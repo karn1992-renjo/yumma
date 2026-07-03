@@ -26,7 +26,7 @@
 	<array>
 		<dict>
 			<key>CFBundleURLName</key>
-			<string>com.example.foodflow_customer</string>
+			<string>com.adgraph.yumma</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
 				<string>foodflow</string>
