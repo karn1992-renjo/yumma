@@ -1,0 +1,1 @@
+@include('restaurant.orders.kot')

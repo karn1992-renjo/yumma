@@ -1,0 +1,31 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+    html {
+        font-size: 0.88rem !important;
+    }
+
+    body,
+    input,
+    button,
+    textarea,
+    select {
+        font-size: 0.88rem !important;
+        line-height: 1.5 !important;
+    }
+
+    h1,
+    h2,
+    h3,
+    h4,
+    h5,
+    h6 {
+        line-height: 1.25;
+    }
+}
+
+[x-cloak] {
+    display: none;
+}
