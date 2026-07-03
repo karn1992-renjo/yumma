@@ -1,0 +1,20 @@
+platform :ios, '14.0'
+
+ENV['COCOAPODS_DISABLE_STATS'] = 'true'
+
+project 'Runner', {
+  'Debug' => :debug,
+  'Profile' => :release,
+  'Release' => :release,
+}
+
+def flutter_install_all_ios_pods(file_dir)
+  require File.expand_path(File.join(file_dir, '..', 'flutter', 'podfile'))
+  install_all_flutter_pods(file_dir)
+end
+
+target 'Runner' do
+  use_frameworks!
+  use_modular_headers!
+  flutter_install_all_ios_pods(File.dirname(File.realpath(__FILE__)))
+end
