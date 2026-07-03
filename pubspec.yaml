@@ -1,13 +1,15 @@
 name: yumma
-description: Root placeholder pubspec for the Yumma Flutter monorepo.
+description: Root wrapper package for the Yumma Flutter monorepo.
 publish_to: 'none'
 version: 1.0.0+1
 environment:
-  sdk: ">=2.17.0 <4.0.0"
+  sdk: '>=3.0.0 <4.0.0'
 
 dependencies:
   flutter:
     sdk: flutter
+  food_delivery_customer:
+    path: customer
 
 dev_dependencies:
   flutter_test:
