@@ -66,5 +66,15 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+	<key>NSCameraUsageDescription</key>
+	<string>Allow camera access to scan QR codes and upload profile or food images.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Allow microphone access for voice ordering and voice search.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Allow speech recognition to understand your voice commands for hands-free food ordering.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Allow location access to show nearby restaurants and deliver your order accurately.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>Allow location access to provide accurate delivery tracking while your order is active.</string>
 </dict>
 </plist>
