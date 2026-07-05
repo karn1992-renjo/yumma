@@ -18,6 +18,7 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Password;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
+use Kreait\Firebase\Factory;
 use Spatie\Permission\Models\Role;
 
 class AuthController extends Controller
@@ -1191,9 +1192,46 @@ class AuthController extends Controller
     {
         $firebaseEnabled = filter_var(config('services.firebase.enabled', false), FILTER_VALIDATE_BOOLEAN);
         $apiKey = (string) config('services.firebase.api_key', '');
+        $credentials = config('firebase.credentials');
 
-        if (! $firebaseEnabled || $apiKey === '') {
+        if (! $firebaseEnabled || (! $credentials && $apiKey === '')) {
             Log::warning('Firebase phone login attempted without Firebase configuration.');
+            return null;
+        }
+
+        if ($credentials && class_exists(Factory::class)) {
+            try {
+                $auth = (new Factory)
+                    ->withServiceAccount($credentials)
+                    ->createAuth();
+                $verifiedToken = $auth->verifyIdToken($idToken);
+                $uid = trim((string) $verifiedToken->claims()->get('sub'));
+                $phone = trim((string) $verifiedToken->claims()->get('phone_number', ''));
+
+                if ($uid !== '' && $phone === '') {
+                    $phone = trim((string) ($auth->getUser($uid)->phoneNumber ?? ''));
+                }
+
+                if ($uid !== '' && $phone !== '') {
+                    return [
+                        'phone' => $phone,
+                        'uid' => $uid,
+                    ];
+                }
+
+                Log::warning('Verified Firebase phone token has incomplete identity claims.', [
+                    'has_uid' => $uid !== '',
+                    'has_phone' => $phone !== '',
+                ]);
+            } catch (\Throwable $e) {
+                Log::warning('Firebase Admin SDK phone token verification failed.', [
+                    'error' => $e->getMessage(),
+                    'configured_project_id' => config('services.firebase.project_id'),
+                ]);
+            }
+        }
+
+        if ($apiKey === '') {
             return null;
         }
 
