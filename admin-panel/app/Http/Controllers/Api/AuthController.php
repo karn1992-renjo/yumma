@@ -309,6 +309,7 @@ class AuthController extends Controller
 
     public function loginWithPhone(Request $request)
     {
+        $firebaseRequestId = (string) Str::uuid();
         $validator = Validator::make($request->all(), [
             'phone' => 'required|string|max:40',
             'firebase_id_token' => 'required|string|min:20',
@@ -319,11 +320,22 @@ class AuthController extends Controller
             return response()->json(['errors' => $validator->errors()], 422);
         }
 
-        $firebaseIdentity = $this->verifyFirebaseIdentityToken($request->input('firebase_id_token'));
+        Log::info('Firebase phone login verification started.', [
+            'request_id' => $firebaseRequestId,
+            'flow' => 'login',
+            'role' => $request->input('role', 'customer'),
+        ]);
+
+        $firebaseIdentity = $this->verifyFirebaseIdentityToken(
+            $request->input('firebase_id_token'),
+            $firebaseRequestId
+        );
         if ($firebaseIdentity === null) {
             return response()->json([
                 'success' => false,
-                'message' => 'Firebase phone authentication is not configured or the ID token is invalid.',
+                'message' => "Firebase could not verify this OTP session. Reference: {$firebaseRequestId}",
+                'code' => 'FIREBASE_TOKEN_REJECTED',
+                'reference' => $firebaseRequestId,
             ], 422);
         }
 
@@ -382,6 +394,7 @@ class AuthController extends Controller
 
     public function verifyFirebasePhone(Request $request)
     {
+        $firebaseRequestId = (string) Str::uuid();
         $validator = Validator::make($request->all(), [
             'phone' => 'required|string|max:40',
             'firebase_id_token' => 'required|string|min:20',
@@ -393,11 +406,22 @@ class AuthController extends Controller
             return response()->json(['errors' => $validator->errors()], 422);
         }
 
-        $firebaseIdentity = $this->verifyFirebaseIdentityToken($request->input('firebase_id_token'));
+        Log::info('Firebase phone verification started.', [
+            'request_id' => $firebaseRequestId,
+            'flow' => $request->input('flow'),
+            'role' => $request->input('role', 'customer'),
+        ]);
+
+        $firebaseIdentity = $this->verifyFirebaseIdentityToken(
+            $request->input('firebase_id_token'),
+            $firebaseRequestId
+        );
         if ($firebaseIdentity === null) {
             return response()->json([
                 'success' => false,
-                'message' => 'Firebase phone authentication is not configured or the ID token is invalid.',
+                'message' => "Firebase could not verify this OTP session. Reference: {$firebaseRequestId}",
+                'code' => 'FIREBASE_TOKEN_REJECTED',
+                'reference' => $firebaseRequestId,
             ], 422);
         }
 
@@ -1187,14 +1211,23 @@ class AuthController extends Controller
         };
     }
 
-    protected function verifyFirebaseIdentityToken(string $idToken): ?array
+    protected function verifyFirebaseIdentityToken(string $idToken, string $requestId): ?array
     {
+        $startedAt = hrtime(true);
         $firebaseEnabled = filter_var(config('services.firebase.enabled', false), FILTER_VALIDATE_BOOLEAN);
         $apiKey = (string) config('services.firebase.api_key', '');
         $clientApiKey = (string) config('services.firebase_client.api_key', '');
+        $tokenDiagnostics = $this->firebaseTokenDiagnostics($idToken);
 
         if (! $firebaseEnabled || ($apiKey === '' && $clientApiKey === '')) {
-            Log::warning('Firebase phone login attempted without Firebase configuration.');
+            Log::warning('Firebase phone login attempted without Firebase configuration.', [
+                'request_id' => $requestId,
+                'firebase_enabled' => $firebaseEnabled,
+                'has_admin_api_key' => $apiKey !== '',
+                'has_client_api_key' => $clientApiKey !== '',
+                'configured_project_id' => config('services.firebase.project_id'),
+                'token' => $tokenDiagnostics,
+            ]);
             return null;
         }
 
@@ -1204,7 +1237,16 @@ class AuthController extends Controller
             ->unique()
             ->values();
 
+        Log::info('Firebase identity token lookup prepared.', [
+            'request_id' => $requestId,
+            'configured_project_id' => config('services.firebase.project_id'),
+            'client_project_id' => config('services.firebase_client.project_id'),
+            'candidate_key_suffixes' => $apiKeys->map(fn ($key) => substr($key, -6))->all(),
+            'token' => $tokenDiagnostics,
+        ]);
+
         foreach ($apiKeys as $candidateKey) {
+            $attemptStartedAt = hrtime(true);
             try {
                 $response = Http::connectTimeout(3)->timeout(7)->post(
                     'https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=' . urlencode($candidateKey),
@@ -1213,6 +1255,8 @@ class AuthController extends Controller
 
                 if (! $response->successful()) {
                     Log::warning('Firebase identity token lookup failed.', [
+                        'request_id' => $requestId,
+                        'duration_ms' => round((hrtime(true) - $attemptStartedAt) / 1_000_000, 2),
                         'status' => $response->status(),
                         'firebase_error' => $response->json('error.message'),
                         'key_suffix' => substr($candidateKey, -6),
@@ -1227,25 +1271,85 @@ class AuthController extends Controller
 
                 if (! is_array($user) || ! is_string($phone) || trim($phone) === '' || ! is_string($uid) || trim($uid) === '') {
                     Log::warning('Firebase identity token lookup returned incomplete user data.', [
+                        'request_id' => $requestId,
+                        'duration_ms' => round((hrtime(true) - $attemptStartedAt) / 1_000_000, 2),
                         'has_phone' => is_string($phone) && trim($phone) !== '',
                         'has_uid' => is_string($uid) && trim($uid) !== '',
                     ]);
                     continue;
                 }
 
-                return [
+                $identity = [
                     'phone' => $phone,
                     'uid' => $uid,
                 ];
+
+                Log::info('Firebase identity token verified.', [
+                    'request_id' => $requestId,
+                    'duration_ms' => round((hrtime(true) - $startedAt) / 1_000_000, 2),
+                    'key_suffix' => substr($candidateKey, -6),
+                    'uid_hash' => substr(hash('sha256', $uid), 0, 12),
+                ]);
+
+                return $identity;
             } catch (\Throwable $e) {
                 Log::error('Firebase identity token verification failed.', [
+                    'request_id' => $requestId,
+                    'duration_ms' => round((hrtime(true) - $attemptStartedAt) / 1_000_000, 2),
                     'error' => $e->getMessage(),
+                    'exception' => get_class($e),
                     'key_suffix' => substr($candidateKey, -6),
                 ]);
             }
         }
 
+        Log::warning('All Firebase identity token lookup attempts failed.', [
+            'request_id' => $requestId,
+            'duration_ms' => round((hrtime(true) - $startedAt) / 1_000_000, 2),
+            'token' => $tokenDiagnostics,
+        ]);
+
         return null;
+    }
+
+    protected function firebaseTokenDiagnostics(string $idToken): array
+    {
+        $diagnostics = [
+            'sha256_prefix' => substr(hash('sha256', $idToken), 0, 12),
+            'length' => strlen($idToken),
+            'segments' => substr_count($idToken, '.') + 1,
+        ];
+
+        try {
+            $segments = explode('.', $idToken);
+            if (count($segments) !== 3) {
+                return $diagnostics + ['payload_readable' => false];
+            }
+
+            $payload = strtr($segments[1], '-_', '+/');
+            $payload .= str_repeat('=', (4 - strlen($payload) % 4) % 4);
+            $claims = json_decode((string) base64_decode($payload, true), true);
+            if (! is_array($claims)) {
+                return $diagnostics + ['payload_readable' => false];
+            }
+
+            return $diagnostics + [
+                'payload_readable' => true,
+                'aud' => $claims['aud'] ?? null,
+                'iss' => $claims['iss'] ?? null,
+                'has_subject' => ! empty($claims['sub']),
+                'has_phone_number' => ! empty($claims['phone_number']),
+                'auth_provider' => $claims['firebase']['sign_in_provider'] ?? null,
+                'issued_at' => $claims['iat'] ?? null,
+                'expires_at' => $claims['exp'] ?? null,
+                'server_time' => time(),
+            ];
+        } catch (\Throwable $e) {
+            return $diagnostics + [
+                'payload_readable' => false,
+                'decode_error' => $e->getMessage(),
+            ];
+        }
     }
 
     protected function verifyFirebaseSocialIdentityToken(string $idToken, string $provider): ?array
