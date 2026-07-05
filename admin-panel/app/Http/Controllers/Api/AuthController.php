@@ -18,7 +18,6 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Password;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
-use Kreait\Firebase\Factory;
 use Spatie\Permission\Models\Role;
 
 class AuthController extends Controller
@@ -1192,83 +1191,61 @@ class AuthController extends Controller
     {
         $firebaseEnabled = filter_var(config('services.firebase.enabled', false), FILTER_VALIDATE_BOOLEAN);
         $apiKey = (string) config('services.firebase.api_key', '');
-        $credentials = config('firebase.credentials');
+        $clientApiKey = (string) config('services.firebase_client.api_key', '');
 
-        if (! $firebaseEnabled || (! $credentials && $apiKey === '')) {
+        if (! $firebaseEnabled || ($apiKey === '' && $clientApiKey === '')) {
             Log::warning('Firebase phone login attempted without Firebase configuration.');
             return null;
         }
 
-        if ($credentials && class_exists(Factory::class)) {
+        $apiKeys = collect([$apiKey, $clientApiKey])
+            ->map(fn ($key) => trim((string) $key))
+            ->filter()
+            ->unique()
+            ->values();
+
+        foreach ($apiKeys as $candidateKey) {
             try {
-                $auth = (new Factory)
-                    ->withServiceAccount($credentials)
-                    ->createAuth();
-                $verifiedToken = $auth->verifyIdToken($idToken);
-                $uid = trim((string) $verifiedToken->claims()->get('sub'));
-                $phone = trim((string) $verifiedToken->claims()->get('phone_number', ''));
+                $response = Http::connectTimeout(3)->timeout(7)->post(
+                    'https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=' . urlencode($candidateKey),
+                    ['idToken' => $idToken]
+                );
 
-                if ($uid !== '' && $phone === '') {
-                    $phone = trim((string) ($auth->getUser($uid)->phoneNumber ?? ''));
+                if (! $response->successful()) {
+                    Log::warning('Firebase identity token lookup failed.', [
+                        'status' => $response->status(),
+                        'firebase_error' => $response->json('error.message'),
+                        'key_suffix' => substr($candidateKey, -6),
+                    ]);
+                    continue;
                 }
 
-                if ($uid !== '' && $phone !== '') {
-                    return [
-                        'phone' => $phone,
-                        'uid' => $uid,
-                    ];
+                $data = $response->json();
+                $user = $data['users'][0] ?? null;
+                $phone = $user['phoneNumber'] ?? null;
+                $uid = $user['localId'] ?? null;
+
+                if (! is_array($user) || ! is_string($phone) || trim($phone) === '' || ! is_string($uid) || trim($uid) === '') {
+                    Log::warning('Firebase identity token lookup returned incomplete user data.', [
+                        'has_phone' => is_string($phone) && trim($phone) !== '',
+                        'has_uid' => is_string($uid) && trim($uid) !== '',
+                    ]);
+                    continue;
                 }
 
-                Log::warning('Verified Firebase phone token has incomplete identity claims.', [
-                    'has_uid' => $uid !== '',
-                    'has_phone' => $phone !== '',
-                ]);
+                return [
+                    'phone' => $phone,
+                    'uid' => $uid,
+                ];
             } catch (\Throwable $e) {
-                Log::warning('Firebase Admin SDK phone token verification failed.', [
+                Log::error('Firebase identity token verification failed.', [
                     'error' => $e->getMessage(),
-                    'configured_project_id' => config('services.firebase.project_id'),
+                    'key_suffix' => substr($candidateKey, -6),
                 ]);
             }
         }
 
-        if ($apiKey === '') {
-            return null;
-        }
-
-        try {
-            $response = Http::timeout(15)->post(
-                'https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=' . urlencode($apiKey),
-                ['idToken' => $idToken]
-            );
-
-            if (! $response->successful()) {
-                Log::warning('Firebase identity token lookup failed.', [
-                    'status' => $response->status(),
-                    'body' => $response->body(),
-                ]);
-                return null;
-            }
-
-            $data = $response->json();
-            $user = $data['users'][0] ?? null;
-            $phone = $user['phoneNumber'] ?? null;
-            $uid = $user['localId'] ?? null;
-
-            if (! is_array($user) || ! is_string($phone) || trim($phone) === '' || ! is_string($uid) || trim($uid) === '') {
-                Log::warning('Firebase identity token lookup returned incomplete user data.', [
-                    'response' => $data,
-                ]);
-                return null;
-            }
-
-            return [
-                'phone' => $phone,
-                'uid' => $uid,
-            ];
-        } catch (\Throwable $e) {
-            Log::error('Firebase identity token verification failed: ' . $e->getMessage());
-            return null;
-        }
+        return null;
     }
 
     protected function verifyFirebaseSocialIdentityToken(string $idToken, string $provider): ?array

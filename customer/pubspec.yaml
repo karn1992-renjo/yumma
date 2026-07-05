@@ -3,7 +3,7 @@ description: A complete food delivery application with customer, restaurant, and
 
 publish_to: 'none'
 
-version: 2.0.5+12
+version: 2.0.6+13
 
 environment:
   sdk: '>=3.0.0 <4.0.0'

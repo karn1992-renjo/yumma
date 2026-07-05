@@ -56,4 +56,9 @@ return [
         'api_version' => env('CASHFREE_API_VERSION', '2022-09-01'),
     ],
 
+    'firebase_client' => [
+        'api_key' => env('FIREBASE_CLIENT_API_KEY', 'AIzaSyDs06Xh5QCDpQiy37L-RR0hrNqGPvx2paE'),
+        'project_id' => env('FIREBASE_CLIENT_PROJECT_ID', 'yumma-458b0'),
+    ],
+
 ];

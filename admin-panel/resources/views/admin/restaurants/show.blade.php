@@ -15,6 +15,9 @@
             <p class="text-muted mb-0">View restaurant details and statistics</p>
         </div>
         <div class="d-flex gap-2">
+            <button type="button" class="btn btn-outline-primary" data-bs-toggle="modal" data-bs-target="#increaseMenuPricesModal">
+                <i class="fas fa-arrow-trend-up me-2"></i> Increase Menu Prices
+            </button>
             <a href="{{ route('admin.restaurants.edit', $restaurant) }}" class="btn btn-primary">
                 <i class="fas fa-edit me-2"></i> Edit
             </a>
@@ -24,6 +27,24 @@
         </div>
     </div>
 </div>
+
+@if(session('success'))
+    <div class="alert alert-success alert-dismissible fade show" role="alert">
+        <i class="fas fa-check-circle me-2"></i>{{ session('success') }}
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    </div>
+@endif
+
+@if(session('error'))
+    <div class="alert alert-danger alert-dismissible fade show" role="alert">
+        <i class="fas fa-circle-exclamation me-2"></i>{{ session('error') }}
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    </div>
+@endif
+
+@if($errors->any())
+    <div class="alert alert-danger" role="alert">{{ $errors->first() }}</div>
+@endif
 
 <!-- Statistics Cards -->
 <div class="row g-3 mb-4">
@@ -414,6 +435,47 @@
     </div>
 </div>
 
+<div class="modal fade" id="increaseMenuPricesModal" tabindex="-1" aria-labelledby="increaseMenuPricesModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <form method="POST" action="{{ route('admin.restaurants.increase-menu-prices', $restaurant) }}" id="increaseMenuPricesForm">
+                @csrf
+                <div class="modal-header">
+                    <h5 class="modal-title" id="increaseMenuPricesModalLabel">Increase Menu Prices</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Increase type</label>
+                        <div class="btn-group w-100" role="group" aria-label="Price increase type">
+                            <input type="radio" class="btn-check" name="adjustment_type" id="adjustmentPercentage" value="percentage" autocomplete="off" @checked(old('adjustment_type', 'percentage') === 'percentage')>
+                            <label class="btn btn-outline-primary" for="adjustmentPercentage">Percentage</label>
+                            <input type="radio" class="btn-check" name="adjustment_type" id="adjustmentFixed" value="fixed" autocomplete="off" @checked(old('adjustment_type') === 'fixed')>
+                            <label class="btn btn-outline-primary" for="adjustmentFixed">Fixed amount</label>
+                        </div>
+                    </div>
+                    <div>
+                        <label for="adjustmentValue" class="form-label fw-semibold">Increase value</label>
+                        <div class="input-group">
+                            <span class="input-group-text" id="adjustmentValuePrefix">{{ old('adjustment_type') === 'fixed' ? $currencySymbol : '%' }}</span>
+                            <input type="number" class="form-control" id="adjustmentValue" name="adjustment_value" min="0.00001" max="1000000" step="0.00001" required value="{{ old('adjustment_value') }}">
+                        </div>
+                    </div>
+                    <div class="alert alert-warning mt-3 mb-0">
+                        This updates all {{ $totalMenuItems }} menu items, including discounted prices, variants, and add-ons. This action cannot be undone.
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary">
+                        <i class="fas fa-arrow-trend-up me-2"></i> Apply Increase
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
 <style>
     .info-group {
         padding: 1rem 0;
@@ -423,4 +485,35 @@
         border-bottom: none;
     }
 </style>
+
+@endsection
+
+@section('scripts')
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    const form = document.getElementById('increaseMenuPricesForm');
+    const prefix = document.getElementById('adjustmentValuePrefix');
+    const typeInputs = form.querySelectorAll('input[name="adjustment_type"]');
+
+    typeInputs.forEach(function (input) {
+        input.addEventListener('change', function () {
+            prefix.textContent = input.value === 'percentage' ? '%' : @json($currencySymbol);
+        });
+    });
+
+    form.addEventListener('submit', function (event) {
+        const type = form.querySelector('input[name="adjustment_type"]:checked').value;
+        const value = document.getElementById('adjustmentValue').value;
+        const label = type === 'percentage' ? value + '%' : @json($currencySymbol) + value;
+
+        if (!window.confirm(@json("Increase every menu price for {$restaurant->name} by ") + label + '?')) {
+            event.preventDefault();
+        }
+    });
+
+    @if($errors->has('adjustment_type') || $errors->has('adjustment_value'))
+        bootstrap.Modal.getOrCreateInstance(document.getElementById('increaseMenuPricesModal')).show();
+    @endif
+});
+</script>
 @endsection

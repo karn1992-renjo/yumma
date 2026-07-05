@@ -3,11 +3,13 @@
 namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
+use App\Models\AppSetting;
 use App\Models\DeliveryArea;
 use App\Models\Restaurant;
 use App\Models\User;
 use App\Models\Cuisine;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
@@ -254,6 +256,83 @@ class RestaurantController extends Controller
             'averageRating',
             'totalMenuItems'
         ));
+    }
+
+    public function increaseMenuPrices(Request $request, Restaurant $restaurant)
+    {
+        $validated = $request->validate([
+            'adjustment_type' => 'required|in:percentage,fixed',
+            'adjustment_value' => 'required|numeric|gt:0|max:1000000',
+        ]);
+
+        $type = $validated['adjustment_type'];
+        $value = (float) $validated['adjustment_value'];
+        $maximumPrice = 9999999.99999;
+        $updatedCount = 0;
+
+        try {
+            DB::transaction(function () use ($restaurant, $type, $value, $maximumPrice, &$updatedCount) {
+                $restaurant->menuItems()
+                    ->orderBy('id')
+                    ->chunkById(200, function ($items) use ($type, $value, $maximumPrice, &$updatedCount) {
+                        foreach ($items as $item) {
+                            $adjust = function ($price) use ($type, $value, $maximumPrice): float {
+                                $current = (float) $price;
+                                $adjusted = $type === 'percentage'
+                                    ? $current * (1 + ($value / 100))
+                                    : $current + $value;
+                                $adjusted = round($adjusted, 5);
+
+                                if ($adjusted > $maximumPrice) {
+                                    throw new \OverflowException('One or more adjusted prices exceed the supported maximum.');
+                                }
+
+                                return $adjusted;
+                            };
+
+                            $item->price = $adjust($item->price);
+                            if ($item->discounted_price !== null) {
+                                $item->discounted_price = $adjust($item->discounted_price);
+                            }
+                            $item->variants = $this->increaseOptionPrices($item->variants, $adjust);
+                            $item->add_ons = $this->increaseOptionPrices($item->add_ons, $adjust);
+                            $item->save();
+                            $updatedCount++;
+                        }
+                    });
+            });
+        } catch (\OverflowException $e) {
+            return back()->withInput()->with('error', $e->getMessage());
+        } catch (\Throwable $e) {
+            \Log::error('Restaurant menu price increase failed.', [
+                'restaurant_id' => $restaurant->id,
+                'error' => $e->getMessage(),
+            ]);
+
+            return back()->withInput()->with('error', 'Menu prices could not be updated. No prices were changed.');
+        }
+
+        $adjustment = $type === 'percentage'
+            ? rtrim(rtrim(number_format($value, 5, '.', ''), '0'), '.') . '%'
+            : AppSetting::getValue('currency_symbol', '') . number_format($value, AppSetting::currencyDecimals());
+
+        return back()->with(
+            'success',
+            "{$updatedCount} menu " . ($updatedCount === 1 ? 'item' : 'items') . " increased by {$adjustment}."
+        );
+    }
+
+    private function increaseOptionPrices(?array $options, callable $adjust): array
+    {
+        return collect($options ?? [])
+            ->map(function ($option) use ($adjust) {
+                if (is_array($option) && array_key_exists('price', $option) && is_numeric($option['price'])) {
+                    $option['price'] = $adjust($option['price']);
+                }
+
+                return $option;
+            })
+            ->all();
     }
     
     /**

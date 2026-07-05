@@ -282,6 +282,7 @@ Route::middleware(['auth', 'role:super_admin|admin'])->prefix('admin')->name('ad
     // Restaurants Management
     Route::get('/restaurants/template', [RestaurantController::class, 'downloadTemplate'])->name('restaurants.template');
     Route::post('/restaurants/bulk-upload', [RestaurantController::class, 'bulkUpload'])->name('restaurants.bulk-upload');
+    Route::post('/restaurants/{restaurant}/increase-menu-prices', [RestaurantController::class, 'increaseMenuPrices'])->name('restaurants.increase-menu-prices');
     Route::resource('restaurants', RestaurantController::class);
     Route::post('/restaurants/{restaurant}/toggle-status', [RestaurantController::class, 'toggleStatus'])->name('restaurants.toggle-status');
     
