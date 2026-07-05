@@ -1248,10 +1248,13 @@ class AuthController extends Controller
         foreach ($apiKeys as $candidateKey) {
             $attemptStartedAt = hrtime(true);
             try {
-                $response = Http::connectTimeout(3)->timeout(7)->post(
-                    'https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=' . urlencode($candidateKey),
-                    ['idToken' => $idToken]
-                );
+                $response = Http::withOptions(['force_ip_resolve' => 'v4'])
+                    ->connectTimeout(3)
+                    ->timeout(7)
+                    ->post(
+                        'https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=' . urlencode($candidateKey),
+                        ['idToken' => $idToken]
+                    );
 
                 if (! $response->successful()) {
                     Log::warning('Firebase identity token lookup failed.', [
@@ -1363,10 +1366,13 @@ class AuthController extends Controller
         }
 
         try {
-            $response = Http::timeout(15)->post(
-                'https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=' . urlencode($apiKey),
-                ['idToken' => $idToken]
-            );
+            $response = Http::withOptions(['force_ip_resolve' => 'v4'])
+                ->connectTimeout(3)
+                ->timeout(7)
+                ->post(
+                    'https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=' . urlencode($apiKey),
+                    ['idToken' => $idToken]
+                );
 
             if (! $response->successful()) {
                 Log::warning('Firebase social identity token lookup failed.', [
