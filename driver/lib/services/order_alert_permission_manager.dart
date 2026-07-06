@@ -4,7 +4,7 @@ class OrderAlertPermissionManager {
   OrderAlertPermissionManager._();
 
   static const MethodChannel _channel =
-      MethodChannel('com.example.foodflow_driver/order_alerts');
+      MethodChannel('com.adgraph.delivery/order_alerts');
 
   static Future<bool> checkOverlayPermission() async {
     try {

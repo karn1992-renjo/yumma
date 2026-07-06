@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
@@ -16,11 +17,7 @@ import 'sound_service.dart';
 @pragma('vm:entry-point')
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   try {
-    if (Firebase.apps.isEmpty) {
-      await Firebase.initializeApp(
-        options: DefaultFirebaseOptions.currentPlatform,
-      );
-    }
+    await _ensureFirebaseInitialized();
     final data = FirebaseNotificationService.normalizeNotificationData(
       message.data,
     );
@@ -55,11 +52,7 @@ class FirebaseNotificationService {
     if (_isInitialized) return;
 
     try {
-      if (Firebase.apps.isEmpty) {
-        await Firebase.initializeApp(
-          options: DefaultFirebaseOptions.currentPlatform,
-        );
-      }
+      await _ensureFirebaseInitialized();
     } catch (e) {
       debugPrint('Firebase initialization failed: $e');
     }
@@ -156,11 +149,7 @@ class FirebaseNotificationService {
 
   Future<void> registerDeviceToken({User? user}) async {
     try {
-      if (Firebase.apps.isEmpty) {
-        await Firebase.initializeApp(
-          options: DefaultFirebaseOptions.currentPlatform,
-        );
-      }
+      await _ensureFirebaseInitialized();
 
       _deviceToken ??= await _messaging.getToken();
       if (_deviceToken == null || _deviceToken!.isEmpty) {
@@ -563,4 +552,19 @@ class FirebaseNotificationService {
       IncomingOrderAlertService.roleFor(normalized),
     );
   }
+}
+
+Future<void> _ensureFirebaseInitialized() async {
+  if (Firebase.apps.isNotEmpty) return;
+
+  if (!kIsWeb &&
+      (defaultTargetPlatform == TargetPlatform.iOS ||
+          defaultTargetPlatform == TargetPlatform.android)) {
+    await Firebase.initializeApp();
+    return;
+  }
+
+  await Firebase.initializeApp(
+    options: DefaultFirebaseOptions.currentPlatform,
+  );
 }

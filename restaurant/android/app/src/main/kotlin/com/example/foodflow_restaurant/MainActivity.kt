@@ -1,4 +1,4 @@
-package com.adgraph.yumma_vendor
+package com.adgraph.vendor
 
 import android.Manifest
 import android.bluetooth.BluetoothAdapter
@@ -33,11 +33,11 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
 class MainActivity : FlutterActivity() {
-    private val audioChannelName = "com.adgraph.yumma_vendor/order_audio"
-    private val alertChannelName = "com.adgraph.yumma_vendor/order_alerts"
-    private val configChannelName = "com.adgraph.yumma_vendor/app_config"
+    private val audioChannelName = "com.adgraph.vendor/order_audio"
+    private val alertChannelName = "com.adgraph.vendor/order_alerts"
+    private val configChannelName = "com.adgraph.vendor/app_config"
     private val printerDiscoveryChannelName =
-        "com.adgraph.yumma_vendor/printer_discovery"
+        "com.adgraph.vendor/printer_discovery"
     private val bluetoothPermissionRequestCode = 7041
     private var previousRingerMode: Int? = null
     private var previousAudioMode: Int? = null

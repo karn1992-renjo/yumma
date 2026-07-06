@@ -1,4 +1,4 @@
-package com.example.foodflow_driver
+package com.adgraph.delivery
 
 import android.app.NotificationManager
 import android.content.Context
@@ -16,9 +16,9 @@ import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity() {
-    private val audioChannelName = "com.example.foodflow_driver/order_audio"
-    private val alertChannelName = "com.example.foodflow_driver/order_alerts"
-    private val configChannelName = "com.example.foodflow_driver/app_config"
+    private val audioChannelName = "com.adgraph.delivery/order_audio"
+    private val alertChannelName = "com.adgraph.delivery/order_alerts"
+    private val configChannelName = "com.adgraph.delivery/app_config"
     private var previousRingerMode: Int? = null
     private var previousAudioMode: Int? = null
     private var previousSpeakerphone: Boolean? = null

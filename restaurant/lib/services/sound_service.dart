@@ -7,7 +7,7 @@ import 'package:flutter/services.dart';
 class SoundService {
   static const String _newOrderSoundAsset = 'sound/order-tone.mp3';
   static const MethodChannel _androidAudioChannel =
-      MethodChannel('com.adgraph.yumma_vendor/order_audio');
+      MethodChannel('com.adgraph.vendor/order_audio');
 
   static final AudioPlayer _player = AudioPlayer();
   static final AudioPlayer _alarmPlayer = AudioPlayer();

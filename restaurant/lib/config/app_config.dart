@@ -8,7 +8,7 @@ class AppConfig {
   );
   static const String appPackageName = String.fromEnvironment(
     'APP_PACKAGE_NAME',
-    defaultValue: 'com.adgraph.yumma_vendor',
+    defaultValue: 'com.adgraph.vendor',
   );
 
   static const String appName = appRole == 'driver'

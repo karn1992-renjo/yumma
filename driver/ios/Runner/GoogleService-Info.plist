@@ -3,9 +3,9 @@
 <plist version="1.0">
 <dict>
 	<key>CLIENT_ID</key>
-	<string>596992936599-32t3jdta96rs6a3gi014davl3bkedkn8.apps.googleusercontent.com</string>
+	<string>596992936599-holpld80fqs72pqkqhl5srlp4rf073hg.apps.googleusercontent.com</string>
 	<key>REVERSED_CLIENT_ID</key>
-	<string>com.googleusercontent.apps.596992936599-32t3jdta96rs6a3gi014davl3bkedkn8</string>
+	<string>com.googleusercontent.apps.596992936599-holpld80fqs72pqkqhl5srlp4rf073hg</string>
 	<key>ANDROID_CLIENT_ID</key>
 	<string>596992936599-g291agakolhr4b0rotae0ebsgfjt4nh9.apps.googleusercontent.com</string>
 	<key>API_KEY</key>
@@ -15,7 +15,7 @@
 	<key>PLIST_VERSION</key>
 	<string>1</string>
 	<key>BUNDLE_ID</key>
-	<string>com.adgraph.yumma</string>
+	<string>com.adgraph.delivery</string>
 	<key>PROJECT_ID</key>
 	<string>yumma-458b0</string>
 	<key>STORAGE_BUCKET</key>
@@ -31,7 +31,7 @@
 	<key>IS_SIGNIN_ENABLED</key>
 	<true></true>
 	<key>GOOGLE_APP_ID</key>
-	<string>1:596992936599:ios:5d0980fcbcf58842f6b7d2</string>
+	<string>1:596992936599:ios:c4ae54a8e54d38bbf6b7d2</string>
 	<key>DATABASE_URL</key>
 	<string>https://yumma-458b0-default-rtdb.firebaseio.com</string>
 </dict>

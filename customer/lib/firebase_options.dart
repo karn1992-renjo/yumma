@@ -38,8 +38,8 @@ class DefaultFirebaseOptions {
   );
 
   static const FirebaseOptions ios = FirebaseOptions(
-    apiKey: 'AIzaSyDs06Xh5QCDpQiy37L-RR0hrNqGPvx2paE',
-    appId: '1:596992936599:ios:8f0a1b2c3d4e5f6g726703',
+    apiKey: 'AIzaSyDhZCVKvFQmun_wXebEFKgaP6zzjQn-c4I',
+    appId: '1:596992936599:ios:5d0980fcbcf58842f6b7d2',
     messagingSenderId: '596992936599',
     projectId: 'yumma-458b0',
     storageBucket: 'yumma-458b0.firebasestorage.app',

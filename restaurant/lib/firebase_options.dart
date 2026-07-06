@@ -38,12 +38,12 @@ class DefaultFirebaseOptions {
   );
 
   static const FirebaseOptions ios = FirebaseOptions(
-    apiKey: 'AIzaSyB6Ixat1fY3Knl7mNiGl4zuNASMxHv23Qg',
-    appId: '1:596992936599:ios:5d0980fcbcf58842f6b7d2',
+    apiKey: 'AIzaSyDhZCVKvFQmun_wXebEFKgaP6zzjQn-c4I',
+    appId: '1:596992936599:ios:ba6b318258c26980f6b7d2',
     messagingSenderId: '596992936599',
     projectId: 'yumma-458b0',
     storageBucket: 'yumma-458b0.firebasestorage.app',
-    iosBundleId: 'com.adgraph.yumma_vendor',
+    iosBundleId: 'com.adgraph.vendor',
     databaseURL: 'https://yumma-458b0-default-rtdb.firebaseio.com',
   );
 }

@@ -5,7 +5,7 @@ class ForegroundServiceManager {
   ForegroundServiceManager._();
 
   static const MethodChannel _channel =
-      MethodChannel('com.example.foodflow_driver/order_alerts');
+      MethodChannel('com.adgraph.delivery/order_alerts');
 
   static Future<void> startForegroundService({
     String status = 'Online and listening for orders',

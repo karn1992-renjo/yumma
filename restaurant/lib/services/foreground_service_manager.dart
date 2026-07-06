@@ -5,7 +5,7 @@ class ForegroundServiceManager {
   ForegroundServiceManager._();
 
   static const MethodChannel _channel =
-      MethodChannel('com.adgraph.yumma_vendor/order_alerts');
+      MethodChannel('com.adgraph.vendor/order_alerts');
 
   static Future<void> startForegroundService({
     String status = 'Online and listening for orders',

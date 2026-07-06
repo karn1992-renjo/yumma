@@ -8,7 +8,7 @@ class AppConfig {
   );
   static const String appPackageName = String.fromEnvironment(
     'APP_PACKAGE_NAME',
-    defaultValue: 'com.example.foodflow_driver',
+    defaultValue: 'com.adgraph.delivery',
   );
 
   static const String appName = appRole == 'driver'

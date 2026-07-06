@@ -4,7 +4,7 @@ class PrinterDiscoveryService {
   PrinterDiscoveryService._();
 
   static const MethodChannel _channel =
-      MethodChannel('com.adgraph.yumma_vendor/printer_discovery');
+      MethodChannel('com.adgraph.vendor/printer_discovery');
 
   static Future<bool> requestBluetoothPermissions() async {
     final result =

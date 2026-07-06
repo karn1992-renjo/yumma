@@ -4,7 +4,7 @@ import '../config/app_config.dart';
 
 class NativeConfigService {
   static const MethodChannel _channel =
-      MethodChannel('com.example.foodflow_driver/app_config');
+      MethodChannel('com.adgraph.delivery/app_config');
   static String? _googleMapsApiKey;
 
   static Future<String> getGoogleMapsApiKey() async {

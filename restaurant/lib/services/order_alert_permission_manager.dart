@@ -4,7 +4,7 @@ class OrderAlertPermissionManager {
   OrderAlertPermissionManager._();
 
   static const MethodChannel _channel =
-      MethodChannel('com.adgraph.yumma_vendor/order_alerts');
+      MethodChannel('com.adgraph.vendor/order_alerts');
 
   static Future<bool> checkOverlayPermission() async {
     try {
