@@ -19,11 +19,7 @@ import 'sound_service.dart';
 @pragma('vm:entry-point')
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   try {
-    if (Firebase.apps.isEmpty) {
-      await Firebase.initializeApp(
-        options: DefaultFirebaseOptions.currentPlatform,
-      );
-    }
+    await _ensureFirebaseInitialized();
     final data = FirebaseNotificationService.normalizeNotificationData(
       message.data,
     );
@@ -60,11 +56,7 @@ class FirebaseNotificationService {
     if (_isInitialized) return;
 
     try {
-      if (Firebase.apps.isEmpty) {
-        await Firebase.initializeApp(
-          options: DefaultFirebaseOptions.currentPlatform,
-        );
-      }
+      await _ensureFirebaseInitialized();
     } catch (e) {
       debugPrint('Firebase initialization failed: $e');
     }
@@ -166,11 +158,7 @@ class FirebaseNotificationService {
 
   Future<void> registerDeviceToken({User? user}) async {
     try {
-      if (Firebase.apps.isEmpty) {
-        await Firebase.initializeApp(
-          options: DefaultFirebaseOptions.currentPlatform,
-        );
-      }
+      await _ensureFirebaseInitialized();
 
       _deviceToken ??= await _resolveDeviceToken();
       if (_deviceToken == null || _deviceToken!.isEmpty) {
@@ -571,4 +559,17 @@ class FirebaseNotificationService {
   static Map<String, dynamic> _safeDataMap(Map<dynamic, dynamic> data) {
     return data.map((key, value) => MapEntry(key.toString(), value));
   }
+}
+
+Future<void> _ensureFirebaseInitialized() async {
+  if (Firebase.apps.isNotEmpty) return;
+
+  if (!kIsWeb && defaultTargetPlatform == TargetPlatform.iOS) {
+    await Firebase.initializeApp();
+    return;
+  }
+
+  await Firebase.initializeApp(
+    options: DefaultFirebaseOptions.currentPlatform,
+  );
 }

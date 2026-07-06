@@ -1,4 +1,7 @@
 // lib/main.dart
+import 'dart:async';
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
@@ -11,7 +14,7 @@ import 'services/navigation_service.dart';
 import 'services/sound_service.dart';
 import 'services/local_cache_service.dart';
 import 'services/app_branding_service.dart';
-import 'services/appsflyer_deep_link_service.dart';
+//#import 'services/appsflyer_deep_link_service.dart';
 import 'config/app_config.dart';
 import 'models/app_branding.dart';
 import 'theme/foodflow_theme.dart';
@@ -52,26 +55,11 @@ import 'screens/customer/wallet_screen.dart';
 import 'widgets/common/animated_loading_spinner.dart';
 import 'utils/route_observer.dart';
 
-void main() async {
+void main() {
   WidgetsFlutterBinding.ensureInitialized();
 
-  try {
-    await LocalCacheService.initialize();
-    await SharedPreferences.getInstance();
-    await SoundService.init();
-
-    if (Firebase.apps.isEmpty) {
-      try {
-        await Firebase.initializeApp(
-          options: DefaultFirebaseOptions.currentPlatform,
-        );
-      } catch (e) {
-        debugPrint('Firebase initialization failed at startup: $e');
-      }
-    }
-  } catch (e) {
-    debugPrint('Startup initialization failed: $e');
-  }
+  configLoading();
+  _logStartupStep('runApp');
 
   runApp(
     MultiProvider(
@@ -86,26 +74,72 @@ void main() async {
     ),
   );
 
-  configLoading();
-
-  WidgetsBinding.instance.addPostFrameCallback((_) async {
-    try {
-      if (Firebase.apps.isEmpty) {
-        await Firebase.initializeApp(
-          options: DefaultFirebaseOptions.currentPlatform,
-        );
-      }
-      await FirebaseNotificationService.instance.initialize();
-    } catch (e) {
-      debugPrint('Notification startup skipped: $e');
-    }
-
-    try {
-      await AppsFlyerDeepLinkService.instance.initialize();
-    } catch (e) {
-      debugPrint('AppsFlyer startup skipped: $e');
-    }
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    unawaited(_initializeAfterFirstFrame());
   });
+}
+
+Future<void> _initializeAfterFirstFrame() async {
+  await _runStartupStep('local cache', LocalCacheService.initialize);
+  await _runStartupStep(
+    'shared preferences',
+    () async {
+      await SharedPreferences.getInstance();
+    },
+  );
+
+  if (defaultTargetPlatform == TargetPlatform.iOS) {
+    unawaited(
+      Future<void>.delayed(const Duration(seconds: 2)).then(
+        (_) => _runStartupStep('sound deferred', SoundService.init),
+      ),
+    );
+  } else {
+    await _runStartupStep('sound', SoundService.init);
+  }
+
+  await _runStartupStep('firebase core', _ensureFirebaseInitialized);
+  await _runStartupStep(
+    'notifications',
+    FirebaseNotificationService.instance.initialize,
+  );
+
+  //#try {
+  //  await AppsFlyerDeepLinkService.instance.initialize();
+  //} catch (e) {
+  //  debugPrint('AppsFlyer startup skipped: $e');
+  //}
+}
+
+Future<void> _ensureFirebaseInitialized() async {
+  if (Firebase.apps.isNotEmpty) return;
+
+  if (!kIsWeb && defaultTargetPlatform == TargetPlatform.iOS) {
+    await Firebase.initializeApp();
+    return;
+  }
+
+  await Firebase.initializeApp(
+    options: DefaultFirebaseOptions.currentPlatform,
+  );
+}
+
+Future<void> _runStartupStep(
+  String name,
+  Future<void> Function() action,
+) async {
+  _logStartupStep('$name start');
+  try {
+    await action();
+    _logStartupStep('$name done');
+  } catch (e, stackTrace) {
+    debugPrint('Startup initiate: $name skipped: $e');
+    debugPrintStack(stackTrace: stackTrace);
+  }
+}
+
+void _logStartupStep(String message) {
+  debugPrint('Startup initiate: $message');
 }
 
 void configLoading() {
