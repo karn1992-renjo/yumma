@@ -14,7 +14,6 @@ import 'services/navigation_service.dart';
 import 'services/sound_service.dart';
 import 'services/local_cache_service.dart';
 import 'services/app_branding_service.dart';
-//#import 'services/appsflyer_deep_link_service.dart';
 import 'config/app_config.dart';
 import 'models/app_branding.dart';
 import 'theme/foodflow_theme.dart';
@@ -103,12 +102,6 @@ Future<void> _initializeAfterFirstFrame() async {
     'notifications',
     FirebaseNotificationService.instance.initialize,
   );
-
-  //#try {
-  //  await AppsFlyerDeepLinkService.instance.initialize();
-  //} catch (e) {
-  //  debugPrint('AppsFlyer startup skipped: $e');
-  //}
 }
 
 Future<void> _ensureFirebaseInitialized() async {
