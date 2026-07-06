@@ -14,6 +14,7 @@ import 'services/navigation_service.dart';
 import 'services/sound_service.dart';
 import 'services/local_cache_service.dart';
 import 'services/app_branding_service.dart';
+import 'services/appsflyer_deep_link_service.dart';
 import 'config/app_config.dart';
 import 'models/app_branding.dart';
 import 'theme/foodflow_theme.dart';
@@ -101,6 +102,10 @@ Future<void> _initializeAfterFirstFrame() async {
   await _runStartupStep(
     'notifications',
     FirebaseNotificationService.instance.initialize,
+  );
+  await _runStartupStep(
+    'appsflyer deep links',
+    AppsFlyerDeepLinkService.instance.initialize,
   );
 }
 
@@ -560,9 +565,17 @@ class _FoodDeliveryAppState extends State<FoodDeliveryApp> {
   }
 
   Route<dynamic>? _generateRoute(BuildContext context, RouteSettings settings) {
+    if (_isFirebaseAuthCallbackRoute(settings.name)) {
+      return MaterialPageRoute(builder: (_) => const LoginScreen());
+    }
+
     final deepLinkRoute = _generateDeepLinkRoute(settings);
     if (deepLinkRoute != null) {
       return deepLinkRoute;
+    }
+
+    if (_isAppsFlyerOneLinkRoute(settings.name)) {
+      return MaterialPageRoute(builder: (_) => const HomeScreen());
     }
 
     switch (settings.name) {
@@ -742,6 +755,74 @@ class _FoodDeliveryAppState extends State<FoodDeliveryApp> {
       default:
         return _errorRoute('Page not found: ${settings.name}');
     }
+  }
+
+  bool _isFirebaseAuthCallbackRoute(String? routeName) {
+    final rawName = routeName?.trim();
+    if (rawName == null || rawName.isEmpty) return false;
+
+    Uri uri;
+    try {
+      uri = Uri.parse(rawName);
+    } catch (_) {
+      return false;
+    }
+
+    if (_isFirebaseAuthCallbackUri(uri)) return true;
+
+    final nestedDeepLink =
+        uri.queryParameters['deep_link_id'] ?? uri.queryParameters['link'];
+    if (nestedDeepLink == null || nestedDeepLink.trim().isEmpty) {
+      return false;
+    }
+
+    try {
+      return _isFirebaseAuthCallbackUri(Uri.parse(nestedDeepLink.trim()));
+    } catch (_) {
+      return false;
+    }
+  }
+
+  bool _isFirebaseAuthCallbackUri(Uri uri) {
+    return uri.host == 'yumma-458b0.firebaseapp.com' &&
+        uri.path == '/__/auth/callback' &&
+        uri.queryParameters['authType'] == 'verifyApp';
+  }
+
+  bool _isAppsFlyerOneLinkRoute(String? routeName) {
+    final rawName = routeName?.trim();
+    if (rawName == null || rawName.isEmpty) return false;
+
+    Uri uri;
+    try {
+      uri = Uri.parse(rawName);
+    } catch (_) {
+      return false;
+    }
+
+    final oneLinkDomain = AppConfig.appsFlyerOneLinkDomain
+        .trim()
+        .replaceFirst(RegExp(r'^https?://'), '')
+        .replaceFirst(RegExp(r'/$'), '');
+    if (oneLinkDomain.isEmpty || uri.host != oneLinkDomain) return false;
+
+    final expectedSegments = AppConfig.appsFlyerOneLinkPath
+        .split('/')
+        .map((segment) => segment.trim())
+        .where((segment) => segment.isNotEmpty)
+        .toList(growable: false);
+    if (expectedSegments.isEmpty) return true;
+
+    final actualSegments = uri.pathSegments
+        .map((segment) => segment.trim())
+        .where((segment) => segment.isNotEmpty)
+        .toList(growable: false);
+    if (actualSegments.length < expectedSegments.length) return false;
+
+    for (var i = 0; i < expectedSegments.length; i++) {
+      if (actualSegments[i] != expectedSegments[i]) return false;
+    }
+    return true;
   }
 
   Route<dynamic>? _generateDeepLinkRoute(RouteSettings settings) {

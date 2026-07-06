@@ -560,10 +560,16 @@ class _RestaurantDetailScreenState extends State<RestaurantDetailScreen> {
       if (menuItemId != null) 'deep_link_sub2': restaurantId,
     };
 
-    final oneLinkId = AppConfig.appsFlyerOneLinkId.trim();
-    final pathSegments = <String>[];
-    if (oneLinkId.isNotEmpty) pathSegments.add(oneLinkId);
-    pathSegments.add(route);
+    final pathSegments = AppConfig.appsFlyerOneLinkPath
+        .split('/')
+        .map((segment) => segment.trim())
+        .where((segment) => segment.isNotEmpty)
+        .toList(growable: true);
+    if (pathSegments.isEmpty) {
+      final oneLinkId = AppConfig.appsFlyerOneLinkId.trim();
+      if (oneLinkId.isNotEmpty) pathSegments.add(oneLinkId);
+      pathSegments.add(route);
+    }
 
     final oneLinkBase = Uri.parse('https://$domain');
     return oneLinkBase

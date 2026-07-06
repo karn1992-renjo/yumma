@@ -27,7 +27,7 @@ class AppConfig {
   static const Color primaryColor = Color(0xFF0A9443);
   static const Color secondaryColor = Color(0xFF282C3F);
   static const Color backgroundColor = Color(0xFFF8F8F8);
-  
+
   static const String walletMoneyLabel = 'Yumma! Money';
 
   // Firebase Config (if using)
@@ -55,6 +55,10 @@ class AppConfig {
   static const String appsFlyerOneLinkDomain = String.fromEnvironment(
     'APPSFLYER_ONELINK_DOMAIN',
     defaultValue: 'yumma.onelink.me',
+  );
+  static const String appsFlyerOneLinkPath = String.fromEnvironment(
+    'APPSFLYER_ONELINK_PATH',
+    defaultValue: 'HZOC/2f2m39o2',
   );
   static const bool appsFlyerDebug = bool.fromEnvironment(
     'APPSFLYER_DEBUG',

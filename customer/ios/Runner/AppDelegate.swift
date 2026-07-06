@@ -1,19 +1,43 @@
+import UIKit
 import Flutter
 import FirebaseCore
-import UIKit
+import FirebaseAuth
+import GoogleMaps
 
 @main
 @objc class AppDelegate: FlutterAppDelegate {
-  override func application(
-    _ application: UIApplication,
-    didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
-  ) -> Bool {
-    if FirebaseApp.app() == nil {
-      FirebaseApp.configure()
+
+    override func application(
+        _ application: UIApplication,
+        didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
+    ) -> Bool {
+
+        // Configure Firebase
+        if FirebaseApp.app() == nil {
+            FirebaseApp.configure()
+        }
+
+        // Configure Google Maps
+        GMSServices.provideAPIKey("AIzaSyDhZCVKvFQmun_wXebEFKgaP6zzjQn-c4I")
+
+        // Register Flutter plugins
+        GeneratedPluginRegistrant.register(with: self)
+
+        return super.application(
+            application,
+            didFinishLaunchingWithOptions: launchOptions
+        )
     }
 
-    GeneratedPluginRegistrant.register(with: self)
+    override func application(
+        _ app: UIApplication,
+        open url: URL,
+        options: [UIApplication.OpenURLOptionsKey: Any] = [:]
+    ) -> Bool {
+        if Auth.auth().canHandle(url) {
+            return true
+        }
 
-    return super.application(application, didFinishLaunchingWithOptions: launchOptions)
-  }
+        return super.application(app, open: url, options: options)
+    }
 }
