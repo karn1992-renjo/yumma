@@ -3,7 +3,7 @@ description: A complete food delivery application with customer, restaurant, and
 
 publish_to: 'none'
 
-version: 2.0.8+15
+version: 2.0.9+16
 
 environment:
   sdk: '>=3.0.0 <4.0.0'
@@ -14,6 +14,7 @@ dependencies:
   
   # UI & Core
   cupertino_icons: ^1.0.6
+  flutter_svg: ^2.2.3
   google_fonts: ^8.1.0
   provider: ^6.1.1
   shared_preferences: ^2.2.2

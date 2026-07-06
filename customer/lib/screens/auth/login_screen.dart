@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_lucide/flutter_lucide.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import 'package:provider/provider.dart';
 
 import '../../config/app_config.dart';
@@ -623,17 +623,13 @@ class _LoginScreenState extends State<LoginScreen> {
             SizedBox(
               width: 36,
               child: Center(
-                child: provider == 'google'
-                    ? const Icon(
-                        LucideIcons.globe,
-                        size: 24,
-                        color: _text,
-                      )
-                    : const Icon(
-                        Icons.apple,
-                        size: 28,
-                        color: _text,
-                      ),
+                child: SvgPicture.asset(
+                  provider == 'google'
+                      ? 'assets/icons/google-icon-logo-svgrepo-com.svg'
+                      : 'assets/icons/apple-black-logo-svgrepo-com.svg',
+                  width: provider == 'google' ? 24 : 26,
+                  height: provider == 'google' ? 24 : 26,
+                ),
               ),
             ),
             const SizedBox(width: 12),
