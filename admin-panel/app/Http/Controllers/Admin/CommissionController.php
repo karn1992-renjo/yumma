@@ -18,24 +18,25 @@ class CommissionController extends Controller
 {
     public function index()
     {
-        $settings = CommissionSetting::all();
+        $settings = CommissionSetting::whereIn('type', [
+            CommissionSetting::RESTAURANT,
+            CommissionSetting::DRIVER,
+        ])->get();
         return view('admin.commissions.index', compact('settings'));
     }
     
     public function updateSettings(Request $request)
     {
         $request->validate([
-            'admin_commission_rate' => 'required|numeric|min:0',
             'restaurant_commission_rate' => 'required|numeric|min:0',
-            'delivery_partner_commission_rate' => 'required|numeric|min:0',
-            'admin_calculation_type' => ['required', Rule::in(['percentage', 'fixed'])],
+            'driver_commission_rate' => 'required|numeric|min:0',
             'restaurant_calculation_type' => ['required', Rule::in(['percentage', 'fixed'])],
-            'delivery_partner_calculation_type' => ['required', Rule::in(['percentage', 'fixed'])],
+            'driver_calculation_type' => ['required', Rule::in(['percentage', 'fixed'])],
             'gst_on_commission_rate' => 'required|numeric|min:0|max:100',
             'gateway_fee_rate' => 'required|numeric|min:0|max:100',
         ]);
 
-        foreach (['admin', 'restaurant', 'delivery_partner'] as $type) {
+        foreach (['restaurant', 'driver'] as $type) {
             if ($request->input($type . '_calculation_type') === 'percentage'
                 && (float) $request->input($type . '_commission_rate') > 100) {
                 return back()->withErrors([
@@ -45,19 +46,16 @@ class CommissionController extends Controller
         }
         
         CommissionSetting::updateOrCreate(
-            ['type' => 'admin'],
-            ['name' => 'Admin Delivery Commission', 'rate' => $request->admin_commission_rate, 'calculation_type' => $request->admin_calculation_type, 'is_active' => true]
-        );
-        
-        CommissionSetting::updateOrCreate(
             ['type' => 'restaurant'],
-            ['name' => 'Platform Commission Charged to Restaurant', 'rate' => $request->restaurant_commission_rate, 'calculation_type' => $request->restaurant_calculation_type, 'is_active' => true]
+            ['name' => 'Restaurant Earning Commission', 'rate' => $request->restaurant_commission_rate, 'calculation_type' => $request->restaurant_calculation_type, 'is_active' => true]
         );
         
         CommissionSetting::updateOrCreate(
-            ['type' => 'delivery_partner'],
-            ['name' => 'Driver Deduction', 'rate' => $request->delivery_partner_commission_rate, 'calculation_type' => $request->delivery_partner_calculation_type, 'is_active' => true]
+            ['type' => 'driver'],
+            ['name' => 'Driver Earning Commission', 'rate' => $request->driver_commission_rate, 'calculation_type' => $request->driver_calculation_type, 'is_active' => true]
         );
+
+        CommissionSetting::whereIn('type', ['admin', 'delivery_partner'])->delete();
 
         AppSetting::setValue('gst_rate', $request->gst_on_commission_rate);
         AppSetting::setValue('gateway_fee_rate', $request->gateway_fee_rate);

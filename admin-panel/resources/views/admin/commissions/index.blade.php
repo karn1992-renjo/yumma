@@ -5,15 +5,13 @@
 @php
     $currencySymbol = App\Models\AppSetting::getValue('currency_symbol', '?');
     $currencyDecimals = App\Models\AppSetting::currencyDecimals();
-    $adminSetting = $settings->where('type', 'admin')->first();
     $restaurantSetting = $settings->where('type', 'restaurant')->first();
-    $driverSetting = $settings->where('type', 'delivery_partner')->first();
+    $driverSetting = $settings->where('type', 'driver')->first();
     $gstOnCommissionRate = (float) App\Models\AppSetting::getValue('gst_rate', 18);
     $gatewayFeeRate = (float) App\Models\AppSetting::getValue('gateway_fee_rate', 2);
     $commissionLabels = [
-        'admin' => 'Admin Delivery Commission',
-        'restaurant' => 'Platform Commission Charged to Restaurant',
-        'delivery_partner' => 'Driver Deduction',
+        'restaurant' => 'Restaurant Earning Commission',
+        'driver' => 'Driver Earning Commission',
     ];
     $formatCommission = fn ($setting, $fallback) => ($setting?->calculation_type ?? 'percentage') === 'fixed'
         ? $currencySymbol . number_format((float) ($setting?->rate ?? $fallback), $currencyDecimals)
@@ -30,11 +28,7 @@
     $sampleCustomerTotal = $sampleSubtotal + $sampleDeliveryFee + $samplePlatformFee + $sampleCustomerTax;
     $sampleGatewayFee = $sampleCustomerTotal * ($gatewayFeeRate / 100);
     $sampleRestaurantPayout = $sampleSubtotal - $sampleRestaurantCommission - $sampleGst - $sampleGatewayFee;
-    $sampleAdminDeliveryCommission = $commissionAmount($adminSetting, $sampleDeliveryFee, 15);
-    $sampleDriverDeduction = min(
-        max(0, $sampleDeliveryFee - $sampleAdminDeliveryCommission),
-        $commissionAmount($driverSetting, $sampleDeliveryFee, 5)
-    );
+    $sampleDriverCommission = $commissionAmount($driverSetting, $sampleDeliveryFee, 5);
 @endphp
 
 @section('content')
@@ -46,32 +40,22 @@
 </div>
 
 <div class="row g-3 mb-4">
-    <div class="col-md-4">
-        <div class="stat-card p-3 text-center">
-            <div class="icon primary mx-auto mb-3" style="width: 60px; height: 60px;">
-                <i class="fas fa-percent fa-2x"></i>
-            </div>
-            <h6 class="text-muted mb-1">Admin Delivery Commission</h6>
-            <div class="h2 fw-bold text-primary">{{ $formatCommission($adminSetting, 15) }}</div>
-            <small class="text-muted">Applied on delivery fees</small>
-        </div>
-    </div>
-    <div class="col-md-4">
+    <div class="col-md-6">
         <div class="stat-card p-3 text-center">
             <div class="icon success mx-auto mb-3" style="width: 60px; height: 60px;">
                 <i class="fas fa-utensils fa-2x"></i>
             </div>
-            <h6 class="text-muted mb-1">Platform Commission Charged to Restaurant</h6>
+            <h6 class="text-muted mb-1">Restaurant Earning Commission</h6>
             <div class="h2 fw-bold text-success">{{ $formatCommission($restaurantSetting, 15) }}</div>
             <small class="text-muted">Applied on order subtotal</small>
         </div>
     </div>
-    <div class="col-md-4">
+    <div class="col-md-6">
         <div class="stat-card p-3 text-center">
             <div class="icon warning mx-auto mb-3" style="width: 60px; height: 60px;">
                 <i class="fas fa-motorcycle fa-2x"></i>
             </div>
-            <h6 class="text-muted mb-1">Driver Deduction</h6>
+            <h6 class="text-muted mb-1">Driver Earning Commission</h6>
             <div class="h2 fw-bold text-warning">{{ $formatCommission($driverSetting, 5) }}</div>
             <small class="text-muted">Applied on delivery fees</small>
         </div>
@@ -127,7 +111,7 @@
                 <h6 class="mb-2">Food Subtotal: {{ $currencySymbol }}{{ number_format($sampleSubtotal, $currencyDecimals) }}</h6>
                 <hr>
                 <div class="d-flex justify-content-between mb-2">
-                    <span>Platform Commission Charged to Restaurant ({{ $formatCommission($restaurantSetting, 15) }}):</span>
+                    <span>Restaurant Earning Commission ({{ $formatCommission($restaurantSetting, 15) }}):</span>
                     <span class="fw-bold">{{ $currencySymbol }}{{ number_format($sampleRestaurantCommission, $currencyDecimals) }}</span>
                 </div>
                 <div class="d-flex justify-content-between mb-2">
@@ -147,16 +131,12 @@
                 <h6 class="mb-2">Delivery Fee: {{ $currencySymbol }}{{ number_format($sampleDeliveryFee, $currencyDecimals) }}</h6>
                 <hr>
                 <div class="d-flex justify-content-between mb-2">
-                    <span>Admin Delivery Commission ({{ $formatCommission($adminSetting, 15) }}):</span>
-                    <span class="fw-bold">{{ $currencySymbol }}{{ number_format($sampleAdminDeliveryCommission, $currencyDecimals) }}</span>
-                </div>
-                <div class="d-flex justify-content-between mb-2">
-                    <span>Driver Deduction ({{ $formatCommission($driverSetting, 5) }}):</span>
-                    <span class="fw-bold">{{ $currencySymbol }}{{ number_format($sampleDriverDeduction, $currencyDecimals) }}</span>
+                    <span>Driver Earning Commission ({{ $formatCommission($driverSetting, 5) }}):</span>
+                    <span class="fw-bold">{{ $currencySymbol }}{{ number_format($sampleDriverCommission, $currencyDecimals) }}</span>
                 </div>
                 <div class="d-flex justify-content-between pt-2 border-top">
                     <span>Driver Earning:</span>
-                    <span class="fw-bold text-success">{{ $currencySymbol }}{{ number_format(max(0, $sampleDeliveryFee - $sampleAdminDeliveryCommission - $sampleDriverDeduction), $currencyDecimals) }}</span>
+                    <span class="fw-bold text-success">{{ $currencySymbol }}{{ number_format(max(0, $sampleDeliveryFee - $sampleDriverCommission), $currencyDecimals) }}</span>
                 </div>
             </div>
         </div>
@@ -192,19 +172,7 @@
                 </div>
                 <div class="modal-body px-4">
                     <div class="mb-3">
-                        <label class="form-label fw-semibold">Admin Delivery Commission</label>
-                        <select name="admin_calculation_type" class="form-select mb-2" required>
-                            <option value="percentage" @selected(old('admin_calculation_type', $adminSetting?->calculation_type ?? 'percentage') === 'percentage')>Percentage</option>
-                            <option value="fixed" @selected(old('admin_calculation_type', $adminSetting?->calculation_type) === 'fixed')>Fixed amount</option>
-                        </select>
-                        <input type="number" step="0.01" name="admin_commission_rate" 
-                               class="form-control @error('admin_commission_rate') is-invalid @enderror" min="0" required
-                               value="{{ old('admin_commission_rate', $adminSetting?->rate ?? 15) }}">
-                        @error('admin_commission_rate') <div class="invalid-feedback">{{ $message }}</div> @enderror
-                        <small class="text-muted">Applied on delivery fees</small>
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label fw-semibold">Platform Commission Charged to Restaurant</label>
+                        <label class="form-label fw-semibold">Restaurant Earning Commission</label>
                         <select name="restaurant_calculation_type" class="form-select mb-2" required>
                             <option value="percentage" @selected(old('restaurant_calculation_type', $restaurantSetting?->calculation_type ?? 'percentage') === 'percentage')>Percentage</option>
                             <option value="fixed" @selected(old('restaurant_calculation_type', $restaurantSetting?->calculation_type) === 'fixed')>Fixed amount</option>
@@ -216,15 +184,15 @@
                         <small class="text-muted">Deducted from the restaurant's food subtotal before payout</small>
                     </div>
                     <div class="mb-3">
-                        <label class="form-label fw-semibold">Driver Deduction</label>
-                        <select name="delivery_partner_calculation_type" class="form-select mb-2" required>
-                            <option value="percentage" @selected(old('delivery_partner_calculation_type', $driverSetting?->calculation_type ?? 'percentage') === 'percentage')>Percentage</option>
-                            <option value="fixed" @selected(old('delivery_partner_calculation_type', $driverSetting?->calculation_type) === 'fixed')>Fixed amount</option>
+                        <label class="form-label fw-semibold">Driver Earning Commission</label>
+                        <select name="driver_calculation_type" class="form-select mb-2" required>
+                            <option value="percentage" @selected(old('driver_calculation_type', $driverSetting?->calculation_type ?? 'percentage') === 'percentage')>Percentage</option>
+                            <option value="fixed" @selected(old('driver_calculation_type', $driverSetting?->calculation_type) === 'fixed')>Fixed amount</option>
                         </select>
-                        <input type="number" step="0.01" name="delivery_partner_commission_rate" 
-                               class="form-control @error('delivery_partner_commission_rate') is-invalid @enderror" min="0" required
-                               value="{{ old('delivery_partner_commission_rate', $driverSetting?->rate ?? 5) }}">
-                        @error('delivery_partner_commission_rate') <div class="invalid-feedback">{{ $message }}</div> @enderror
+                        <input type="number" step="0.01" name="driver_commission_rate" 
+                               class="form-control @error('driver_commission_rate') is-invalid @enderror" min="0" required
+                               value="{{ old('driver_commission_rate', $driverSetting?->rate ?? 5) }}">
+                        @error('driver_commission_rate') <div class="invalid-feedback">{{ $message }}</div> @enderror
                         <small class="text-muted">Applied on delivery fees</small>
                     </div>
                     <div class="mb-3">

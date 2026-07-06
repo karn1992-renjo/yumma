@@ -567,11 +567,11 @@ class RefundService
                 $payout->platform_commission,
                 (float) $order->admin_delivery_commission + (float) $order->driver_deduction
             ),
-            'admin_delivery_commission' => $subtract(
-                $payout->admin_delivery_commission,
-                $order->admin_delivery_commission
+            'admin_delivery_commission' => 0,
+            'driver_deduction' => $subtract(
+                $payout->driver_deduction,
+                (float) $order->admin_delivery_commission + (float) $order->driver_deduction
             ),
-            'driver_deduction' => $subtract($payout->driver_deduction, $order->driver_deduction),
             'batch_bonus' => $subtract($payout->batch_bonus, $order->batch_bonus),
         ];
     }

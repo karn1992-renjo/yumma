@@ -3,13 +3,12 @@
 namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
-use App\Models\AppSetting;
 use App\Models\DeliveryArea;
+use App\Models\CommissionSetting;
 use App\Models\Restaurant;
 use App\Models\User;
 use App\Models\Cuisine;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
@@ -248,91 +247,54 @@ class RestaurantController extends Controller
         $totalRevenue = $restaurant->orders()->where('status', 'delivered')->sum('total');
         $averageRating = $restaurant->reviews()->avg('rating') ?? 0;
         $totalMenuItems = $restaurant->menuItems()->count();
+
+        $financialSummary = (array) $restaurant->orders()
+            ->where('status', 'delivered')
+            ->selectRaw('COUNT(*) as delivered_orders')
+            ->selectRaw('COALESCE(SUM(subtotal), 0) as food_subtotal')
+            ->selectRaw('COALESCE(SUM(total), 0) as customer_total')
+            ->selectRaw('COALESCE(SUM(platform_fee), 0) as platform_charges')
+            ->selectRaw('COALESCE(SUM(platform_commission), 0) as restaurant_commission')
+            ->selectRaw('COALESCE(SUM(gst_on_commission), 0) as gst_on_commission')
+            ->selectRaw('COALESCE(SUM(payment_gateway_fee), 0) as gateway_fees')
+            ->selectRaw('COALESCE(SUM(restaurant_earning), 0) as restaurant_earning')
+            ->selectRaw('COALESCE(SUM(branch_commission), 0) as branch_commission')
+            ->selectRaw('COALESCE(SUM(admin_commission), 0) as admin_earning')
+            ->first()
+            ?->getAttributes();
+
+        $financialSummary['released_earning'] = (float) $restaurant->orders()
+            ->where('status', 'delivered')
+            ->whereNotNull('restaurant_payout_id')
+            ->sum('restaurant_earning');
+        $financialSummary['pending_earning'] = (float) $restaurant->orders()
+            ->where('status', 'delivered')
+            ->whereNull('restaurant_payout_id')
+            ->sum('restaurant_earning');
+
+        $commissionType = $restaurant->commission_calculation_type;
+        $commissionValue = $restaurant->commission_rate;
+        if ($commissionType === 'global' || $commissionValue === null || $commissionValue === '') {
+            $commissionType = CommissionSetting::getCalculationType(CommissionSetting::RESTAURANT);
+            $commissionValue = CommissionSetting::getRate(CommissionSetting::RESTAURANT);
+        }
+        $commissionRule = [
+            'source' => $restaurant->commission_calculation_type === 'global' || $restaurant->commission_rate === null
+                ? 'Global setting'
+                : 'Restaurant override',
+            'type' => $commissionType ?: CommissionSetting::TYPE_PERCENTAGE,
+            'value' => (float) $commissionValue,
+        ];
         
         return view('admin.restaurants.show', compact(
             'restaurant', 
             'totalOrders', 
             'totalRevenue', 
             'averageRating',
-            'totalMenuItems'
+            'totalMenuItems',
+            'financialSummary',
+            'commissionRule'
         ));
-    }
-
-    public function increaseMenuPrices(Request $request, Restaurant $restaurant)
-    {
-        $validated = $request->validate([
-            'adjustment_type' => 'required|in:percentage,fixed',
-            'adjustment_value' => 'required|numeric|gt:0|max:1000000',
-        ]);
-
-        $type = $validated['adjustment_type'];
-        $value = (float) $validated['adjustment_value'];
-        $maximumPrice = 9999999.99999;
-        $updatedCount = 0;
-
-        try {
-            DB::transaction(function () use ($restaurant, $type, $value, $maximumPrice, &$updatedCount) {
-                $restaurant->menuItems()
-                    ->orderBy('id')
-                    ->chunkById(200, function ($items) use ($type, $value, $maximumPrice, &$updatedCount) {
-                        foreach ($items as $item) {
-                            $adjust = function ($price) use ($type, $value, $maximumPrice): float {
-                                $current = (float) $price;
-                                $adjusted = $type === 'percentage'
-                                    ? $current * (1 + ($value / 100))
-                                    : $current + $value;
-                                $adjusted = round($adjusted, 5);
-
-                                if ($adjusted > $maximumPrice) {
-                                    throw new \OverflowException('One or more adjusted prices exceed the supported maximum.');
-                                }
-
-                                return $adjusted;
-                            };
-
-                            $item->price = $adjust($item->price);
-                            if ($item->discounted_price !== null) {
-                                $item->discounted_price = $adjust($item->discounted_price);
-                            }
-                            $item->variants = $this->increaseOptionPrices($item->variants, $adjust);
-                            $item->add_ons = $this->increaseOptionPrices($item->add_ons, $adjust);
-                            $item->save();
-                            $updatedCount++;
-                        }
-                    });
-            });
-        } catch (\OverflowException $e) {
-            return back()->withInput()->with('error', $e->getMessage());
-        } catch (\Throwable $e) {
-            \Log::error('Restaurant menu price increase failed.', [
-                'restaurant_id' => $restaurant->id,
-                'error' => $e->getMessage(),
-            ]);
-
-            return back()->withInput()->with('error', 'Menu prices could not be updated. No prices were changed.');
-        }
-
-        $adjustment = $type === 'percentage'
-            ? rtrim(rtrim(number_format($value, 5, '.', ''), '0'), '.') . '%'
-            : AppSetting::getValue('currency_symbol', '') . number_format($value, AppSetting::currencyDecimals());
-
-        return back()->with(
-            'success',
-            "{$updatedCount} menu " . ($updatedCount === 1 ? 'item' : 'items') . " increased by {$adjustment}."
-        );
-    }
-
-    private function increaseOptionPrices(?array $options, callable $adjust): array
-    {
-        return collect($options ?? [])
-            ->map(function ($option) use ($adjust) {
-                if (is_array($option) && array_key_exists('price', $option) && is_numeric($option['price'])) {
-                    $option['price'] = $adjust($option['price']);
-                }
-
-                return $option;
-            })
-            ->all();
     }
     
     /**

@@ -976,7 +976,7 @@ class _SearchScreenState extends State<SearchScreen> {
       try {
         response = await _api
             .get(
-              ApiConstants.searchRestaurants,
+              ApiConstants.advancedSearch,
               queryParams: queryParams,
               includeAuth: false,
               cachePolicy: ApiCachePolicy.discovery,

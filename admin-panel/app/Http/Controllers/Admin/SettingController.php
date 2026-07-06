@@ -187,7 +187,6 @@ class SettingController extends Controller
             'site_description' => 'nullable|string|max:2000',
             'contact_email' => 'nullable|email|max:255',
             'contact_phone' => 'nullable|string|max:50',
-            'commission_percentage' => 'nullable|numeric|min:0|max:100',
             'media_storage_driver' => 'nullable|in:local,s3',
             'media_s3_key' => 'nullable|string|max:255',
             'media_s3_secret' => 'nullable|string|max:255',

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
@@ -300,9 +301,18 @@ class FirebaseNotificationService {
     }
   }
 
-  Future<String?> _resolveDeviceToken() {
+  Future<String?> _resolveDeviceToken() async {
     if (kIsWeb && AppConfig.firebaseWebVapidKey.isNotEmpty) {
       return _messaging.getToken(vapidKey: AppConfig.firebaseWebVapidKey);
+    }
+    if (!kIsWeb && Platform.isIOS) {
+      for (var attempt = 0; attempt < 10; attempt++) {
+        final apnsToken = await _messaging.getAPNSToken();
+        if (apnsToken?.isNotEmpty == true) return _messaging.getToken();
+        await Future<void>.delayed(const Duration(milliseconds: 500));
+      }
+      debugPrint('FCM token unavailable because APNs registration did not complete.');
+      return null;
     }
     return _messaging.getToken();
   }

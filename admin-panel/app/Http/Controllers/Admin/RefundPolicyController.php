@@ -28,7 +28,6 @@ class RefundPolicyController extends Controller
             'title' => 'required|string|max:255',
             'content' => 'required|string',
             'refund_window_hours' => 'required|integer|min:0|max:168',
-            'restaurant_commission_rate' => 'required|numeric|min:0|max:100',
             'delivery_charge_refund_percentage' => 'required|numeric|min:0|max:100',
             'cancellation_refund_rules' => 'nullable|array',
             'status' => 'required|in:active,inactive'
@@ -43,7 +42,6 @@ class RefundPolicyController extends Controller
             'title' => $request->title,
             'content' => $request->content,
             'refund_window_hours' => $request->refund_window_hours,
-            'restaurant_commission_rate' => $request->restaurant_commission_rate,
             'delivery_charge_refund_percentage' => $request->delivery_charge_refund_percentage,
             'cancellation_refund_rules' => $request->cancellation_refund_rules,
             'status' => $request->status
@@ -64,7 +62,6 @@ class RefundPolicyController extends Controller
             'title' => 'required|string|max:255',
             'content' => 'required|string',
             'refund_window_hours' => 'required|integer|min:0|max:168',
-            'restaurant_commission_rate' => 'required|numeric|min:0|max:100',
             'delivery_charge_refund_percentage' => 'required|numeric|min:0|max:100',
             'cancellation_refund_rules' => 'nullable|array',
             'status' => 'required|in:active,inactive'
@@ -81,7 +78,6 @@ class RefundPolicyController extends Controller
             'title' => $request->title,
             'content' => $request->content,
             'refund_window_hours' => $request->refund_window_hours,
-            'restaurant_commission_rate' => $request->restaurant_commission_rate,
             'delivery_charge_refund_percentage' => $request->delivery_charge_refund_percentage,
             'cancellation_refund_rules' => $request->cancellation_refund_rules,
             'status' => $request->status

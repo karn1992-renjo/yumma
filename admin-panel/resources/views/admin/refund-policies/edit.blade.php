@@ -42,13 +42,6 @@
                         </div>
 
                         <div class="col-md-6">
-                            <label class="form-label fw-semibold">Platform Commission Charged to Restaurant Rate (%) <span class="text-danger">*</span></label>
-                            <input type="number" name="restaurant_commission_rate" step="0.01" class="form-control @error('restaurant_commission_rate') is-invalid @enderror" value="{{ old('restaurant_commission_rate', $refundPolicy->restaurant_commission_rate) }}" required>
-                            <div class="form-text">Reference rate for the platform deduction from restaurant subtotal</div>
-                            @error('restaurant_commission_rate') <div class="invalid-feedback">{{ $message }}</div> @enderror
-                        </div>
-
-                        <div class="col-md-6">
                             <label class="form-label fw-semibold">Delivery Charge Refund (%) <span class="text-danger">*</span></label>
                             <input type="number" name="delivery_charge_refund_percentage" step="0.01" class="form-control @error('delivery_charge_refund_percentage') is-invalid @enderror" value="{{ old('delivery_charge_refund_percentage', $refundPolicy->delivery_charge_refund_percentage) }}" required>
                             <div class="form-text">Percentage of delivery fee to refund on cancellation</div>

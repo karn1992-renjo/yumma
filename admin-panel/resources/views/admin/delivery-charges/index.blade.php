@@ -62,7 +62,7 @@
                         </div>
 
                         <div class="mb-3 form-check">
-                            <input type="checkbox" name="free_delivery_global" class="form-check-input" id="freeDeliveryGlobal"
+                            <input type="checkbox" name="free_delivery_global" value="1" class="form-check-input" id="freeDeliveryGlobal"
                                    {{ ($settings->free_delivery_global ?? false) ? 'checked' : '' }}>
                             <label class="form-check-label" for="freeDeliveryGlobal">
                                 Enable free delivery using this threshold

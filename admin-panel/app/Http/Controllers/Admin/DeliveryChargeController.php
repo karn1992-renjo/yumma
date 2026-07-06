@@ -7,12 +7,13 @@ use App\Models\DeliveryArea;
 use App\Models\DeliveryChargeSetting;
 use App\Models\Restaurant;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 
 class DeliveryChargeController extends Controller
 {
     public function index()
     {
-        $settings = DeliveryChargeSetting::first();
+        $settings = DeliveryChargeSetting::query()->oldest('id')->first();
         $restaurants = Restaurant::orderBy('name')->get();
         $deliveryAreas = DeliveryArea::active()->orderBy('name')->get();
         
@@ -41,7 +42,7 @@ class DeliveryChargeController extends Controller
             );
         }
 
-        $request->validate([
+        $validated = $request->validate([
             'charge_type' => 'required|in:fixed,per_km',
             'base_charge' => 'required|numeric|min:0',
             'per_km_charge' => 'required_if:charge_type,per_km|numeric|min:0',
@@ -56,21 +57,25 @@ class DeliveryChargeController extends Controller
             'restaurant_contribution_percent' => 'required|numeric|min:0|max:100',
         ]);
         
-        $settings = DeliveryChargeSetting::updateOrCreate(
-            ['id' => 1],
-            [
-                'charge_type' => $request->charge_type,
-                'base_charge' => $request->base_charge,
-                'per_km_charge' => $request->per_km_charge ?? 0,
-                'platform_fee' => $request->platform_fee ?? 0,
-                'free_delivery_threshold' => $request->free_delivery_threshold,
-                'free_delivery_global' => $request->has('free_delivery_global'),
-                'free_delivery_days' => array_values($request->input('free_delivery_days', [])),
-                'free_delivery_area_ids' => array_values($request->input('free_delivery_area_ids', [])),
-                'admin_contribution_percent' => $request->admin_contribution_percent,
-                'restaurant_contribution_percent' => $request->restaurant_contribution_percent,
-            ]
-        );
+        DB::transaction(function () use ($request, $validated) {
+            $settings = DeliveryChargeSetting::query()->oldest('id')->lockForUpdate()->first()
+                ?? new DeliveryChargeSetting();
+
+            $settings->fill([
+                'charge_type' => $validated['charge_type'],
+                'base_charge' => $validated['base_charge'],
+                'per_km_charge' => $validated['per_km_charge'] ?? 0,
+                'platform_fee' => $validated['platform_fee'] ?? 0,
+                'free_delivery_threshold' => $validated['free_delivery_threshold'] ?? null,
+                'free_delivery_global' => $request->boolean('free_delivery_global'),
+                'free_delivery_days' => array_values($validated['free_delivery_days'] ?? []),
+                'free_delivery_area_ids' => array_values($validated['free_delivery_area_ids'] ?? []),
+                'admin_contribution_percent' => $validated['admin_contribution_percent'],
+                'restaurant_contribution_percent' => $validated['restaurant_contribution_percent'],
+            ])->save();
+
+            DeliveryChargeSetting::query()->whereKeyNot($settings->getKey())->delete();
+        });
 
         return redirect()->back()->with('success', 'Delivery charges updated successfully!');
     }

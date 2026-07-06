@@ -107,12 +107,11 @@ class DetailedOrdersSheet extends BaseReportSheet implements FromCollection, Wit
             'Customer Taxes & Charges',
             'Discount',
             'Total',
-            'Platform Commission Charged to Restaurant',
+            'Restaurant Earning Commission',
             'GST on Platform Commission',
             'Online Payment Gateway Fee',
             'Net Restaurant Payout',
-            'Admin Delivery Commission',
-            'Driver Deduction',
+            'Driver Earning Commission',
             'Batch Bonus',
             'Driver Settlement',
             'Branch Earnings',
@@ -139,8 +138,7 @@ class DetailedOrdersSheet extends BaseReportSheet implements FromCollection, Wit
             $this->roundAmount($order->gst_on_commission),
             $this->roundAmount($order->payment_gateway_fee),
             $this->roundAmount($order->restaurant_earning),
-            $this->roundAmount($order->admin_delivery_commission),
-            $this->roundAmount($order->driver_deduction),
+            $this->roundAmount((float) $order->admin_delivery_commission + (float) $order->driver_deduction),
             $this->roundAmount($order->batch_bonus),
             $this->roundAmount($order->driver_earning),
             $this->roundAmount($order->branch_commission),
@@ -239,8 +237,9 @@ class DriverTransactionsSheet extends BaseReportSheet implements FromCollection,
 
             $deliveryRevenue = $delivered->sum(fn ($order) => (float) ($order->delivery_fee ?? 0));
             $deliveryBase = $delivered->sum(fn ($order) => (float) ($order->driver_delivery_base ?? 0));
-            $adminDeliveryCommission = $delivered->sum(fn ($order) => (float) ($order->admin_delivery_commission ?? 0));
-            $driverDeduction = $delivered->sum(fn ($order) => (float) ($order->driver_deduction ?? 0));
+            $driverCommission = $delivered->sum(fn ($order) =>
+                (float) ($order->admin_delivery_commission ?? 0) + (float) ($order->driver_deduction ?? 0)
+            );
             $batchBonus = $delivered->sum(fn ($order) => (float) ($order->batch_bonus ?? 0));
             $driverEarnings = $delivered->sum(fn ($order) => (float) ($order->driver_earning ?? 0));
 
@@ -250,11 +249,10 @@ class DriverTransactionsSheet extends BaseReportSheet implements FromCollection,
                 'delivered_count' => $delivered->count(),
                 'delivery_revenue' => round($deliveryRevenue, 2),
                 'delivery_base' => round($deliveryBase, 2),
-                'admin_delivery_commission' => round($adminDeliveryCommission, 2),
-                'driver_deduction' => round($driverDeduction, 2),
+                'driver_commission' => round($driverCommission, 2),
                 'batch_bonus' => round($batchBonus, 2),
                 'driver_earnings' => round($driverEarnings, 2),
-                'admin_margin' => round($adminDeliveryCommission + $driverDeduction, 2),
+                'admin_margin' => round($driverCommission, 2),
             ];
         })->values();
     }
@@ -267,8 +265,7 @@ class DriverTransactionsSheet extends BaseReportSheet implements FromCollection,
             'Delivered Orders',
             'Delivery Revenue',
             'Delivery Settlement Base',
-            'Admin Delivery Commission',
-            'Driver Deduction',
+            'Driver Earning Commission',
             'Batch Bonus',
             'Driver Earnings',
             'Admin Margin',
@@ -305,7 +302,7 @@ class SummarySheet extends BaseReportSheet implements FromCollection, WithHeadin
             ['metric' => 'Delivered Orders', 'value' => $delivered->count()],
             ['metric' => 'Complete Revenue', 'value' => round($grossRevenue, 2)],
             ['metric' => 'Platform Fee Revenue', 'value' => round($platformFeeRevenue, 2)],
-            ['metric' => 'Platform Commission Charged to Restaurants', 'value' => round($restaurantCommission, 2)],
+            ['metric' => 'Restaurant Earning Commission', 'value' => round($restaurantCommission, 2)],
             ['metric' => 'Branch Earnings', 'value' => round($branchEarnings, 2)],
             ['metric' => 'Admin Earnings', 'value' => round($adminEarnings, 2)],
             ['metric' => 'Customer Taxes & Charges Collected', 'value' => round($taxCollected, 2)],

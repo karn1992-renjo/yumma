@@ -73,6 +73,8 @@ class BranchController extends Controller
         }
 
         $data = $this->validatedBranch($request);
+        $data['platform_commission_percent'] = 0;
+        $data['admin_share_percent'] = 100 - (float) $data['branch_share_percent'];
         $deliveryAreaIds = $data['delivery_area_ids'];
         unset($data['delivery_area_ids']);
 
@@ -124,6 +126,8 @@ class BranchController extends Controller
     public function update(Request $request, Branch $branch)
     {
         $data = $this->validatedBranch($request, $branch);
+        $data['platform_commission_percent'] = 0;
+        $data['admin_share_percent'] = 100 - (float) $data['branch_share_percent'];
         $deliveryAreaIds = $data['delivery_area_ids'] ?? [];
         unset($data['delivery_area_ids']);
 
@@ -439,9 +443,7 @@ class BranchController extends Controller
             'pan_number' => ['nullable', 'string', 'max:50'],
             'trade_license' => ['nullable', 'string', 'max:100'],
             'status' => ['required', Rule::in(['active', 'inactive', 'archived'])],
-            'platform_commission_percent' => ['required', 'numeric', 'min:0', 'max:100'],
             'branch_share_percent' => ['required', 'numeric', 'min:0', 'max:100'],
-            'admin_share_percent' => ['required', 'numeric', 'min:0', 'max:100'],
             'settlement_cycle' => ['required', Rule::in(['daily', 'weekly', 'biweekly', 'monthly'])],
             'bank_details.account_holder_name' => ['nullable', 'string', 'max:255'],
             'bank_details.bank_name' => ['nullable', 'string', 'max:255'],

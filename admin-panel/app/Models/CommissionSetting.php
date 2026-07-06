@@ -6,6 +6,8 @@ use Illuminate\Database\Eloquent\Model;
 
 class CommissionSetting extends Model
 {
+    public const RESTAURANT = 'restaurant';
+    public const DRIVER = 'driver';
     public const TYPE_PERCENTAGE = 'percentage';
     public const TYPE_FIXED = 'fixed';
 

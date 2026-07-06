@@ -12,7 +12,6 @@ class RefundPolicy extends Model
         'content',
         'status',
         'refund_window_hours',
-        'restaurant_commission_rate',
         'delivery_charge_refund_percentage',
         'cancellation_refund_rules'
     ];
@@ -20,7 +19,6 @@ class RefundPolicy extends Model
     protected $casts = [
         'cancellation_refund_rules' => 'array',
         'refund_window_hours' => 'integer',
-        'restaurant_commission_rate' => 'decimal:2',
         'delivery_charge_refund_percentage' => 'decimal:2'
     ];
 
@@ -40,7 +38,6 @@ class RefundPolicy extends Model
             'content' => 'Standard refund rules apply based on the current order status.',
             'status' => 'active',
             'refund_window_hours' => 2,
-            'restaurant_commission_rate' => 15,
             'delivery_charge_refund_percentage' => 100,
             'cancellation_refund_rules' => [
                 'pending' => 95,

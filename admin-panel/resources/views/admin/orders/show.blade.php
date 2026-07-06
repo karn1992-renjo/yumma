@@ -7,6 +7,9 @@
     $currencySymbol = App\Models\AppSetting::getValue('currency_symbol', '?');
     $currencyDecimals = App\Models\AppSetting::currencyDecimals();
     $currencyStep = number_format(1 / pow(10, $currencyDecimals), $currencyDecimals, '.', '');
+    $formatRule = fn ($type, $value) => $type === 'fixed'
+        ? $currencySymbol . number_format((float) $value, $currencyDecimals)
+        : number_format((float) $value, 2) . '%';
 @endphp
 
 @section('content')
@@ -171,7 +174,7 @@
                                 <td>{{ $currencySymbol }}{{ number_format($order->delivery_fee ?? 0, App\Models\AppSetting::currencyDecimals()) }}</td>
                             </tr>
                             <tr>
-                                <td colspan="3" class="text-end fw-semibold">Platform Fee:</td>
+                                <td colspan="3" class="text-end fw-semibold">Platform Charge:</td>
                                 <td>{{ $currencySymbol }}{{ number_format($order->platform_fee ?? 0, App\Models\AppSetting::currencyDecimals()) }}</td>
                             </tr>
                             <tr>
@@ -424,28 +427,44 @@
                 </div>
             </div>
             
-            @if(isset($earnings))
             <!-- Earnings Breakdown -->
             <div class="table-card mt-4">
                 <div class="card-header bg-transparent">
-                    <h5 class="mb-0 fw-bold">Earnings Breakdown</h5>
+                    <div class="d-flex justify-content-between align-items-center">
+                        <h5 class="mb-0 fw-bold">Financial Breakdown</h5>
+                        <span class="badge bg-{{ $order->payout_processed ? 'success' : 'warning text-dark' }}">{{ $financials['source'] }}</span>
+                    </div>
                 </div>
                 <div class="p-4">
+                    <h6 class="fw-bold mb-3">Restaurant Settlement</h6>
                     <div class="d-flex justify-content-between mb-2">
-                        <span>Restaurant Earnings:</span>
-                        <span class="fw-semibold">{{ $currencySymbol }}{{ number_format($earnings['restaurant'] ?? 0, App\Models\AppSetting::currencyDecimals()) }}</span>
+                        <span>Food subtotal</span>
+                        <span>{{ $currencySymbol }}{{ number_format((float) $order->subtotal, $currencyDecimals) }}</span>
                     </div>
                     <div class="d-flex justify-content-between mb-2">
-                        <span>Driver Earnings:</span>
-                        <span class="fw-semibold">{{ $currencySymbol }}{{ number_format($earnings['driver'] ?? 0, App\Models\AppSetting::currencyDecimals()) }}</span>
+                        <span>Restaurant commission ({{ $formatRule($financials['restaurant_commission_type'], $financials['restaurant_commission_value']) }})</span>
+                        <span class="text-danger">-{{ $currencySymbol }}{{ number_format($financials['restaurant_commission'], $currencyDecimals) }}</span>
                     </div>
-                    <div class="d-flex justify-content-between pt-2 border-top">
-                        <span>Platform Commission (15%):</span>
-                        <span class="fw-semibold text-primary">{{ $currencySymbol }}{{ number_format(($order->total ?? 0) * 0.15, App\Models\AppSetting::currencyDecimals()) }}</span>
+                    <div class="d-flex justify-content-between mb-2"><span>GST on restaurant commission</span><span class="text-danger">-{{ $currencySymbol }}{{ number_format($financials['gst_on_commission'], $currencyDecimals) }}</span></div>
+                    <div class="d-flex justify-content-between mb-2"><span>Online payment gateway fee</span><span class="text-danger">-{{ $currencySymbol }}{{ number_format($financials['payment_gateway_fee'], $currencyDecimals) }}</span></div>
+                    <div class="d-flex justify-content-between pt-2 border-top fw-bold">
+                        <span>Net restaurant earning</span>
+                        <span class="text-success">{{ $currencySymbol }}{{ number_format($financials['restaurant_earning'], $currencyDecimals) }}</span>
                     </div>
+
+                    <h6 class="fw-bold mt-4 mb-3">Driver Settlement</h6>
+                    <div class="d-flex justify-content-between mb-2"><span>Delivery earning base</span><span>{{ $currencySymbol }}{{ number_format($financials['driver_base'], $currencyDecimals) }}</span></div>
+                    <div class="d-flex justify-content-between mb-2"><span>Driver commission ({{ $formatRule($financials['driver_commission_type'], $financials['driver_commission_value']) }})</span><span class="text-danger">-{{ $currencySymbol }}{{ number_format($financials['driver_commission'], $currencyDecimals) }}</span></div>
+                    <div class="d-flex justify-content-between mb-2"><span>Batch bonus</span><span class="text-success">+{{ $currencySymbol }}{{ number_format($financials['batch_bonus'], $currencyDecimals) }}</span></div>
+                    <div class="d-flex justify-content-between pt-2 border-top fw-bold"><span>Net driver earning</span><span class="text-success">{{ $currencySymbol }}{{ number_format($financials['driver_earning'], $currencyDecimals) }}</span></div>
+
+                    <h6 class="fw-bold mt-4 mb-3">Platform Allocation</h6>
+                    <div class="d-flex justify-content-between mb-2"><span>Customer platform charge</span><span>{{ $currencySymbol }}{{ number_format((float) $order->platform_fee, $currencyDecimals) }}</span></div>
+                    <div class="d-flex justify-content-between mb-2"><span>Branch commission</span><span>{{ $currencySymbol }}{{ number_format($financials['branch_commission'], $currencyDecimals) }}</span></div>
+                    <div class="d-flex justify-content-between pt-2 border-top fw-bold"><span>Admin earning</span><span class="text-primary">{{ $currencySymbol }}{{ number_format($financials['admin_earning'], $currencyDecimals) }}</span></div>
+                    <div class="small text-muted mt-3">Restaurant payout: {{ $order->restaurant_payout_id ? '#' . $order->restaurant_payout_id : 'Pending' }} · Driver payout: {{ $order->driver_payout_id ? '#' . $order->driver_payout_id : 'Pending' }}</div>
                 </div>
             </div>
-            @endif
         </div>
     </div>
     

@@ -559,7 +559,20 @@ class _FoodDeliveryAppState extends State<FoodDeliveryApp> {
       navigatorObservers: [routeObserver],
       onGenerateRoute: (settings) => _generateRoute(context, settings),
       builder: (context, child) {
-        return EasyLoading.init()(context, child);
+        final loadingChild = EasyLoading.init()(context, child);
+        return GestureDetector(
+          behavior: HitTestBehavior.translucent,
+          onTap: () => FocusManager.instance.primaryFocus?.unfocus(),
+          child: NotificationListener<UserScrollNotification>(
+            onNotification: (notification) {
+              if (notification.direction != ScrollDirection.idle) {
+                FocusManager.instance.primaryFocus?.unfocus();
+              }
+              return false;
+            },
+            child: loadingChild,
+          ),
+        );
       },
     );
   }

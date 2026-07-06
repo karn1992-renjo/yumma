@@ -85,7 +85,7 @@ class DeliveryChargeSetting extends Model
     private static function safeFirst(): ?self
     {
         try {
-            return self::first();
+            return self::query()->oldest('id')->first();
         } catch (\Throwable $e) {
             Log::warning('Delivery charge settings unavailable; using defaults.', [
                 'error' => $e->getMessage(),

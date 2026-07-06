@@ -33,7 +33,6 @@
                     <th>Title</th>
                     <th>Status</th>
                     <th>Refund Window</th>
-                    <th>Platform Commission Rate</th>
                     <th>Created At</th>
                     <th>Actions</th>
                 </tr>
@@ -51,7 +50,6 @@
                         @endif
                     </td>
                     <td>{{ $policy->refund_window_hours }} hours</td>
-                    <td>{{ $policy->restaurant_commission_rate }}%</td>
                     <td>{{ $policy->created_at->format('M d, Y') }}</td>
                     <td>
                         <div class="btn-group" role="group">

@@ -118,7 +118,7 @@
                 <hr>
                 <div class="row g-3">
                     <div class="col-md-6">
-                        <label class="form-label fw-semibold text-muted small">Platform Commission Charged to Restaurant</label>
+                        <label class="form-label fw-semibold text-muted small">Net Restaurant Earning</label>
                         <div class="fw-semibold">{{ $currencySymbol }}{{ number_format($order->restaurant_earning ?? 0, App\Models\AppSetting::currencyDecimals()) }}</div>
                     </div>
                     <div class="col-md-6">

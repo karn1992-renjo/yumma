@@ -113,7 +113,7 @@
                         </div>
 
                         <div class="col-md-4">
-                            <label class="form-label fw-semibold">Platform Commission Charged to Restaurant</label>
+                            <label class="form-label fw-semibold">Restaurant Earning Commission</label>
                             <input type="number" name="commission_rate" class="form-control @error('commission_rate') is-invalid @enderror" value="{{ old('commission_rate', $restaurant->commission_rate) }}" min="0" step="0.01" placeholder="Uses global setting when blank">
                             @error('commission_rate') <div class="invalid-feedback">{{ $message }}</div> @enderror
                         </div>

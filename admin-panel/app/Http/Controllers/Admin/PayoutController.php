@@ -233,8 +233,8 @@ class PayoutController extends Controller
             $out = fopen('php://output', 'w');
             fputcsv($out, [
                 'ID', 'Batch ID', 'Type', 'Vendor', 'Order IDs', 'Gross Amount',
-                'Platform Commission Charged to Restaurant', 'GST on Platform Commission', 'Online Payment Gateway Fee',
-                'Delivery Settlement Base', 'Admin Delivery Commission', 'Driver Deduction', 'Batch Bonus',
+                'Earning Commission', 'GST on Restaurant Commission', 'Online Payment Gateway Fee',
+                'Delivery Settlement Base', 'Driver Earning Commission', 'Batch Bonus',
                 'Additional Deduction', 'Net Payout', 'Currency', 'Gateway', 'Status',
                 'Commission Rules', 'Transaction ID', 'Period Start', 'Period End', 'Processed At',
             ]);
@@ -250,8 +250,7 @@ class PayoutController extends Controller
                     $payout->gst_on_commission,
                     $payout->payment_gateway_fee,
                     $payout->delivery_fee,
-                    $payout->admin_delivery_commission,
-                    $payout->driver_deduction,
+                    (float) $payout->admin_delivery_commission + (float) $payout->driver_deduction,
                     $payout->batch_bonus,
                     $payout->deduction_amount,
                     $payout->net_amount,

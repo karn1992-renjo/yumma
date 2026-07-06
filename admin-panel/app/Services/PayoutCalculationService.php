@@ -24,7 +24,7 @@ class PayoutCalculationService
     public function __construct()
     {
         $this->commissionRate = $this->normalizePercentage(
-            CommissionSetting::getRate('restaurant') ?: AppSetting::getValue('commission_rate', AppSetting::getValue('commission_percentage', 15))
+            CommissionSetting::getRate(CommissionSetting::RESTAURANT) ?: 15
         );
         $this->gstRate = $this->normalizePercentage(AppSetting::getValue('gst_rate', 18));
         $this->gatewayFeeRate = $this->normalizePercentage(AppSetting::getValue('gateway_fee_rate', 2));
@@ -72,27 +72,18 @@ class PayoutCalculationService
         $driverEarning = $customerDeliveryFee > 0
             ? $customerDeliveryFee
             : $freeDeliveryContribution;
-        $adminFee = CommissionSetting::calculate('admin', $driverEarning);
-        $deliveryPartnerFee = min(
-            max(0, $driverEarning - $adminFee),
-            CommissionSetting::calculate('delivery_partner', $driverEarning)
-        );
+        $driverCommission = CommissionSetting::calculate(CommissionSetting::DRIVER, $driverEarning);
         $multipleOrderBonus = $this->calculateMultipleOrderBonus($order);
-        $finalEarning = $driverEarning - $adminFee - $deliveryPartnerFee + $multipleOrderBonus;
+        $finalEarning = $driverEarning - $driverCommission + $multipleOrderBonus;
         
         return [
             'delivery_fee' => $customerDeliveryFee,
             'delivery_base' => round($driverEarning, 2),
             'chargeable_delivery_fee' => round($chargeableDeliveryFee, 2),
             'free_delivery_contribution' => round($freeDeliveryContribution, 2),
-            'admin_fee' => round($adminFee, 2),
-            'admin_delivery_commission' => round($adminFee, 2),
-            'admin_commission_type' => CommissionSetting::getCalculationType('admin'),
-            'admin_commission_value' => (float) CommissionSetting::getRate('admin'),
-            'platform_fee' => round($deliveryPartnerFee, 2),
-            'driver_deduction' => round($deliveryPartnerFee, 2),
-            'driver_deduction_type' => CommissionSetting::getCalculationType('delivery_partner'),
-            'driver_deduction_value' => (float) CommissionSetting::getRate('delivery_partner'),
+            'driver_commission' => round($driverCommission, 2),
+            'driver_commission_type' => CommissionSetting::getCalculationType(CommissionSetting::DRIVER),
+            'driver_commission_value' => (float) CommissionSetting::getRate(CommissionSetting::DRIVER),
             'multiple_order_bonus' => round($multipleOrderBonus, 2),
             'driver_earning' => max(0, round($finalEarning, 2))
         ];
@@ -156,8 +147,9 @@ class PayoutCalculationService
             ->groupBy('driver_id')
             ->map(function ($orders, $driverId) {
                 $gross = (float) $orders->sum('driver_delivery_base');
-                $adminDeliveryCommission = (float) $orders->sum('admin_delivery_commission');
-                $driverDeduction = (float) $orders->sum('driver_deduction');
+                $driverCommission = (float) $orders->sum(fn ($order) =>
+                    (float) $order->admin_delivery_commission + (float) $order->driver_deduction
+                );
                 $batchBonus = (float) $orders->sum('batch_bonus');
                 $net = (float) $orders->sum('driver_earning');
 
@@ -167,20 +159,16 @@ class PayoutCalculationService
                     'vendor_id' => (int) $driverId,
                     'user_id' => (int) $driverId,
                     'gross_amount' => round($gross, 2),
-                    'platform_commission' => round($adminDeliveryCommission + $driverDeduction, 2),
+                    'platform_commission' => round($driverCommission, 2),
                     'delivery_fee' => round($gross, 2),
-                    'admin_delivery_commission' => round($adminDeliveryCommission, 2),
-                    'driver_deduction' => round($driverDeduction, 2),
+                    'admin_delivery_commission' => 0,
+                    'driver_deduction' => round($driverCommission, 2),
                     'batch_bonus' => round($batchBonus, 2),
                     'amount' => round($net, 2),
                     'order_ids' => $orders->pluck('id')->values()->all(),
                     'breakdown' => [
                         'order_count' => $orders->count(),
-                        'admin_delivery_rules' => $orders->map(fn ($order) => [
-                            'type' => $order->admin_delivery_commission_type,
-                            'value' => (float) $order->admin_delivery_commission_value,
-                        ])->unique(fn ($rule) => $rule['type'] . ':' . $rule['value'])->values()->all(),
-                        'driver_deduction_rules' => $orders->map(fn ($order) => [
+                        'driver_commission_rules' => $orders->map(fn ($order) => [
                             'type' => $order->driver_deduction_type,
                             'value' => (float) $order->driver_deduction_value,
                         ])->unique(fn ($rule) => $rule['type'] . ':' . $rule['value'])->values()->all(),
@@ -298,15 +286,16 @@ class PayoutCalculationService
             $row['amount'] = round((float) $orders->sum('restaurant_earning'), 2);
         } else {
             $gross = (float) $orders->sum('driver_delivery_base');
-            $adminDeliveryCommission = (float) $orders->sum('admin_delivery_commission');
-            $driverDeduction = (float) $orders->sum('driver_deduction');
+            $driverCommission = (float) $orders->sum(fn ($order) =>
+                (float) $order->admin_delivery_commission + (float) $order->driver_deduction
+            );
             $batchBonus = (float) $orders->sum('batch_bonus');
 
             $row['gross_amount'] = round($gross, 2);
-            $row['platform_commission'] = round($adminDeliveryCommission + $driverDeduction, 2);
+            $row['platform_commission'] = round($driverCommission, 2);
             $row['delivery_fee'] = round($gross, 2);
-            $row['admin_delivery_commission'] = round($adminDeliveryCommission, 2);
-            $row['driver_deduction'] = round($driverDeduction, 2);
+            $row['admin_delivery_commission'] = 0;
+            $row['driver_deduction'] = round($driverCommission, 2);
             $row['batch_bonus'] = round($batchBonus, 2);
             $row['amount'] = round((float) $orders->sum('driver_earning'), 2);
         }
@@ -354,18 +343,17 @@ class PayoutCalculationService
                 'restaurant_earning' => $restaurantEarningData['restaurant_earning'],
                 'driver_earning' => $driverEarningData['driver_earning'],
                 'driver_delivery_base' => $driverEarningData['delivery_base'],
-                'admin_delivery_commission' => $driverEarningData['admin_delivery_commission'],
-                'admin_delivery_commission_type' => $driverEarningData['admin_commission_type'],
-                'admin_delivery_commission_value' => $driverEarningData['admin_commission_value'],
-                'driver_deduction' => $driverEarningData['driver_deduction'],
-                'driver_deduction_type' => $driverEarningData['driver_deduction_type'],
-                'driver_deduction_value' => $driverEarningData['driver_deduction_value'],
+                'admin_delivery_commission' => 0,
+                'admin_delivery_commission_type' => null,
+                'admin_delivery_commission_value' => 0,
+                'driver_deduction' => $driverEarningData['driver_commission'],
+                'driver_deduction_type' => $driverEarningData['driver_commission_type'],
+                'driver_deduction_value' => $driverEarningData['driver_commission_value'],
                 'batch_bonus' => $driverEarningData['multiple_order_bonus'],
                 'branch_commission' => $branchShare,
                 'admin_commission' => round(
                     $adminRestaurantShare
-                    + (float) $driverEarningData['admin_fee']
-                    + (float) $driverEarningData['platform_fee']
+                    + (float) $driverEarningData['driver_commission']
                     + (float) ($order->platform_fee ?? 0),
                     2
                 ),

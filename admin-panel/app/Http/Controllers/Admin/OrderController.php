@@ -104,25 +104,64 @@ class OrderController extends Controller
      */
     public function show($id)
     {
-        $order = Order::with(['restaurant', 'customer', 'driver', 'orderItems.menuItem', 'transactions'])
+        $order = Order::with(['restaurant', 'branch', 'customer', 'driver', 'orderItems.menuItem', 'transactions'])
             ->findOrFail($id);
             
         $timeline = $this->getOrderTimeline($order);
         
-        // Calculate earnings if order is delivered
-        $earnings = null;
-        if ($order->status === 'delivered') {
-            $restaurantEarnings = $this->payoutCalculation->calculateRestaurantEarning($order);
-            $driverEarnings = $this->payoutCalculation->calculateDriverEarning($order);
+        $restaurantEarnings = $this->payoutCalculation->calculateRestaurantEarning($order);
+        $driverEarnings = $this->payoutCalculation->calculateDriverEarning($order);
+        $isPersisted = (bool) $order->payout_processed;
+        $restaurantCommission = $isPersisted
+            ? (float) $order->platform_commission
+            : (float) $restaurantEarnings['platform_commission'];
+        $driverCommission = $isPersisted
+            ? (float) $order->admin_delivery_commission + (float) $order->driver_deduction
+            : (float) $driverEarnings['driver_commission'];
+        $branchCommission = $isPersisted
+            ? (float) $order->branch_commission
+            : ($order->branch
+                ? round($restaurantCommission * ((float) $order->branch->branch_share_percent / 100), 2)
+                : 0);
 
-            $earnings = [
-                'restaurant' => $restaurantEarnings['restaurant_earning'] ?? 0,
-                'driver' => $driverEarnings['driver_earning'] ?? 0,
-            ];
-        }
+        $financials = [
+            'source' => $isPersisted ? 'Finalized settlement' : 'Current estimate',
+            'restaurant_commission_type' => $isPersisted
+                ? ($order->restaurant_commission_type ?: $restaurantEarnings['commission_type'])
+                : $restaurantEarnings['commission_type'],
+            'restaurant_commission_value' => $isPersisted
+                ? (float) ($order->restaurant_commission_value ?? $restaurantEarnings['commission_value'])
+                : (float) $restaurantEarnings['commission_value'],
+            'restaurant_commission' => $restaurantCommission,
+            'gst_on_commission' => $isPersisted
+                ? (float) $order->gst_on_commission
+                : (float) $restaurantEarnings['gst_on_commission'],
+            'payment_gateway_fee' => $isPersisted
+                ? (float) $order->payment_gateway_fee
+                : (float) $restaurantEarnings['payment_gateway_fee'],
+            'restaurant_earning' => $isPersisted
+                ? (float) $order->restaurant_earning
+                : (float) $restaurantEarnings['restaurant_earning'],
+            'driver_base' => $isPersisted
+                ? (float) $order->driver_delivery_base
+                : (float) $driverEarnings['delivery_base'],
+            'driver_commission_type' => $isPersisted
+                ? ($order->driver_deduction_type ?: $driverEarnings['driver_commission_type'])
+                : $driverEarnings['driver_commission_type'],
+            'driver_commission_value' => $isPersisted
+                ? (float) ($order->driver_deduction_value ?? $driverEarnings['driver_commission_value'])
+                : (float) $driverEarnings['driver_commission_value'],
+            'driver_commission' => $driverCommission,
+            'batch_bonus' => $isPersisted ? (float) $order->batch_bonus : (float) $driverEarnings['multiple_order_bonus'],
+            'driver_earning' => $isPersisted ? (float) $order->driver_earning : (float) $driverEarnings['driver_earning'],
+            'branch_commission' => $branchCommission,
+            'admin_earning' => $isPersisted
+                ? (float) $order->admin_commission
+                : round($restaurantCommission - $branchCommission + $driverCommission + (float) $order->platform_fee, 2),
+        ];
         $deliveryDistanceKm = $this->calculateDeliveryDistanceKm($order);
         
-        return view('admin.orders.show', compact('order', 'timeline', 'earnings', 'deliveryDistanceKm'));
+        return view('admin.orders.show', compact('order', 'timeline', 'financials', 'deliveryDistanceKm'));
     }
     
     /**

@@ -907,13 +907,12 @@
             <div class="row g-3 mb-3">
                 ${payout.restaurant_id ? `
                     <div class="col-md-4"><small class="text-muted d-block">Order Subtotal</small><strong>${payoutCurrencySymbol}${parseFloat(payout.gross_amount || 0).toFixed(window.currencyDecimals)}</strong></div>
-                    <div class="col-md-4"><small class="text-muted d-block">Platform Commission Charged to Restaurant</small><strong>${payoutCurrencySymbol}${parseFloat(payout.platform_commission || 0).toFixed(window.currencyDecimals)}</strong></div>
+                    <div class="col-md-4"><small class="text-muted d-block">Restaurant Earning Commission</small><strong>${payoutCurrencySymbol}${parseFloat(payout.platform_commission || 0).toFixed(window.currencyDecimals)}</strong></div>
                     <div class="col-md-4"><small class="text-muted d-block">GST on Platform Commission</small><strong>${payoutCurrencySymbol}${parseFloat(payout.gst_on_commission || 0).toFixed(window.currencyDecimals)}</strong></div>
                     <div class="col-md-4"><small class="text-muted d-block">Online Payment Gateway Fee</small><strong>${payoutCurrencySymbol}${parseFloat(payout.payment_gateway_fee || 0).toFixed(window.currencyDecimals)}</strong></div>
                 ` : `
                     <div class="col-md-4"><small class="text-muted d-block">Delivery Base</small><strong>${payoutCurrencySymbol}${parseFloat(payout.delivery_fee || 0).toFixed(window.currencyDecimals)}</strong></div>
-                    <div class="col-md-4"><small class="text-muted d-block">Admin Delivery Commission</small><strong>${payoutCurrencySymbol}${parseFloat(payout.admin_delivery_commission || 0).toFixed(window.currencyDecimals)}</strong></div>
-                    <div class="col-md-4"><small class="text-muted d-block">Driver Deduction</small><strong>${payoutCurrencySymbol}${parseFloat(payout.driver_deduction || 0).toFixed(window.currencyDecimals)}</strong></div>
+                    <div class="col-md-4"><small class="text-muted d-block">Driver Earning Commission</small><strong>${payoutCurrencySymbol}${(parseFloat(payout.admin_delivery_commission || 0) + parseFloat(payout.driver_deduction || 0)).toFixed(window.currencyDecimals)}</strong></div>
                     <div class="col-md-4"><small class="text-muted d-block">Batch Bonus</small><strong>${payoutCurrencySymbol}${parseFloat(payout.batch_bonus || 0).toFixed(window.currencyDecimals)}</strong></div>
                 `}
                 <div class="col-12"><small class="text-muted d-block">Orders</small><span>${(payout.order_ids || []).join(', ') || 'Manual payout'}</span></div>

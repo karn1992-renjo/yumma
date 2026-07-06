@@ -53,8 +53,7 @@ class CommissionService
         
         return [
             'delivery_fee' => $earning['delivery_fee'],
-            'admin_commission' => $earning['admin_delivery_commission'],
-            'driver_deduction' => $earning['driver_deduction'],
+            'driver_commission' => $earning['driver_commission'],
             'batch_bonus' => $earning['multiple_order_bonus'],
             'driver_earning' => $earning['driver_earning'],
         ];
@@ -151,10 +150,9 @@ class CommissionService
             
         $earnings = $orders->map(fn ($order) => $this->payoutCalculation->calculateDriverEarning($order));
         $totalEarnings = $earnings->sum('delivery_fee');
-        $adminDeliveryCommission = $earnings->sum('admin_delivery_commission');
-        $driverDeduction = $earnings->sum('driver_deduction');
+        $driverCommission = $earnings->sum('driver_commission');
         $batchBonus = $earnings->sum('multiple_order_bonus');
-        $commission = $adminDeliveryCommission + $driverDeduction;
+        $commission = $driverCommission;
         $payoutAmount = $earnings->sum('driver_earning');
         
         $payout = PayoutHistory::updateOrCreate(
@@ -169,11 +167,10 @@ class CommissionService
                 'amount' => max(0, $payoutAmount),
                 'breakdown' => [
                     'total_earnings' => $totalEarnings,
-                    'commission_rate' => CommissionSetting::getRate('delivery_partner'),
-                    'calculation_type' => CommissionSetting::getCalculationType('delivery_partner'),
+                    'commission_rate' => CommissionSetting::getRate(CommissionSetting::DRIVER),
+                    'calculation_type' => CommissionSetting::getCalculationType(CommissionSetting::DRIVER),
                     'commission_amount' => $commission,
-                    'admin_delivery_commission' => $adminDeliveryCommission,
-                    'driver_deduction' => $driverDeduction,
+                    'driver_commission' => $driverCommission,
                     'batch_bonus' => $batchBonus,
                     'order_count' => $orders->count(),
                     'orders' => $orders->pluck('id')

@@ -3,6 +3,7 @@ import Flutter
 import FirebaseCore
 import FirebaseAuth
 import GoogleMaps
+import UserNotifications
 
 @main
 @objc class AppDelegate: FlutterAppDelegate {
@@ -22,6 +23,9 @@ import GoogleMaps
 
         // Register Flutter plugins
         GeneratedPluginRegistrant.register(with: self)
+
+        UNUserNotificationCenter.current().delegate = self
+        application.registerForRemoteNotifications()
 
         return super.application(
             application,

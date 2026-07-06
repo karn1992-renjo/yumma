@@ -43,7 +43,7 @@
                     <td><strong>{{ $branch->name }}</strong><div class="text-muted small">{{ $branch->code }}</div></td>
                     <td>{{ $branch->owner_name }}<div class="text-muted small">{{ $branch->owner_email }}</div></td>
                     <td>{{ collect([$branch->city, $branch->state, $branch->country])->filter()->join(', ') ?: 'Not set' }}</td>
-                    <td>{{ $branch->platform_commission_percent }}% platform<br><span class="small text-muted">{{ $branch->branch_share_percent }}% branch / {{ $branch->admin_share_percent }}% admin</span></td>
+                    <td>{{ $branch->branch_share_percent }}% branch<br><span class="small text-muted">{{ number_format(100 - (float) $branch->branch_share_percent, 2) }}% admin remainder</span></td>
                     <td>{{ $branch->restaurants_count }}</td>
                     <td>{{ number_format($branch->wallet?->balance ?? 0, 2) }}</td>
                     <td><span class="badge bg-{{ $branch->status === 'active' ? 'success' : 'secondary' }}">{{ ucfirst($branch->status) }}</span></td>

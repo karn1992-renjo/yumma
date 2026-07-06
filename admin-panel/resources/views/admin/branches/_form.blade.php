@@ -106,17 +106,15 @@
         <input name="trade_license" class="form-control" value="{{ old('trade_license', $branch->trade_license ?? '') }}">
     </div>
 
-    <div class="col-md-4">
-        <label class="form-label">Platform Commission %</label>
-        <input type="number" step="0.01" min="0" max="100" name="platform_commission_percent" class="form-control" value="{{ old('platform_commission_percent', $branch->platform_commission_percent ?? 15) }}" required>
-    </div>
-    <div class="col-md-4">
+    <div class="col-md-6">
         <label class="form-label">Branch Share %</label>
         <input type="number" step="0.01" min="0" max="100" name="branch_share_percent" class="form-control" value="{{ old('branch_share_percent', $branch->branch_share_percent ?? 70) }}" required>
+        <div class="form-text">Share of the restaurant earning commission credited to this branch.</div>
     </div>
-    <div class="col-md-4">
-        <label class="form-label">Admin Share %</label>
-        <input type="number" step="0.01" min="0" max="100" name="admin_share_percent" class="form-control" value="{{ old('admin_share_percent', $branch->admin_share_percent ?? 30) }}" required>
+    <div class="col-md-6">
+        <label class="form-label">Admin Share</label>
+        <input class="form-control" value="{{ number_format(100 - (float) old('branch_share_percent', $branch->branch_share_percent ?? 70), 2) }}%" disabled>
+        <div class="form-text">Calculated automatically as the remainder.</div>
     </div>
 
     <div class="col-md-3">

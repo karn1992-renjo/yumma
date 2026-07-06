@@ -83,10 +83,6 @@
                         <input type="text" name="contact_phone" class="form-control" value="{{ $settings['contact_phone'] ?? '+91 9876543210' }}">
                     </div>
                     <div class="mb-3">
-                        <label class="form-label fw-semibold">Platform Commission (%)</label>
-                        <input type="number" name="commission_percentage" class="form-control" step="0.5" value="{{ $settings['commission_percentage'] ?? 15 }}">
-                    </div>
-                    <div class="mb-3">
                         <label class="form-label fw-semibold">Currency Decimals</label>
                         <input type="number" name="currency_decimals" class="form-control" min="2" max="5" value="{{ max(2, min(5, (int) ($settings['currency_decimals'] ?? 2))) }}">
                         <div class="form-text">Number of decimal places to display after the currency symbol. Allowed range: 2 to 5.</div>
