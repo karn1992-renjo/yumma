@@ -1,10 +1,7 @@
-import 'dart:convert';
-
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
-import 'package:http/http.dart' as http;
 
 import '../../../config/api_constants.dart';
 import '../../../services/api_service.dart';
@@ -71,10 +68,9 @@ class _RestaurantLocationScreenState extends State<RestaurantLocationScreen> {
           _addressController.text = data['address']?.toString() ?? '';
           _cityController.text = data['city']?.toString() ?? '';
           _pincodeController.text = data['pincode']?.toString() ?? '';
-          _hasApprovedFssaiLicense =
-              data['has_approved_fssai_license'] == true ||
-                  (data['fssai_license_number']?.toString().isNotEmpty ??
-                      false);
+          _hasApprovedFssaiLicense = data['has_approved_fssai_license'] ==
+                  true ||
+              (data['fssai_license_number']?.toString().isNotEmpty ?? false);
 
           if (latitude != null && longitude != null) {
             _selectedLocation = LatLng(latitude, longitude);
@@ -212,36 +208,23 @@ class _RestaurantLocationScreenState extends State<RestaurantLocationScreen> {
     setState(() => _isSaving = true);
 
     try {
-      final token = await _api.getToken();
-      final request = http.MultipartRequest(
-        'POST',
-        Uri.parse(
-          '${ApiConstants.baseUrl}${ApiConstants.restaurantLocationChangeRequest}',
-        ),
-      );
-
-      request.headers['Authorization'] = 'Bearer $token';
-      request.fields['latitude'] = _selectedLocation!.latitude.toString();
-      request.fields['longitude'] = _selectedLocation!.longitude.toString();
-      if (_fssaiFile != null) {
-        if (_fssaiFile?.path == null || _fssaiFile!.path!.isEmpty) {
-          throw Exception('Selected FSSAI file is not accessible.');
-        }
-        request.files.add(
-          await http.MultipartFile.fromPath(
-            'fssai_license',
-            _fssaiFile!.path!,
-          ),
-        );
+      if (_fssaiFile != null &&
+          (_fssaiFile?.path == null || _fssaiFile!.path!.isEmpty)) {
+        throw Exception('Selected FSSAI file is not accessible.');
       }
 
-      final streamedResponse = await request.send();
-      final body = await streamedResponse.stream.bytesToString();
-      final response = jsonDecode(body) as Map<String, dynamic>;
+      final response = await _api.postMultipart(
+        ApiConstants.restaurantLocationChangeRequest,
+        fields: {
+          'latitude': _selectedLocation!.latitude.toString(),
+          'longitude': _selectedLocation!.longitude.toString(),
+        },
+        files: _fssaiFile?.path == null
+            ? null
+            : {'fssai_license': _fssaiFile!.path!},
+      );
 
-      if (streamedResponse.statusCode >= 200 &&
-          streamedResponse.statusCode < 300 &&
-          response['success'] == true) {
+      if (response['success'] == true) {
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(

@@ -11,11 +11,27 @@ use App\Models\MasterMenuItem;
 use App\Models\MenuItem;
 use App\Models\Restaurant;
 use App\Services\MediaStorage;
+use App\Services\MenuPriceAdjustmentService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 
 class RestaurantMenuController extends Controller
 {
+    public function adjustPrices(Request $request, MenuPriceAdjustmentService $adjuster)
+    {
+        $restaurant = $this->getAuthenticatedRestaurant($request);
+        if (!$restaurant) {
+            return response()->json(['success' => false, 'message' => 'Restaurant not found.'], 404);
+        }
+        $data = $request->validate([
+            'direction' => 'required|in:increase,decrease',
+            'adjustment_type' => 'required|in:percentage,fixed',
+            'value' => 'required|numeric|gt:0|max:1000000',
+        ]);
+        $count = $adjuster->adjust($restaurant, $data['direction'], $data['adjustment_type'], (float) $data['value']);
+        return response()->json(['success' => true, 'message' => "Updated {$count} menu items.", 'data' => ['updated_count' => $count]]);
+    }
+
     private function getAuthenticatedRestaurant(Request $request): ?Restaurant
     {
         $user = auth()->user();
@@ -318,6 +334,7 @@ class RestaurantMenuController extends Controller
             'variants' => 'nullable|array',
             'add_ons' => 'nullable|array',
             'availability_schedule' => 'nullable|array',
+            'existing_images' => 'nullable|array',
             'tags' => 'nullable|array',
             'tags.*' => 'nullable|string|max:80',
         ], $this->menuCustomizationRules()));
@@ -433,9 +450,9 @@ class RestaurantMenuController extends Controller
             $validated['food_type'] = $validated['is_veg'] ? 'veg' : 'non_veg';
         }
 
-        if ($request->hasFile('image') || $request->filled('image_url')) {
+        if ($request->hasFile('image') || $request->filled('image_url') || $request->exists('existing_images')) {
             $this->deleteStoredImage($menuItem->image);
-            $validated['images'] = $this->resolveImagesFromRequest($request);
+            $validated['images'] = $this->resolveImagesFromRequest($request, $request->input('existing_images', []));
         }
 
         if (array_key_exists('variants', $validated)) {
@@ -678,19 +695,25 @@ class RestaurantMenuController extends Controller
         }
     }
 
-    private function resolveImagesFromRequest(Request $request): array
+    private function resolveImagesFromRequest(Request $request, $existingImages = []): array
     {
+        $images = collect(is_array($existingImages) ? $existingImages : [])
+            ->map(fn ($image) => trim((string) $image))
+            ->filter()
+            ->values()
+            ->all();
+
         if ($request->hasFile('image')) {
             $path = MediaStorage::store($request->file('image'), 'menu-items');
 
-            return [$path];
+            array_unshift($images, $path);
         }
 
         if ($request->filled('image_url')) {
-            return [(string) $request->input('image_url')];
+            array_unshift($images, (string) $request->input('image_url'));
         }
 
-        return [];
+        return array_values(array_unique($images));
     }
 
     private function formatGlobalCatalogItem(MasterMenuItem $item): array

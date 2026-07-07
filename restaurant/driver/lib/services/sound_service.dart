@@ -16,7 +16,7 @@ class SoundService {
   static bool _assetUnavailable = false;
   static bool _urgentAudioPrepared = false;
 
-  static const AudioContext _urgentOrderAudioContext = AudioContext(
+  static final AudioContext _urgentOrderAudioContext = AudioContext(
     android: AudioContextAndroid(
       isSpeakerphoneOn: true,
       audioMode: AndroidAudioMode.inCommunication,
@@ -29,7 +29,7 @@ class SoundService {
       category: AVAudioSessionCategory.playback,
     ),
   );
-  
+
   static Future<void> init() async {
     try {
       await AudioPlayer.global.setAudioContext(_urgentOrderAudioContext);
@@ -45,7 +45,7 @@ class SoundService {
       print('Sound init error: $e');
     }
   }
-  
+
   static Future<void> playNewOrderSound() async {
     try {
       await _prepareUrgentOrderAudio();
@@ -106,7 +106,7 @@ class SoundService {
     } catch (_) {}
     await _restoreNormalAudioRoute();
   }
-  
+
   static Future<void> playOrderAcceptedSound() async {
     try {
       await playNewOrderSound();
@@ -114,7 +114,7 @@ class SoundService {
       print('Sound error: $e');
     }
   }
-  
+
   static Future<void> dispose() async {
     await stopIncomingOrderAlarm();
     await _player.dispose();

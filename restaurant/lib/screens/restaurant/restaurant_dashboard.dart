@@ -224,8 +224,8 @@ class _RestaurantDashboardState extends State<RestaurantDashboard> {
     final pendingNotificationCount = _unreadNotificationCount > 0
         ? _unreadNotificationCount
         : (restaurantProvider.pendingOrdersCount > 0
-              ? restaurantProvider.pendingOrdersCount
-              : restaurantProvider.pendingOrders.length);
+            ? restaurantProvider.pendingOrdersCount
+            : restaurantProvider.pendingOrders.length);
     final effectiveIndex = _currentIndex >= navItems.length ? 0 : _currentIndex;
 
     return Scaffold(
@@ -416,19 +416,6 @@ class _RestaurantDashboardState extends State<RestaurantDashboard> {
       );
     }
 
-    items.add(
-      const _DashboardNavItem(
-        key: 'profile',
-        title: 'Profile',
-        screen: RestaurantProfileScreen(),
-        navItem: BottomNavigationBarItem(
-          icon: Icon(Icons.person_outline),
-          activeIcon: Icon(Icons.person),
-          label: 'Profile',
-        ),
-      ),
-    );
-
     return items;
   }
 
@@ -503,6 +490,18 @@ class _RestaurantDashboardState extends State<RestaurantDashboard> {
             ),
           ),
           const SizedBox(height: 8),
+          ListTile(
+            leading: const Icon(Icons.person_outline),
+            title: const Text('Profile'),
+            subtitle: const Text('Restaurant details, timings and account'),
+            onTap: () {
+              Navigator.pop(context);
+              Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                      builder: (_) => const RestaurantProfileScreen()));
+            },
+          ),
           if (user?.isRestaurantOwner ?? true)
             ListTile(
               leading: const Icon(Icons.store),
@@ -630,8 +629,7 @@ class _RestaurantScopeSelector extends StatelessWidget {
   String _logoUrl(Map<String, dynamic>? restaurant) {
     if (restaurant == null) return '';
 
-    final raw =
-        restaurant['logo_url'] ??
+    final raw = restaurant['logo_url'] ??
         restaurant['logo_image_url'] ??
         restaurant['logo_image'] ??
         restaurant['logo'] ??
@@ -695,12 +693,12 @@ class _RestaurantScopeSelector extends StatelessWidget {
     final selectedName = selectedRestaurantId == null
         ? 'All'
         : selectedMatches.isNotEmpty
-        ? selectedMatches.first['name']?.toString() ?? 'Store'
-        : 'Store';
+            ? selectedMatches.first['name']?.toString() ?? 'Store'
+            : 'Store';
     final selectedRestaurant =
         selectedRestaurantId == null || selectedMatches.isEmpty
-        ? null
-        : selectedMatches.first;
+            ? null
+            : selectedMatches.first;
 
     return PopupMenuButton<int>(
       tooltip: 'Select restaurant',
@@ -942,9 +940,8 @@ class _RestaurantHomeContentState extends State<RestaurantHomeContent>
             content: Text(
               _isOpen ? 'Restaurant is now open' : 'Restaurant is now closed',
             ),
-            backgroundColor: _isOpen
-                ? FoodFlowTheme.success
-                : FoodFlowTheme.danger,
+            backgroundColor:
+                _isOpen ? FoodFlowTheme.success : FoodFlowTheme.danger,
           ),
         );
       }

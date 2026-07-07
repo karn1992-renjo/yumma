@@ -19,6 +19,7 @@ class DashboardController extends Controller
 
     public function index(Request $request)
     {
+        $deliveryMinutesExpression = $this->deliveryMinutesExpression();
         $user = $request->user();
         $restaurants = $user->hasRole('restaurant_owner')
             ? $user->restaurants()->orderBy('name')->get()
@@ -60,6 +61,14 @@ class DashboardController extends Controller
         $pendingOrders = (clone $baseOrders)
             ->whereIn('status', ['pending', 'confirmed', 'preparing', 'ready_for_pickup'])
             ->count();
+        $cancelledOrders = (clone $baseOrders)
+            ->whereIn('status', ['cancelled', 'refunded'])
+            ->count();
+        $successRate = $totalOrders > 0 ? round(($deliveredOrdersCount / $totalOrders) * 100, 1) : 0;
+        $cancellationRate = $totalOrders > 0 ? round(($cancelledOrders / $totalOrders) * 100, 1) : 0;
+        $avgDeliveryTime = (float) (clone $baseOrders)
+            ->whereNotNull('delivered_at')
+            ->avg(DB::raw($deliveryMinutesExpression)) ?: 0;
 
         $totalCustomers = (clone $baseOrders)
             ->whereNotNull('customer_id')
@@ -75,6 +84,13 @@ class DashboardController extends Controller
             ->withCount('orderItems')
             ->latest()
             ->limit(10)
+            ->get();
+        $activeOrders = (clone $baseOrders)
+            ->with('customer')
+            ->withCount('orderItems')
+            ->whereNotIn('status', ['delivered', 'cancelled', 'refunded'])
+            ->latest()
+            ->limit(5)
             ->get();
             
         $popularItems = MenuItem::whereIn('restaurant_id', $restaurantIds)
@@ -97,9 +113,14 @@ class DashboardController extends Controller
             'totalOrders',
             'deliveredOrdersCount',
             'pendingOrders',
+            'cancelledOrders',
+            'successRate',
+            'cancellationRate',
+            'avgDeliveryTime',
             'totalCustomers',
             'avgRating',
             'recentOrders',
+            'activeOrders',
             'popularItems',
             'restaurantBreakdown',
             'revenueTrend',
@@ -222,6 +243,13 @@ class DashboardController extends Controller
             'biweekly' => $now->copy()->next($day ?: 'monday')->addWeek(),
             default => $now->copy()->next($day ?: 'monday'),
         };
+    }
+
+    private function deliveryMinutesExpression(): string
+    {
+        return DB::connection()->getDriverName() === 'sqlite'
+            ? '((julianday(delivered_at) - julianday(created_at)) * 24 * 60)'
+            : 'TIMESTAMPDIFF(MINUTE, created_at, delivered_at)';
     }
     
     public function toggleStatus()

@@ -10,6 +10,7 @@ use App\Models\Cuisine;
 use App\Models\GlobalMenuCategory;
 use App\Models\MasterMenuItem;
 use App\Services\MediaStorage;
+use App\Services\MenuPriceAdjustmentService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Validator;
@@ -18,6 +19,19 @@ use PhpOffice\PhpSpreadsheet\IOFactory;
 
 class MenuController extends Controller
 {
+    public function adjustPrices(Request $request, MenuPriceAdjustmentService $adjuster)
+    {
+        $restaurant = $this->currentRestaurant();
+        abort_unless($restaurant, 404, 'Restaurant not found.');
+        $data = $request->validate([
+            'direction' => 'required|in:increase,decrease',
+            'adjustment_type' => 'required|in:percentage,fixed',
+            'value' => 'required|numeric|gt:0|max:1000000',
+        ]);
+        $count = $adjuster->adjust($restaurant, $data['direction'], $data['adjustment_type'], (float) $data['value']);
+        return back()->with('success', "Updated prices for {$count} menu items.");
+    }
+
     use ResolvesRestaurantContext;
 
     public function index()

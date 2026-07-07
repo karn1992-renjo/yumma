@@ -238,7 +238,7 @@ class _ModernLoginScreenState extends State<ModernLoginScreen>
                           const SizedBox(height: 24),
                           Text(
                             'Welcome Back',
-                            style: GoogleFonts.poppins(
+                            style: GoogleFonts.nunitoSans(
                               fontSize: 32,
                               fontWeight: FontWeight.bold,
                               color: Colors.white,
@@ -247,7 +247,7 @@ class _ModernLoginScreenState extends State<ModernLoginScreen>
                           const SizedBox(height: 8),
                           Text(
                             _getSubtitle(),
-                            style: GoogleFonts.poppins(
+                            style: GoogleFonts.nunitoSans(
                               fontSize: 16,
                               color: Colors.white.withOpacity(0.8),
                               fontWeight: FontWeight.w400,
@@ -298,7 +298,7 @@ class _ModernLoginScreenState extends State<ModernLoginScreen>
                                     child: Text(
                                       'OTP',
                                       textAlign: TextAlign.center,
-                                      style: GoogleFonts.poppins(
+                                      style: GoogleFonts.nunitoSans(
                                         fontWeight: FontWeight.w600,
                                         color: _useOtp
                                             ? Color(0xFF667EEA)
@@ -326,7 +326,7 @@ class _ModernLoginScreenState extends State<ModernLoginScreen>
                                     child: Text(
                                       'Password',
                                       textAlign: TextAlign.center,
-                                      style: GoogleFonts.poppins(
+                                      style: GoogleFonts.nunitoSans(
                                         fontWeight: FontWeight.w600,
                                         color: !_useOtp
                                             ? Color(0xFF667EEA)
@@ -389,7 +389,7 @@ class _ModernLoginScreenState extends State<ModernLoginScreen>
                                 },
                                 child: Text(
                                   'Change number?',
-                                  style: GoogleFonts.poppins(
+                                  style: GoogleFonts.nunitoSans(
                                     color: Colors.white,
                                     fontWeight: FontWeight.w600,
                                   ),
@@ -473,14 +473,14 @@ class _ModernLoginScreenState extends State<ModernLoginScreen>
                                   children: [
                                     TextSpan(
                                       text: 'I agree to the ',
-                                      style: GoogleFonts.poppins(
+                                      style: GoogleFonts.nunitoSans(
                                         color: Colors.white.withOpacity(0.8),
                                         fontSize: 13,
                                       ),
                                     ),
                                     TextSpan(
                                       text: 'Terms & Conditions',
-                                      style: GoogleFonts.poppins(
+                                      style: GoogleFonts.nunitoSans(
                                         color: Colors.white,
                                         fontSize: 13,
                                         fontWeight: FontWeight.w600,
@@ -524,7 +524,7 @@ class _ModernLoginScreenState extends State<ModernLoginScreen>
                                         : _useOtp
                                             ? 'Send OTP'
                                             : 'Continue',
-                                    style: GoogleFonts.poppins(
+                                    style: GoogleFonts.nunitoSans(
                                       fontSize: 16,
                                       fontWeight: FontWeight.w600,
                                       color: Color(0xFF667EEA),
@@ -541,14 +541,14 @@ class _ModernLoginScreenState extends State<ModernLoginScreen>
                               children: [
                                 TextSpan(
                                   text: "Don't have an account? ",
-                                  style: GoogleFonts.poppins(
+                                  style: GoogleFonts.nunitoSans(
                                     color: Colors.white.withOpacity(0.8),
                                     fontSize: 14,
                                   ),
                                 ),
                                 TextSpan(
                                   text: 'Sign Up',
-                                  style: GoogleFonts.poppins(
+                                  style: GoogleFonts.nunitoSans(
                                     color: Colors.white,
                                     fontSize: 14,
                                     fontWeight: FontWeight.w700,
@@ -601,7 +601,7 @@ class _ModernLoginScreenState extends State<ModernLoginScreen>
       children: [
         Text(
           label,
-          style: GoogleFonts.poppins(
+          style: GoogleFonts.nunitoSans(
             fontSize: 14,
             fontWeight: FontWeight.w600,
             color: Colors.white,
@@ -614,13 +614,13 @@ class _ModernLoginScreenState extends State<ModernLoginScreen>
           obscureText: obscureText,
           maxLength: maxLength,
           validator: validator,
-          style: GoogleFonts.poppins(
+          style: GoogleFonts.nunitoSans(
             color: Colors.white,
             fontSize: 16,
           ),
           decoration: InputDecoration(
             hintText: hint,
-            hintStyle: GoogleFonts.poppins(
+            hintStyle: GoogleFonts.nunitoSans(
               color: Colors.white.withOpacity(0.5),
               fontSize: 14,
             ),

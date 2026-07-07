@@ -17,6 +17,9 @@
                 <i class="fas fa-sliders me-2"></i> Filters
             </button>
             @if($canManageMenu)
+            <button class="btn btn-outline-primary rounded-3" data-bs-toggle="modal" data-bs-target="#adjustPricesModal">
+                <i class="fas fa-percent me-2"></i> Adjust Prices
+            </button>
             <button class="btn btn-outline-success rounded-3" data-bs-toggle="modal" data-bs-target="#bulkUploadModal">
                 <i class="fas fa-file-arrow-up me-2"></i> Bulk Upload
             </button>
@@ -107,6 +110,25 @@
 </div>
 
 @if($canManageMenu)
+<div class="modal fade" id="adjustPricesModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <form action="{{ route('restaurant.menu.adjust-prices') }}" method="POST">
+                @csrf
+                <div class="modal-header"><h5 class="modal-title">Adjust all menu prices</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+                <div class="modal-body">
+                    <p class="text-muted">This updates base and discounted prices for every menu item.</p>
+                    <div class="row g-3">
+                        <div class="col-6"><label class="form-label">Direction</label><select name="direction" class="form-select" required><option value="increase">Increase</option><option value="decrease">Decrease</option></select></div>
+                        <div class="col-6"><label class="form-label">Method</label><select name="adjustment_type" class="form-select" required><option value="percentage">Percentage</option><option value="fixed">Fixed amount</option></select></div>
+                        <div class="col-12"><label class="form-label">Value</label><input name="value" type="number" min="0.01" step="0.01" class="form-control" required></div>
+                    </div>
+                </div>
+                <div class="modal-footer"><button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancel</button><button class="btn btn-primary">Apply to all items</button></div>
+            </form>
+        </div>
+    </div>
+</div>
 <!-- Bulk Upload Modal -->
 <div class="modal fade" id="bulkUploadModal" tabindex="-1">
     <div class="modal-dialog modal-dialog-centered modal-lg">

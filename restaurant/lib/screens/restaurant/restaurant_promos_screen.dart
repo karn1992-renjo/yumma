@@ -82,8 +82,9 @@ class _RestaurantPromosScreenState extends State<RestaurantPromosScreen> {
     if (confirmed != true) return;
 
     try {
-      final response =
-          await _api.delete('${ApiConstants.restaurantPromos}/$promoId');
+      final response = await _api.post(
+        '${ApiConstants.restaurantPromos}/$promoId/delete',
+      );
       if (response['success'] == true) {
         await _loadPromos();
         if (mounted) {
@@ -177,7 +178,8 @@ class _RestaurantPromosScreenState extends State<RestaurantPromosScreen> {
                                   ),
                                   DropdownMenuItem(
                                     value: 'fixed',
-                                    child: Text('Fixed Amount (${getCurrencySymbol(context)})'),
+                                    child: Text(
+                                        'Fixed Amount (${getCurrencySymbol(context)})'),
                                   ),
                                 ],
                                 onChanged: (value) =>
@@ -490,8 +492,8 @@ class _RestaurantPromosScreenState extends State<RestaurantPromosScreen> {
                                     vertical: 6,
                                   ),
                                   decoration: BoxDecoration(
-                                    color: FoodFlowTheme.orange
-                                        .withOpacity(0.1),
+                                    color:
+                                        FoodFlowTheme.orange.withOpacity(0.1),
                                     borderRadius: BorderRadius.circular(20),
                                   ),
                                   child: Text(

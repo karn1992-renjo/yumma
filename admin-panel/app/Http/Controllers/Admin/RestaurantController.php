@@ -14,9 +14,23 @@ use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
 use PhpOffice\PhpSpreadsheet\IOFactory;
+use App\Services\MenuPriceAdjustmentService;
 
 class RestaurantController extends Controller
 {
+    public function increaseMenuPrices(Request $request, Restaurant $restaurant, MenuPriceAdjustmentService $adjuster)
+    {
+        $data = $request->validate([
+            'direction' => 'required|in:increase,decrease',
+            'adjustment_type' => 'required|in:percentage,fixed',
+            'value' => 'required|numeric|gt:0|max:1000000',
+        ]);
+
+        $count = $adjuster->adjust($restaurant, $data['direction'], $data['adjustment_type'], (float) $data['value']);
+
+        return back()->with('success', "Updated prices for {$count} menu items.");
+    }
+
     private function payoutProviderAccountAttributes(Request $request): array
     {
         $provider = \App\Models\AppSetting::getValue('payout_gateway_provider', 'razorpay');

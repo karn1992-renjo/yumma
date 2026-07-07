@@ -81,7 +81,7 @@ class StatCard extends StatelessWidget {
           const SizedBox(height: 12),
           Text(
             value,
-            style: GoogleFonts.poppins(
+            style: GoogleFonts.nunitoSans(
               fontSize: 22,
               fontWeight: FontWeight.bold,
               color: color,
@@ -91,7 +91,7 @@ class StatCard extends StatelessWidget {
           ),
           Text(
             title,
-            style: GoogleFonts.poppins(
+            style: GoogleFonts.nunitoSans(
               fontSize: 12,
               color: Colors.grey.shade600,
             ),

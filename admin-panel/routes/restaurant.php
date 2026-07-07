@@ -50,6 +50,7 @@ Route::middleware(['auth', 'role:restaurant_owner|restaurant_staff'])->prefix('r
         Route::put('/menu/{menu}', [MenuController::class, 'update'])->name('menu.update');
         Route::delete('/menu/{menu}', [MenuController::class, 'destroy'])->name('menu.destroy');
         Route::post('/menu/bulk-upload', [MenuController::class, 'bulkUpload'])->name('menu.bulk-upload');
+        Route::post('/menu/adjust-prices', [MenuController::class, 'adjustPrices'])->name('menu.adjust-prices');
         Route::post('/menu/{id}/toggle-availability', [MenuController::class, 'toggleAvailability'])->name('menu.toggle-availability');
     });
     

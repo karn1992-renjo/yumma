@@ -2,11 +2,12 @@ import UIKit
 import Flutter
 import FirebaseCore
 import FirebaseAuth
+import FirebaseMessaging
 import GoogleMaps
 import UserNotifications
 
 @main
-@objc class AppDelegate: FlutterAppDelegate {
+@objc class AppDelegate: FlutterAppDelegate, MessagingDelegate {
 
     override func application(
         _ application: UIApplication,
@@ -19,12 +20,13 @@ import UserNotifications
         }
 
         // Configure Google Maps
-        GMSServices.provideAPIKey("AIzaSyDhZCVKvFQmun_wXebEFKgaP6zzjQn-c4I")
+        GMSServices.provideAPIKey("AIzaSyB8-QxsMReKTKEZQZ58_BCDMOeiTHo4d2Q")
 
         // Register Flutter plugins
         GeneratedPluginRegistrant.register(with: self)
 
         UNUserNotificationCenter.current().delegate = self
+        Messaging.messaging().delegate = self
         application.registerForRemoteNotifications()
 
         return super.application(
@@ -43,5 +45,35 @@ import UserNotifications
         }
 
         return super.application(app, open: url, options: options)
+    }
+
+    override func application(
+        _ application: UIApplication,
+        didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data
+    ) {
+        Messaging.messaging().apnsToken = deviceToken
+        super.application(
+            application,
+            didRegisterForRemoteNotificationsWithDeviceToken: deviceToken
+        )
+    }
+
+    override func application(
+        _ application: UIApplication,
+        didFailToRegisterForRemoteNotificationsWithError error: Error
+    ) {
+        print("APNs registration failed: \(error.localizedDescription)")
+        super.application(
+            application,
+            didFailToRegisterForRemoteNotificationsWithError: error
+        )
+    }
+
+    func messaging(
+        _ messaging: Messaging,
+        didReceiveRegistrationToken fcmToken: String?
+    ) {
+        guard let fcmToken = fcmToken, !fcmToken.isEmpty else { return }
+        print("Firebase registration token refreshed: \(fcmToken)")
     }
 }

@@ -296,6 +296,8 @@ class RestaurantController extends Controller
                 'success' => true,
                 'data' => [
                     'is_open' => (bool)$restaurant->is_open,
+                    'weekly_timings' => $restaurant->weekly_timings,
+                    'timezone' => $restaurant->timezone,
                 ],
                 'message' => $restaurant->is_open ? 'Restaurant is now open' : 'Restaurant is now closed'
             ]);
@@ -487,6 +489,12 @@ class RestaurantController extends Controller
             $request->validate([
                 'name' => 'required|string|max:255',
                 'description' => 'nullable|string',
+                'weekly_timings' => 'nullable|array',
+                'weekly_timings.*.is_open' => 'required_with:weekly_timings|boolean',
+                'weekly_timings.*.open_time' => 'nullable|date_format:H:i',
+                'weekly_timings.*.close_time' => 'nullable|date_format:H:i',
+                'weekly_timings.*.break_start' => 'nullable|date_format:H:i',
+                'weekly_timings.*.break_end' => 'nullable|date_format:H:i',
                 'image' => 'nullable|image|mimes:jpeg,png,jpg,webp|max:2048',
             ]);
 
@@ -701,6 +709,18 @@ class RestaurantController extends Controller
                 'data' => $this->formatOrderForApi($order)
             ]);
             
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => collect($e->errors())->flatten()->first() ?: 'Please check the staff details.',
+                'errors' => $e->errors(),
+            ], 422);
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => collect($e->errors())->flatten()->first() ?: 'Please check the staff details.',
+                'errors' => $e->errors(),
+            ], 422);
         } catch (\Exception $e) {
             if (DB::transactionLevel() > 0) {
                 DB::rollBack();
@@ -1116,6 +1136,10 @@ class RestaurantController extends Controller
                 'auto_accept_orders' => 'nullable|boolean',
                 'order_lead_time' => 'nullable|integer|min:0',
                 'same_day_delivery' => 'nullable|boolean',
+                'weekly_timings' => 'nullable|array',
+                'weekly_timings.*.is_open' => 'required_with:weekly_timings|boolean',
+                'weekly_timings.*.open_time' => 'nullable|date_format:H:i',
+                'weekly_timings.*.close_time' => 'nullable|date_format:H:i',
             ]);
 
             if (array_key_exists('cuisine', $validated)) {
@@ -1252,6 +1276,12 @@ class RestaurantController extends Controller
                 'message' => 'Staff member account created successfully.'
             ], 201);
             
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => collect($e->errors())->flatten()->first() ?: 'Please check the staff details.',
+                'errors' => $e->errors(),
+            ], 422);
         } catch (\Exception $e) {
             if (DB::transactionLevel() > 0) {
                 DB::rollBack();
@@ -1310,6 +1340,12 @@ class RestaurantController extends Controller
                 'message' => 'Staff member updated successfully.'
             ]);
             
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => collect($e->errors())->flatten()->first() ?: 'Please check the staff details.',
+                'errors' => $e->errors(),
+            ], 422);
         } catch (\Exception $e) {
             if (DB::transactionLevel() > 0) {
                 DB::rollBack();
@@ -1485,6 +1521,9 @@ class RestaurantController extends Controller
     public function updateSettings(Request $request)
     {
         try {
+            if (is_string($request->input('weekly_timings'))) {
+                $request->merge(['weekly_timings' => json_decode($request->input('weekly_timings'), true)]);
+            }
             $user = auth()->user();
             $restaurant = $this->getAuthenticatedRestaurant($user);
 
@@ -1518,7 +1557,7 @@ class RestaurantController extends Controller
 
             $restaurant->update($request->only([
                 'name', 'email', 'phone', 'address', 'city', 'state', 'pincode',
-                'min_order_amount', 'delivery_time', 'description'
+                'min_order_amount', 'delivery_time', 'description', 'weekly_timings'
             ]));
 
             $user->update($request->only([
@@ -1608,7 +1647,7 @@ class RestaurantController extends Controller
                 'user_id' => $user->id,
                 'ticket_number' => 'SUP-' . now()->format('YmdHis') . '-' . strtoupper(substr((string) $restaurant->id, -4)),
                 'subject' => 'Restaurant location update request',
-                'category' => 'location_change',
+                'category' => 'technical_support',
                 'priority' => 'high',
                 'description' => implode("\n", array_filter([
                     'Restaurant has requested a location update.',

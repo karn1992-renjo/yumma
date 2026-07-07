@@ -68,7 +68,7 @@ class OrderCard extends StatelessWidget {
                             children: [
                               Text(
                                 '#${order['order_number']}',
-                                style: GoogleFonts.poppins(
+                                style: GoogleFonts.nunitoSans(
                                   fontSize: 16,
                                   fontWeight: FontWeight.bold,
                                 ),
@@ -292,7 +292,7 @@ class OrderCard extends StatelessWidget {
                 children: [
                   Text(
                     'Order #${order['order_number']}',
-                    style: GoogleFonts.poppins(
+                    style: GoogleFonts.nunitoSans(
                       fontSize: 20,
                       fontWeight: FontWeight.bold,
                     ),
@@ -356,7 +356,7 @@ class OrderCard extends StatelessWidget {
               // Order Items
               Text(
                 'Order Items',
-                style: GoogleFonts.poppins(
+                style: GoogleFonts.nunitoSans(
                   fontSize: 18,
                   fontWeight: FontWeight.bold,
                 ),

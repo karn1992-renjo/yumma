@@ -19,6 +19,7 @@
             <p class="text-muted mb-0">View restaurant details and statistics</p>
         </div>
         <div class="d-flex gap-2">
+            <button class="btn btn-outline-primary" data-bs-toggle="modal" data-bs-target="#adjustPricesModal"><i class="fas fa-percent me-2"></i> Adjust Menu Prices</button>
             <a href="{{ route('admin.restaurants.edit', $restaurant) }}" class="btn btn-primary">
                 <i class="fas fa-edit me-2"></i> Edit
             </a>
@@ -53,6 +54,20 @@
             <div class="col-md-3"><div class="small text-muted">Customer Order Total</div><div class="fw-semibold">{{ $currencySymbol }}{{ number_format((float) ($financialSummary['customer_total'] ?? 0), $currencyDecimals) }}</div></div>
         </div>
     </div>
+</div>
+
+<div class="modal fade" id="adjustPricesModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered"><div class="modal-content">
+        <form method="POST" action="{{ route('admin.restaurants.increase-menu-prices', $restaurant) }}">@csrf
+            <div class="modal-header"><h5 class="modal-title">Adjust {{ $restaurant->name }} prices</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+            <div class="modal-body"><div class="row g-3">
+                <div class="col-6"><label class="form-label">Direction</label><select class="form-select" name="direction"><option value="increase">Increase</option><option value="decrease">Decrease</option></select></div>
+                <div class="col-6"><label class="form-label">Method</label><select class="form-select" name="adjustment_type"><option value="percentage">Percentage</option><option value="fixed">Fixed amount</option></select></div>
+                <div class="col-12"><label class="form-label">Value</label><input class="form-control" type="number" name="value" min="0.01" step="0.01" required><div class="form-text">Applies to every base and discounted menu price.</div></div>
+            </div></div>
+            <div class="modal-footer"><button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancel</button><button class="btn btn-primary">Apply adjustment</button></div>
+        </form>
+    </div></div>
 </div>
 
 <!-- Statistics Cards -->

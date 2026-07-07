@@ -109,7 +109,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                 onPressed: _skipOnboarding,
                 child: Text(
                   'Skip',
-                  style: GoogleFonts.poppins(
+                  style: GoogleFonts.nunitoSans(
                     fontSize: 16,
                     fontWeight: FontWeight.w600,
                     color: Color(0xFF667EEA),
@@ -200,7 +200,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                               _currentIndex == screens.length - 1
                                   ? 'Get Started'
                                   : 'Next',
-                              style: GoogleFonts.poppins(
+                              style: GoogleFonts.nunitoSans(
                                 fontSize: 16,
                                 fontWeight: FontWeight.w600,
                                 color: Colors.white,
@@ -296,7 +296,7 @@ class OnboardingPage extends StatelessWidget {
             child: Text(
               model.title,
               textAlign: TextAlign.center,
-              style: GoogleFonts.poppins(
+              style: GoogleFonts.nunitoSans(
                 fontSize: 28,
                 fontWeight: FontWeight.bold,
                 color: Colors.black87,
@@ -310,7 +310,7 @@ class OnboardingPage extends StatelessWidget {
             child: Text(
               model.description,
               textAlign: TextAlign.center,
-              style: GoogleFonts.poppins(
+              style: GoogleFonts.nunitoSans(
                 fontSize: 16,
                 fontWeight: FontWeight.w400,
                 color: Colors.grey[600],

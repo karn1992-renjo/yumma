@@ -3,6 +3,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_easyloading/flutter_easyloading.dart';
@@ -233,87 +234,87 @@ class _FoodDeliveryAppState extends State<FoodDeliveryApp> {
         ),
         primaryColor: primary,
         scaffoldBackgroundColor: homeCanvas,
-        visualDensity: VisualDensity.adaptivePlatformDensity,
-        materialTapTargetSize: MaterialTapTargetSize.padded,
-        fontFamily: 'Poppins',
+        visualDensity: const VisualDensity(horizontal: -3, vertical: -3),
+        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        fontFamily: GoogleFonts.nunitoSans().fontFamily,
         useMaterial3: true,
-        textTheme: const TextTheme(
+        textTheme: GoogleFonts.nunitoSansTextTheme().copyWith(
           displayLarge: TextStyle(
             color: homeText,
-            fontSize: 32,
+            fontSize: 30,
             fontWeight: FontWeight.w800,
             height: 1.02,
           ),
           displayMedium: TextStyle(
             color: homeText,
-            fontSize: 28,
+            fontSize: 26,
             fontWeight: FontWeight.w800,
             height: 1.06,
           ),
           headlineLarge: TextStyle(
             color: homeText,
-            fontSize: 25,
+            fontSize: 23,
             fontWeight: FontWeight.w800,
             height: 1.08,
           ),
           headlineMedium: TextStyle(
             color: homeText,
-            fontSize: 23,
+            fontSize: 21,
             fontWeight: FontWeight.w800,
             height: 1.1,
           ),
           titleLarge: TextStyle(
             color: homeText,
-            fontSize: 20,
+            fontSize: 18,
             fontWeight: FontWeight.w800,
             height: 1.16,
           ),
           titleMedium: TextStyle(
             color: homeText,
-            fontSize: 18,
+            fontSize: 16,
             fontWeight: FontWeight.w700,
             height: 1.18,
           ),
           titleSmall: TextStyle(
             color: homeText,
-            fontSize: 16,
+            fontSize: 14,
             fontWeight: FontWeight.w700,
             height: 1.18,
           ),
           bodyLarge: TextStyle(
             color: homeMuted,
-            fontSize: 17,
-            fontWeight: FontWeight.w500,
+            fontSize: 16,
+            fontWeight: FontWeight.w600,
             height: 1.3,
           ),
           bodyMedium: TextStyle(
             color: homeMuted,
-            fontSize: 16,
+            fontSize: 14,
             fontWeight: FontWeight.w500,
             height: 1.28,
           ),
           bodySmall: TextStyle(
             color: homeMuted,
-            fontSize: 14,
-            fontWeight: FontWeight.w600,
+            fontSize: 12,
+            fontWeight: FontWeight.w500,
             height: 1.22,
           ),
           labelLarge: TextStyle(
             color: homeText,
-            fontSize: 16,
-            fontWeight: FontWeight.w800,
+            fontSize: 15,
+            fontWeight: FontWeight.w700,
             height: 1.1,
           ),
           labelMedium: TextStyle(
             color: homeMuted,
-            fontSize: 14,
+            fontSize: 13,
             fontWeight: FontWeight.w700,
             height: 1.1,
           ),
           labelSmall: TextStyle(
             color: homeMuted,
-            fontSize: 12,
-            fontWeight: FontWeight.w700,
+            fontSize: 11,
+            fontWeight: FontWeight.w500,
             height: 1.1,
           ),
         ),
@@ -325,12 +326,30 @@ class _FoodDeliveryAppState extends State<FoodDeliveryApp> {
           iconTheme: IconThemeData(color: homeText),
           titleTextStyle: TextStyle(
             color: homeText,
-            fontSize: 20,
+            fontSize: 18,
             fontWeight: FontWeight.w800,
           ),
-          toolbarHeight: 58,
+          toolbarHeight: 52,
           scrolledUnderElevation: 0,
           surfaceTintColor: Colors.transparent,
+        ),
+        dialogTheme: DialogThemeData(
+          backgroundColor: Colors.white,
+          surfaceTintColor: Colors.transparent,
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+          titleTextStyle: const TextStyle(
+              color: homeText, fontSize: 18, fontWeight: FontWeight.w800),
+          contentTextStyle: const TextStyle(
+              color: homeMuted, fontSize: 14, fontWeight: FontWeight.w500),
+        ),
+        bottomSheetTheme: const BottomSheetThemeData(
+          backgroundColor: Colors.white,
+          modalBackgroundColor: Colors.white,
+          surfaceTintColor: Colors.transparent,
+          showDragHandle: true,
+          shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
         ),
         tabBarTheme: TabBarThemeData(
           labelColor: primary,
@@ -515,12 +534,6 @@ class _FoodDeliveryAppState extends State<FoodDeliveryApp> {
             borderRadius: BorderRadius.circular(16),
           ),
         ),
-        bottomSheetTheme: const BottomSheetThemeData(
-          backgroundColor: Colors.white,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
-          ),
-        ),
         floatingActionButtonTheme: FloatingActionButtonThemeData(
           backgroundColor: primary,
           foregroundColor: Colors.white,
@@ -586,7 +599,7 @@ class _FoodDeliveryAppState extends State<FoodDeliveryApp> {
         final orderId = _parseOrderId(
           settings.arguments is Map
               ? (settings.arguments as Map)['orderId'] ??
-                    (settings.arguments as Map)['id']
+                  (settings.arguments as Map)['id']
               : settings.arguments,
         );
         if (orderId == null) {

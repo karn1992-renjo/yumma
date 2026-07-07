@@ -211,7 +211,7 @@ class _DriverDashboardState extends State<DriverDashboard>
           _activeGig = response['data']?['active_gig'];
           _onlineStartedAt = _isOnline
               ? _parseOnlineStartedAt(response['data']?['online_started_at']) ??
-                    DateTime.now()
+                  DateTime.now()
               : null;
         });
         if (_isOnline) {
@@ -283,7 +283,7 @@ class _DriverDashboardState extends State<DriverDashboard>
           _activeGig = response['data']?['active_gig'] ?? _activeGig;
           _onlineStartedAt = isOnline
               ? _parseOnlineStartedAt(response['data']?['online_started_at']) ??
-                    DateTime.now()
+                  DateTime.now()
               : null;
         });
 
@@ -468,8 +468,8 @@ class _DriverDashboardState extends State<DriverDashboard>
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
           : _loadError != null && _stats.isEmpty
-          ? NetworkErrorView(message: _loadError, onRetry: _loadStats)
-          : _buildCurrentBody(),
+              ? NetworkErrorView(message: _loadError, onRetry: _loadStats)
+              : _buildCurrentBody(),
       bottomNavigationBar: _buildBottomNavBar(),
     );
   }
@@ -482,8 +482,6 @@ class _DriverDashboardState extends State<DriverDashboard>
         return const DriverEarningsScreen();
       case 3:
         return const DriverWalletScreen();
-      case 4:
-        return const DriverProfileScreen();
       default:
         return _buildDashboard();
     }
@@ -575,7 +573,7 @@ class _DriverDashboardState extends State<DriverDashboard>
                   user != null && user.name.isNotEmpty
                       ? user.name[0].toUpperCase()
                       : 'Z',
-                  style: GoogleFonts.poppins(
+                  style: GoogleFonts.nunitoSans(
                     fontSize: 20,
                     fontWeight: FontWeight.w900,
                     color: Colors.white,
@@ -591,7 +589,7 @@ class _DriverDashboardState extends State<DriverDashboard>
                       '$_greeting, $driverName',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: GoogleFonts.poppins(
+                      style: GoogleFonts.nunitoSans(
                         fontSize: 17,
                         fontWeight: FontWeight.w900,
                         color: FoodFlowTheme.ink,
@@ -601,9 +599,9 @@ class _DriverDashboardState extends State<DriverDashboard>
                       _activeGig == null
                           ? 'Book a gig before accepting orders'
                           : _isOnline
-                          ? 'You are receiving orders'
-                          : 'You are offline',
-                      style: GoogleFonts.poppins(
+                              ? 'You are receiving orders'
+                              : 'You are offline',
+                      style: GoogleFonts.nunitoSans(
                         fontSize: 12,
                         color: FoodFlowTheme.muted,
                       ),
@@ -613,7 +611,7 @@ class _DriverDashboardState extends State<DriverDashboard>
                         branchLabel,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: GoogleFonts.poppins(
+                        style: GoogleFonts.nunitoSans(
                           fontSize: 11,
                           fontWeight: FontWeight.w700,
                           color: FoodFlowTheme.crimson,
@@ -642,7 +640,7 @@ class _DriverDashboardState extends State<DriverDashboard>
                     children: [
                       Text(
                         _onlineDurationText,
-                        style: GoogleFonts.poppins(
+                        style: GoogleFonts.nunitoSans(
                           fontSize: 11,
                           fontWeight: FontWeight.w900,
                           color: FoodFlowTheme.success,
@@ -651,7 +649,7 @@ class _DriverDashboardState extends State<DriverDashboard>
                       if (_onlineStartedAtText.isNotEmpty)
                         Text(
                           _onlineStartedAtText,
-                          style: GoogleFonts.poppins(
+                          style: GoogleFonts.nunitoSans(
                             fontSize: 9,
                             fontWeight: FontWeight.w700,
                             color: FoodFlowTheme.muted,
@@ -662,6 +660,26 @@ class _DriverDashboardState extends State<DriverDashboard>
                 ),
               ],
               const SizedBox(width: 8),
+              PopupMenuButton<String>(
+                tooltip: 'Menu',
+                icon: const Icon(Icons.menu, color: FoodFlowTheme.ink),
+                onSelected: (value) {
+                  if (value == 'profile') {
+                    Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                            builder: (_) => const DriverProfileScreen()));
+                  }
+                },
+                itemBuilder: (_) => const [
+                  PopupMenuItem(
+                      value: 'profile',
+                      child: ListTile(
+                          leading: Icon(Icons.person_outline),
+                          title: Text('Profile'),
+                          contentPadding: EdgeInsets.zero)),
+                ],
+              ),
               GestureDetector(
                 onTap: _toggleOnlineStatus,
                 child: AnimatedContainer(
@@ -670,14 +688,12 @@ class _DriverDashboardState extends State<DriverDashboard>
                   height: 34,
                   padding: const EdgeInsets.all(4),
                   decoration: BoxDecoration(
-                    color: _isOnline
-                        ? FoodFlowTheme.success
-                        : FoodFlowTheme.line,
+                    color:
+                        _isOnline ? FoodFlowTheme.success : FoodFlowTheme.line,
                     borderRadius: BorderRadius.circular(18),
                   ),
-                  alignment: _isOnline
-                      ? Alignment.centerRight
-                      : Alignment.centerLeft,
+                  alignment:
+                      _isOnline ? Alignment.centerRight : Alignment.centerLeft,
                   child: Container(
                     width: 26,
                     height: 26,
@@ -722,7 +738,7 @@ class _DriverDashboardState extends State<DriverDashboard>
                 value,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: GoogleFonts.poppins(
+                style: GoogleFonts.nunitoSans(
                   fontWeight: FontWeight.bold,
                   fontSize: 13,
                   height: 1.0,
@@ -733,7 +749,7 @@ class _DriverDashboardState extends State<DriverDashboard>
                 label,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: GoogleFonts.poppins(
+                style: GoogleFonts.nunitoSans(
                   fontSize: 9,
                   height: 1.0,
                   color: Colors.grey.shade600,
@@ -818,7 +834,7 @@ class _DriverDashboardState extends State<DriverDashboard>
                                   _isOnline
                                       ? 'You are online'
                                       : 'You are offline',
-                                  style: GoogleFonts.poppins(
+                                  style: GoogleFonts.nunitoSans(
                                     fontSize: 16,
                                     fontWeight: FontWeight.w900,
                                     color: FoodFlowTheme.ink,
@@ -829,9 +845,9 @@ class _DriverDashboardState extends State<DriverDashboard>
                                   _isOnline
                                       ? 'Stay ready for incoming orders'
                                       : _activeGig == null
-                                      ? 'Book a gig to start receiving orders'
-                                      : 'Go online to start receiving orders',
-                                  style: GoogleFonts.poppins(
+                                          ? 'Book a gig to start receiving orders'
+                                          : 'Go online to start receiving orders',
+                                  style: GoogleFonts.nunitoSans(
                                     fontSize: 12,
                                     color: FoodFlowTheme.muted,
                                   ),
@@ -857,8 +873,8 @@ class _DriverDashboardState extends State<DriverDashboard>
                               _activeGig == null
                                   ? 'Book Gig'
                                   : _isOnline
-                                  ? 'Online'
-                                  : 'Go Online',
+                                      ? 'Online'
+                                      : 'Go Online',
                             ),
                           ),
                         ],
@@ -899,7 +915,7 @@ class _DriverDashboardState extends State<DriverDashboard>
               children: [
                 Text(
                   'Running Orders',
-                  style: GoogleFonts.poppins(
+                  style: GoogleFonts.nunitoSans(
                     fontSize: 18,
                     fontWeight: FontWeight.w900,
                     color: FoodFlowTheme.ink,
@@ -917,7 +933,7 @@ class _DriverDashboardState extends State<DriverDashboard>
 
             Text(
               'Earnings Summary',
-              style: GoogleFonts.poppins(
+              style: GoogleFonts.nunitoSans(
                 fontSize: 18,
                 fontWeight: FontWeight.w900,
                 color: FoodFlowTheme.ink,
@@ -942,7 +958,7 @@ class _DriverDashboardState extends State<DriverDashboard>
                         const SizedBox(height: 4),
                         Text(
                           formatCurrencyValue(context, _stats['week_earnings']),
-                          style: GoogleFonts.poppins(
+                          style: GoogleFonts.nunitoSans(
                             fontSize: 20,
                             fontWeight: FontWeight.bold,
                             color: Colors.green,
@@ -968,7 +984,7 @@ class _DriverDashboardState extends State<DriverDashboard>
                             context,
                             _stats['month_earnings'],
                           ),
-                          style: GoogleFonts.poppins(
+                          style: GoogleFonts.nunitoSans(
                             fontSize: 20,
                             fontWeight: FontWeight.bold,
                             color: Colors.green,
@@ -988,7 +1004,7 @@ class _DriverDashboardState extends State<DriverDashboard>
               children: [
                 Text(
                   'Recent Deliveries',
-                  style: GoogleFonts.poppins(
+                  style: GoogleFonts.nunitoSans(
                     fontSize: 18,
                     fontWeight: FontWeight.w900,
                     color: FoodFlowTheme.ink,
@@ -1028,13 +1044,13 @@ class _DriverDashboardState extends State<DriverDashboard>
             const SizedBox(height: 16),
             Text(
               'No deliveries yet',
-              style: GoogleFonts.poppins(color: Colors.grey.shade600),
+              style: GoogleFonts.nunitoSans(color: Colors.grey.shade600),
             ),
             const SizedBox(height: 8),
             if (!_isOnline)
               Text(
                 'Go online to start receiving orders',
-                style: GoogleFonts.poppins(
+                style: GoogleFonts.nunitoSans(
                   fontSize: 12,
                   color: Colors.grey.shade500,
                 ),
@@ -1078,7 +1094,8 @@ class _DriverDashboardState extends State<DriverDashboard>
                   children: [
                     Text(
                       'Order #${delivery['order_number']}',
-                      style: GoogleFonts.poppins(fontWeight: FontWeight.bold),
+                      style:
+                          GoogleFonts.nunitoSans(fontWeight: FontWeight.bold),
                     ),
                     Text(
                       '${delivery['customer_name']} • ${delivery['delivery_address']?.split(',')[0]}',
@@ -1100,7 +1117,7 @@ class _DriverDashboardState extends State<DriverDashboard>
                       context,
                       delivery['delivery_fee'] ?? 50,
                     ),
-                    style: GoogleFonts.poppins(
+                    style: GoogleFonts.nunitoSans(
                       fontWeight: FontWeight.bold,
                       color: Colors.green,
                     ),
@@ -1272,7 +1289,7 @@ class _DriverDashboardState extends State<DriverDashboard>
             Expanded(
               child: Text(
                 'No running orders right now',
-                style: GoogleFonts.poppins(
+                style: GoogleFonts.nunitoSans(
                   color: FoodFlowTheme.muted,
                   fontWeight: FontWeight.w700,
                 ),
@@ -1302,7 +1319,7 @@ class _DriverDashboardState extends State<DriverDashboard>
             ),
             title: Text(
               'Order #${order['order_number'] ?? ''}',
-              style: GoogleFonts.poppins(fontWeight: FontWeight.w900),
+              style: GoogleFonts.nunitoSans(fontWeight: FontWeight.w900),
             ),
             subtitle: Text(
               accepted ? 'Running delivery' : 'Waiting for your response',
@@ -1326,8 +1343,8 @@ class _DriverDashboardState extends State<DriverDashboard>
       type: BottomNavigationBarType.fixed,
       selectedItemColor: FoodFlowTheme.crimson,
       unselectedItemColor: FoodFlowTheme.muted,
-      selectedLabelStyle: GoogleFonts.poppins(fontSize: 12),
-      unselectedLabelStyle: GoogleFonts.poppins(fontSize: 12),
+      selectedLabelStyle: GoogleFonts.nunitoSans(fontSize: 12),
+      unselectedLabelStyle: GoogleFonts.nunitoSans(fontSize: 12),
       items: const [
         BottomNavigationBarItem(
           icon: Icon(Icons.shopping_bag_outlined),
@@ -1348,11 +1365,6 @@ class _DriverDashboardState extends State<DriverDashboard>
           icon: Icon(Icons.wallet_outlined),
           activeIcon: Icon(Icons.wallet),
           label: 'Wallet',
-        ),
-        BottomNavigationBarItem(
-          icon: Icon(Icons.person_outline),
-          activeIcon: Icon(Icons.person),
-          label: 'Profile',
         ),
       ],
     );

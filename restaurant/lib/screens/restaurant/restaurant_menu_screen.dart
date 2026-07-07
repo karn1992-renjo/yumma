@@ -146,8 +146,9 @@ class _RestaurantMenuScreenState extends State<RestaurantMenuScreen>
     if (confirmed != true) return;
 
     try {
-      final response =
-          await _api.delete('${ApiConstants.restaurantMenuItems}/$itemId');
+      final response = await _api.post(
+        '${ApiConstants.restaurantMenuItems}/$itemId/delete',
+      );
       if (response['success'] == true) {
         await _loadData();
         if (mounted) {
@@ -179,6 +180,101 @@ class _RestaurantMenuScreenState extends State<RestaurantMenuScreen>
       }
     } catch (e) {
       debugPrint('Toggle availability error: $e');
+    }
+  }
+
+  Future<void> _showAdjustPricesSheet() async {
+    final rootContext = context;
+    var direction = 'increase';
+    var type = 'percentage';
+    final valueController = TextEditingController();
+    final applied = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (context, setSheetState) => Padding(
+          padding: EdgeInsets.fromLTRB(
+              20, 8, 20, MediaQuery.viewInsetsOf(context).bottom + 24),
+          child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Adjust all menu prices',
+                    style: Theme.of(context).textTheme.titleLarge),
+                const SizedBox(height: 6),
+                Text('Base and discounted prices will be updated together.',
+                    style: Theme.of(context).textTheme.bodyMedium),
+                const SizedBox(height: 20),
+                SegmentedButton<String>(
+                    segments: const [
+                      ButtonSegment(value: 'increase', label: Text('Increase')),
+                      ButtonSegment(value: 'decrease', label: Text('Decrease'))
+                    ],
+                    selected: {
+                      direction
+                    },
+                    onSelectionChanged: (value) =>
+                        setSheetState(() => direction = value.first)),
+                const SizedBox(height: 14),
+                DropdownButtonFormField<String>(
+                    value: type,
+                    decoration:
+                        const InputDecoration(labelText: 'Adjustment method'),
+                    items: const [
+                      DropdownMenuItem(
+                          value: 'percentage', child: Text('Percentage')),
+                      DropdownMenuItem(
+                          value: 'fixed', child: Text('Fixed amount'))
+                    ],
+                    onChanged: (value) => setSheetState(() => type = value!)),
+                const SizedBox(height: 14),
+                TextField(
+                    controller: valueController,
+                    keyboardType:
+                        const TextInputType.numberWithOptions(decimal: true),
+                    decoration: InputDecoration(
+                        labelText:
+                            type == 'percentage' ? 'Percentage' : 'Amount',
+                        suffixText: type == 'percentage' ? '%' : null,
+                        prefixText: type == 'fixed'
+                            ? currencyInputPrefix(context)
+                            : null)),
+                const SizedBox(height: 20),
+                SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                        onPressed: () async {
+                          final value = double.tryParse(valueController.text);
+                          if (value == null || value <= 0) return;
+                          try {
+                            await _api.post(
+                                '${ApiConstants.restaurantMenuItems}/adjust-prices',
+                                data: {
+                                  'direction': direction,
+                                  'adjustment_type': type,
+                                  'value': value
+                                });
+                            if (sheetContext.mounted)
+                              Navigator.pop(sheetContext, true);
+                          } catch (error) {
+                            if (mounted) {
+                              ScaffoldMessenger.of(rootContext).showSnackBar(
+                                SnackBar(content: Text('$error')),
+                              );
+                            }
+                          }
+                        },
+                        child: const Text('Apply to all items'))),
+              ]),
+        ),
+      ),
+    );
+    valueController.dispose();
+    if (applied == true) {
+      await _loadData();
+      if (mounted)
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('Menu prices updated')));
     }
   }
 
@@ -296,7 +392,7 @@ class _RestaurantMenuScreenState extends State<RestaurantMenuScreen>
 
     final ids = _selectedItemIds.toList();
     for (final id in ids) {
-      await _api.delete('${ApiConstants.restaurantMenuItems}/$id');
+      await _api.post('${ApiConstants.restaurantMenuItems}/$id/delete');
     }
     _setSelectionMode(false);
     await _loadData();
@@ -406,6 +502,8 @@ class _RestaurantMenuScreenState extends State<RestaurantMenuScreen>
     }
 
     // ignore: dead_code
+    // TODO: Remove this superseded bottom-sheet editor after migration settles.
+    // ignore: dead_code
     final formKey = GlobalKey<FormState>();
     final priceController = TextEditingController();
     final discountedPriceController = TextEditingController();
@@ -425,202 +523,205 @@ class _RestaurantMenuScreenState extends State<RestaurantMenuScreen>
       ),
       builder: (context) => StatefulBuilder(
         builder: (context, setSheetState) => Padding(
-          padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+          padding:
+              EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
           child: SingleChildScrollView(
             padding: const EdgeInsets.all(16),
             child: Form(
               key: formKey,
               child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Text(
-                  'Add From Global Menu',
-                  style: TextStyle(
-                    color: FoodFlowTheme.ink,
-                    fontSize: 20,
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
-                const SizedBox(height: 16),
-                DropdownButtonFormField<int>(
-                  decoration: const InputDecoration(
-                    labelText: 'Global Category',
-                    border: OutlineInputBorder(),
-                  ),
-                  items: _globalCategories.map((category) {
-                    return DropdownMenuItem<int>(
-                      value: _asInt(category['id']),
-                      child: Text(category['name']?.toString() ?? ''),
-                    );
-                  }).toList(),
-                  onChanged: (value) {
-                    selectedGlobalCategoryId = value;
-                    selectedGlobalSubcategoryId = null;
-                    selectedMasterId = null;
-                    variantsController.clear();
-                    addOnsController.clear();
-                    setSheetState(() => optionEditorRevision += 1);
-                  },
-                  validator: (value) => value == null ? 'Required' : null,
-                ),
-                const SizedBox(height: 12),
-                DropdownButtonFormField<int>(
-                  value: selectedGlobalSubcategoryId,
-                  decoration: const InputDecoration(
-                    labelText: 'Global Sub Category',
-                    border: OutlineInputBorder(),
-                  ),
-                  items: [
-                    const DropdownMenuItem<int>(
-                      value: null,
-                      child: Text('All sub categories'),
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text(
+                    'Add From Global Menu',
+                    style: TextStyle(
+                      color: FoodFlowTheme.ink,
+                      fontSize: 20,
+                      fontWeight: FontWeight.w900,
                     ),
-                    ..._globalSubcategories(selectedGlobalCategoryId).map(
-                      (subcategory) => DropdownMenuItem<int>(
-                        value: _asInt(subcategory['id']),
-                        child: Text(subcategory['name']?.toString() ?? ''),
-                      ),
-                    ),
-                  ],
-                  onChanged: (value) {
-                    selectedGlobalSubcategoryId = value;
-                    selectedMasterId = null;
-                    variantsController.clear();
-                    addOnsController.clear();
-                    setSheetState(() => optionEditorRevision += 1);
-                  },
-                ),
-                const SizedBox(height: 12),
-                DropdownButtonFormField<int>(
-                  value: selectedMasterId,
-                  decoration: const InputDecoration(
-                    labelText: 'Global Menu Item',
-                    border: OutlineInputBorder(),
                   ),
-                  items: _filteredGlobalMenuItems(
-                    selectedGlobalCategoryId,
-                    selectedGlobalSubcategoryId,
-                  ).map((item) {
-                    final name = item['name']?.toString() ?? '';
-                    final category = item['category_name']?.toString() ?? '';
-                    final subcategory = item['subcategory_name']?.toString() ?? '';
-                    return DropdownMenuItem<int>(
-                      value: _asInt(item['id']),
-                      child: Text(
-                        subcategory.isNotEmpty
-                            ? '$name - $subcategory'
-                            : (category.isEmpty ? name : '$name - $category'),
-                      ),
-                    );
-                  }).toList(),
-                  onChanged: (value) {
-                    selectedMasterId = value;
-                    final selected = _globalMenuItems.firstWhere(
-                      (item) => item['id'].toString() == value.toString(),
-                      orElse: () => <String, dynamic>{},
-                    );
-                    prepController.text =
-                        (selected?['preparation_time'] ?? 20).toString();
-                    variantsController.text =
-                        _formatRawMenuOptions(selected?['variants']);
-                    addOnsController.text =
-                        _formatRawMenuOptions(selected?['add_ons'] ?? selected?['addons']);
-                    setSheetState(() => optionEditorRevision += 1);
-                  },
-                  validator: (value) => value == null ? 'Required' : null,
-                ),
-                const SizedBox(height: 12),
-                Row(
-                  children: [
-                    Expanded(
-                      child: TextFormField(
-                        controller: priceController,
-                        decoration: InputDecoration(
-                          labelText: 'Selling Price',
-                          prefixText: currencyInputPrefix(context),
-                          border: const OutlineInputBorder(),
-                        ),
-                        keyboardType:
-                            const TextInputType.numberWithOptions(decimal: true),
-                        validator: (value) =>
-                            value?.trim().isEmpty == true ? 'Required' : null,
-                      ),
+                  const SizedBox(height: 16),
+                  DropdownButtonFormField<int>(
+                    decoration: const InputDecoration(
+                      labelText: 'Global Category',
+                      border: OutlineInputBorder(),
                     ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: TextFormField(
-                        controller: discountedPriceController,
-                        decoration: InputDecoration(
-                          labelText: 'Offer Price',
-                          prefixText: currencyInputPrefix(context),
-                          border: const OutlineInputBorder(),
-                        ),
-                        keyboardType:
-                            const TextInputType.numberWithOptions(decimal: true),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                TextFormField(
-                  controller: prepController,
-                  decoration: const InputDecoration(
-                    labelText: 'Preparation Time',
-                    border: OutlineInputBorder(),
-                  ),
-                  keyboardType: TextInputType.number,
-                ),
-                const SizedBox(height: 12),
-                _MenuOptionEditor(
-                  key: ValueKey('global_variants_$optionEditorRevision'),
-                  controller: variantsController,
-                  label: 'Variants (Size / Quantity)',
-                  addButtonLabel: 'Add Variant',
-                  placeholder: 'Medium / 500g',
-                  helpText:
-                      'Customers must choose one available variant when variants are configured.',
-                  emptyText:
-                      'No variants added. Add sizes, weights, portions, or quantity choices.',
-                ),
-                const SizedBox(height: 12),
-                _MenuOptionEditor(
-                  key: ValueKey('global_add_ons_$optionEditorRevision'),
-                  controller: addOnsController,
-                  label: 'Add-ons / Extras',
-                  addButtonLabel: 'Add Extra',
-                  placeholder: 'Extra cheese',
-                  helpText:
-                      'Customers can select multiple available extras during add-to-cart.',
-                  emptyText:
-                      'No extras added. Add toppings, sides, sauces, or paid extras.',
-                ),
-                const SizedBox(height: 20),
-                SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton(
-                    onPressed: () async {
-                      if (!formKey.currentState!.validate() ||
-                          selectedMasterId == null) {
-                        return;
-                      }
-                      Navigator.pop(context);
-                      await _importGlobalMenuItem(
-                        masterMenuItemId: selectedMasterId!,
-                        price: double.parse(priceController.text),
-                        discountedPrice: discountedPriceController.text.isNotEmpty
-                            ? double.parse(discountedPriceController.text)
-                            : null,
-                        preparationTime: int.tryParse(prepController.text),
-                        globalCategoryId: selectedGlobalCategoryId,
-                        globalSubcategoryId: selectedGlobalSubcategoryId,
-                        variants: _parseMenuOptions(variantsController.text),
-                        addOns: _parseMenuOptions(addOnsController.text),
+                    items: _globalCategories.map((category) {
+                      return DropdownMenuItem<int>(
+                        value: _asInt(category['id']),
+                        child: Text(category['name']?.toString() ?? ''),
                       );
+                    }).toList(),
+                    onChanged: (value) {
+                      selectedGlobalCategoryId = value;
+                      selectedGlobalSubcategoryId = null;
+                      selectedMasterId = null;
+                      variantsController.clear();
+                      addOnsController.clear();
+                      setSheetState(() => optionEditorRevision += 1);
                     },
-                    child: const Text('Add To My Menu'),
+                    validator: (value) => value == null ? 'Required' : null,
                   ),
-                ),
-              ],
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<int>(
+                    value: selectedGlobalSubcategoryId,
+                    decoration: const InputDecoration(
+                      labelText: 'Global Sub Category',
+                      border: OutlineInputBorder(),
+                    ),
+                    items: [
+                      const DropdownMenuItem<int>(
+                        value: null,
+                        child: Text('All sub categories'),
+                      ),
+                      ..._globalSubcategories(selectedGlobalCategoryId).map(
+                        (subcategory) => DropdownMenuItem<int>(
+                          value: _asInt(subcategory['id']),
+                          child: Text(subcategory['name']?.toString() ?? ''),
+                        ),
+                      ),
+                    ],
+                    onChanged: (value) {
+                      selectedGlobalSubcategoryId = value;
+                      selectedMasterId = null;
+                      variantsController.clear();
+                      addOnsController.clear();
+                      setSheetState(() => optionEditorRevision += 1);
+                    },
+                  ),
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<int>(
+                    value: selectedMasterId,
+                    decoration: const InputDecoration(
+                      labelText: 'Global Menu Item',
+                      border: OutlineInputBorder(),
+                    ),
+                    items: _filteredGlobalMenuItems(
+                      selectedGlobalCategoryId,
+                      selectedGlobalSubcategoryId,
+                    ).map((item) {
+                      final name = item['name']?.toString() ?? '';
+                      final category = item['category_name']?.toString() ?? '';
+                      final subcategory =
+                          item['subcategory_name']?.toString() ?? '';
+                      return DropdownMenuItem<int>(
+                        value: _asInt(item['id']),
+                        child: Text(
+                          subcategory.isNotEmpty
+                              ? '$name - $subcategory'
+                              : (category.isEmpty ? name : '$name - $category'),
+                        ),
+                      );
+                    }).toList(),
+                    onChanged: (value) {
+                      selectedMasterId = value;
+                      final selected = _globalMenuItems.firstWhere(
+                        (item) => item['id'].toString() == value.toString(),
+                        orElse: () => <String, dynamic>{},
+                      );
+                      prepController.text =
+                          (selected?['preparation_time'] ?? 20).toString();
+                      variantsController.text =
+                          _formatRawMenuOptions(selected?['variants']);
+                      addOnsController.text = _formatRawMenuOptions(
+                          selected?['add_ons'] ?? selected?['addons']);
+                      setSheetState(() => optionEditorRevision += 1);
+                    },
+                    validator: (value) => value == null ? 'Required' : null,
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextFormField(
+                          controller: priceController,
+                          decoration: InputDecoration(
+                            labelText: 'Selling Price',
+                            prefixText: currencyInputPrefix(context),
+                            border: const OutlineInputBorder(),
+                          ),
+                          keyboardType: const TextInputType.numberWithOptions(
+                              decimal: true),
+                          validator: (value) =>
+                              value?.trim().isEmpty == true ? 'Required' : null,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: TextFormField(
+                          controller: discountedPriceController,
+                          decoration: InputDecoration(
+                            labelText: 'Offer Price',
+                            prefixText: currencyInputPrefix(context),
+                            border: const OutlineInputBorder(),
+                          ),
+                          keyboardType: const TextInputType.numberWithOptions(
+                              decimal: true),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  TextFormField(
+                    controller: prepController,
+                    decoration: const InputDecoration(
+                      labelText: 'Preparation Time',
+                      border: OutlineInputBorder(),
+                    ),
+                    keyboardType: TextInputType.number,
+                  ),
+                  const SizedBox(height: 12),
+                  _MenuOptionEditor(
+                    key: ValueKey('global_variants_$optionEditorRevision'),
+                    controller: variantsController,
+                    label: 'Variants (Size / Quantity)',
+                    addButtonLabel: 'Add Variant',
+                    placeholder: 'Medium / 500g',
+                    helpText:
+                        'Customers must choose one available variant when variants are configured.',
+                    emptyText:
+                        'No variants added. Add sizes, weights, portions, or quantity choices.',
+                  ),
+                  const SizedBox(height: 12),
+                  _MenuOptionEditor(
+                    key: ValueKey('global_add_ons_$optionEditorRevision'),
+                    controller: addOnsController,
+                    label: 'Add-ons / Extras',
+                    addButtonLabel: 'Add Extra',
+                    placeholder: 'Extra cheese',
+                    helpText:
+                        'Customers can select multiple available extras during add-to-cart.',
+                    emptyText:
+                        'No extras added. Add toppings, sides, sauces, or paid extras.',
+                  ),
+                  const SizedBox(height: 20),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      onPressed: () async {
+                        if (!formKey.currentState!.validate() ||
+                            selectedMasterId == null) {
+                          return;
+                        }
+                        Navigator.pop(context);
+                        await _importGlobalMenuItem(
+                          masterMenuItemId: selectedMasterId!,
+                          price: double.parse(priceController.text),
+                          discountedPrice:
+                              discountedPriceController.text.isNotEmpty
+                                  ? double.parse(discountedPriceController.text)
+                                  : null,
+                          preparationTime: int.tryParse(prepController.text),
+                          globalCategoryId: selectedGlobalCategoryId,
+                          globalSubcategoryId: selectedGlobalSubcategoryId,
+                          variants: _parseMenuOptions(variantsController.text),
+                          addOns: _parseMenuOptions(addOnsController.text),
+                        );
+                      },
+                      child: const Text('Add To My Menu'),
+                    ),
+                  ),
+                ],
               ),
             ),
           ),
@@ -652,6 +753,8 @@ class _RestaurantMenuScreenState extends State<RestaurantMenuScreen>
             required tags,
             required imagePaths,
             required existingImages,
+            required variants,
+            required addOns,
           }) async {
             await _createMenuItem(
               name: name,
@@ -669,6 +772,8 @@ class _RestaurantMenuScreenState extends State<RestaurantMenuScreen>
               tags: tags,
               imagePaths: imagePaths,
               existingImages: existingImages,
+              variants: variants,
+              addOns: addOns,
             );
           },
         ),
@@ -769,13 +874,16 @@ class _RestaurantMenuScreenState extends State<RestaurantMenuScreen>
                           ),
                           items: [
                             const DropdownMenuItem(
-                                value: null, child: Text('Select Global Category')),
-                            ..._globalCategories.map((cat) => DropdownMenuItem<int>(
-                                  value: cat['id'] is int
-                                      ? cat['id'] as int
-                                      : int.tryParse(cat['id'].toString()),
-                                  child: Text(cat['name']?.toString() ?? ''),
-                                )),
+                                value: null,
+                                child: Text('Select Global Category')),
+                            ..._globalCategories
+                                .map((cat) => DropdownMenuItem<int>(
+                                      value: cat['id'] is int
+                                          ? cat['id'] as int
+                                          : int.tryParse(cat['id'].toString()),
+                                      child:
+                                          Text(cat['name']?.toString() ?? ''),
+                                    )),
                           ],
                           onChanged: (value) {
                             selectedGlobalCategoryId = value;
@@ -810,8 +918,8 @@ class _RestaurantMenuScreenState extends State<RestaurantMenuScreen>
                           ],
                           onChanged: selectedGlobalCategoryId == null
                               ? null
-                              : (value) =>
-                                  setState(() => selectedGlobalSubcategoryId = value),
+                              : (value) => setState(
+                                  () => selectedGlobalSubcategoryId = value),
                         ),
                         const SizedBox(height: 12),
                         DropdownButtonFormField<int>(
@@ -842,7 +950,8 @@ class _RestaurantMenuScreenState extends State<RestaurantMenuScreen>
                                   border: const OutlineInputBorder(),
                                 ),
                                 keyboardType:
-                                    const TextInputType.numberWithOptions(decimal: true),
+                                    const TextInputType.numberWithOptions(
+                                        decimal: true),
                                 validator: (value) =>
                                     value?.isEmpty == true ? 'Required' : null,
                               ),
@@ -857,7 +966,8 @@ class _RestaurantMenuScreenState extends State<RestaurantMenuScreen>
                                   border: const OutlineInputBorder(),
                                 ),
                                 keyboardType:
-                                    const TextInputType.numberWithOptions(decimal: true),
+                                    const TextInputType.numberWithOptions(
+                                        decimal: true),
                               ),
                             ),
                           ],
@@ -872,7 +982,8 @@ class _RestaurantMenuScreenState extends State<RestaurantMenuScreen>
                           items: const [
                             DropdownMenuItem(value: 'veg', child: Text('Veg')),
                             DropdownMenuItem(value: 'egg', child: Text('Egg')),
-                            DropdownMenuItem(value: 'non_veg', child: Text('Non-Veg')),
+                            DropdownMenuItem(
+                                value: 'non_veg', child: Text('Non-Veg')),
                           ],
                           onChanged: (value) =>
                               setState(() => foodType = value ?? 'veg'),
@@ -971,8 +1082,8 @@ class _RestaurantMenuScreenState extends State<RestaurantMenuScreen>
                                   cuisineId: selectedCuisineId,
                                   foodType: foodType,
                                   imagePath: selectedImage?.path,
-                                  variants:
-                                      _parseMenuOptions(variantsController.text),
+                                  variants: _parseMenuOptions(
+                                      variantsController.text),
                                   addOns:
                                       _parseMenuOptions(addOnsController.text),
                                 );
@@ -1017,6 +1128,8 @@ class _RestaurantMenuScreenState extends State<RestaurantMenuScreen>
             required tags,
             required imagePaths,
             required existingImages,
+            required variants,
+            required addOns,
           }) async {
             await _updateMenuItem(
               itemId: item.id,
@@ -1035,6 +1148,8 @@ class _RestaurantMenuScreenState extends State<RestaurantMenuScreen>
               tags: tags,
               imagePaths: imagePaths,
               existingImages: existingImages,
+              variants: variants,
+              addOns: addOns,
             );
           },
         ),
@@ -1042,6 +1157,7 @@ class _RestaurantMenuScreenState extends State<RestaurantMenuScreen>
     );
     return;
 
+    // ignore: dead_code
     final formKey = GlobalKey<FormState>();
     final nameController = TextEditingController(text: item.name);
     final descriptionController =
@@ -1050,7 +1166,9 @@ class _RestaurantMenuScreenState extends State<RestaurantMenuScreen>
       text: item.price.toStringAsFixed(getCurrencyDecimals(context)),
     );
     final discountedPriceController = TextEditingController(
-      text: item.discountedPrice?.toStringAsFixed(getCurrencyDecimals(context)) ?? '',
+      text:
+          item.discountedPrice?.toStringAsFixed(getCurrencyDecimals(context)) ??
+              '',
     );
     final variantsController = TextEditingController(
       text: _formatMenuOptions(item.variants),
@@ -1211,7 +1329,8 @@ class _RestaurantMenuScreenState extends State<RestaurantMenuScreen>
                                   prefixText: currencyInputPrefix(context),
                                 ),
                                 keyboardType:
-                                    const TextInputType.numberWithOptions(decimal: true),
+                                    const TextInputType.numberWithOptions(
+                                        decimal: true),
                                 validator: (value) {
                                   final parsed = double.tryParse(value ?? '');
                                   if (parsed == null || parsed <= 0) {
@@ -1230,7 +1349,8 @@ class _RestaurantMenuScreenState extends State<RestaurantMenuScreen>
                                   prefixText: currencyInputPrefix(context),
                                 ),
                                 keyboardType:
-                                    const TextInputType.numberWithOptions(decimal: true),
+                                    const TextInputType.numberWithOptions(
+                                        decimal: true),
                                 validator: (value) {
                                   if (value == null || value.trim().isEmpty) {
                                     return null;
@@ -1255,9 +1375,12 @@ class _RestaurantMenuScreenState extends State<RestaurantMenuScreen>
                               prefixIcon: Icon(Icons.restaurant),
                             ),
                             items: const [
-                              DropdownMenuItem(value: 'veg', child: Text('Veg')),
-                              DropdownMenuItem(value: 'egg', child: Text('Egg')),
-                              DropdownMenuItem(value: 'non_veg', child: Text('Non-Veg')),
+                              DropdownMenuItem(
+                                  value: 'veg', child: Text('Veg')),
+                              DropdownMenuItem(
+                                  value: 'egg', child: Text('Egg')),
+                              DropdownMenuItem(
+                                  value: 'non_veg', child: Text('Non-Veg')),
                             ],
                             onChanged: (value) =>
                                 setSheetState(() => foodType = value ?? 'veg'),
@@ -1386,9 +1509,7 @@ class _RestaurantMenuScreenState extends State<RestaurantMenuScreen>
                 ),
               ),
               files: {'image': uploads.first},
-              fileLists: uploads.length > 1
-                  ? {'images[]': uploads}
-                  : null,
+              fileLists: uploads.length > 1 ? {'images[]': uploads} : null,
             );
 
       if (response['success'] == true) {
@@ -1425,7 +1546,8 @@ class _RestaurantMenuScreenState extends State<RestaurantMenuScreen>
               'discounted_price': discountedPrice,
               'preparation_time': preparationTime,
               'is_available': true,
-              if (globalCategoryId != null) 'global_category_id': globalCategoryId,
+              if (globalCategoryId != null)
+                'global_category_id': globalCategoryId,
               if (globalSubcategoryId != null)
                 'global_subcategory_id': globalSubcategoryId,
               'variants': variants,
@@ -1526,9 +1648,8 @@ class _RestaurantMenuScreenState extends State<RestaurantMenuScreen>
                 ),
               },
               files: {'image': imagePaths.first},
-              fileLists: imagePaths.length > 1
-                  ? {'images[]': imagePaths}
-                  : null,
+              fileLists:
+                  imagePaths.length > 1 ? {'images[]': imagePaths} : null,
             );
 
       if (response['success'] == true) {
@@ -1641,8 +1762,10 @@ class _RestaurantMenuScreenState extends State<RestaurantMenuScreen>
         .map((line) {
           final parts = line.split('|').map((part) => part.trim()).toList();
           final name = parts.isNotEmpty ? parts[0] : '';
-          final price = parts.length > 1 ? double.tryParse(parts[1]) ?? 0.0 : 0.0;
-          final availability = parts.length > 2 ? parts[2].toLowerCase() : 'yes';
+          final price =
+              parts.length > 1 ? double.tryParse(parts[1]) ?? 0.0 : 0.0;
+          final availability =
+              parts.length > 2 ? parts[2].toLowerCase() : 'yes';
           final customFields = <String, String>{};
 
           if (parts.length > 3) {
@@ -1687,24 +1810,30 @@ class _RestaurantMenuScreenState extends State<RestaurantMenuScreen>
     if (value is String || value == null) return '';
     if (value is! List) return '';
 
-    return value.map((option) {
-      if (option is String) return option;
-      if (option is! Map) return '';
+    return value
+        .map((option) {
+          if (option is String) return option;
+          if (option is! Map) return '';
 
-      final customFields = option['custom_fields'] is Map
-          ? (option['custom_fields'] as Map)
-              .entries
-              .map((entry) => '${entry.key}=${entry.value}')
-              .join('; ')
-          : '';
+          final customFields = option['custom_fields'] is Map
+              ? (option['custom_fields'] as Map)
+                  .entries
+                  .map((entry) => '${entry.key}=${entry.value}')
+                  .join('; ')
+              : '';
 
-      return [
-        option['name'] ?? option['label'] ?? option['title'] ?? '',
-        option['price'] ?? option['additional_price'] ?? option['amount'] ?? 0,
-        option['is_available'] == false ? 'no' : 'yes',
-        if (customFields.isNotEmpty) customFields,
-      ].join(' | ');
-    }).where((line) => line.toString().trim().isNotEmpty).join('\n');
+          return [
+            option['name'] ?? option['label'] ?? option['title'] ?? '',
+            option['price'] ??
+                option['additional_price'] ??
+                option['amount'] ??
+                0,
+            option['is_available'] == false ? 'no' : 'yes',
+            if (customFields.isNotEmpty) customFields,
+          ].join(' | ');
+        })
+        .where((line) => line.toString().trim().isNotEmpty)
+        .join('\n');
   }
 
   @override
@@ -1724,6 +1853,16 @@ class _RestaurantMenuScreenState extends State<RestaurantMenuScreen>
       backgroundColor: FoodFlowTheme.canvas,
       body: Column(
         children: [
+          if (canManageMenu)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+              child: Align(
+                  alignment: Alignment.centerRight,
+                  child: OutlinedButton.icon(
+                      onPressed: _showAdjustPricesSheet,
+                      icon: const Icon(Icons.percent),
+                      label: const Text('Adjust all prices'))),
+            ),
           Expanded(
             child: _isLoading
                 ? const Center(child: CircularProgressIndicator())
@@ -1740,10 +1879,13 @@ class _RestaurantMenuScreenState extends State<RestaurantMenuScreen>
                           Padding(
                             padding: const EdgeInsets.symmetric(horizontal: 32),
                             child: ElevatedButton.icon(
-                              onPressed: canManageMenu ? _showAddMethodSheet : null,
+                              onPressed:
+                                  canManageMenu ? _showAddMethodSheet : null,
                               icon: const Icon(Icons.add),
                               label: Text(
-                                canManageMenu ? 'Add Menu Item' : 'View Only Access',
+                                canManageMenu
+                                    ? 'Add Menu Item'
+                                    : 'View Only Access',
                               ),
                             ),
                           ),
@@ -1798,6 +1940,8 @@ typedef _MenuItemFormSubmit = Future<void> Function({
   required List<String> tags,
   required List<String> imagePaths,
   required List<String> existingImages,
+  required List<Map<String, dynamic>> variants,
+  required List<Map<String, dynamic>> addOns,
 });
 
 class _MenuItemFormScreen extends StatefulWidget {
@@ -1827,6 +1971,8 @@ class _MenuItemFormScreenState extends State<_MenuItemFormScreen> {
   final _prepController = TextEditingController();
   final _caloriesController = TextEditingController();
   final _tagController = TextEditingController();
+  final _variantsController = TextEditingController();
+  final _addOnsController = TextEditingController();
   final _picker = ImagePicker();
 
   late List<String> _existingImages;
@@ -1856,10 +2002,11 @@ class _MenuItemFormScreenState extends State<_MenuItemFormScreen> {
       _categoryId = _containsId(widget.categories, item.categoryId)
           ? item.categoryId
           : null;
-      _cuisineId = _containsId(widget.cuisines, item.cuisineId)
-          ? item.cuisineId
-          : null;
+      _cuisineId =
+          _containsId(widget.cuisines, item.cuisineId) ? item.cuisineId : null;
       _tags.addAll(item.tags);
+      _variantsController.text = _formatMenuOptions(item.variants);
+      _addOnsController.text = _formatMenuOptions(item.addOns);
       _foodType = item.foodType;
       _isAvailable = item.isAvailable;
     }
@@ -1873,6 +2020,8 @@ class _MenuItemFormScreenState extends State<_MenuItemFormScreen> {
     _prepController.dispose();
     _caloriesController.dispose();
     _tagController.dispose();
+    _variantsController.dispose();
+    _addOnsController.dispose();
     super.dispose();
   }
 
@@ -1884,6 +2033,57 @@ class _MenuItemFormScreenState extends State<_MenuItemFormScreen> {
   bool _containsId(List<dynamic> items, int? id) {
     if (id == null) return false;
     return items.any((item) => _asInt(item['id']) == id);
+  }
+
+  List<Map<String, dynamic>> _parseMenuOptions(String text) {
+    return text
+        .split('\n')
+        .map((line) => line.trim())
+        .where((line) => line.isNotEmpty)
+        .map((line) {
+          final parts = line.split('|').map((part) => part.trim()).toList();
+          final name = parts.isNotEmpty ? parts[0] : '';
+          final price =
+              parts.length > 1 ? double.tryParse(parts[1]) ?? 0.0 : 0.0;
+          final availability =
+              parts.length > 2 ? parts[2].toLowerCase() : 'yes';
+          final customFields = <String, String>{};
+
+          if (parts.length > 3) {
+            for (final field in parts[3].split(';')) {
+              final fieldParts = field.split('=');
+              if (fieldParts.length < 2) continue;
+              final key = fieldParts.first.trim();
+              final value = fieldParts.sublist(1).join('=').trim();
+              if (key.isNotEmpty && value.isNotEmpty) {
+                customFields[key] = value;
+              }
+            }
+          }
+
+          return {
+            'name': name,
+            'price': price < 0 ? 0 : price,
+            'is_available': !['no', 'false', '0', 'off'].contains(availability),
+            'custom_fields': customFields,
+          };
+        })
+        .where((option) => (option['name'] as String).isNotEmpty)
+        .toList();
+  }
+
+  String _formatMenuOptions(List<MenuOption> options) {
+    return options.map((option) {
+      final customFields = option.customFields.entries
+          .map((entry) => '${entry.key}=${entry.value}')
+          .join('; ');
+      return [
+        option.name,
+        option.price.toStringAsFixed(getCurrencyDecimals(context)),
+        option.isAvailable ? 'yes' : 'no',
+        if (customFields.isNotEmpty) customFields,
+      ].join(' | ');
+    }).join('\n');
   }
 
   List<dynamic> _globalSubcategories(int? categoryId) {
@@ -1903,9 +2103,16 @@ class _MenuItemFormScreenState extends State<_MenuItemFormScreen> {
   }
 
   Future<void> _pickImages() async {
-    final images = await _picker.pickMultiImage(imageQuality: 85);
-    if (images.isEmpty) return;
-    setState(() => _newImages.addAll(images));
+    final image = await _picker.pickImage(
+      source: ImageSource.gallery,
+      imageQuality: 85,
+    );
+    if (image == null) return;
+    setState(() {
+      _newImages
+        ..clear()
+        ..add(image);
+    });
   }
 
   void _addTag(String value) {
@@ -1937,6 +2144,8 @@ class _MenuItemFormScreenState extends State<_MenuItemFormScreen> {
         tags: _tags,
         imagePaths: _newImages.map((image) => image.path).toList(),
         existingImages: _existingImages,
+        variants: _parseMenuOptions(_variantsController.text),
+        addOns: _parseMenuOptions(_addOnsController.text),
       );
       if (mounted) Navigator.pop(context);
     } finally {
@@ -1963,25 +2172,53 @@ class _MenuItemFormScreenState extends State<_MenuItemFormScreen> {
                     _input(
                       controller: _nameController,
                       hint: 'Enter menu name',
-                      validator: (value) =>
-                          value?.trim().isEmpty == true ? 'Menu name is required' : null,
+                      validator: (value) => value?.trim().isEmpty == true
+                          ? 'Menu name is required'
+                          : null,
                     ),
                     const SizedBox(height: 14),
-                    _label('Category', requiredField: true),
-                    _select<int?>(
-                      value: _categoryId,
-                      hint: 'Select category',
-                      items: widget.categories
-                          .map(
-                            (category) => DropdownMenuItem<int?>(
-                              value: _asInt(category['id']),
-                              child: Text(_asText(category['name'])),
+                    if (_globalCategoryId == null) ...[
+                      _label('Category', requiredField: true),
+                      _select<int?>(
+                        value: _categoryId,
+                        hint: 'Select category',
+                        items: widget.categories
+                            .map(
+                              (category) => DropdownMenuItem<int?>(
+                                value: _asInt(category['id']),
+                                child: Text(_asText(category['name'])),
+                              ),
+                            )
+                            .toList(),
+                        onChanged: (value) =>
+                            setState(() => _categoryId = value),
+                        validator: (_) =>
+                            _categoryId == null && _globalCategoryId == null
+                                ? 'Select a category or global category'
+                                : null,
+                      ),
+                    ] else ...[
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: FoodFlowTheme.softSurface(radius: 12),
+                        child: Row(
+                          children: [
+                            Icon(Icons.auto_awesome,
+                                color: FoodFlowTheme.orange),
+                            SizedBox(width: 10),
+                            Expanded(
+                              child: Text(
+                                'Restaurant category will be created or mapped from the selected global category.',
+                                style: TextStyle(
+                                  color: FoodFlowTheme.muted,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
                             ),
-                          )
-                          .toList(),
-                      onChanged: (value) => setState(() => _categoryId = value),
-                      validator: (value) => value == null ? 'Category is required' : null,
-                    ),
+                          ],
+                        ),
+                      ),
+                    ],
                     if (widget.globalCategories.isNotEmpty) ...[
                       const SizedBox(height: 14),
                       _label('Global Category Mapping'),
@@ -2002,8 +2239,13 @@ class _MenuItemFormScreenState extends State<_MenuItemFormScreen> {
                         ],
                         onChanged: (value) => setState(() {
                           _globalCategoryId = value;
+                          if (value != null) _categoryId = null;
                           _globalSubcategoryId = null;
                         }),
+                        validator: (_) =>
+                            _categoryId == null && _globalCategoryId == null
+                                ? 'Select a category or global category'
+                                : null,
                       ),
                       const SizedBox(height: 14),
                       _label('Global Subcategory'),
@@ -2042,11 +2284,13 @@ class _MenuItemFormScreenState extends State<_MenuItemFormScreen> {
                                 controller: _priceController,
                                 hint: '0.00',
                                 prefix: Text(getCurrencySymbol(context)),
-                                keyboardType: const TextInputType.numberWithOptions(
+                                keyboardType:
+                                    const TextInputType.numberWithOptions(
                                   decimal: true,
                                 ),
                                 validator: (value) {
-                                  final amount = double.tryParse(value?.trim() ?? '');
+                                  final amount =
+                                      double.tryParse(value?.trim() ?? '');
                                   return amount == null ? 'Required' : null;
                                 },
                               ),
@@ -2071,8 +2315,8 @@ class _MenuItemFormScreenState extends State<_MenuItemFormScreen> {
                                     child: _StatusOption(active: false),
                                   ),
                                 ],
-                                onChanged: (value) =>
-                                    setState(() => _isAvailable = value ?? true),
+                                onChanged: (value) => setState(
+                                    () => _isAvailable = value ?? true),
                               ),
                             ],
                           ),
@@ -2116,7 +2360,9 @@ class _MenuItemFormScreenState extends State<_MenuItemFormScreen> {
                               _input(
                                 controller: _caloriesController,
                                 hint: 'e.g. 250 kcal',
-                                suffix: const Icon(Icons.local_fire_department_outlined, size: 19),
+                                suffix: const Icon(
+                                    Icons.local_fire_department_outlined,
+                                    size: 19),
                               ),
                             ],
                           ),
@@ -2133,9 +2379,11 @@ class _MenuItemFormScreenState extends State<_MenuItemFormScreen> {
                       items: const [
                         DropdownMenuItem(value: 'veg', child: Text('Veg')),
                         DropdownMenuItem(value: 'egg', child: Text('Egg')),
-                        DropdownMenuItem(value: 'non_veg', child: Text('Non-Veg')),
+                        DropdownMenuItem(
+                            value: 'non_veg', child: Text('Non-Veg')),
                       ],
-                      onChanged: (value) => setState(() => _foodType = value ?? 'veg'),
+                      onChanged: (value) =>
+                          setState(() => _foodType = value ?? 'veg'),
                     ),
                     if (widget.cuisines.isNotEmpty) ...[
                       const SizedBox(height: 14),
@@ -2155,9 +2403,34 @@ class _MenuItemFormScreenState extends State<_MenuItemFormScreen> {
                             ),
                           ),
                         ],
-                        onChanged: (value) => setState(() => _cuisineId = value),
+                        onChanged: (value) =>
+                            setState(() => _cuisineId = value),
                       ),
                     ],
+                    const SizedBox(height: 18),
+                    _sectionTitle('Variants & Add-ons'),
+                    const SizedBox(height: 10),
+                    _MenuOptionEditor(
+                      controller: _variantsController,
+                      label: 'Variants (Size / Quantity)',
+                      addButtonLabel: 'Add Variant',
+                      placeholder: 'Medium / 500g',
+                      helpText:
+                          'Customers must choose one available variant when variants are configured.',
+                      emptyText:
+                          'No variants added. Add sizes, weights, portions, or quantity choices.',
+                    ),
+                    const SizedBox(height: 12),
+                    _MenuOptionEditor(
+                      controller: _addOnsController,
+                      label: 'Add-ons / Extras',
+                      addButtonLabel: 'Add Extra',
+                      placeholder: 'Extra cheese',
+                      helpText:
+                          'Customers can select multiple available extras during add-to-cart.',
+                      emptyText:
+                          'No extras added. Add toppings, sides, sauces, or paid extras.',
+                    ),
                   ],
                 ),
               ),
@@ -2237,7 +2510,8 @@ class _MenuItemFormScreenState extends State<_MenuItemFormScreen> {
               borderRadius: BorderRadius.circular(10),
               child: Container(
                 width: double.infinity,
-                padding: const EdgeInsets.symmetric(vertical: 26, horizontal: 12),
+                padding:
+                    const EdgeInsets.symmetric(vertical: 26, horizontal: 12),
                 decoration: BoxDecoration(
                   color: const Color(0xFFFAF7FF),
                   borderRadius: BorderRadius.circular(10),
@@ -2248,7 +2522,8 @@ class _MenuItemFormScreenState extends State<_MenuItemFormScreen> {
                 ),
                 child: const Column(
                   children: [
-                    Icon(Icons.image_outlined, color: Color(0xFF6D35E8), size: 32),
+                    Icon(Icons.image_outlined,
+                        color: Color(0xFF6D35E8), size: 32),
                     SizedBox(height: 10),
                     Text(
                       'Upload Menu Image',
@@ -2259,7 +2534,7 @@ class _MenuItemFormScreenState extends State<_MenuItemFormScreen> {
                     ),
                     SizedBox(height: 4),
                     Text(
-                      'Tap to upload multiple images',
+                      'Tap to upload an image',
                       style: TextStyle(color: Color(0xFF65708A), fontSize: 12),
                     ),
                     SizedBox(height: 2),
@@ -2274,16 +2549,6 @@ class _MenuItemFormScreenState extends State<_MenuItemFormScreen> {
           else ...[
             ..._existingImages.map((image) => _existingImageTile(image)),
             ..._newImages.map((image) => _newImageTile(image)),
-            const SizedBox(height: 8),
-            OutlinedButton.icon(
-              onPressed: _pickImages,
-              icon: const Icon(Icons.image_outlined, size: 18),
-              label: const Text('Add more images'),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: const Color(0xFF5B21E8),
-                side: const BorderSide(color: Color(0xFFB8A5FF)),
-              ),
-            ),
           ],
         ],
       ),
@@ -2356,10 +2621,13 @@ class _MenuItemFormScreenState extends State<_MenuItemFormScreen> {
                 const SizedBox(height: 4),
                 Text(
                   subtitle,
-                  style: const TextStyle(color: Color(0xFF65708A), fontSize: 12),
+                  style:
+                      const TextStyle(color: Color(0xFF65708A), fontSize: 12),
                 ),
                 const SizedBox(height: 10),
-                Row(
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
                   children: [
                     OutlinedButton.icon(
                       onPressed: _pickImages,
@@ -2368,16 +2636,18 @@ class _MenuItemFormScreenState extends State<_MenuItemFormScreen> {
                       style: OutlinedButton.styleFrom(
                         foregroundColor: const Color(0xFF5B21E8),
                         side: const BorderSide(color: Color(0xFFB8A5FF)),
+                        visualDensity: VisualDensity.compact,
                       ),
                     ),
-                    const SizedBox(width: 8),
                     OutlinedButton.icon(
                       onPressed: onRemove,
                       icon: const Icon(Icons.delete_outline, size: 16),
                       label: const Text('Remove'),
                       style: OutlinedButton.styleFrom(
                         foregroundColor: FoodFlowTheme.danger,
-                        side: BorderSide(color: FoodFlowTheme.danger.withOpacity(0.35)),
+                        side: BorderSide(
+                            color: FoodFlowTheme.danger.withOpacity(0.35)),
+                        visualDensity: VisualDensity.compact,
                       ),
                     ),
                   ],
@@ -2696,7 +2966,8 @@ class _MenuOptionEditorState extends State<_MenuOptionEditor> {
               final option = _options[index];
 
               return Container(
-                margin: EdgeInsets.only(bottom: index == _options.length - 1 ? 0 : 10),
+                margin: EdgeInsets.only(
+                    bottom: index == _options.length - 1 ? 0 : 10),
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
                   color: Colors.white,
@@ -2746,7 +3017,8 @@ class _MenuOptionEditorState extends State<_MenuOptionEditor> {
                         IconButton(
                           tooltip: 'Remove option',
                           onPressed: () => _removeOption(index),
-                          icon: const Icon(Icons.close, color: FoodFlowTheme.danger),
+                          icon: const Icon(Icons.close,
+                              color: FoodFlowTheme.danger),
                         ),
                       ],
                     ),
@@ -2816,7 +3088,8 @@ class _EditableMenuOption {
             price: parts.length > 1 ? parts[1] : '0',
             isAvailable: parts.length < 3 ||
                 !['no', 'false', '0', 'off'].contains(parts[2].toLowerCase()),
-            customFieldsText: parts.length > 3 ? parts.sublist(3).join(' | ') : '',
+            customFieldsText:
+                parts.length > 3 ? parts.sublist(3).join(' | ') : '',
           );
         })
         .where((option) => option.name.trim().isNotEmpty)
@@ -3224,8 +3497,9 @@ class _ToolbarIconButton extends StatelessWidget {
       onPressed: onPressed,
       icon: Icon(icon),
       style: IconButton.styleFrom(
-        backgroundColor:
-            isActive ? FoodFlowTheme.orange : FoodFlowTheme.orange.withOpacity(0.08),
+        backgroundColor: isActive
+            ? FoodFlowTheme.orange
+            : FoodFlowTheme.orange.withOpacity(0.08),
         foregroundColor: isActive ? Colors.white : FoodFlowTheme.orange,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       ),

@@ -80,7 +80,9 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
     if (confirmed != true) return;
 
     try {
-      final response = await _api.delete('${ApiConstants.restaurantStaff}/$id');
+      final response = await _api.post(
+        '${ApiConstants.restaurantStaff}/$id/delete',
+      );
       if (response['success'] == true) await _loadStaff();
     } catch (e) {
       debugPrint('Delete staff error: $e');
@@ -126,7 +128,7 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
     try {
       final response = id == null
           ? await _api.post(ApiConstants.restaurantStaff, data: data)
-          : await _api.put('${ApiConstants.restaurantStaff}/$id', data: data);
+          : await _api.post('${ApiConstants.restaurantStaff}/$id', data: data);
       if (response['success'] == true) {
         await _loadStaff();
         if (!mounted) return;
@@ -424,7 +426,8 @@ class _StaffEditorScreenState extends State<_StaffEditorScreen> {
             padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
             children: [
               PremiumRestaurantHeader(
-                title: _isCreating ? 'Create Staff Login' : 'Update Staff Access',
+                title:
+                    _isCreating ? 'Create Staff Login' : 'Update Staff Access',
                 subtitle: _isCreating
                     ? 'Add a staff account without cramped modal forms.'
                     : 'Adjust permissions, contact details, and password safely.',
@@ -441,13 +444,15 @@ class _StaffEditorScreenState extends State<_StaffEditorScreen> {
               ),
               const SizedBox(height: 12),
               DropdownButtonFormField<String>(
-                value: widget.roles.contains(_role) ? _role : widget.roles.first,
+                value:
+                    widget.roles.contains(_role) ? _role : widget.roles.first,
                 decoration: const InputDecoration(
                   labelText: 'Role',
                   prefixIcon: Icon(Icons.badge_outlined),
                 ),
                 items: widget.roles
-                    .map((item) => DropdownMenuItem(value: item, child: Text(item)))
+                    .map((item) =>
+                        DropdownMenuItem(value: item, child: Text(item)))
                     .toList(),
                 onChanged: (value) => setState(() => _role = value!),
               ),
@@ -514,7 +519,8 @@ class _StaffEditorScreenState extends State<_StaffEditorScreen> {
                   final confirmText = value?.trim() ?? '';
                   if (passwordText.isEmpty && !_isCreating) return null;
                   if (confirmText.isEmpty) return 'Confirm the password';
-                  if (passwordText != confirmText) return 'Passwords do not match';
+                  if (passwordText != confirmText)
+                    return 'Passwords do not match';
                   return null;
                 },
               ),
@@ -566,7 +572,8 @@ class _StaffEditorScreenState extends State<_StaffEditorScreen> {
                 value: _canMenu,
                 onChanged: (value) => setState(() => _canMenu = value),
                 title: const Text('Menu updates'),
-                subtitle: const Text('Manage dishes, categories, and availability'),
+                subtitle:
+                    const Text('Manage dishes, categories, and availability'),
                 activeColor: FoodFlowTheme.orange,
                 contentPadding: EdgeInsets.zero,
               ),
@@ -590,7 +597,8 @@ class _StaffEditorScreenState extends State<_StaffEditorScreen> {
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
                       : const Icon(Icons.save_outlined),
-                  label: Text(_isCreating ? 'Create Staff Account' : 'Save Changes'),
+                  label: Text(
+                      _isCreating ? 'Create Staff Account' : 'Save Changes'),
                 ),
               ),
             ],

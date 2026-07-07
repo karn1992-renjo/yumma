@@ -5,7 +5,7 @@ import 'dart:io';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
-import 'package:flutter/foundation.dart'; 
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 import '../config/api_constants.dart';
@@ -25,7 +25,8 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
       message.data,
     );
     if (FirebaseNotificationService.isCustomerOrderStatusPayload(data)) {
-      await FirebaseNotificationService.showCustomerOrderStatusNotificationFromMessage(
+      await FirebaseNotificationService
+          .showCustomerOrderStatusNotificationFromMessage(
         message,
       );
     }
@@ -92,6 +93,11 @@ class FirebaseNotificationService {
 
     debugPrint('FCM permission status: ${settings.authorizationStatus}');
 
+    _messaging.onTokenRefresh.listen((token) {
+      _deviceToken = token;
+      registerDeviceToken();
+    });
+
     _deviceToken = await _resolveDeviceToken();
     debugPrint('FCM device token: $_deviceToken');
 
@@ -126,13 +132,14 @@ class FirebaseNotificationService {
       _presentOrderFromData(_safeDataMap(initialMessage.data));
     }
 
-    _messaging.onTokenRefresh.listen((token) {
-      _deviceToken = token;
-      registerDeviceToken();
-    });
-
     _isInitialized = true;
     await registerDeviceToken();
+    if (_deviceToken == null && !kIsWeb && Platform.isIOS) {
+      unawaited(Future<void>.delayed(
+        const Duration(seconds: 3),
+        registerDeviceToken,
+      ));
+    }
   }
 
   @pragma('vm:entry-point')
@@ -283,8 +290,9 @@ class FirebaseNotificationService {
     if (imageUrl == null || imageUrl.isEmpty) return null;
 
     try {
-      final response =
-          await http.get(Uri.parse(imageUrl)).timeout(const Duration(seconds: 4));
+      final response = await http
+          .get(Uri.parse(imageUrl))
+          .timeout(const Duration(seconds: 4));
       if (response.statusCode < 200 || response.statusCode >= 300) {
         return null;
       }
@@ -311,7 +319,8 @@ class FirebaseNotificationService {
         if (apnsToken?.isNotEmpty == true) return _messaging.getToken();
         await Future<void>.delayed(const Duration(milliseconds: 500));
       }
-      debugPrint('FCM token unavailable because APNs registration did not complete.');
+      debugPrint(
+          'FCM token unavailable because APNs registration did not complete.');
       return null;
     }
     return _messaging.getToken();
@@ -507,10 +516,11 @@ class FirebaseNotificationService {
     final normalized = _normalizeOrderData(data);
     final type = normalized['type']?.toString().toLowerCase() ?? '';
     final role = normalized['role']?.toString().toLowerCase() ?? '';
-    final hasOrderId = normalized.containsKey('order_id') ||
-        normalized.containsKey('id');
+    final hasOrderId =
+        normalized.containsKey('order_id') || normalized.containsKey('id');
 
-    return hasOrderId && (role == 'customer' || type == 'customer_order_status');
+    return hasOrderId &&
+        (role == 'customer' || type == 'customer_order_status');
   }
 
   static bool _isForeignOrderData(Map<String, dynamic> data) {

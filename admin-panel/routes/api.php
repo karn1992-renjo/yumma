@@ -266,6 +266,8 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/global-categories', [RestaurantMenuController::class, 'globalCategories'])->middleware('restaurant.permission:view_menu_items,manage_menu');
         Route::post('/menu', [RestaurantMenuController::class, 'store'])->middleware('restaurant.permission:manage_menu');
         Route::post('/menu/from-global', [RestaurantMenuController::class, 'importFromGlobal'])->middleware('restaurant.permission:manage_menu');
+        Route::post('/menu/adjust-prices', [RestaurantMenuController::class, 'adjustPrices'])->middleware('restaurant.permission:manage_menu');
+        Route::post('/menu/{id}/delete', [RestaurantMenuController::class, 'destroy'])->middleware('restaurant.permission:manage_menu');
         Route::post('/menu/{id}', [RestaurantMenuController::class, 'update'])->middleware('restaurant.permission:manage_menu');
         Route::put('/menu/{id}', [RestaurantMenuController::class, 'update'])->middleware('restaurant.permission:manage_menu');
         Route::delete('/menu/{id}', [RestaurantMenuController::class, 'destroy'])->middleware('restaurant.permission:manage_menu');
@@ -281,14 +283,17 @@ Route::middleware('auth:sanctum')->group(function () {
         // Staff Management
         Route::get('/staff', [RestaurantController::class, 'getStaff'])->middleware('role:restaurant_owner');
         Route::post('/staff', [RestaurantController::class, 'createStaff'])->middleware('role:restaurant_owner');
+        Route::post('/staff/{id}', [RestaurantController::class, 'updateStaff'])->middleware('role:restaurant_owner');
         Route::put('/staff/{id}', [RestaurantController::class, 'updateStaff'])->middleware('role:restaurant_owner');
         Route::post('/staff/{id}/toggle', [RestaurantController::class, 'toggleStaff'])->middleware('role:restaurant_owner');
+        Route::post('/staff/{id}/delete', [RestaurantController::class, 'deleteStaff'])->middleware('role:restaurant_owner');
         Route::delete('/staff/{id}', [RestaurantController::class, 'deleteStaff'])->middleware('role:restaurant_owner');
 
         // Promotions
         Route::get('/promos', [RestaurantController::class, 'getPromos'])->middleware('role:restaurant_owner');
         Route::post('/promos', [RestaurantController::class, 'createPromo'])->middleware('role:restaurant_owner');
         Route::post('/promos/{id}/toggle', [RestaurantController::class, 'togglePromo'])->middleware('role:restaurant_owner');
+        Route::post('/promos/{id}/delete', [RestaurantController::class, 'deletePromo'])->middleware('role:restaurant_owner');
         Route::delete('/promos/{id}', [RestaurantController::class, 'deletePromo'])->middleware('role:restaurant_owner');
 
         // Printers

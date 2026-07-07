@@ -3,6 +3,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_easyloading/flutter_easyloading.dart';
@@ -226,9 +227,9 @@ class _FoodDeliveryAppState extends State<FoodDeliveryApp> {
         primaryColor: primary,
         scaffoldBackgroundColor: FoodFlowTheme.canvas,
         visualDensity: VisualDensity.adaptivePlatformDensity,
-        fontFamily: 'Poppins',
+        fontFamily: GoogleFonts.nunitoSans().fontFamily,
         useMaterial3: true,
-        textTheme: const TextTheme(
+        textTheme: GoogleFonts.nunitoSansTextTheme().copyWith(
           displayLarge: TextStyle(
             fontSize: 30,
             fontWeight: FontWeight.w800,
@@ -299,6 +300,28 @@ class _FoodDeliveryAppState extends State<FoodDeliveryApp> {
             fontSize: 18,
             fontWeight: FontWeight.w900,
           ),
+        ),
+        dialogTheme: DialogThemeData(
+          backgroundColor: Colors.white,
+          surfaceTintColor: Colors.transparent,
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+          titleTextStyle: const TextStyle(
+              color: FoodFlowTheme.ink,
+              fontSize: 18,
+              fontWeight: FontWeight.w800),
+          contentTextStyle: const TextStyle(
+              color: FoodFlowTheme.muted,
+              fontSize: 14,
+              fontWeight: FontWeight.w500),
+        ),
+        bottomSheetTheme: const BottomSheetThemeData(
+          backgroundColor: Colors.white,
+          modalBackgroundColor: Colors.white,
+          surfaceTintColor: Colors.transparent,
+          showDragHandle: true,
+          shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
         ),
         tabBarTheme: TabBarThemeData(
           labelColor: primary,
@@ -420,12 +443,6 @@ class _FoodDeliveryAppState extends State<FoodDeliveryApp> {
             borderRadius: BorderRadius.circular(10),
           ),
         ),
-        bottomSheetTheme: const BottomSheetThemeData(
-          backgroundColor: Colors.white,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-          ),
-        ),
         floatingActionButtonTheme: FloatingActionButtonThemeData(
           backgroundColor: primary,
           foregroundColor: Colors.white,
@@ -489,7 +506,7 @@ class _FoodDeliveryAppState extends State<FoodDeliveryApp> {
         final orderId = _parseOrderId(
           settings.arguments is Map
               ? (settings.arguments as Map)['orderId'] ??
-                    (settings.arguments as Map)['id']
+                  (settings.arguments as Map)['id']
               : settings.arguments,
         );
         if (orderId == null) {

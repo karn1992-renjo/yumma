@@ -10,6 +10,9 @@
 include: package:flutter_lints/flutter.yaml
 
 analyzer:
+  exclude:
+    # This is a separate Flutter package with its own pubspec/package config.
+    - driver/**
   errors:
     avoid_print: ignore
     curly_braces_in_flow_control_structures: ignore
