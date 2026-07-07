@@ -52,9 +52,10 @@ class AdvancedSearchService
             ->get();
 
         $grouped = $rows->groupBy('entity_type');
+        $foodRows = $grouped->get('menu_item', collect())->take($limit);
         $response = [
             'restaurants' => $this->serialize($grouped->get('restaurant', collect())->take($limit)),
-            'foods' => $this->serialize($grouped->get('menu_item', collect())->take($limit)),
+            'foods' => $this->serializeMenuItems($foodRows),
             'offers' => $this->serialize($grouped->get('offer', collect())->take($limit)),
             'categories' => $this->serialize($grouped->get('category', collect())->merge($grouped->get('cuisine', collect()))->take($limit)),
             'brands' => $this->serialize($grouped->get('brand', collect())->take($limit)),
@@ -308,6 +309,54 @@ class AdvancedSearchService
             'score' => round((float) ($row->final_score ?? $row->search_score), 2),
             'tags' => $row->tags ?? [],
         ])->values()->all();
+    }
+
+    private function serializeMenuItems(Collection $rows): array
+    {
+        $items = MenuItem::query()
+            ->with(['category:id,name', 'cuisine:id,name'])
+            ->whereKey($rows->pluck('entity_id')->filter())
+            ->get()
+            ->keyBy('id');
+
+        return $rows->map(function (SearchIndex $row) use ($items) {
+            $result = $this->serialize(collect([$row]))[0];
+            /** @var MenuItem|null $item */
+            $item = $items->get($row->entity_id);
+
+            if (!$item) {
+                return $result;
+            }
+
+            return array_merge($result, [
+                'name' => $item->name,
+                'price' => (float) $item->price,
+                'discounted_price' => $item->discounted_price !== null
+                    ? (float) $item->discounted_price
+                    : null,
+                'images' => $item->images ?? [],
+                'image_url' => $item->image_url,
+                'is_veg' => (bool) $item->is_veg,
+                'food_type' => $item->food_type,
+                'diet_label' => $item->diet_label,
+                'is_available' => (bool) $item->is_available,
+                'preparation_time' => $item->preparation_time,
+                'total_orders' => (int) ($item->total_orders ?? 0),
+                'rating' => $item->rating !== null ? (float) $item->rating : null,
+                'category_id' => $item->category_id,
+                'category_name' => $item->category?->name,
+                'cuisine_id' => $item->cuisine_id,
+                'cuisine_name' => $item->cuisine?->name,
+                'is_recommended' => (bool) $item->is_recommended,
+                'is_bestseller' => (bool) $item->is_bestseller,
+                'is_new' => (bool) $item->is_new,
+                'is_spicy' => (bool) $item->is_spicy,
+                'is_combo' => (bool) $item->is_combo,
+                'variants' => $item->variants ?? [],
+                'add_ons' => $item->add_ons ?? [],
+                'created_at' => optional($item->created_at)->toIso8601String(),
+            ]);
+        })->values()->all();
     }
 
     private function correctKeyword(string $keyword): string

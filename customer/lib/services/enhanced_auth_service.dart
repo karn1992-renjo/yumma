@@ -251,7 +251,7 @@ class EnhancedAuthService {
 
   Future<void> logout() async {
     try {
-      await _api.post(ApiConstants.logout);
+      await _api.post(ApiConstants.logout, data: const {'target_app': 'customer'});
     } catch (e) {
       // Ignore logout errors
     } finally {

@@ -321,8 +321,12 @@ class OrderChatController extends Controller
 
         foreach ($targets as $user) {
             try {
+                $targetRole = (int) $user->id === (int) $order->customer_id
+                    ? 'customer'
+                    : ((int) $user->id === (int) $order->driver_id ? 'driver' : 'restaurant');
                 $payload = [
                     'type' => 'order_chat_message',
+                    'role' => $targetRole,
                     'deep_link' => '/orders/' . $order->id . '/chat',
                     'order_id' => $order->id,
                     'order_number' => $order->order_number,
@@ -338,9 +342,10 @@ class OrderChatController extends Controller
                     $payload
                 ));
 
-                if (! empty($user->fcm_token)) {
+                $token = $user->fcmTokenForApp($targetRole);
+                if (filled($token)) {
                     (new FirebaseHelper())->sendToDevice(
-                        $user->fcm_token,
+                        $token,
                         'New order chat message',
                         $senderLabel . ': ' . $preview,
                         $payload

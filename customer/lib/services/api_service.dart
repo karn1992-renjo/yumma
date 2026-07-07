@@ -233,9 +233,16 @@ class ApiService {
     }
   }
 
-  Future<dynamic> delete(String endpoint) async {
+  Future<dynamic> delete(
+    String endpoint, {
+    Map<String, dynamic>? queryParams,
+  }) async {
     try {
-      final uri = Uri.parse('${AppConfig.apiBaseUrl}$endpoint');
+      final uri = Uri.parse('${AppConfig.apiBaseUrl}$endpoint').replace(
+        queryParameters: queryParams?.map(
+          (key, value) => MapEntry(key, value.toString()),
+        ),
+      );
 
       final response = await http.delete(
         uri,

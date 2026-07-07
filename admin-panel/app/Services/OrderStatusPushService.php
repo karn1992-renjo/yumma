@@ -30,7 +30,7 @@ class OrderStatusPushService
         $message ??= $this->messageFor($order);
         // Store the notification immediately so the customer notification feed
         // does not depend on a queue worker being available.
-        $customer->notifyNow(new OrderStatusNotification($order, $message));
+        $customer->notifyNow(new OrderStatusNotification($order, $message, 'customer'));
 
         try {
             broadcast(new CustomerOrderStatusUpdatedEvent($order));
@@ -99,7 +99,7 @@ class OrderStatusPushService
         $title = "Order #{$orderNumber} {$statusLabel}";
         $message ??= "Order #{$orderNumber} status changed to {$statusLabel}.";
         $this->restaurantUsers($order)
-            ->each(fn ($user) => $user->notifyNow(new OrderStatusNotification($order, $message)));
+            ->each(fn ($user) => $user->notifyNow(new OrderStatusNotification($order, $message, 'restaurant')));
 
         return $this->firebase->sendToDevices(
             $tokens,
@@ -122,7 +122,7 @@ class OrderStatusPushService
         $statusLabel = ucwords(str_replace('_', ' ', (string) $order->status));
         $title = "Order #{$orderNumber} {$statusLabel}";
         $message ??= "Order #{$orderNumber} status changed to {$statusLabel}.";
-        $driver->notifyNow(new OrderStatusNotification($order, $message));
+        $driver->notifyNow(new OrderStatusNotification($order, $message, 'driver'));
 
         $token = $driver->fcmTokenForApp('driver');
 

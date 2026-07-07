@@ -171,7 +171,12 @@ class WebSocketService {
         } catch (e, stackTrace) {
           debugPrint('Pusher authorizer failed for $channelName: $e');
           debugPrintStack(stackTrace: stackTrace);
-          rethrow;
+          // pusher_channels_flutter 2.4.0 force-casts every non-null iOS
+          // authorizer result to [String: String]. If this exception crosses the
+          // method channel, Flutter returns a FlutterError object and the plugin
+          // aborts while casting it. A null result is explicitly handled by the
+          // native plugin as an authorization failure.
+          return null;
         }
       },
     );

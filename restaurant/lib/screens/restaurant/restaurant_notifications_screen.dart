@@ -30,7 +30,10 @@ class _RestaurantNotificationsScreenState
   Future<void> _loadNotifications() async {
     setState(() => _isLoading = true);
     try {
-      final response = await _api.get(ApiConstants.notifications);
+      final response = await _api.get(
+        ApiConstants.notifications,
+        queryParams: const {'target_app': 'restaurant'},
+      );
       if (response['success'] == true) {
         final data = response['data'] as Map<String, dynamic>? ?? {};
         setState(() {
@@ -44,7 +47,10 @@ class _RestaurantNotificationsScreenState
   }
 
   Future<void> _markAllRead() async {
-    await _api.post(ApiConstants.notificationsRead);
+    await _api.post(
+      ApiConstants.notificationsRead,
+      data: const {'target_app': 'restaurant'},
+    );
     await _loadNotifications();
   }
 
@@ -70,7 +76,10 @@ class _RestaurantNotificationsScreenState
 
     setState(() => _isClearing = true);
     try {
-      await _api.delete(ApiConstants.notifications);
+      await _api.delete(
+        ApiConstants.notifications,
+        queryParams: const {'target_app': 'restaurant'},
+      );
       if (!mounted) return;
       setState(() {
         _notifications = [];
@@ -92,7 +101,10 @@ class _RestaurantNotificationsScreenState
   Future<void> _openNotification(Map<String, dynamic> notification) async {
     final id = notification['id']?.toString();
     if (id != null && id.isNotEmpty) {
-      await _api.post('${ApiConstants.notifications}/$id/read');
+      await _api.post(
+        '${ApiConstants.notifications}/$id/read',
+        data: const {'target_app': 'restaurant'},
+      );
     }
     final data = notification['data'];
     final orderId = data is Map

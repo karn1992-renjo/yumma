@@ -28,7 +28,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     try {
       final response = await _api.get(
         ApiConstants.notifications,
-        queryParams: const {'limit': 100},
+        queryParams: const {'limit': 100, 'target_app': 'customer'},
       );
       final payload = response['data'];
       final items = payload is Map ? payload['notifications'] as List? : null;
@@ -41,7 +41,10 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
         _loading = false;
       });
       if (_notifications.any((item) => item['read_at'] == null)) {
-        await _api.post(ApiConstants.markNotificationsRead, data: const {});
+        await _api.post(
+          ApiConstants.markNotificationsRead,
+          data: const {'target_app': 'customer'},
+        );
         if (!mounted) return;
         setState(() {
           _notifications = _notifications
@@ -96,7 +99,10 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
 
     setState(() => _clearing = true);
     try {
-      await _api.delete(ApiConstants.notifications);
+      await _api.delete(
+        ApiConstants.notifications,
+        queryParams: const {'target_app': 'customer'},
+      );
       if (!mounted) return;
       setState(() => _notifications = const []);
       ScaffoldMessenger.of(context).showSnackBar(

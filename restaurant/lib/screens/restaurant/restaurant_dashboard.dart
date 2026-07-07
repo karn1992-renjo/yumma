@@ -194,7 +194,7 @@ class _RestaurantDashboardState extends State<RestaurantDashboard> {
     try {
       final response = await _api.get(
         ApiConstants.notifications,
-        queryParams: const {'limit': '1'},
+        queryParams: const {'limit': '1', 'target_app': 'restaurant'},
       );
       if (!mounted || response['success'] != true) return;
       final data = response['data'] as Map<String, dynamic>? ?? {};

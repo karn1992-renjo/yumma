@@ -12,11 +12,13 @@ class OrderStatusNotification extends Notification implements ShouldQueue
     
     protected $order;
     protected $message;
+    protected string $role;
     
-    public function __construct($order, $message)
+    public function __construct($order, $message, string $role = 'customer')
     {
         $this->order = $order;
         $this->message = $message;
+        $this->role = $role;
     }
     
     public function via($notifiable)
@@ -32,13 +34,18 @@ class OrderStatusNotification extends Notification implements ShouldQueue
 
         return [
             'type' => 'order_status_updated',
+            'role' => $this->role,
             'title' => 'Order ' . $statusLabel,
             'body' => $this->message,
             'order_id' => $this->order->id,
             'order_number' => $this->order->order_number,
             'status' => $this->order->status,
             'message' => $this->message,
-            'deep_link' => '/order/track',
+            'deep_link' => match ($this->role) {
+                'restaurant' => '/restaurant/order',
+                'driver' => '/driver/order',
+                default => '/order/track',
+            },
         ];
     }
 }

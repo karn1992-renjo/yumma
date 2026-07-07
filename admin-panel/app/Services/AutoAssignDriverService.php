@@ -129,6 +129,10 @@ class AutoAssignDriverService
     {
         $order->refresh();
 
+        if (! $order->isVisibleToRestaurant()) {
+            return null;
+        }
+
         if (!in_array($order->status, ['confirmed', 'preparing', 'ready_for_pickup'], true)) {
             return null;
         }
@@ -411,6 +415,7 @@ class AutoAssignDriverService
     public function retryPendingAssignments(int $limit = 50): int
     {
         $orders = Order::whereIn('status', ['confirmed', 'preparing', 'ready_for_pickup'])
+            ->visibleToRestaurant()
             ->where(function ($query) {
                 $query->whereNull('driver_id')
                     ->orWhere(function ($nested) {

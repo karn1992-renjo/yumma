@@ -1088,7 +1088,7 @@ class _CustomerHomeFeedState extends State<_CustomerHomeFeed> {
     try {
       final response = await _api.get(
         ApiConstants.notifications,
-        queryParams: const {'limit': 1},
+        queryParams: const {'limit': 1, 'target_app': 'customer'},
       );
       final data = response['data'];
       if (!mounted || data is! Map) return;

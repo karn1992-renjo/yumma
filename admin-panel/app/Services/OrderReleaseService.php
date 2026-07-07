@@ -23,9 +23,7 @@ class OrderReleaseService
             return true;
         }
 
-        $method = strtolower((string) ($order->delivery_payment_mode ?: $order->payment_method));
-
-        return in_array($method, ['cod', 'cash', 'cash_on_delivery'], true);
+        return $order->isCashOnDelivery();
     }
 
     public function releaseToRestaurant(Order $order): bool

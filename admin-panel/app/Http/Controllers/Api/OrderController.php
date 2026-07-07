@@ -286,6 +286,9 @@ class OrderController extends Controller
                 'discount' => $discount,
                 'total' => $total,
                 'payment_method' => $request->payment_method,
+                'delivery_payment_mode' => $request->payment_method === 'cod'
+                    ? 'cod'
+                    : 'online',
                 'payment_status' => 'pending',
                 'status' => 'pending',
                 'customer_name' => $customerName,

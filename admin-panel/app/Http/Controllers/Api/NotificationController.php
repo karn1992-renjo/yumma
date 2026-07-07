@@ -9,14 +9,16 @@ class NotificationController extends Controller
 {
     public function index(Request $request)
     {
+        $targetApp = $this->targetApp($request);
         $limit = min(max((int) $request->query('limit', 30), 1), 100);
         $user = $request->user();
+        $notifications = $this->notificationsFor($request, $targetApp);
 
         return response()->json([
             'success' => true,
             'data' => [
-                'unread_count' => $user->unreadNotifications()->count(),
-                'notifications' => $user->notifications()
+                'unread_count' => (clone $notifications)->whereNull('read_at')->count(),
+                'notifications' => $notifications
                     ->latest()
                     ->limit($limit)
                     ->get()
@@ -34,7 +36,8 @@ class NotificationController extends Controller
 
     public function markRead(Request $request, ?string $id = null)
     {
-        $query = $request->user()->unreadNotifications();
+        $query = $this->notificationsFor($request, $this->targetApp($request))
+            ->whereNull('read_at');
 
         if ($id) {
             $query->whereKey($id);
@@ -50,11 +53,29 @@ class NotificationController extends Controller
 
     public function clear(Request $request)
     {
-        $request->user()->notifications()->delete();
+        $this->notificationsFor($request, $this->targetApp($request))->delete();
 
         return response()->json([
             'success' => true,
             'message' => 'Notifications cleared.',
         ]);
+    }
+
+    private function targetApp(Request $request): string
+    {
+        return $request->validate([
+            'target_app' => ['required', 'in:customer,restaurant,driver'],
+        ])['target_app'];
+    }
+
+    private function notificationsFor(Request $request, string $targetApp)
+    {
+        return $request->user()->notifications()
+            ->where(function ($query) use ($targetApp) {
+                $query->where('data->role', $targetApp)
+                    ->orWhere('data->target_app', $targetApp)
+                    ->orWhere('data->requester_role', $targetApp);
+
+            });
     }
 }

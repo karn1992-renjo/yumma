@@ -794,6 +794,13 @@ class AuthController extends Controller
     
     public function logout(Request $request)
     {
+        $validated = $request->validate([
+            'target_app' => ['nullable', 'in:customer,restaurant,driver'],
+        ]);
+        $targetApp = $validated['target_app'] ?? null;
+        if ($targetApp) {
+            $request->user()->update([$targetApp . '_fcm_token' => null]);
+        }
         $request->user()->currentAccessToken()->delete();
         
         return response()->json([
@@ -1541,7 +1548,7 @@ class AuthController extends Controller
     {
         $request->validate([
             'fcm_token' => 'required|string',
-            'target_app' => 'nullable|in:customer,restaurant,driver',
+            'target_app' => 'required|in:customer,restaurant,driver',
             'role' => 'nullable|string',
         ]);
 
@@ -1549,10 +1556,19 @@ class AuthController extends Controller
         $targetApp = $request->input('target_app')
             ?: $this->targetAppForRole($request->input('role'));
 
-        $updates = ['fcm_token' => $request->fcm_token];
-        if ($targetApp) {
-            $updates[$targetApp . '_fcm_token'] = $request->fcm_token;
+        $token = (string) $request->fcm_token;
+
+        // An FCM registration token identifies one app installation. Remove a
+        // previous account/app association before assigning it so a signed-out
+        // user cannot keep receiving the next user's private notifications.
+        foreach (['fcm_token', 'customer_fcm_token', 'restaurant_fcm_token', 'driver_fcm_token'] as $column) {
+            User::query()->where($column, $token)->update([$column => null]);
         }
+
+        $updates = [
+            'fcm_token' => null,
+            $targetApp . '_fcm_token' => $token,
+        ];
 
         $user->update($updates);
 

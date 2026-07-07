@@ -613,9 +613,19 @@ class Order extends Model
             return true;
         }
 
-        $method = strtolower((string) ($this->delivery_payment_mode ?: $this->payment_method));
+        return $this->isCashOnDelivery();
+    }
 
-        return in_array($method, ['cod', 'cash', 'cash_on_delivery'], true);
+    public function isCashOnDelivery(): bool
+    {
+        $paymentMethod = strtolower(trim((string) $this->payment_method));
+        if ($paymentMethod !== '') {
+            return in_array($paymentMethod, ['cod', 'cash', 'cash_on_delivery'], true);
+        }
+
+        $legacyDeliveryMode = strtolower(trim((string) $this->delivery_payment_mode));
+
+        return in_array($legacyDeliveryMode, ['cod', 'cash', 'cash_on_delivery'], true);
     }
 
     public function scopeVisibleToRestaurant($query)
@@ -623,7 +633,12 @@ class Order extends Model
         return $query->where(function ($builder) {
             $builder->where('payment_status', 'success')
                 ->orWhereIn('payment_method', ['cod', 'cash', 'cash_on_delivery'])
-                ->orWhereIn('delivery_payment_mode', ['cod', 'cash', 'cash_on_delivery']);
+                ->orWhere(function ($legacy) {
+                    $legacy->where(function ($missingMethod) {
+                        $missingMethod->whereNull('payment_method')
+                            ->orWhere('payment_method', '');
+                    })->whereIn('delivery_payment_mode', ['cod', 'cash', 'cash_on_delivery']);
+                });
         });
     }
     
