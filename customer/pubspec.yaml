@@ -3,12 +3,13 @@ description: A complete food delivery application with customer, restaurant, and
 
 publish_to: 'none'
 
-version: 2.3.0+19
+version: 2.4.8+29
 
 environment:
   sdk: '>=3.0.0 <4.0.0'
 
 dependencies:
+  sendotp_flutter_sdk: ^0.0.2
   flutter:
     sdk: flutter
   
@@ -43,6 +44,7 @@ dependencies:
   # Storage
   sqflite: ^2.3.0
   path_provider: ^2.1.1
+  package_info_plus: ^9.0.1
   
   # Notifications
   flutter_local_notifications: ^21.0.0
@@ -86,7 +88,7 @@ dependencies:
   firebase_analytics: ^12.4.1
   firebase_auth: ^6.5.1
   firebase_core: ^4.9.0
-  google_sign_in: ^6.2.2
+  google_sign_in: ^7.2.0
   sign_in_with_apple: ^6.1.4
   crypto: ^3.0.3
   sms_autofill: ^2.2.0
