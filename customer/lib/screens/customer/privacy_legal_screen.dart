@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_lucide/flutter_lucide.dart';
+
 import '../../config/api_constants.dart';
 import '../../services/api_service.dart';
 import '../../theme/foodflow_theme.dart';
-import '../../widgets/customer/account_chrome.dart';
+import '../../widgets/customer/profile_screen_chrome.dart';
 
 class PrivacyLegalScreen extends StatefulWidget {
   const PrivacyLegalScreen({super.key});
@@ -69,99 +71,222 @@ class _PrivacyLegalScreenState extends State<PrivacyLegalScreen> {
     final sections = [
       (
         'Terms of Service',
-        _legalText('terms')
+        _legalText('terms'),
+        LucideIcons.file_text,
       ),
       (
         'Privacy Policy',
-        _legalText('privacy')
+        _legalText('privacy'),
+        LucideIcons.shield_check,
       ),
       (
         'Refund Policy',
-        _legalText('refund')
+        _legalText('refund'),
+        LucideIcons.receipt_text,
       ),
       (
         'Data & Support',
-        'Legal contact: ${_legalText('contact_email')}'
+        'Legal contact: ${_legalText('contact_email')}',
+        LucideIcons.headset,
       ),
     ];
 
     return Scaffold(
-      backgroundColor: accountCanvas,
-      appBar: AppBar(
-        title: const Text('Privacy & Legal'),
-        backgroundColor: accountCanvas,
-        foregroundColor: FoodFlowTheme.ink,
-        elevation: 0,
-      ),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : _error != null
-              ? Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(24),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
+      backgroundColor: profileCanvasColor(context),
+      body: SafeArea(
+        child: RefreshIndicator(
+          onRefresh: () => _loadContent(forceRefresh: true),
+          color: profileAccentColor(context),
+          child: Stack(
+            children: [
+              ListView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                padding: const EdgeInsets.fromLTRB(18, 14, 18, 32),
+                children: [
+                  const ProfilePageTopBar(
+                    title: 'Privacy & Legal',
+                    subtitle: 'Policies, terms and support details',
+                  ),
+                  const SizedBox(height: 22),
+                  ProfileSurfaceCard(
+                    padding: const EdgeInsets.fromLTRB(14, 14, 14, 12),
+                    child: Row(
                       children: [
-                        const Text('Could not load legal content.'),
-                        const SizedBox(height: 12),
-                        ElevatedButton(
-                          onPressed: () {
-                            setState(() => _isLoading = true);
-                            _loadContent();
-                          },
-                          child: const Text('Retry'),
+                        ProfileAccentIcon(
+                          icon: LucideIcons.shield_check,
+                          size: 58,
+                          iconSize: 26,
+                          radius: 20,
+                        ),
+                        const SizedBox(width: 14),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Privacy & legal',
+                                style: TextStyle(
+                                  color: profileTextColor(context),
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w800,
+                                  height: 1.1,
+                                ),
+                              ),
+                              SizedBox(height: 6),
+                              Text(
+                                'Review policy details for your account, orders and data.',
+                                style: TextStyle(
+                                  color: profileMutedColor(context),
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w500,
+                                  height: 1.35,
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
                       ],
                     ),
                   ),
-                )
-              : ListView.separated(
-        padding: EdgeInsets.zero,
-        itemCount: sections.length + 2,
-        separatorBuilder: (_, __) => const SizedBox(height: 12),
-        itemBuilder: (context, index) {
-          if (index == 0) {
-            return const AccountHeroCard(
-              title: 'Privacy & legal',
-              subtitle:
-                  'Review your policies, refund terms, privacy details, and how support works around your account.',
-              icon: Icons.gavel_rounded,
-              badge: 'PROFILE SPACE',
-            );
-          }
-          if (index == 1) {
-            return const Padding(
-              padding: EdgeInsets.fromLTRB(16, 0, 16, 2),
-              child: AccountSectionTitle(title: 'POLICIES'),
-            );
-          }
-          final section = sections[index - 2];
-          return AccountSurfaceCard(
-            margin: const EdgeInsets.fromLTRB(16, 0, 16, 0),
+                  const SizedBox(height: 18),
+                  const ProfileSectionLabel(title: 'Policies'),
+                  const SizedBox(height: 10),
+                  if (_error != null)
+                    _LegalErrorCard(onRetry: () {
+                      setState(() => _isLoading = true);
+                      _loadContent(forceRefresh: true);
+                    })
+                  else
+                    ...sections.map(
+                      (section) => Padding(
+                        padding: const EdgeInsets.only(bottom: 12),
+                        child: _LegalSectionCard(
+                          title: section.$1,
+                          body: section.$2,
+                          icon: section.$3,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+              if (_isLoading)
+                const Positioned(
+                  left: 0,
+                  right: 0,
+                  top: 0,
+                  child: LinearProgressIndicator(minHeight: 2),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _LegalSectionCard extends StatelessWidget {
+  const _LegalSectionCard({
+    required this.title,
+    required this.body,
+    required this.icon,
+  });
+
+  final String title;
+  final String body;
+  final IconData icon;
+
+  @override
+  Widget build(BuildContext context) {
+    return ProfileSurfaceCard(
+      padding: const EdgeInsets.all(16),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          ProfileAccentIcon(
+            icon: icon,
+          ),
+          const SizedBox(width: 16),
+          Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  section.$1,
-                  style: const TextStyle(
-                    color: FoodFlowTheme.ink,
-                    fontWeight: FontWeight.w900,
+                  title,
+                  style: TextStyle(
+                    color: profileTextColor(context),
                     fontSize: 16,
+                    fontWeight: FontWeight.w800,
                   ),
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  section.$2,
-                  style: const TextStyle(
-                    color: FoodFlowTheme.muted,
+                  body.isEmpty ? 'Details are not available yet.' : body,
+                  style: TextStyle(
+                    color: profileMutedColor(context),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w500,
                     height: 1.45,
-                    fontWeight: FontWeight.w600,
                   ),
                 ),
               ],
             ),
-          );
-        },
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _LegalErrorCard extends StatelessWidget {
+  const _LegalErrorCard({required this.onRetry});
+
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return ProfileSurfaceCard(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        children: [
+          ProfileAccentIcon(
+            icon: LucideIcons.cloud_off,
+            size: 66,
+            iconSize: 30,
+            radius: 20,
+          ),
+          const SizedBox(height: 16),
+          Text(
+            'Could not load legal content',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: profileTextColor(context),
+              fontSize: 16,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Please check your connection and try again.',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: profileMutedColor(context),
+              fontSize: 12,
+              fontWeight: FontWeight.w500,
+              height: 1.35,
+            ),
+          ),
+          const SizedBox(height: 18),
+          ElevatedButton(
+            onPressed: onRetry,
+            style: FoodFlowTheme.zomatoPrimaryButton(
+              color: profileButtonColor(context),
+              foregroundColor: profileOnButtonColor(context),
+              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+              radius: 14,
+            ),
+            child: Text('Retry'),
+          ),
+        ],
       ),
     );
   }

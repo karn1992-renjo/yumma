@@ -4,7 +4,7 @@ class ApiConstants {
   // Base URL - Update this with your actual API URL
   static const String baseUrl = String.fromEnvironment(
     'API_BASE_URL',
-    defaultValue: 'https://yumma.in/api',
+    defaultValue: 'https://food.renjotech.in/api',
   );
 
   // Auth endpoints
@@ -21,6 +21,11 @@ class ApiConstants {
   static const String logout = '/logout';
   static const String user = '/user';
   static const String appBranding = '/app/branding';
+  static const String services = '/services';
+  static const String languages = '/languages';
+  static String translations(String languageCode) =>
+      '/translations/$languageCode';
+  static const String menuData = '/menu-data';
   static const String updateProfile = '/user/profile';
   static const String registerFcmToken = '/user/fcm-token';
   static const String notifications = '/notifications';
@@ -32,11 +37,21 @@ class ApiConstants {
   static const String walletTopUp = '/wallet/top-up';
   static const String walletTopUpVerify = '/wallet/top-up/verify';
   static const String walletGiftCardRedeem = '/wallet/gift-card/redeem';
+  static const String scratchCards = '/scratch-cards';
+  static String viewScratchCard(int cardId) => '/scratch-cards/$cardId/view';
+  static String revealScratchCard(int cardId) =>
+      '/scratch-cards/$cardId/reveal';
+  static const String rewardHistory = '/rewards/history';
+  static const String rewardCoupons = '/rewards/coupons';
+  static const String rewardPoints = '/rewards/points';
+  static const String rewardPointsRedeem = '/rewards/points/redeem';
+  static const String referralSummary = '/referrals/summary';
   static const String supportTickets = '/support/tickets';
   static String supportTicketReply(int ticketId) =>
       '/support/tickets/$ticketId/reply';
   static String orderChat(int orderId) => '/orders/$orderId/chat';
-  static String restaurantOrderChat(int orderId) => '/restaurant/orders/$orderId/chat';
+  static String restaurantOrderChat(int orderId) =>
+      '/restaurant/orders/$orderId/chat';
   static String driverOrderChat(int orderId) => '/driver/orders/$orderId/chat';
 
   // Restaurant Customer endpoints
@@ -55,6 +70,11 @@ class ApiConstants {
       '/favorites/restaurants/$restaurantId';
   static String removeFavoriteRestaurant(int restaurantId) =>
       '/favorites/restaurants/$restaurantId/remove';
+  static const String favoriteMenuItems = '/favorites/menu-items';
+  static String favoriteMenuItem(int menuItemId) =>
+      '/favorites/menu-items/$menuItemId';
+  static String removeFavoriteMenuItem(int menuItemId) =>
+      '/favorites/menu-items/$menuItemId/remove';
 
   // Content endpoints
   static const String homeSections = '/home/sections';
@@ -62,6 +82,11 @@ class ApiConstants {
   static const String bannersByType = '/banners';
   static const String activeOffers = '/offers/active';
   static const String legalContent = '/content/legal';
+  static const String parcelEstimate = '/parcel/estimate';
+  static const String parcelOrders = '/parcel/orders';
+  static String parcelOrderDetails(int orderId) => '/parcel/orders/$orderId';
+  static String parcelOrderTrack(int orderId) =>
+      '/parcel/orders/$orderId/track';
 
   // Order Customer endpoints
   static const String createOrder = '/orders';
@@ -85,7 +110,12 @@ class ApiConstants {
 
   // Payment endpoints
   static const String createPayment = '/payments/create';
+  static const String createCheckoutPayment = '/payments/checkout/create';
   static const String verifyPayment = '/payments/verify';
+  static const String cancelPayment = '/payments/cancel';
+  static String orderPay(int orderId) => '/orders/$orderId/pay';
+  static String orderPaymentStatus(int orderId) =>
+      '/orders/$orderId/payment-status';
 
   // Restaurant Owner Dashboard endpoints
   static const String restaurantDashboard = '/restaurant/dashboard';
@@ -112,6 +142,8 @@ class ApiConstants {
       '$restaurantOrders/$orderId/status';
   static String restaurantOrderReady(int orderId) =>
       '$restaurantOrders/$orderId/ready';
+  static String restaurantExtendPrepTime(int orderId) =>
+      '$restaurantOrders/$orderId/extend-prep-time';
 
   // Dining endpoints
   static const String diningCelebrationTypes = '/dining/celebration-types';

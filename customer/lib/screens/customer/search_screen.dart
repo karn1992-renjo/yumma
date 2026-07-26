@@ -17,8 +17,18 @@ import '../../services/location_service.dart';
 import '../../config/api_constants.dart';
 import '../../models/menu_item.dart';
 import '../../models/restaurant.dart';
+import '../../theme/foodflow_theme.dart';
 import '../../utils/currency_utils.dart';
-import '../../widgets/customer/search_result_card.dart';
+
+const _searchText = FoodFlowTheme.ink;
+const _searchSubtext = FoodFlowTheme.muted;
+const _searchLine = FoodFlowTheme.line;
+const _searchBg = Color(0xFFFAFAFA);
+
+Color _searchPrimary(BuildContext context) =>
+    FoodFlowTheme.brandPrimary(context);
+Color _searchSecondary(BuildContext context) =>
+    FoodFlowTheme.brandSecondary(context);
 
 class SearchScreen extends StatefulWidget {
   const SearchScreen({
@@ -53,154 +63,234 @@ class _SearchMenuItemCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final primary = Theme.of(context).colorScheme.primary;
+    final primary = _searchPrimary(context);
+    final secondary = _searchSecondary(context);
     final imageUrl = hit.item.imageUrl.isNotEmpty
         ? hit.item.imageUrl
-        : hit.restaurant.logoUrl;
-    final tags = hit.item.displayTags.take(3).toList(growable: false);
+        : hit.restaurant.bannerUrl.isNotEmpty
+            ? hit.restaurant.bannerUrl
+            : hit.restaurant.logoUrl;
+    final category = hit.item.categoryName?.trim().isNotEmpty == true
+        ? hit.item.categoryName!.trim()
+        : hit.item.cuisineName?.trim() ?? hit.restaurant.cuisineText;
 
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(18),
-          border: Border.all(color: const Color(0xFFE5E7EB)),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.045),
-              blurRadius: 16,
-              offset: const Offset(0, 6),
-            ),
-          ],
-        ),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            ClipRRect(
-              borderRadius: const BorderRadius.only(
-                topLeft: Radius.circular(18),
-                bottomLeft: Radius.circular(18),
-              ),
-              child: imageUrl.isNotEmpty
-                  ? AppCachedImage(
-                      imageUrl: imageUrl,
-                      width: 104,
-                      height: 112,
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) => _fallback(primary),
-                    )
-                  : _fallback(primary),
-            ),
-            Expanded(
-              child: Padding(
-                padding: const EdgeInsets.all(12),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      hit.item.name,
-                      style: const TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w800,
-                        color: Color(0xFF111827),
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(20),
+        child: Container(
+          margin: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+          padding: const EdgeInsets.all(10),
+          decoration: _searchPanelDecoration(context, radius: 20),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Stack(
+                children: [
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(16),
+                    child: imageUrl.isNotEmpty
+                        ? AppCachedImage(
+                            imageUrl: imageUrl,
+                            width: 104,
+                            height: 132,
+                            fit: BoxFit.cover,
+                            errorBuilder: (_, __, ___) =>
+                                _foodFallback(primary),
+                          )
+                        : _foodFallback(primary),
+                  ),
+                  Positioned(
+                    left: 7,
+                    top: 7,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 7, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.94),
+                        borderRadius: BorderRadius.circular(999),
                       ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      hit.restaurant.name,
-                      style: const TextStyle(
-                        fontSize: 12.5,
-                        fontWeight: FontWeight.w700,
-                        color: Color(0xFF6B7280),
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    if (tags.isNotEmpty) ...[
-                      const SizedBox(height: 7),
-                      Wrap(
-                        spacing: 6,
-                        runSpacing: 6,
-                        children: tags
-                            .map(
-                              (tag) => Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 8,
-                                  vertical: 4,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: const Color(0xFFFFF3E8),
-                                  borderRadius: BorderRadius.circular(999),
-                                  border: Border.all(
-                                    color: const Color(0xFFFFD7AF),
-                                  ),
-                                ),
-                                child: Text(
-                                  tag,
-                                  style: const TextStyle(
-                                    fontSize: 10.5,
-                                    fontWeight: FontWeight.w800,
-                                    color: Color(0xFFE86F00),
-                                  ),
-                                ),
-                              ),
-                            )
-                            .toList(),
-                      ),
-                    ],
-                    if (hit.item.description?.trim().isNotEmpty == true) ...[
-                      const SizedBox(height: 6),
-                      Text(
-                        hit.item.description!.trim(),
-                        style: const TextStyle(
-                          fontSize: 12,
-                          color: Color(0xFF6B7280),
-                          height: 1.3,
-                        ),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ],
-                    const SizedBox(height: 8),
-                    Row(
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 4,
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            hit.item.isVeg
+                                ? Icons.eco_rounded
+                                : Icons.restaurant_rounded,
+                            color: hit.item.isVeg
+                                ? FoodFlowTheme.success
+                                : primary,
+                            size: 12,
                           ),
-                          decoration: BoxDecoration(
-                            color: primary.withOpacity(0.08),
-                            borderRadius: BorderRadius.circular(999),
-                          ),
-                          child: Text(
+                          const SizedBox(width: 3),
+                          Text(
                             hit.item.dietLabel,
-                            style: TextStyle(
-                              fontSize: 11,
-                              fontWeight: FontWeight.w700,
-                              color: primary,
+                            style: const TextStyle(
+                              color: _searchText,
+                              fontSize: 9.5,
+                              fontWeight: FontWeight.w900,
                             ),
                           ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: SizedBox(
+                  height: 132,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              hit.item.name,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: _searchText,
+                                fontSize: 16.5,
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
+                          ),
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.end,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                formatCurrency(context, hit.item.finalPrice),
+                                style: TextStyle(
+                                  color: secondary,
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w900,
+                                ),
+                              ),
+                              if (hit.item.hasDiscount)
+                                Text(
+                                  formatCurrency(context, hit.item.price),
+                                  style: const TextStyle(
+                                    color: FoodFlowTheme.faint,
+                                    fontSize: 10.5,
+                                    fontWeight: FontWeight.w700,
+                                    decoration: TextDecoration.lineThrough,
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ],
+                      ),
+                      if (hit.item.hasDiscount) ...[
+                        const SizedBox(height: 4),
+                        _SearchDiscountBadge(
+                          label:
+                              '${hit.item.discountPercent.toStringAsFixed(0)}% off',
+                          color: secondary,
                         ),
-                        const SizedBox(width: 8),
+                      ],
+                      const SizedBox(height: 4),
+                      Text(
+                        hit.restaurant.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: _searchSubtext,
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      if (hit.item.description?.trim().isNotEmpty == true) ...[
+                        const SizedBox(height: 5),
                         Text(
-                          hit.item.hasDiscount
-                              ? formatCurrency(context, hit.item.finalPrice)
-                              : formatCurrency(context, hit.item.price),
+                          hit.item.description!.trim(),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
                           style: const TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w800,
-                            color: Color(0xFF111827),
+                            color: FoodFlowTheme.faint,
+                            fontSize: 11.2,
+                            height: 1.18,
+                            fontWeight: FontWeight.w500,
                           ),
                         ),
                       ],
-                    ),
-                  ],
+                      if (category.trim().isNotEmpty) ...[
+                        const SizedBox(height: 4),
+                        Text(
+                          category,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: FoodFlowTheme.faint,
+                            fontSize: 11.5,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                      const Spacer(),
+                      Row(
+                        children: [
+                          _SearchMetricChip(
+                              icon: Icons.schedule_rounded,
+                              label: hit.restaurant.deliveryEtaLabel),
+                        ],
+                      ),
+                    ],
+                  ),
                 ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _foodFallback(Color primary) {
+    return Container(
+      width: 104,
+      height: 132,
+      color: primary.withOpacity(0.08),
+      child: Icon(Icons.fastfood_rounded, size: 34, color: primary),
+    );
+  }
+}
+
+class _SearchDiscountBadge extends StatelessWidget {
+  const _SearchDiscountBadge({
+    required this.label,
+    required this.color,
+  });
+
+  final String label;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        decoration: BoxDecoration(
+          color: color.withOpacity(0.1),
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(color: color.withOpacity(0.18)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.local_offer_rounded, size: 12, color: color),
+            const SizedBox(width: 4),
+            Text(
+              label,
+              style: TextStyle(
+                color: color,
+                fontSize: 10.5,
+                fontWeight: FontWeight.w900,
               ),
             ),
           ],
@@ -208,17 +298,277 @@ class _SearchMenuItemCard extends StatelessWidget {
       ),
     );
   }
+}
 
-  Widget _fallback(Color primary) {
-    return Container(
-      width: 104,
-      height: 112,
-      color: primary.withOpacity(0.08),
-      child: Icon(
-        Icons.fastfood_rounded,
-        size: 34,
-        color: primary,
+class _SearchRestaurantCard extends StatelessWidget {
+  const _SearchRestaurantCard({required this.restaurant, required this.onTap});
+
+  final Restaurant restaurant;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final primary = _searchPrimary(context);
+    final secondary = _searchSecondary(context);
+    final imageUrl = restaurant.bannerUrl.isNotEmpty
+        ? restaurant.bannerUrl
+        : restaurant.logoUrl;
+    final cuisine = restaurant.cuisineText;
+    final amount = restaurant.amountForOne;
+    final hasRating = restaurant.hasVisibleRating;
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(22),
+        child: Container(
+          margin: const EdgeInsets.fromLTRB(16, 0, 16, 14),
+          decoration: _searchPanelDecoration(context, radius: 22),
+          clipBehavior: Clip.antiAlias,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Stack(
+                children: [
+                  SizedBox(
+                    height: 142,
+                    width: double.infinity,
+                    child: imageUrl.isNotEmpty
+                        ? AppCachedImage(
+                            imageUrl: imageUrl,
+                            fit: BoxFit.cover,
+                            errorBuilder: (_, __, ___) =>
+                                _restaurantFallback(primary),
+                          )
+                        : _restaurantFallback(primary),
+                  ),
+                  Positioned.fill(
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [
+                            Colors.transparent,
+                            Colors.black.withOpacity(0.46)
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                  Positioned(
+                    left: 12,
+                    right: 12,
+                    bottom: 12,
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Expanded(
+                          child: Text(
+                            restaurant.name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 19,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                        ),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 5),
+                          decoration: BoxDecoration(
+                            color: restaurant.isOpen
+                                ? FoodFlowTheme.success
+                                : FoodFlowTheme.danger,
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                          child: Text(
+                            restaurant.isOpen ? 'OPEN' : 'CLOSED',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 10,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        _SearchMetricChip(
+                          icon: Icons.star_rounded,
+                          label: hasRating
+                              ? restaurant.rating.toStringAsFixed(1)
+                              : 'New',
+                          color: hasRating ? FoodFlowTheme.success : secondary,
+                        ),
+                        const SizedBox(width: 8),
+                        _SearchMetricChip(
+                            icon: Icons.schedule_rounded,
+                            label: restaurant.deliveryEtaLabel),
+                        if (amount != null && amount > 0) ...[
+                          const SizedBox(width: 8),
+                          _SearchMetricChip(
+                            icon: Icons.currency_rupee_rounded,
+                            label: '${amount.toStringAsFixed(0)} for one',
+                          ),
+                        ],
+                      ],
+                    ),
+                    if (cuisine.isNotEmpty) ...[
+                      const SizedBox(height: 10),
+                      Text(
+                        cuisine,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: _searchSubtext,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                    if (restaurant.matchedItemNames.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        'Matches ${restaurant.matchedItemNames.take(3).join(', ')}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: primary,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
+    );
+  }
+
+  Widget _restaurantFallback(Color primary) {
+    return Container(
+      color: primary.withOpacity(0.08),
+      child: Icon(Icons.restaurant_rounded, size: 48, color: primary),
+    );
+  }
+}
+
+class _SearchMetricChip extends StatelessWidget {
+  const _SearchMetricChip(
+      {required this.icon, required this.label, this.color});
+
+  final IconData icon;
+  final String label;
+  final Color? color;
+
+  @override
+  Widget build(BuildContext context) {
+    final resolvedColor = color ?? _searchText;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+      decoration: BoxDecoration(
+        color: resolvedColor.withOpacity(0.08),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 13, color: resolvedColor),
+          const SizedBox(width: 4),
+          Text(
+            label,
+            style: TextStyle(
+              color: resolvedColor,
+              fontSize: 11,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+BoxDecoration _searchPanelDecoration(BuildContext context,
+    {double radius = 24}) {
+  return BoxDecoration(
+    gradient: const LinearGradient(
+      begin: Alignment.topLeft,
+      end: Alignment.bottomRight,
+      colors: [
+        FoodFlowTheme.surfaceColor,
+        FoodFlowTheme.surfaceWarm,
+        FoodFlowTheme.surfaceCool,
+      ],
+      stops: [0, 0.56, 1],
+    ),
+    borderRadius: BorderRadius.circular(radius),
+    border: Border.all(color: _searchLine),
+    boxShadow: [
+      BoxShadow(
+        color: Colors.white.withOpacity(0.95),
+        blurRadius: 3,
+        offset: const Offset(-2, -2),
+      ),
+      BoxShadow(
+        color: _searchPrimary(context).withOpacity(0.13),
+        blurRadius: 22,
+        spreadRadius: -3,
+        offset: const Offset(0, 14),
+      ),
+      BoxShadow(
+        color: Colors.black.withOpacity(0.06),
+        blurRadius: 24,
+        spreadRadius: -4,
+        offset: const Offset(0, 14),
+      ),
+    ],
+  );
+}
+
+class _SearchFloatingIcon extends StatelessWidget {
+  const _SearchFloatingIcon({
+    required this.icon,
+    required this.color,
+  });
+
+  final IconData icon;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 54,
+      height: 54,
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.12),
+        shape: BoxShape.circle,
+        boxShadow: [
+          BoxShadow(
+            color: color.withOpacity(0.18),
+            blurRadius: 18,
+            offset: const Offset(0, 10),
+          ),
+        ],
+      ),
+      child: Icon(icon, color: color, size: 28),
     );
   }
 }
@@ -248,7 +598,10 @@ class _SearchScreenState extends State<SearchScreen> {
   bool _speechPermissionDenied = false;
   bool _shouldStartVoiceSearch = false;
   bool _isCategoryBrowse = false;
+  bool _isPriceFilterBrowse = false;
   String? _categoryFilter;
+  double? _minPriceFilter;
+  double? _maxPriceFilter;
   int? _cuisineId;
   int _searchRequestId = 0;
 
@@ -267,9 +620,13 @@ class _SearchScreenState extends State<SearchScreen> {
         _cuisineId = int.tryParse(
           initialQuery['cuisine_id']?.toString() ?? '',
         );
-        _isCategoryBrowse =
-            initialQuery['browseMode']?.toString() == 'category' ||
-                initialQuery['source']?.toString() == 'category';
+        final browseMode = initialQuery['browseMode']?.toString();
+        final source = initialQuery['source']?.toString();
+        _isCategoryBrowse = browseMode == 'category' || source == 'category';
+        _isPriceFilterBrowse =
+            browseMode == 'price_filter' || source == 'menu_price_filter';
+        _minPriceFilter = _parseNullableDouble(initialQuery['min_price']);
+        _maxPriceFilter = _parseNullableDouble(initialQuery['max_price']);
         if (category != null && category.isNotEmpty) {
           _categoryFilter = category;
         }
@@ -277,7 +634,10 @@ class _SearchScreenState extends State<SearchScreen> {
         if (title != null && title.isNotEmpty) {
           _initialTitle = title;
         }
-        if (query.isNotEmpty) {
+        if (_isPriceFilterBrowse) {
+          _searchController.text = title ?? '';
+          _loadPriceFilteredItems();
+        } else if (query.isNotEmpty) {
           _searchWithQuery(query);
         } else {
           _focusNode.requestFocus();
@@ -293,6 +653,11 @@ class _SearchScreenState extends State<SearchScreen> {
         _focusNode.requestFocus();
       }
     });
+  }
+
+  double? _parseNullableDouble(dynamic value) {
+    if (value is num) return value.toDouble();
+    return double.tryParse(value?.toString() ?? '');
   }
 
   @override
@@ -575,7 +940,7 @@ class _SearchScreenState extends State<SearchScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Recent searches cleared'),
-          backgroundColor: Colors.green,
+          backgroundColor: FoodFlowTheme.success,
           behavior: SnackBarBehavior.floating,
         ),
       );
@@ -605,13 +970,37 @@ class _SearchScreenState extends State<SearchScreen> {
           .timeout(const Duration(seconds: 8));
       final rawItems = _extractGenericList(response);
       final searches = rawItems
-          .map((item) => item['name']?.toString().trim() ?? '')
-          .where((name) => name.isNotEmpty)
+          .map((item) {
+            final name = _firstSearchText(
+              item,
+              const ['name', 'title', 'cuisine_name', 'category_name'],
+            );
+            if (name.isEmpty) return null;
+            final imageUrl = _resolveSearchImageUrl(item, const [
+              'image_url',
+              'icon_url',
+              'thumbnail_url',
+              'thumb_url',
+              'photo_url',
+              'asset_url',
+              'media_url',
+              'image',
+              'icon',
+              'thumbnail',
+              'thumb',
+              'photo',
+              'url',
+              'images',
+              'media',
+            ]);
+            return <String, dynamic>{
+              'name': name,
+              'icon': _popularSearchIcon(name),
+              if (imageUrl.isNotEmpty) 'image_url': imageUrl,
+            };
+          })
+          .whereType<Map<String, dynamic>>()
           .take(12)
-          .map((name) => {
-                'name': name,
-                'icon': _popularSearchIcon(name),
-              })
           .toList(growable: false);
       if (!mounted) return;
       setState(() {
@@ -645,6 +1034,64 @@ class _SearchScreenState extends State<SearchScreen> {
     return Icons.restaurant_menu;
   }
 
+  String _firstSearchText(Map<String, dynamic> item, List<String> keys) {
+    for (final key in keys) {
+      final value = item[key];
+      if (value is String && value.trim().isNotEmpty) return value.trim();
+      if (value is num) return value.toString();
+    }
+
+    for (final key in const ['restaurant', 'store', 'vendor', 'merchant']) {
+      final nested = item[key];
+      if (nested is Map) {
+        final value = _firstSearchText(Map<String, dynamic>.from(nested), keys);
+        if (value.isNotEmpty) return value;
+      }
+    }
+    return '';
+  }
+
+  String _resolveSearchImageUrl(dynamic item, List<String> keys) {
+    String resolve(dynamic value) {
+      if (value is String && value.trim().isNotEmpty) return value.trim();
+      if (value is Map) {
+        final map = Map<String, dynamic>.from(value);
+        for (final key in const [
+          'url',
+          'image_url',
+          'icon_url',
+          'path',
+          'file',
+          'src',
+          'image',
+          'icon',
+        ]) {
+          final resolved = resolve(map[key]);
+          if (resolved.isNotEmpty) return resolved;
+        }
+      }
+      if (value is List) {
+        for (final child in value) {
+          final resolved = resolve(child);
+          if (resolved.isNotEmpty) return resolved;
+        }
+      }
+      return '';
+    }
+
+    if (item is! Map) return resolve(item);
+    final map = Map<String, dynamic>.from(item);
+    for (final key in keys) {
+      final resolved = resolve(map[key]);
+      if (resolved.isNotEmpty) return resolved;
+    }
+    for (final key in const ['restaurant', 'store', 'vendor', 'merchant']) {
+      final resolved = _resolveSearchImageUrl(map[key], keys);
+      if (resolved.isNotEmpty) return resolved;
+    }
+    return '';
+  }
+
   List<Map<String, dynamic>> _extractGenericList(dynamic response) {
     if (response is List) {
       return response
@@ -652,6 +1099,7 @@ class _SearchScreenState extends State<SearchScreen> {
           .map((item) => _restaurantMapFromSearchItem(
                 Map<String, dynamic>.from(item),
               ))
+          .whereType<Map<String, dynamic>>()
           .toList(growable: false);
     }
     if (response is! Map) return const <Map<String, dynamic>>[];
@@ -663,7 +1111,10 @@ class _SearchScreenState extends State<SearchScreen> {
       if (candidate is List) {
         return candidate
             .whereType<Map>()
-            .map((item) => Map<String, dynamic>.from(item))
+            .map((item) => _restaurantMapFromSearchItem(
+                  Map<String, dynamic>.from(item),
+                ))
+            .whereType<Map<String, dynamic>>()
             .toList(growable: false);
       }
       if (candidate is Map) {
@@ -685,7 +1136,10 @@ class _SearchScreenState extends State<SearchScreen> {
     if (response is List) {
       return response
           .whereType<Map>()
-          .map((item) => Map<String, dynamic>.from(item))
+          .map((item) => _restaurantMapFromSearchItem(
+                Map<String, dynamic>.from(item),
+              ))
+          .whereType<Map<String, dynamic>>()
           .toList(growable: false);
     }
 
@@ -707,6 +1161,7 @@ class _SearchScreenState extends State<SearchScreen> {
             .map((item) => _restaurantMapFromSearchItem(
                   Map<String, dynamic>.from(item),
                 ))
+            .whereType<Map<String, dynamic>>()
             .toList(growable: false);
       }
       if (candidate is Map) {
@@ -718,6 +1173,7 @@ class _SearchScreenState extends State<SearchScreen> {
                 .map((item) => _restaurantMapFromSearchItem(
                       Map<String, dynamic>.from(item),
                     ))
+                .whereType<Map<String, dynamic>>()
                 .toList(growable: false);
           }
         }
@@ -727,20 +1183,119 @@ class _SearchScreenState extends State<SearchScreen> {
     return const <Map<String, dynamic>>[];
   }
 
-  Map<String, dynamic> _restaurantMapFromSearchItem(Map<String, dynamic> item) {
-    if (item['name'] != null) return item;
-    if (item['type'] != 'restaurant' && item['entity_type'] != 'restaurant') {
+  bool _looksLikeMenuResultItem(Map<String, dynamic> item) {
+    final type = (item['type'] ?? item['entity_type'] ?? item['source'])
+        ?.toString()
+        .toLowerCase()
+        .trim();
+    if (type != null &&
+        (type.contains('menu') ||
+            type.contains('food') ||
+            type.contains('dish') ||
+            type.contains('item'))) {
+      return !type.contains('restaurant');
+    }
+
+    final hasMenuIdentity = item['menu_item_id'] != null ||
+        item['food_id'] != null ||
+        item['dish_id'] != null ||
+        item['item_id'] != null;
+    final hasMenuPrice = item.containsKey('price') ||
+        item.containsKey('discounted_price') ||
+        item.containsKey('discount_price') ||
+        item.containsKey('final_price') ||
+        item.containsKey('actual_price') ||
+        item.containsKey('original_price') ||
+        item.containsKey('sale_price') ||
+        item.containsKey('offer_price');
+    final hasMenuMetadata = item.containsKey('restaurant_id') ||
+        item.containsKey('category_id') ||
+        item.containsKey('category_name') ||
+        item.containsKey('cuisine_id') ||
+        item.containsKey('cuisine_name') ||
+        item.containsKey('is_veg') ||
+        item.containsKey('food_type') ||
+        item.containsKey('preparation_time');
+    final hasRestaurantIdentity = item.containsKey('restaurant_name') ||
+        item.containsKey('store_name') ||
+        item.containsKey('business_name') ||
+        item.containsKey('vendor_name') ||
+        item.containsKey('merchant_name') ||
+        item.containsKey('delivery_time') ||
+        item.containsKey('delivery_fee') ||
+        item.containsKey('address');
+
+    return hasMenuIdentity ||
+        (hasMenuPrice && hasMenuMetadata && !hasRestaurantIdentity);
+  }
+
+  Map<String, dynamic>? _restaurantMapFromSearchItem(
+    Map<String, dynamic> item,
+  ) {
+    final nestedRestaurant = item['restaurant'];
+    if (_looksLikeMenuResultItem(item)) {
+      if (nestedRestaurant is Map) {
+        return _restaurantMapFromSearchItem(
+          Map<String, dynamic>.from(nestedRestaurant),
+        );
+      }
+      return null;
+    }
+
+    final type = (item['type'] ?? item['entity_type'])?.toString();
+    if (item['name'] != null && type != 'menu_item' && type != 'food') {
       return item;
     }
+    if (type != 'restaurant' && item['entity_type'] != 'restaurant') {
+      return item;
+    }
+
+    final name = _firstSearchText(item, const [
+      'restaurant_name',
+      'restaurantName',
+      'store_name',
+      'storeName',
+      'business_name',
+      'businessName',
+      'vendor_name',
+      'vendorName',
+      'merchant_name',
+      'merchantName',
+      'title',
+      'name',
+    ]);
+    final logoImage = _resolveSearchImageUrl(item, const [
+      'restaurant_logo',
+      'restaurant_logo_url',
+      'logo_image',
+      'logo',
+      'image_url',
+      'image',
+      'photo',
+      'thumbnail_url',
+    ]);
+    final bannerImage = _resolveSearchImageUrl(item, const [
+      'restaurant_banner',
+      'restaurant_banner_url',
+      'banner_image',
+      'banner_url',
+      'cover_image',
+      'image_url',
+      'image',
+      'photo',
+    ]);
 
     return <String, dynamic>{
       ...item,
       'id': item['restaurant_id'] ?? item['entity_id'] ?? item['id'],
-      'name': item['title'] ?? item['name'] ?? 'Restaurant',
+      'name': name.isNotEmpty ? name : 'Restaurant',
       'description': item['description'],
       'latitude': item['latitude'],
       'longitude': item['longitude'],
       'cuisine': item['tags'] ?? const <dynamic>[],
+      if (logoImage.isNotEmpty) 'logo_image': logoImage,
+      if (bannerImage.isNotEmpty) 'banner_image': bannerImage,
+      if (logoImage.isNotEmpty && item['image'] == null) 'image': logoImage,
       'is_open': true,
       'is_verified': true,
       'delivery_fee': 0,
@@ -792,6 +1347,47 @@ class _SearchScreenState extends State<SearchScreen> {
     return false;
   }
 
+  Future<List<Restaurant>> _loadNearbyRestaurantsForSearch(
+    Map<String, dynamic>? savedLocation, {
+    bool forceRefresh = false,
+  }) async {
+    if (savedLocation == null) return const <Restaurant>[];
+    final lat = savedLocation['lat'];
+    final lng = savedLocation['lng'];
+    if (lat is! num || lng is! num) return const <Restaurant>[];
+
+    try {
+      final response = await _api
+          .get(
+            ApiConstants.nearbyRestaurants,
+            queryParams: {
+              'lat': lat.toDouble(),
+              'lng': lng.toDouble(),
+              'radius': 100,
+            },
+            includeAuth: false,
+            cachePolicy: ApiCachePolicy.discovery,
+            cacheFirst: !forceRefresh,
+            refreshCached: !forceRefresh,
+          )
+          .timeout(const Duration(seconds: 15));
+      return _extractRestaurantMaps(response)
+          .map((json) {
+            try {
+              return Restaurant.fromJson(json);
+            } catch (e) {
+              debugPrint('Error parsing nearby search restaurant: $e');
+              return null;
+            }
+          })
+          .whereType<Restaurant>()
+          .toList(growable: false);
+    } catch (e) {
+      debugPrint('Nearby restaurant lookup for search failed: $e');
+      return const <Restaurant>[];
+    }
+  }
+
   Future<List<Map<String, dynamic>>> _fallbackNearbySearch(
       String query, Map<String, dynamic>? savedLocation) async {
     if (savedLocation == null) return const <Map<String, dynamic>>[];
@@ -817,6 +1413,136 @@ class _SearchScreenState extends State<SearchScreen> {
           (!_isCategoryBrowse &&
               _restaurantMatchesTextMap(restaurant, queryLower));
     }).toList(growable: false);
+  }
+
+  Future<void> _loadPriceFilteredItems({bool forceRefresh = false}) async {
+    final requestId = ++_searchRequestId;
+    final minPrice = _minPriceFilter ?? 0;
+    final maxPrice = _maxPriceFilter;
+    final title = _initialTitle?.trim().isNotEmpty == true
+        ? _initialTitle!.trim()
+        : maxPrice != null
+            ? 'Under ${formatCurrency(context, maxPrice)}'
+            : 'Filtered items';
+
+    setState(() {
+      _isLoading = true;
+      _hasSearched = true;
+      _searchQuery = title;
+      _error = null;
+      _restaurants = [];
+      _allResults = [];
+      _itemResults = [];
+      _liveSuggestions = [];
+    });
+
+    try {
+      final savedLocation = await _locationService.getSavedLocation();
+      if (savedLocation == null) {
+        throw Exception('Select a delivery location to view filtered items.');
+      }
+      final lat = savedLocation['lat'];
+      final lng = savedLocation['lng'];
+      if (lat is! num || lng is! num) {
+        throw Exception('Select a delivery location to view filtered items.');
+      }
+
+      final response = await _api
+          .get(
+            ApiConstants.nearbyRestaurants,
+            queryParams: {
+              'lat': lat.toDouble(),
+              'lng': lng.toDouble(),
+              'radius': 100,
+            },
+            cachePolicy: ApiCachePolicy.discovery,
+            cacheFirst: !forceRefresh,
+            refreshCached: !forceRefresh,
+          )
+          .timeout(const Duration(seconds: 15));
+
+      if (!mounted || requestId != _searchRequestId) return;
+
+      final restaurants = _extractRestaurantMaps(response)
+          .map((json) {
+            try {
+              return Restaurant.fromJson(json);
+            } catch (_) {
+              return null;
+            }
+          })
+          .whereType<Restaurant>()
+          .toList(growable: false);
+
+      final hits = <_MenuSearchHit>[];
+      final seenItems = <String>{};
+
+      Future<List<_MenuSearchHit>> loadRestaurantItems(
+          Restaurant restaurant) async {
+        try {
+          final menuResponse = await _api
+              .get('${ApiConstants.restaurantDetails}/${restaurant.id}/menu')
+              .timeout(const Duration(seconds: 10));
+          final payload = menuResponse is Map
+              ? Map<String, dynamic>.from(menuResponse)
+              : <String, dynamic>{'data': menuResponse};
+          final rawItems = _extractMenuItemMaps(payload);
+          return _parseMenuItems(rawItems, restaurant.id)
+              .where((item) {
+                final price = item.finalPrice;
+                return item.isAvailable &&
+                    price > 0 &&
+                    price >= minPrice &&
+                    (maxPrice == null || price <= maxPrice);
+              })
+              .map((item) => _MenuSearchHit(restaurant: restaurant, item: item))
+              .toList(growable: false);
+        } catch (_) {
+          return const <_MenuSearchHit>[];
+        }
+      }
+
+      final grouped = await Future.wait(
+        restaurants.take(24).map(loadRestaurantItems),
+      );
+
+      if (!mounted || requestId != _searchRequestId) return;
+
+      for (final restaurantHits in grouped) {
+        for (final hit in restaurantHits) {
+          final key = '${hit.restaurant.id}:${hit.item.id}';
+          if (seenItems.add(key)) hits.add(hit);
+        }
+      }
+      hits.sort((a, b) {
+        final priceCompare = a.item.finalPrice.compareTo(b.item.finalPrice);
+        if (priceCompare != 0) return priceCompare;
+        return b.item.totalOrders.compareTo(a.item.totalOrders);
+      });
+
+      setState(() {
+        _itemResults = hits;
+        _restaurants = const <Restaurant>[];
+        _allResults = const <Restaurant>[];
+        _error = null;
+      });
+      unawaited(AppImageCache.precacheVisible(
+        context,
+        hits.map((hit) => hit.item.imageUrl).toList(growable: false),
+      ));
+    } catch (e) {
+      if (!mounted || requestId != _searchRequestId) return;
+      setState(() {
+        _error = e.toString().replaceFirst('Exception: ', '');
+        _itemResults = [];
+        _restaurants = [];
+        _allResults = [];
+      });
+    }
+
+    if (mounted && requestId == _searchRequestId) {
+      setState(() => _isLoading = false);
+    }
   }
 
   String _normalizedCategoryQuery(String query) {
@@ -953,8 +1679,7 @@ class _SearchScreenState extends State<SearchScreen> {
           'category': _categoryFilter,
         if (_categoryFilter != null && _categoryFilter!.isNotEmpty)
           'cuisine': _categoryFilter,
-        if (_cuisineId != null && _cuisineId! > 0)
-          'cuisine_id': _cuisineId,
+        if (_cuisineId != null && _cuisineId! > 0) 'cuisine_id': _cuisineId,
       };
 
       // Add location if available for better results
@@ -968,30 +1693,32 @@ class _SearchScreenState extends State<SearchScreen> {
         }
       }
 
-      debugPrint('🔍 Searching restaurants with query: "$query"');
-      debugPrint('📍 Search params: $queryParams');
+      debugPrint(
+          'ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â°ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â Searching restaurants with query: "$query"');
+      debugPrint(
+          'ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â°ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â Search params: $queryParams');
 
       // Try search endpoint
       dynamic response;
       try {
-        response = await _api
-            .get(
-              ApiConstants.advancedSearch,
-              queryParams: queryParams,
-              includeAuth: false,
-              cachePolicy: ApiCachePolicy.discovery,
-              cacheFirst: !forceRefresh,
-              refreshCached: !forceRefresh,
-              onCacheRefreshed: (_) {
-                if (mounted && query == _searchQuery.trim()) {
-                  _searchRestaurants(forceRefresh: true);
-                }
-              },
-            )
-            .timeout(const Duration(seconds: 15));
-        debugPrint('✅ Search API response received');
+        response = await _api.get(
+          ApiConstants.advancedSearch,
+          queryParams: queryParams,
+          includeAuth: false,
+          cachePolicy: ApiCachePolicy.discovery,
+          cacheFirst: !forceRefresh,
+          refreshCached: !forceRefresh,
+          onCacheRefreshed: (_) {
+            if (mounted && query == _searchQuery.trim()) {
+              _searchRestaurants(forceRefresh: true);
+            }
+          },
+        ).timeout(const Duration(seconds: 15));
+        debugPrint(
+            'ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã¢â‚¬Å“ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¦ Search API response received');
       } catch (e) {
-        debugPrint('❌ Search endpoint failed: $e');
+        debugPrint(
+            'ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ Search endpoint failed: $e');
         final fallback = await _fallbackNearbySearch(query, savedLocation);
         response = <String, dynamic>{
           'success': true,
@@ -1019,7 +1746,7 @@ class _SearchScreenState extends State<SearchScreen> {
             return;
           }
 
-          final parsedRestaurants = dataList
+          var parsedRestaurants = dataList
               .map((json) {
                 try {
                   return Restaurant.fromJson(json);
@@ -1030,6 +1757,17 @@ class _SearchScreenState extends State<SearchScreen> {
               })
               .whereType<Restaurant>()
               .toList();
+          if (parsedRestaurants.isEmpty) {
+            parsedRestaurants = await _loadNearbyRestaurantsForSearch(
+              savedLocation,
+              forceRefresh: forceRefresh,
+            );
+            if (!mounted ||
+                requestId != _searchRequestId ||
+                query != _searchQuery.trim()) {
+              return;
+            }
+          }
           final queryLower = _normalizedCategoryQuery(query);
           final filteredRestaurants = parsedRestaurants.where((restaurant) {
             if (_isCategoryBrowse) {
@@ -1057,11 +1795,64 @@ class _SearchScreenState extends State<SearchScreen> {
             ),
           ];
           final seenItems = <String>{};
-          final itemResults = <_MenuSearchHit>[
+          var itemResults = <_MenuSearchHit>[
             ...directItemResults,
           ].where((hit) {
             return seenItems.add('${hit.restaurant.id}:${hit.item.id}');
           }).toList(growable: false);
+
+          if (itemResults.isEmpty && !_isCategoryBrowse) {
+            var menuSearchRestaurants = parsedRestaurants;
+            if (menuSearchRestaurants.isEmpty && savedLocation != null) {
+              try {
+                final lat = savedLocation['lat'];
+                final lng = savedLocation['lng'];
+                if (lat is num && lng is num) {
+                  final nearbyResponse = await _api
+                      .get(
+                        ApiConstants.nearbyRestaurants,
+                        queryParams: {
+                          'lat': lat.toDouble(),
+                          'lng': lng.toDouble(),
+                          'radius': 100,
+                        },
+                        includeAuth: false,
+                        cachePolicy: ApiCachePolicy.discovery,
+                        cacheFirst: !forceRefresh,
+                        refreshCached: !forceRefresh,
+                      )
+                      .timeout(const Duration(seconds: 15));
+                  menuSearchRestaurants = _extractRestaurantMaps(nearbyResponse)
+                      .map((json) {
+                        try {
+                          return Restaurant.fromJson(json);
+                        } catch (e) {
+                          debugPrint('Error parsing nearby restaurant: $e');
+                          return null;
+                        }
+                      })
+                      .whereType<Restaurant>()
+                      .toList(growable: false);
+                }
+              } catch (e) {
+                debugPrint('Nearby menu search fallback failed: $e');
+              }
+            }
+
+            if (!mounted ||
+                requestId != _searchRequestId ||
+                query != _searchQuery.trim()) {
+              return;
+            }
+
+            if (menuSearchRestaurants.isNotEmpty) {
+              itemResults = await _findMatchingMenuItems(
+                menuSearchRestaurants.take(24).toList(growable: false),
+                query,
+                requestId,
+              );
+            }
+          }
 
           final seenRestaurantIds = <int>{};
           final results = <Restaurant>[
@@ -1087,7 +1878,7 @@ class _SearchScreenState extends State<SearchScreen> {
           }
 
           debugPrint(
-              '📊 Total found: ${dataList.length}, Filtered: ${filteredRestaurants.length}');
+              'ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â°ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â  Total found: ${dataList.length}, Filtered: ${filteredRestaurants.length}');
 
           setState(() {
             _restaurants = results;
@@ -1149,6 +1940,11 @@ class _SearchScreenState extends State<SearchScreen> {
       _searchQuery = value;
       if (value.isNotEmpty) {
         _initialTitle = null;
+        if (_isPriceFilterBrowse) {
+          _isPriceFilterBrowse = false;
+          _minPriceFilter = null;
+          _maxPriceFilter = null;
+        }
       }
       if (_isCategoryBrowse &&
           value.trim().toLowerCase() !=
@@ -1311,9 +2107,50 @@ class _SearchScreenState extends State<SearchScreen> {
         } catch (_) {}
       }
       if (restaurant == null && restaurantId > 0) {
+        final fallbackName = _firstSearchText(rawItem, const [
+          'restaurant_name',
+          'restaurantName',
+          'store_name',
+          'storeName',
+          'business_name',
+          'businessName',
+          'vendor_name',
+          'vendorName',
+          'merchant_name',
+          'merchantName',
+          'brand_name',
+          'title',
+        ]);
+        final fallbackLogo = _resolveSearchImageUrl(rawItem, const [
+          'restaurant_logo',
+          'restaurant_logo_url',
+          'logo_image',
+          'logo',
+          'store_logo',
+          'brand_logo',
+          'image_url',
+          'image',
+          'photo',
+          'thumbnail_url',
+        ]);
+        final fallbackBanner = _resolveSearchImageUrl(rawItem, const [
+          'restaurant_banner',
+          'restaurant_banner_url',
+          'banner_image',
+          'banner_url',
+          'cover_image',
+          'restaurant_image',
+          'restaurant_image_url',
+          'image_url',
+          'image',
+          'photo',
+        ]);
         restaurant = Restaurant.fromJson(<String, dynamic>{
           'id': restaurantId,
-          'name': rawItem['restaurant_name'] ?? 'Restaurant',
+          'name': fallbackName.isNotEmpty ? fallbackName : 'Restaurant',
+          if (fallbackLogo.isNotEmpty) 'logo_image': fallbackLogo,
+          if (fallbackBanner.isNotEmpty) 'banner_image': fallbackBanner,
+          if (fallbackLogo.isNotEmpty) 'image': fallbackLogo,
           'is_open': true,
           'is_verified': true,
           'delivery_fee': 0,
@@ -1456,6 +2293,8 @@ class _SearchScreenState extends State<SearchScreen> {
         data['items'],
         data['menu'],
         data['dishes'],
+        data['foods'],
+        data['food_items'],
         data['foodItems'],
         data['categories'],
       ]);
@@ -1497,6 +2336,7 @@ class _SearchScreenState extends State<SearchScreen> {
         'items',
         'menu',
         'dishes',
+        'foods',
         'food_items',
         'foodItems',
       ]) {
@@ -1563,7 +2403,7 @@ class _SearchScreenState extends State<SearchScreen> {
     final header = _buildHeader(context);
     if (widget.embedded) {
       return ColoredBox(
-        color: Theme.of(context).scaffoldBackgroundColor,
+        color: _searchBg,
         child: Column(
           children: [
             SafeArea(bottom: false, child: header),
@@ -1574,9 +2414,9 @@ class _SearchScreenState extends State<SearchScreen> {
     }
 
     return Scaffold(
-      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+      backgroundColor: _searchBg,
       appBar: PreferredSize(
-        preferredSize: const Size.fromHeight(78),
+        preferredSize: const Size.fromHeight(82),
         child: SafeArea(bottom: false, child: header),
       ),
       body: _buildBody(),
@@ -1584,114 +2424,424 @@ class _SearchScreenState extends State<SearchScreen> {
   }
 
   Widget _buildHeader(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final borderColor = const Color(0xFFE5E7EB);
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 10, 20, 12),
-      child: Row(
-        children: [
-          if (!widget.embedded) ...[
-            InkWell(
-              onTap: () => Navigator.pop(context),
-              borderRadius: BorderRadius.circular(14),
-              child: Container(
-                width: 42,
-                height: 42,
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(14),
-                  border: Border.all(color: borderColor),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.05),
-                      blurRadius: 12,
-                      offset: const Offset(0, 6),
-                    ),
-                  ],
-                ),
-                child: const Icon(
-                  Icons.arrow_back_rounded,
-                  color: Color(0xFF111827),
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: Border(
+          bottom: BorderSide(color: _searchLine.withOpacity(0.65)),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.06),
+            blurRadius: 18,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(14, 8, 14, 10),
+        child: Row(
+          children: [
+            Material(
+              color: Colors.white,
+              shape: const CircleBorder(),
+              child: InkWell(
+                onTap: _goBack,
+                customBorder: const CircleBorder(),
+                child: const SizedBox(
+                  width: 44,
+                  height: 44,
+                  child: Icon(Icons.arrow_back_rounded, color: _searchText),
                 ),
               ),
             ),
-            const SizedBox(width: 12),
-          ],
-          Expanded(
-            child: Container(
-              height: 56,
-              padding: const EdgeInsets.symmetric(horizontal: 14),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(18),
-                border: Border.all(color: borderColor),
-              ),
-              child: Row(
-                children: [
-                  const Icon(Icons.search_rounded,
-                      size: 20, color: Color(0xFF6B7280)),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: TextField(
-                      controller: _searchController,
-                      focusNode: _focusNode,
-                      autofocus: true,
-                      decoration: const InputDecoration(
-                        hintText: 'Search restaurant, item, cuisine...',
-                        hintStyle: TextStyle(
-                          color: Color(0xFF9CA3AF),
-                          fontSize: 14.5,
-                          fontWeight: FontWeight.w500,
+            const SizedBox(width: 8),
+            Expanded(
+              child: Container(
+                height: 56,
+                padding: const EdgeInsets.only(left: 14, right: 8),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: const Color(0xFFF1F1F1)),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.06),
+                      blurRadius: 12,
+                      offset: const Offset(0, 4),
+                    ),
+                  ],
+                ),
+                child: Row(
+                  children: [
+                    const Icon(
+                      Icons.search_rounded,
+                      size: 22,
+                      color: Color(0xFF00A651),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: SizedBox(
+                        height: 22,
+                        child: Stack(
+                          alignment: Alignment.centerLeft,
+                          children: [
+                            if (_searchController.text.isEmpty)
+                              const IgnorePointer(
+                                child: Text(
+                                  'Search restaurants, dishes...',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.clip,
+                                  softWrap: false,
+                                  style: TextStyle(
+                                    color: Color(0xFF686B78),
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ),
+                            EditableText(
+                              controller: _searchController,
+                              focusNode: _focusNode,
+                              autofocus: !widget.embedded,
+                              textInputAction: TextInputAction.search,
+                              keyboardType: TextInputType.text,
+                              maxLines: 1,
+                              cursorColor: const Color(0xFF00A651),
+                              backgroundCursorColor: const Color(0xFFEAEAEA),
+                              style: const TextStyle(
+                                color: Color(0xFF686B78),
+                                fontSize: 15,
+                                fontWeight: FontWeight.w600,
+                              ),
+                              onChanged: _onSearchChanged,
+                              onSubmitted: (value) {
+                                if (value.trim().isNotEmpty) {
+                                  _searchRestaurants();
+                                }
+                              },
+                            ),
+                          ],
                         ),
-                        border: InputBorder.none,
                       ),
-                      onChanged: _onSearchChanged,
-                      onSubmitted: (value) {
-                        if (value.trim().isNotEmpty) {
-                          _searchRestaurants();
-                        }
-                      },
                     ),
-                  ),
-                  if (_searchController.text.isNotEmpty)
-                    IconButton(
-                      visualDensity: VisualDensity.compact,
-                      icon: const Icon(Icons.clear_rounded,
-                          color: Color(0xFF6B7280)),
-                      onPressed: _clearSearch,
+                    Container(
+                      width: 1,
+                      height: 24,
+                      color: const Color(0xFFEAEAEA),
                     ),
-                ],
+                    const SizedBox(width: 8),
+                    InkWell(
+                      onTap: _isSpeechBusy ? null : _startVoiceSearch,
+                      borderRadius: BorderRadius.circular(16),
+                      child: SizedBox(
+                        width: 34,
+                        height: 34,
+                        child: Icon(
+                          _isListening
+                              ? Icons.mic_rounded
+                              : Icons.mic_none_rounded,
+                          size: 20,
+                          color: _isListening
+                              ? FoodFlowTheme.danger
+                              : (_speechPermissionDenied
+                                  ? FoodFlowTheme.dangerDark
+                                  : const Color(0xFF1C1C1C)),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBody() {
+    final secondary = _searchSecondary(context);
+
+    if (_isLoading) {
+      return _SearchStatePanel(
+        icon: Icons.search_rounded,
+        title: 'Searching nearby',
+        message: 'Finding restaurants and dishes for you...',
+        child: CircularProgressIndicator(color: secondary),
+      );
+    }
+
+    if (_error != null) {
+      return _SearchStatePanel(
+        icon: Icons.wifi_off_rounded,
+        title: 'Search failed',
+        message: _error!,
+        action: FilledButton.icon(
+          onPressed: () {
+            if (_isPriceFilterBrowse) {
+              _loadPriceFilteredItems(forceRefresh: true);
+            } else if (_searchQuery.isNotEmpty) {
+              _searchRestaurants(forceRefresh: true);
+            }
+          },
+          icon: const Icon(Icons.refresh_rounded),
+          label: const Text('Try Again'),
+          style: FilledButton.styleFrom(
+            backgroundColor: secondary,
+            foregroundColor: Colors.white,
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          ),
+        ),
+      );
+    }
+
+    if (_hasSearched) return _buildResultsState(secondary);
+    return _buildInitialState(secondary);
+  }
+
+  Widget _buildResultsState(Color secondary) {
+    if (_restaurants.isEmpty && _itemResults.isEmpty) {
+      return _SearchStatePanel(
+        icon: Icons.search_off_rounded,
+        title: 'No matches found',
+        message: _isPriceFilterBrowse
+            ? 'No menu items are available in this price range right now.'
+            : 'We could not find restaurants or dishes for "$_searchQuery".',
+        action: OutlinedButton.icon(
+          onPressed: _clearSearch,
+          icon: const Icon(Icons.close_rounded),
+          label: const Text('Clear Search'),
+          style: OutlinedButton.styleFrom(
+            foregroundColor: secondary,
+            side: BorderSide(color: secondary),
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          ),
+        ),
+      );
+    }
+
+    return RefreshIndicator(
+      color: secondary,
+      onRefresh: () async {
+        if (_isPriceFilterBrowse) {
+          await _loadPriceFilteredItems(forceRefresh: true);
+        } else {
+          await _searchRestaurants(forceRefresh: true);
+        }
+      },
+      child: ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.fromLTRB(0, 18, 0, 28),
+        children: [
+          _resultSummary(),
+          if (_liveSuggestions.isNotEmpty) _suggestionRail(secondary),
+          if (_itemResults.isNotEmpty) ...[
+            _sectionHeader(
+              title: _isPriceFilterBrowse
+                  ? 'Pocket-friendly dishes'
+                  : 'Dishes matching your search',
+              subtitle:
+                  '${_itemResults.length} item${_itemResults.length == 1 ? '' : 's'} found',
+            ),
+            ..._itemResults.map(
+              (hit) => _SearchMenuItemCard(
+                hit: hit,
+                onTap: () => _openRestaurant(
+                  hit.restaurant.id,
+                  menuItemId: hit.item.id,
+                ),
+              ),
+            ),
+          ],
+          if (_restaurants.isNotEmpty) ...[
+            _sectionHeader(
+              title: 'Restaurants for you',
+              subtitle:
+                  '${_restaurants.length} place${_restaurants.length == 1 ? '' : 's'} nearby',
+            ),
+            ..._restaurants.map(
+              (restaurant) => _SearchRestaurantCard(
+                restaurant: restaurant,
+                onTap: () => _openRestaurant(restaurant.id),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildInitialState(Color secondary) {
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(0, 18, 0, 28),
+      children: [
+        if (_isListening) _listeningPill(secondary),
+        _recentSection(secondary),
+        _popularSection(secondary),
+      ],
+    );
+  }
+
+  Widget _recentSection(Color secondary) {
+    if (_recentSearches.isEmpty) return const SizedBox.shrink();
+    return _SearchSectionShell(
+      title: 'Recent Searches',
+      trailing: TextButton(
+        onPressed: _clearRecentSearches,
+        style: TextButton.styleFrom(foregroundColor: const Color(0xFF6B7280)),
+        child: const Text('Clear'),
+      ),
+      child: SizedBox(
+        height: 46,
+        child: ListView.separated(
+          scrollDirection: Axis.horizontal,
+          padding: const EdgeInsets.symmetric(horizontal: 20),
+          itemCount: _recentSearches.take(10).length,
+          separatorBuilder: (_, __) => const SizedBox(width: 10),
+          itemBuilder: (context, index) {
+            final search = _recentSearches[index];
+            return _SearchRecentPill(
+              label: search,
+              color: secondary,
+              onTap: () => _searchWithQuery(search),
+              onRemove: () => _removeRecentSearch(search),
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  Widget _popularSection(Color secondary) {
+    final searches = _popularSearches.isNotEmpty
+        ? _popularSearches.take(10).toList(growable: false)
+        : <Map<String, dynamic>>[
+            {'name': 'Biryani', 'icon': Icons.rice_bowl_rounded},
+            {'name': 'Pizza', 'icon': Icons.local_pizza_rounded},
+            {'name': 'North Indian', 'icon': Icons.restaurant_menu_rounded},
+            {'name': 'Momos', 'icon': Icons.set_meal_rounded},
+            {'name': 'Cake', 'icon': Icons.cake_rounded},
+          ];
+
+    return _SearchSectionShell(
+      title: 'Popular Searches',
+      subtitle: 'Most ordered around you',
+      child: SizedBox(
+        height: 116,
+        child: ListView.separated(
+          scrollDirection: Axis.horizontal,
+          padding: const EdgeInsets.symmetric(horizontal: 20),
+          itemCount: searches.length,
+          separatorBuilder: (_, __) => const SizedBox(width: 14),
+          itemBuilder: (context, index) {
+            final item = searches[index];
+            final name = item['name']?.toString() ?? '';
+            final icon = item['icon'] is IconData
+                ? item['icon'] as IconData
+                : _popularSearchIcon(name);
+            return _SearchPopularTile(
+              label: name,
+              icon: icon,
+              color: secondary,
+              imageUrl: item['image_url']?.toString().trim() ?? '',
+              onTap: () => _searchWithQuery(name),
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  Widget _listeningPill(Color secondary) {
+    return Container(
+      margin: const EdgeInsets.fromLTRB(20, 0, 20, 18),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFFF1F1F1)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.06),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.graphic_eq_rounded, color: secondary),
+          const SizedBox(width: 10),
+          const Expanded(
+            child: Text(
+              'Listening...',
+              style: TextStyle(
+                color: _searchText,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+          ),
+          TextButton(
+            onPressed: _stopVoiceSearch,
+            style: TextButton.styleFrom(foregroundColor: secondary),
+            child: const Text('Stop'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _suggestionRail(Color secondary) {
+    return SizedBox(
+      height: 46,
+      child: ListView.separated(
+        padding: const EdgeInsets.symmetric(horizontal: 20),
+        scrollDirection: Axis.horizontal,
+        itemBuilder: (context, index) {
+          final suggestion = _liveSuggestions[index];
+          return _SearchRecentPill(
+            label: suggestion,
+            color: secondary,
+            onTap: () => _searchWithQuery(suggestion),
+          );
+        },
+        separatorBuilder: (_, __) => const SizedBox(width: 10),
+        itemCount: _liveSuggestions.length,
+      ),
+    );
+  }
+
+  Widget _resultSummary() {
+    final title = _isPriceFilterBrowse
+        ? (_initialTitle ?? 'Budget picks')
+        : 'Showing results for "$_searchQuery"';
+    final count = _restaurants.length + _itemResults.length;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              title,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: _searchText,
+                fontSize: 15,
+                fontWeight: FontWeight.w800,
               ),
             ),
           ),
           const SizedBox(width: 12),
-          InkWell(
-            onTap: _isSpeechBusy ? null : _startVoiceSearch,
-            borderRadius: BorderRadius.circular(14),
-            child: Container(
-              width: 42,
-              height: 42,
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(color: borderColor),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.05),
-                    blurRadius: 12,
-                    offset: const Offset(0, 6),
-                  ),
-                ],
-              ),
-              child: Icon(
-                _isListening ? Icons.mic : Icons.mic_none_rounded,
-                size: 20,
-                color: _isListening
-                    ? Colors.redAccent
-                    : (_speechPermissionDenied
-                        ? Colors.orange
-                        : colorScheme.primary),
-              ),
+          Text(
+            '$count found',
+            style: const TextStyle(
+              color: Color(0xFF6B7280),
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
             ),
           ),
         ],
@@ -1699,360 +2849,385 @@ class _SearchScreenState extends State<SearchScreen> {
     );
   }
 
-  Widget _buildBody() {
-    final primary = Theme.of(context).colorScheme.primary;
-    if (_isLoading) {
-      return const Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            CircularProgressIndicator(),
-            SizedBox(height: 16),
-            Text('Searching for restaurants...'),
-          ],
-        ),
-      );
+  Widget _sectionHeader({required String title, required String subtitle}) {
+    return _SearchHomeSectionHeader(title: title, subtitle: subtitle);
+  }
+
+  void _openRestaurant(int restaurantId, {int? menuItemId}) {
+    Navigator.pushNamed(
+      context,
+      '/restaurant/detail',
+      arguments: {
+        'restaurantId': restaurantId,
+        if (menuItemId != null && menuItemId > 0) 'menuItemId': menuItemId,
+      },
+    );
+  }
+
+  void _goBack() {
+    if (widget.embedded) {
+      Navigator.pushReplacementNamed(context, '/customer/home');
+      return;
     }
+    Navigator.maybePop(context);
+  }
+}
 
-    if (_error != null) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.wifi_off, size: 64, color: Colors.grey.shade400),
-            const SizedBox(height: 16),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 32),
-              child: Text(
-                _error!,
-                style: TextStyle(color: Colors.grey.shade600),
-                textAlign: TextAlign.center,
-              ),
-            ),
-            const SizedBox(height: 24),
-            ElevatedButton.icon(
-              onPressed: () {
-                if (_searchQuery.isNotEmpty) {
-                  _searchRestaurants();
-                }
-              },
-              icon: const Icon(Icons.refresh),
-              label: const Text('Try Again'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: primary,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
-            ),
-          ],
-        ),
-      );
-    }
+class _SearchSectionShell extends StatelessWidget {
+  const _SearchSectionShell({
+    required this.title,
+    required this.child,
+    this.subtitle,
+    this.trailing,
+  });
 
-    if (_hasSearched) {
-      if (_restaurants.isEmpty && _itemResults.isEmpty) {
-        return Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Lottie.asset(
-                'assets/animations/no-search.json',
-                width: 240,
-                height: 200,
-                fit: BoxFit.contain,
-              ),
-              const SizedBox(height: 16),
-              const Text(
-                'No results found',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'We couldn\'t find any restaurants or items matching "$_searchQuery"',
-                style: TextStyle(fontSize: 14, color: Colors.grey.shade600),
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 24),
-              OutlinedButton.icon(
-                onPressed: _clearSearch,
-                icon: const Icon(Icons.clear),
-                label: const Text('Clear Search'),
-                style: OutlinedButton.styleFrom(
-                  side: BorderSide(color: primary),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        );
-      }
+  final String title;
+  final String? subtitle;
+  final Widget child;
+  final Widget? trailing;
 
-      return Column(
-        children: [
-          if (_isListening)
-            Container(
-              width: double.infinity,
-              margin: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-              decoration: BoxDecoration(
-                color: primary.withOpacity(0.08),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Row(
-                children: [
-                  Icon(Icons.graphic_eq, color: primary, size: 18),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Text(
-                      'Listening... say a restaurant, dish, or cuisine',
-                      style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                        color: primary,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          if (_initialTitle != null && _initialTitle!.isNotEmpty)
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.fromLTRB(16, 10, 16, 2),
-              child: Text(
-                'Showing results for ${_initialTitle!}',
-                style: TextStyle(
-                  fontSize: 13,
-                  color: Colors.grey.shade700,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ),
-          if (_liveSuggestions.isNotEmpty)
-            Container(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-              alignment: Alignment.centerLeft,
-              child: Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: _liveSuggestions
-                    .map(
-                      (suggestion) => ActionChip(
-                        label: Text(suggestion),
-                        onPressed: () => _searchWithQuery(suggestion),
-                        backgroundColor: primary.withOpacity(0.08),
-                        side: BorderSide(
-                          color: primary.withOpacity(0.18),
-                        ),
-                      ),
-                    )
-                    .toList(),
-              ),
-            ),
-          // Unified results summary
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            alignment: Alignment.centerLeft,
-            child: Text(
-              '${_itemResults.length} matching item${_itemResults.length == 1 ? '' : 's'} | '
-              '${_restaurants.length} matching restaurant${_restaurants.length == 1 ? '' : 's'}',
-              style: TextStyle(
-                fontSize: 13,
-                color: Colors.grey.shade600,
-                fontWeight: FontWeight.w500,
-              ),
-            ),
-          ),
-          Expanded(
-            child: RefreshIndicator(
-              onRefresh: () => _searchRestaurants(forceRefresh: true),
-              color: primary,
-              child: ListView(
-                padding: const EdgeInsets.symmetric(vertical: 8),
-                children: [
-                  if (_itemResults.isNotEmpty) ...[
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 4, 16, 10),
-                      child: Text(
-                        'Matching items (${_itemResults.length})',
-                        style: const TextStyle(
-                          fontSize: 15,
-                          fontWeight: FontWeight.w800,
-                          color: Color(0xFF111827),
-                        ),
-                      ),
-                    ),
-                    ..._itemResults.map(
-                      (hit) => _SearchMenuItemCard(
-                        hit: hit,
-                        onTap: () {
-                          Navigator.pushNamed(
-                            context,
-                            '/restaurant/detail',
-                            arguments: hit.restaurant.id,
-                          );
-                        },
-                      ),
-                    ),
-                  ],
-                  if (_restaurants.isNotEmpty) ...[
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
-                      child: Text(
-                        'Matching restaurants (${_restaurants.length})',
-                        style: const TextStyle(
-                          fontSize: 15,
-                          fontWeight: FontWeight.w800,
-                          color: Color(0xFF111827),
-                        ),
-                      ),
-                    ),
-                    ..._restaurants.map(
-                    (restaurant) => SearchResultCard(
-                      restaurant: restaurant,
-                      onTap: () {
-                        Navigator.pushNamed(
-                          context,
-                          '/restaurant/detail',
-                          arguments: restaurant.id,
-                        );
-                      },
-                    ),
-                    ),
-                  ],
-                ],
-              ),
-            ),
-          ),
-        ],
-      );
-    }
-
-    // Initial state - show suggestions
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(16),
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 18),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (_recentSearches.isNotEmpty) ...[
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                const Text(
-                  'Recent Searches',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                ),
-                TextButton(
-                  onPressed: _clearRecentSearches,
-                  style: TextButton.styleFrom(
-                    foregroundColor: Colors.red,
-                  ),
-                  child:
-                      const Text('Clear All', style: TextStyle(fontSize: 12)),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: _recentSearches
-                  .map((search) => Chip(
-                        label:
-                            Text(search, style: const TextStyle(fontSize: 13)),
-                        onDeleted: () => _removeRecentSearch(search),
-                        deleteIcon: const Icon(Icons.close, size: 16),
-                        backgroundColor: Colors.grey.shade100,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(20),
-                        ),
-                      ))
-                  .toList(),
-            ),
-            const SizedBox(height: 24),
-          ],
-          if (_popularSearches.isNotEmpty) ...[
-            const Text(
-              'Popular Searches',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 12),
-            Wrap(
-              spacing: 12,
-              runSpacing: 12,
-              children: _popularSearches
-                  .map((item) => GestureDetector(
-                        onTap: () => _searchWithQuery(item['name'] as String),
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 16, vertical: 10),
-                          decoration: BoxDecoration(
-                            color: Colors.grey.shade100,
-                            borderRadius: BorderRadius.circular(24),
+          _SearchHomeSectionHeader(
+            title: title,
+            subtitle: subtitle,
+            trailing: trailing,
+          ),
+          child,
+        ],
+      ),
+    );
+  }
+}
+
+class _SearchHomeSectionHeader extends StatelessWidget {
+  const _SearchHomeSectionHeader({
+    required this.title,
+    this.subtitle,
+    this.trailing,
+  });
+
+  final String title;
+  final String? subtitle;
+  final Widget? trailing;
+
+  @override
+  Widget build(BuildContext context) {
+    final words = title
+        .split(RegExp(r'\s+'))
+        .where((word) => word.isNotEmpty)
+        .toList(growable: false);
+    final highlightCount = words.length >= 3 ? 2 : 1;
+    final splitIndex = (words.length - highlightCount).clamp(0, words.length);
+    final leading = words.take(splitIndex).join(' ');
+    final trailingWords = words.skip(splitIndex).join(' ');
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 0, 20, 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: SizedBox(
+                  height: 30,
+                  child: RichText(
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    text: TextSpan(
+                      children: [
+                        if (leading.isNotEmpty)
+                          TextSpan(
+                            text: '$leading ',
+                            style: const TextStyle(
+                              color: _searchText,
+                              fontSize: 21,
+                              fontWeight: FontWeight.w800,
+                            ),
                           ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(
-                                item['icon'] as IconData,
-                                size: 18,
-                                color: Theme.of(context).colorScheme.primary,
-                              ),
-                              const SizedBox(width: 8),
-                              Text(
-                                item['name'] as String,
-                                style: const TextStyle(
-                                    fontSize: 14, fontWeight: FontWeight.w500),
-                              ),
-                            ],
+                        TextSpan(
+                          text: trailingWords,
+                          style: const TextStyle(
+                            color: Color(0xFFFF6B00),
+                            fontSize: 21,
+                            fontWeight: FontWeight.w800,
                           ),
                         ),
-                      ))
-                  .toList(),
-            ),
-            const SizedBox(height: 24),
-          ],
-          GestureDetector(
-            onTap: () {
-              Navigator.pushNamed(context, '/customer/home');
-            },
-            child: Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [
-                    Theme.of(context).colorScheme.primary.withOpacity(0.1),
-                    Theme.of(context).colorScheme.primary.withOpacity(0.05),
-                  ],
-                ),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Row(
-                children: [
-                  Icon(
-                    Icons.restaurant,
-                    color: Theme.of(context).colorScheme.primary,
-                  ),
-                  const SizedBox(width: 12),
-                  const Expanded(
-                    child: Text(
-                      'Browse all restaurants near you',
-                      style:
-                          TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
+                      ],
                     ),
                   ),
-                  Icon(
-                    Icons.arrow_forward,
-                    color: Theme.of(context).colorScheme.primary,
+                ),
+              ),
+              if (trailing != null) trailing!,
+            ],
+          ),
+          if (subtitle != null && subtitle!.trim().isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 2),
+              child: Text(
+                subtitle!,
+                style: const TextStyle(
+                  color: Color(0xFF6B7280),
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SearchPopularTile extends StatelessWidget {
+  const _SearchPopularTile({
+    required this.label,
+    required this.icon,
+    required this.color,
+    required this.imageUrl,
+    required this.onTap,
+  });
+
+  final String label;
+  final IconData icon;
+  final Color color;
+  final String imageUrl;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(18),
+      child: SizedBox(
+        width: 76,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            Container(
+              width: 64,
+              height: 64,
+              decoration: BoxDecoration(
+                color: Colors.white,
+                shape: BoxShape.circle,
+                border: Border.all(color: const Color(0xFFF1F1F1)),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.06),
+                    blurRadius: 12,
+                    offset: const Offset(0, 4),
                   ),
                 ],
               ),
+              clipBehavior: Clip.antiAlias,
+              child: imageUrl.isNotEmpty
+                  ? AppCachedImage(
+                      imageUrl: imageUrl,
+                      width: 64,
+                      height: 64,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => _PopularIconFallback(
+                        icon: icon,
+                        color: color,
+                      ),
+                    )
+                  : _PopularIconFallback(icon: icon, color: color),
             ),
+            const SizedBox(height: 7),
+            Text(
+              label,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                color: _searchText,
+                fontSize: 12,
+                height: 1.08,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _PopularIconFallback extends StatelessWidget {
+  const _PopularIconFallback({
+    required this.icon,
+    required this.color,
+  });
+
+  final IconData icon;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return ColoredBox(
+      color: Colors.white,
+      child: Icon(icon, color: color, size: 28),
+    );
+  }
+}
+
+class _SearchRecentPill extends StatelessWidget {
+  const _SearchRecentPill({
+    required this.label,
+    required this.color,
+    required this.onTap,
+    this.onRemove,
+  });
+
+  final String label;
+  final Color color;
+  final VoidCallback onTap;
+  final VoidCallback? onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(999),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(999),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 9),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(999),
+            border: Border.all(color: const Color(0xFFF1F1F1)),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.04),
+                blurRadius: 8,
+                offset: const Offset(0, 3),
+              ),
+            ],
           ),
-        ],
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.history_rounded, size: 17, color: color),
+              const SizedBox(width: 7),
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 150),
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: _searchText,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+              if (onRemove != null) ...[
+                const SizedBox(width: 6),
+                GestureDetector(
+                  onTap: onRemove,
+                  child: const Icon(
+                    Icons.close_rounded,
+                    size: 16,
+                    color: Color(0xFF6B7280),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SearchStatePanel extends StatelessWidget {
+  const _SearchStatePanel({
+    required this.icon,
+    required this.title,
+    required this.message,
+    this.action,
+    this.child,
+  });
+
+  final IconData icon;
+  final String title;
+  final String message;
+  final Widget? action;
+  final Widget? child;
+
+  @override
+  Widget build(BuildContext context) {
+    final secondary = _searchSecondary(context);
+    return Center(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(24),
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(24),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(22),
+            border: Border.all(color: const Color(0xFFF1F1F1)),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.06),
+                blurRadius: 12,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 70,
+                height: 70,
+                decoration: BoxDecoration(
+                  color: secondary.withOpacity(0.10),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(icon, color: secondary, size: 34),
+              ),
+              const SizedBox(height: 16),
+              Text(
+                title,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: _searchText,
+                  fontSize: 20,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                message,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: Color(0xFF6B7280),
+                  fontSize: 13.5,
+                  height: 1.4,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              if (child != null) ...[
+                const SizedBox(height: 18),
+                child!,
+              ],
+              if (action != null) ...[
+                const SizedBox(height: 18),
+                action!,
+              ],
+            ],
+          ),
+        ),
       ),
     );
   }

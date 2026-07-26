@@ -11,15 +11,19 @@ import '../../theme/brand_palette.dart';
 import '../../utils/phone_number_utils.dart';
 import 'otp_verification_screen.dart';
 
+import 'package:food_delivery_customer/utils/app_text.dart';
+
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({
     super.key,
     this.initialPhone,
     this.initialEmail,
+    this.verifiedPhoneToken,
   });
 
   final String? initialPhone;
   final String? initialEmail;
+  final String? verifiedPhoneToken;
 
   @override
   State<RegisterScreen> createState() => _RegisterScreenState();
@@ -51,8 +55,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
   @override
   void initState() {
     super.initState();
-    _phoneController.text = _stripCountryCode(widget.initialPhone?.trim() ?? '');
+    _phoneController.text =
+        _stripCountryCode(widget.initialPhone?.trim() ?? '');
     _emailController.text = widget.initialEmail?.trim() ?? '';
+    _verifiedPhoneToken = widget.verifiedPhoneToken;
+    _verifiedPhoneNumber = widget.initialPhone;
     _loadBranding();
   }
 
@@ -71,8 +78,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       _branding = branding;
       _isLoadingBranding = false;
       if ((widget.initialPhone ?? '').isNotEmpty) {
-        _phoneController.text =
-            _stripCountryCode(widget.initialPhone!.trim());
+        _phoneController.text = _stripCountryCode(widget.initialPhone!.trim());
       }
     });
   }
@@ -163,7 +169,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
         if (!mounted) return;
 
         if (!sent) {
-          _showMessage(authProvider.error ?? 'Failed to send OTP', isError: true);
+          _showMessage(authProvider.error ?? 'Failed to send OTP',
+              isError: true);
           return;
         }
       }
@@ -256,7 +263,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   }) {
     return InputDecoration(
       hintText: hint,
-      hintStyle: const TextStyle(
+      hintStyle: TextStyle(
         fontSize: 16,
         fontWeight: FontWeight.w500,
         color: Color(0xFF9CA3AF),
@@ -265,10 +272,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
       suffixIcon: suffixIcon,
       filled: true,
       fillColor: Colors.white,
-      contentPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 18),
+      contentPadding: EdgeInsets.symmetric(horizontal: 18, vertical: 18),
       enabledBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(18),
-        borderSide: const BorderSide(color: _line),
+        borderSide: BorderSide(color: _line),
       ),
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(18),
@@ -276,11 +283,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
       ),
       errorBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(18),
-        borderSide: const BorderSide(color: Colors.red),
+        borderSide: BorderSide(color: Colors.red),
       ),
       focusedErrorBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(18),
-        borderSide: const BorderSide(color: Colors.red, width: 1.4),
+        borderSide: BorderSide(color: Colors.red, width: 1.4),
       ),
     );
   }
@@ -295,45 +302,45 @@ class _RegisterScreenState extends State<RegisterScreen> {
           backgroundColor: Colors.white,
           body: SafeArea(
             child: SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(24, 12, 24, 24),
+              padding: EdgeInsets.fromLTRB(24, 12, 24, 24),
               child: Form(
                 key: _formKey,
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const SizedBox(height: 4),
+                    SizedBox(height: 4),
                     Center(
                       child: Container(
                         width: 96,
                         height: 6,
                         decoration: BoxDecoration(
-                          color: const Color(0xFFE9EEF5),
+                          color: Color(0xFFE9EEF5),
                           borderRadius: BorderRadius.circular(999),
                         ),
                       ),
                     ),
-                    const SizedBox(height: 20),
+                    SizedBox(height: 20),
                     _buildHero(isVerified),
-                    const SizedBox(height: 26),
-                    const Text(
-                      'Create account',
+                    SizedBox(height: 26),
+                    Text(
+                      appText('Create account'),
                       style: TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.w600,
                         color: _subtext,
                       ),
                     ),
-                    const SizedBox(height: 10),
+                    SizedBox(height: 10),
                     TextFormField(
                       controller: _nameController,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.w500,
                         color: _text,
                       ),
                       decoration: _fieldDecoration(
                         hint: 'Full name',
-                        prefixIcon: const Icon(
+                        prefixIcon: Icon(
                           Icons.person_outline_rounded,
                           color: _subtext,
                         ),
@@ -345,12 +352,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
                         return null;
                       },
                     ),
-                    const SizedBox(height: 16),
+                    SizedBox(height: 16),
                     TextFormField(
                       controller: _phoneController,
                       keyboardType: TextInputType.phone,
                       readOnly: isVerified,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.w500,
                         color: _text,
@@ -365,28 +372,28 @@ class _RegisterScreenState extends State<RegisterScreen> {
                         }
                       },
                       decoration: InputDecoration(
-                        hintText: 'Enter mobile number',
-                        hintStyle: const TextStyle(
+                        hintText: appText('Enter mobile number'),
+                        hintStyle: TextStyle(
                           fontSize: 16,
                           fontWeight: FontWeight.w500,
                           color: Color(0xFF9CA3AF),
                         ),
                         filled: true,
                         fillColor: Colors.white,
-                        contentPadding: const EdgeInsets.symmetric(
+                        contentPadding: EdgeInsets.symmetric(
                           horizontal: 18,
                           vertical: 18,
                         ),
                         enabledBorder: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(18),
-                          borderSide: const BorderSide(color: _line),
+                          borderSide: BorderSide(color: _line),
                         ),
                         focusedBorder: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(18),
                           borderSide: BorderSide(color: _primary, width: 1.4),
                         ),
                         prefixIcon: Padding(
-                          padding: const EdgeInsets.only(left: 14, right: 10),
+                          padding: EdgeInsets.only(left: 14, right: 10),
                           child: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
@@ -396,9 +403,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                 decoration: BoxDecoration(
                                   borderRadius: BorderRadius.circular(4),
                                   border: Border.all(
-                                    color: const Color(0xFFE5E7EB),
+                                    color: Color(0xFFE5E7EB),
                                   ),
-                                  gradient: const LinearGradient(
+                                  gradient: LinearGradient(
                                     colors: [
                                       Color(0xFFFF9933),
                                       Color(0xFFFF9933),
@@ -413,30 +420,29 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                   ),
                                 ),
                               ),
-                              const SizedBox(width: 10),
+                              SizedBox(width: 10),
                               Text(
                                 _branding.defaultMobileCountryCode,
-                                style: const TextStyle(
+                                style: TextStyle(
                                   fontSize: 16,
                                   fontWeight: FontWeight.w600,
                                   color: _text,
                                 ),
                               ),
-                              const SizedBox(width: 6),
-                              const Icon(
+                              SizedBox(width: 6),
+                              Icon(
                                 Icons.keyboard_arrow_down_rounded,
                                 size: 20,
                                 color: _subtext,
                               ),
-                              const SizedBox(width: 10),
+                              SizedBox(width: 10),
                               Container(width: 1, height: 24, color: _line),
                             ],
                           ),
                         ),
-                        prefixIconConstraints:
-                            const BoxConstraints(minWidth: 148),
+                        prefixIconConstraints: BoxConstraints(minWidth: 148),
                         suffixIcon: Padding(
-                          padding: const EdgeInsets.only(right: 8),
+                          padding: EdgeInsets.only(right: 8),
                           child: TextButton(
                             onPressed:
                                 auth.isLoading || _isSendingOtp || isVerified
@@ -459,18 +465,18 @@ class _RegisterScreenState extends State<RegisterScreen> {
                         );
                       },
                     ),
-                    const SizedBox(height: 16),
+                    SizedBox(height: 16),
                     TextFormField(
                       controller: _emailController,
                       keyboardType: TextInputType.emailAddress,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.w500,
                         color: _text,
                       ),
                       decoration: _fieldDecoration(
                         hint: 'Email address',
-                        prefixIcon: const Icon(
+                        prefixIcon: Icon(
                           Icons.mail_outline_rounded,
                           color: _subtext,
                         ),
@@ -485,14 +491,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
                         return null;
                       },
                     ),
-                    const SizedBox(height: 16),
+                    SizedBox(height: 16),
                     Container(
                       width: double.infinity,
-                      padding: const EdgeInsets.all(16),
+                      padding: EdgeInsets.all(16),
                       decoration: BoxDecoration(
-                        color: const Color(0xFFFFF8EE),
+                        color: Color(0xFFFFF8EE),
                         borderRadius: BorderRadius.circular(18),
-                        border: Border.all(color: const Color(0xFFFFE0B2)),
+                        border: Border.all(color: Color(0xFFFFE0B2)),
                       ),
                       child: Row(
                         children: [
@@ -502,13 +508,13 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                 : Icons.info_outline_rounded,
                             color: isVerified ? Colors.green : _primary,
                           ),
-                          const SizedBox(width: 12),
+                          SizedBox(width: 12),
                           Expanded(
                             child: Text(
                               isVerified
                                   ? 'Your mobile number is verified. You can finish creating your account.'
                                   : 'Verify your mobile number first. Your customer login will stay OTP only.',
-                              style: const TextStyle(
+                              style: TextStyle(
                                 color: _text,
                                 fontSize: 14,
                                 fontWeight: FontWeight.w500,
@@ -519,7 +525,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                         ],
                       ),
                     ),
-                    const SizedBox(height: 16),
+                    SizedBox(height: 16),
                     CheckboxListTile(
                       value: _agreeTerms,
                       onChanged: (value) {
@@ -529,8 +535,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
                       },
                       contentPadding: EdgeInsets.zero,
                       controlAffinity: ListTileControlAffinity.leading,
-                      title: const Text(
-                        'I agree to the Terms & Conditions and Privacy Policy',
+                      title: Text(
+                        appText(
+                            'I agree to the Terms & Conditions and Privacy Policy'),
                         style: TextStyle(
                           color: _subtext,
                           fontSize: 13,
@@ -538,7 +545,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                         ),
                       ),
                     ),
-                    const SizedBox(height: 18),
+                    SizedBox(height: 18),
                     SizedBox(
                       width: double.infinity,
                       child: DecoratedBox(
@@ -546,7 +553,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
                           gradient: LinearGradient(
                             colors: [
                               _primary,
-                              Color.lerp(_primary, _secondary, 0.24) ?? _primary,
+                              Color.lerp(_primary, _secondary, 0.24) ??
+                                  _primary,
                             ],
                           ),
                           borderRadius: BorderRadius.circular(18),
@@ -554,7 +562,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                             BoxShadow(
                               color: _primary.withOpacity(0.2),
                               blurRadius: 18,
-                              offset: const Offset(0, 10),
+                              offset: Offset(0, 10),
                             ),
                           ],
                         ),
@@ -567,7 +575,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                           style: ElevatedButton.styleFrom(
                             backgroundColor: Colors.transparent,
                             shadowColor: Colors.transparent,
-                            minimumSize: const Size.fromHeight(58),
+                            minimumSize: Size.fromHeight(58),
                             shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(18),
                             ),
@@ -580,7 +588,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                     : isVerified
                                         ? 'Create Account'
                                         : 'Verify Mobile & Continue',
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontSize: 18,
                               fontWeight: FontWeight.w600,
                               color: Colors.black,
@@ -589,12 +597,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
                         ),
                       ),
                     ),
-                    const SizedBox(height: 24),
+                    SizedBox(height: 24),
                     Center(
                       child: TextButton(
-                        onPressed: () =>
-                            Navigator.pushReplacementNamed(context, '/login/form'),
-                        child: const Text.rich(
+                        onPressed: () => Navigator.pushReplacementNamed(
+                            context, '/login/form'),
+                        child: Text.rich(
                           TextSpan(
                             text: 'Already have an account? ',
                             style: TextStyle(
@@ -635,7 +643,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
             decoration: BoxDecoration(
               color: Colors.white,
               borderRadius: BorderRadius.circular(32),
-              boxShadow: const [
+              boxShadow: [
                 BoxShadow(
                   color: Color(0x14000000),
                   blurRadius: 24,
@@ -659,7 +667,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   begin: Alignment.topLeft,
                   end: Alignment.bottomRight,
                 ),
-                borderRadius: const BorderRadius.only(
+                borderRadius: BorderRadius.only(
                   topRight: Radius.circular(36),
                   bottomLeft: Radius.circular(120),
                   bottomRight: Radius.circular(26),
@@ -688,37 +696,37 @@ class _RegisterScreenState extends State<RegisterScreen> {
           ),
           Positioned.fill(
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(22, 28, 22, 22),
+              padding: EdgeInsets.fromLTRB(22, 28, 22, 22),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const SizedBox(height: 90),
+                  SizedBox(height: 90),
                   Text(
                     isVerified ? 'Almost there' : 'Join us',
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 22,
                       fontWeight: FontWeight.w600,
                       color: _text,
                     ),
                   ),
-                  const SizedBox(height: 6),
+                  SizedBox(height: 6),
                   Text(
                     _branding.displayName,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 38,
                       height: 1.08,
                       fontWeight: FontWeight.w700,
                       color: _text,
                     ),
                   ),
-                  const SizedBox(height: 12),
+                  SizedBox(height: 12),
                   SizedBox(
                     width: 190,
                     child: Text(
                       isVerified
                           ? 'Your number is verified. Complete your profile and start ordering.'
                           : 'Create your customer account with secure OTP based sign up.',
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 18,
                         fontWeight: FontWeight.w400,
                         color: _subtext,

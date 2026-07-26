@@ -14,6 +14,7 @@ class MenuItemCard extends StatelessWidget {
   final VoidCallback? onSave;
   final ValueChanged<int>? onQuantityChanged;
   final bool orderingEnabled;
+  final String? promotionTag;
 
   const MenuItemCard({
     super.key,
@@ -25,17 +26,25 @@ class MenuItemCard extends StatelessWidget {
     this.onSave,
     this.onQuantityChanged,
     this.orderingEnabled = true,
+    this.promotionTag,
   });
 
   @override
   Widget build(BuildContext context) {
     final itemTags = item.displayTags.take(4).toList(growable: false);
     final highlightTag = item.totalOrders >= 20 ? 'Highly ordered' : null;
+    final promoTag = promotionTag?.trim() ?? '';
+    final compact = MediaQuery.sizeOf(context).width < 380;
+    final imageWidth = compact ? 116.0 : 148.0;
+    final imageHeight = compact ? 104.0 : 132.0;
+    final itemPadding = compact
+        ? const EdgeInsets.fromLTRB(12, 12, 12, 14)
+        : const EdgeInsets.fromLTRB(16, 14, 16, 16);
 
     return InkWell(
       onTap: onTap,
       child: Container(
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 18),
+        padding: itemPadding,
         decoration: const BoxDecoration(
           color: Colors.white,
           border: Border(
@@ -50,13 +59,13 @@ class MenuItemCard extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   _FoodTypeBadge(item: item),
-                  const SizedBox(height: 10),
+                  SizedBox(height: compact ? 8 : 10),
                   Text(
                     item.name,
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
-                      fontSize: 16,
+                      fontSize: 14.1,
                       height: 1.2,
                       fontWeight: FontWeight.w700,
                       color: FoodFlowTheme.ink,
@@ -96,13 +105,13 @@ class MenuItemCard extends StatelessWidget {
                       ],
                     ),
                   ],
-                  const SizedBox(height: 10),
+                  SizedBox(height: compact ? 8 : 10),
                   Row(
                     children: [
                       Text(
                         formatCurrency(context, item.finalPrice),
                         style: const TextStyle(
-                          fontSize: 14,
+                          fontSize: 12.3,
                           fontWeight: FontWeight.w600,
                           color: FoodFlowTheme.ink,
                         ),
@@ -122,20 +131,20 @@ class MenuItemCard extends StatelessWidget {
                     ],
                   ),
                   if (item.description?.trim().isNotEmpty == true) ...[
-                    const SizedBox(height: 10),
-                      Text(
-                        item.description!,
-                        maxLines: 3,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontSize: 13,
-                          height: 1.35,
-                          color: FoodFlowTheme.inkSoft,
-                          fontWeight: FontWeight.w500,
-                        ),
+                    SizedBox(height: compact ? 8 : 10),
+                    Text(
+                      item.description!,
+                      maxLines: 3,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 13,
+                        height: 1.35,
+                        color: FoodFlowTheme.inkSoft,
+                        fontWeight: FontWeight.w500,
                       ),
+                    ),
                   ],
-                  const SizedBox(height: 14),
+                  SizedBox(height: compact ? 10 : 14),
                   Row(
                     children: [
                       _ActionCircle(
@@ -154,7 +163,7 @@ class MenuItemCard extends StatelessWidget {
                 ],
               ),
             ),
-            const SizedBox(width: 16),
+            SizedBox(width: compact ? 10 : 16),
             Column(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
@@ -163,11 +172,17 @@ class MenuItemCard extends StatelessWidget {
                   children: [
                     NetworkImageLoader(
                       imageUrl: item.imageUrl,
-                      width: 148,
-                      height: 132,
+                      width: imageWidth,
+                      height: imageHeight,
                       fit: BoxFit.cover,
-                      borderRadius: BorderRadius.circular(20),
+                      borderRadius: BorderRadius.circular(compact ? 16 : 20),
                     ),
+                    if (promoTag.isNotEmpty)
+                      Positioned(
+                        left: 8,
+                        top: 8,
+                        child: _PromotionTagBadge(label: promoTag),
+                      ),
                     Positioned(
                       left: 20,
                       right: 20,
@@ -309,7 +324,7 @@ class _MenuCustomizationSheetState extends State<MenuCustomizationSheet> {
                               Text(
                                 item.name,
                                 style: const TextStyle(
-                                  fontSize: 18,
+                                  fontSize: 15.8,
                                   fontWeight: FontWeight.w700,
                                   color: FoodFlowTheme.ink,
                                 ),
@@ -335,7 +350,7 @@ class _MenuCustomizationSheetState extends State<MenuCustomizationSheet> {
                                           ? item.description!
                                           : 'Handcrafted with careful preparation and delivered fresh.',
                                       style: const TextStyle(
-                                        fontSize: 14,
+                                        fontSize: 12.3,
                                         height: 1.35,
                                         color: FoodFlowTheme.inkSoft,
                                       ),
@@ -483,7 +498,7 @@ class _MenuCustomizationSheetState extends State<MenuCustomizationSheet> {
                       child: Text(
                         'Add item ${formatCurrency(context, total)}',
                         style: const TextStyle(
-                          fontSize: 16,
+                          fontSize: 14.1,
                           fontWeight: FontWeight.w700,
                         ),
                       ),
@@ -558,7 +573,7 @@ class _AddControl extends StatelessWidget {
                   '$quantity',
                   style: const TextStyle(
                     color: Color(0xFF0A9443),
-                    fontSize: 16,
+                    fontSize: 14.1,
                     fontWeight: FontWeight.w700,
                   ),
                 ),
@@ -593,7 +608,7 @@ class _AddControl extends StatelessWidget {
                 'ADD',
                 style: TextStyle(
                   color: Color(0xFF0A9443),
-                  fontSize: 18,
+                  fontSize: 15.8,
                   fontWeight: FontWeight.w700,
                 ),
               ),
@@ -680,17 +695,65 @@ class _MenuTagBadge extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
-        color: const Color(0xFFFFF3E8),
+        color: FoodFlowTheme.tagOrangeSoft,
         borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: const Color(0xFFFFD7AF)),
+        border: Border.all(color: FoodFlowTheme.tagOrangeBorder),
       ),
       child: Text(
         label,
         style: const TextStyle(
           fontSize: 11,
           fontWeight: FontWeight.w700,
-          color: FoodFlowTheme.orange,
+          color: FoodFlowTheme.tagOrange,
         ),
+      ),
+    );
+  }
+}
+
+class _PromotionTagBadge extends StatelessWidget {
+  final String label;
+
+  const _PromotionTagBadge({required this.label});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      constraints: const BoxConstraints(maxWidth: 126),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+      decoration: BoxDecoration(
+        color: FoodFlowTheme.tagOrange,
+        borderRadius: BorderRadius.circular(10),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.18),
+            blurRadius: 8,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(
+            Icons.local_offer_rounded,
+            color: Colors.white,
+            size: 12,
+          ),
+          const SizedBox(width: 4),
+          Flexible(
+            child: Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 10,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -722,7 +785,7 @@ class _OptionSection extends StatelessWidget {
           Text(
             title,
             style: const TextStyle(
-              fontSize: 15,
+              fontSize: 13.2,
               fontWeight: FontWeight.w700,
               color: FoodFlowTheme.ink,
             ),
@@ -775,7 +838,7 @@ class _SelectionTile extends StatelessWidget {
               child: Text(
                 label,
                 style: const TextStyle(
-                  fontSize: 15,
+                  fontSize: 13.2,
                   fontWeight: FontWeight.w600,
                   color: FoodFlowTheme.ink,
                 ),
@@ -784,7 +847,7 @@ class _SelectionTile extends StatelessWidget {
             Text(
               trailing,
               style: const TextStyle(
-                fontSize: 14,
+                fontSize: 12.3,
                 fontWeight: FontWeight.w600,
                 color: FoodFlowTheme.ink,
               ),
@@ -889,7 +952,7 @@ class _FooterStepper extends StatelessWidget {
               '$quantity',
               textAlign: TextAlign.center,
               style: const TextStyle(
-                fontSize: 18,
+                fontSize: 15.8,
                 fontWeight: FontWeight.w700,
                 color: FoodFlowTheme.ink,
               ),

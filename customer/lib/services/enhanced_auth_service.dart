@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:sms_autofill/sms_autofill.dart';
 import 'api_service.dart';
 import 'foreground_service_manager.dart';
 import 'notification_service.dart';
@@ -24,10 +25,12 @@ class EnhancedAuthService {
         phoneNumber,
         defaultMobileCountryCode: countryCode,
       );
+      final appSignature = await _smsRetrieverSignature();
       final response = await _sendOtpRequest({
         'phone': normalizedPhone,
         'flow': flow,
         if (role != null && role.isNotEmpty) 'role': role,
+        if (appSignature.isNotEmpty) 'app_signature': appSignature,
       });
 
       if (response['success'] != true) {
@@ -98,10 +101,12 @@ class EnhancedAuthService {
         phoneNumber,
         defaultMobileCountryCode: countryCode,
       );
+      final appSignature = await _smsRetrieverSignature();
       final response = await _sendOtpRequest({
         'phone': normalizedPhone,
         'flow': flow,
         if (role != null && role.isNotEmpty) 'role': role,
+        if (appSignature.isNotEmpty) 'app_signature': appSignature,
       });
       if (response['success'] != true) {
         throw Exception(response['message'] ?? 'Failed to resend OTP');
@@ -113,6 +118,14 @@ class EnhancedAuthService {
 
   Future<String> _getRecaptchaToken() async {
     return '';
+  }
+
+  Future<String> _smsRetrieverSignature() async {
+    try {
+      return (await SmsAutoFill().getAppSignature).trim();
+    } catch (_) {
+      return '';
+    }
   }
 
   Future<dynamic> _sendOtpRequest(Map<String, String> data) async {

@@ -3,6 +3,18 @@ import 'dart:async';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../utils/phone_number_utils.dart';
 
+class FirebaseOtpSendResult {
+  const FirebaseOtpSendResult({
+    required this.verificationId,
+    this.firebaseIdToken,
+  });
+
+  final String verificationId;
+  final String? firebaseIdToken;
+
+  bool get autoVerified => firebaseIdToken?.isNotEmpty == true;
+}
+
 class FirebasePhoneAuthService {
   final FirebaseAuth _firebaseAuth = FirebaseAuth.instance;
   int? _resendToken;
@@ -29,13 +41,30 @@ class FirebasePhoneAuthService {
     required String phone,
     String? countryCode,
     Duration timeout = const Duration(seconds: 60),
+    Future<void> Function(String firebaseIdToken)? onAutoVerified,
+  }) async {
+    final result = await sendOtpWithAutoVerification(
+      phone: phone,
+      countryCode: countryCode,
+      timeout: timeout,
+      onAutoVerified: onAutoVerified,
+    );
+
+    return result.verificationId;
+  }
+
+  Future<FirebaseOtpSendResult> sendOtpWithAutoVerification({
+    required String phone,
+    String? countryCode,
+    Duration timeout = const Duration(seconds: 60),
+    Future<void> Function(String firebaseIdToken)? onAutoVerified,
   }) async {
     final normalizedPhone = _normalizePhoneNumber(
       phone,
       defaultMobileCountryCode: countryCode,
     );
 
-    final completer = Completer<String>();
+    final completer = Completer<FirebaseOtpSendResult>();
 
     await _firebaseAuth.verifyPhoneNumber(
       phoneNumber: normalizedPhone,
@@ -43,13 +72,24 @@ class FirebasePhoneAuthService {
       forceResendingToken: _resendToken,
       verificationCompleted: (credential) async {
         try {
-          await _firebaseAuth.signInWithCredential(credential);
-          if (!completer.isCompleted) {
-            completer.complete(credential.verificationId ?? '');
+          final result = await _firebaseAuth.signInWithCredential(credential);
+          final idToken = await result.user?.getIdToken(true);
+          if (idToken == null || idToken.isEmpty) {
+            throw Exception('Unable to obtain Firebase ID token.');
           }
-        } catch (_) {
+
+          await onAutoVerified?.call(idToken);
           if (!completer.isCompleted) {
-            completer.completeError('Automatic verification failed.');
+            completer.complete(
+              FirebaseOtpSendResult(
+                verificationId: credential.verificationId ?? '',
+                firebaseIdToken: idToken,
+              ),
+            );
+          }
+        } catch (error) {
+          if (!completer.isCompleted) {
+            completer.completeError(error);
           }
         }
       },
@@ -61,12 +101,16 @@ class FirebasePhoneAuthService {
       codeSent: (verificationId, resendToken) {
         _resendToken = resendToken;
         if (!completer.isCompleted) {
-          completer.complete(verificationId);
+          completer.complete(
+            FirebaseOtpSendResult(verificationId: verificationId),
+          );
         }
       },
       codeAutoRetrievalTimeout: (verificationId) {
         if (!completer.isCompleted) {
-          completer.complete(verificationId);
+          completer.complete(
+            FirebaseOtpSendResult(verificationId: verificationId),
+          );
         }
       },
     );

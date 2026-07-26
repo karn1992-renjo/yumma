@@ -13,6 +13,8 @@ import '../../utils/phone_number_utils.dart';
 import '../../widgets/auth/auth_lottie_accent.dart';
 import '../../widgets/auth/brand_mark.dart';
 
+import 'package:food_delivery_customer/utils/app_text.dart';
+
 class ModernLoginScreen extends StatefulWidget {
   const ModernLoginScreen({super.key});
 
@@ -83,7 +85,7 @@ class _ModernLoginScreenState extends State<ModernLoginScreen> {
     });
 
     while (_resendCountdown > 0 && mounted) {
-      await Future.delayed(const Duration(seconds: 1));
+      await Future.delayed(Duration(seconds: 1));
       if (!mounted) return;
       setState(() {
         _resendCountdown -= 1;
@@ -129,7 +131,8 @@ class _ModernLoginScreenState extends State<ModernLoginScreen> {
         _isResendAvailable = false;
       });
       _startResendCountdown();
-      _showMessage('OTP sent to ${_phoneAuthService.formatPhoneForDisplay(phone, countryCode: _defaultCountryCode)}');
+      _showMessage(
+          'OTP sent to ${_phoneAuthService.formatPhoneForDisplay(phone, countryCode: _defaultCountryCode)}');
     } catch (e) {
       setState(() {
         _authError = e.toString().replaceAll('Exception: ', '');
@@ -160,7 +163,8 @@ class _ModernLoginScreenState extends State<ModernLoginScreen> {
     final code = _otpController.text.trim();
 
     if (code.length < 6 || _verificationId == null) {
-      _showMessage('Please enter the 6-digit OTP sent to your phone', isError: true);
+      _showMessage('Please enter the 6-digit OTP sent to your phone',
+          isError: true);
       return;
     }
 
@@ -190,7 +194,8 @@ class _ModernLoginScreenState extends State<ModernLoginScreen> {
       if (!authProvider.canUseCurrentApp) {
         await authProvider.logout();
         if (!mounted) return;
-        _showMessage('Please login with a ${AppConfig.appRole} account.', isError: true);
+        _showMessage('Please login with a ${AppConfig.appRole} account.',
+            isError: true);
         return;
       }
 
@@ -304,7 +309,7 @@ class _ModernLoginScreenState extends State<ModernLoginScreen> {
       case 'driver':
         return 'Driver';
       case 'restaurant':
-        return 'Restaurant';
+        return 'Store';
       default:
         return 'Customer';
     }
@@ -314,7 +319,7 @@ class _ModernLoginScreenState extends State<ModernLoginScreen> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(message),
-        backgroundColor: isError ? Colors.red : FoodFlowTheme.orange,
+        backgroundColor: isError ? Colors.red : FoodFlowTheme.tagOrange,
         behavior: SnackBarBehavior.floating,
       ),
     );
@@ -331,20 +336,20 @@ class _ModernLoginScreenState extends State<ModernLoginScreen> {
       suffixIcon: suffix,
       floatingLabelBehavior: FloatingLabelBehavior.always,
       filled: false,
-      contentPadding: const EdgeInsets.only(top: 4, bottom: 12),
-      enabledBorder: const UnderlineInputBorder(
+      contentPadding: EdgeInsets.only(top: 4, bottom: 12),
+      enabledBorder: UnderlineInputBorder(
         borderSide: BorderSide(color: Color(0xFFB3ACA7)),
       ),
-      focusedBorder: const UnderlineInputBorder(
+      focusedBorder: UnderlineInputBorder(
         borderSide: BorderSide(color: Color(0xFFFF5A1F), width: 1.4),
       ),
-      border: const UnderlineInputBorder(),
-      labelStyle: const TextStyle(
+      border: UnderlineInputBorder(),
+      labelStyle: TextStyle(
         color: Color(0xFF2C2727),
         fontWeight: FontWeight.w600,
         fontSize: 12,
       ),
-      hintStyle: const TextStyle(
+      hintStyle: TextStyle(
         color: Color(0xFFAAA19B),
         fontSize: 13,
       ),
@@ -359,7 +364,7 @@ class _ModernLoginScreenState extends State<ModernLoginScreen> {
           backgroundColor: Colors.white,
           body: SafeArea(
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(28, 20, 28, 20),
+              padding: EdgeInsets.fromLTRB(28, 20, 28, 20),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
@@ -367,11 +372,11 @@ class _ModernLoginScreenState extends State<ModernLoginScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       BrandMark(branding: _branding, size: 30),
-                      const Spacer(),
-                      const AuthLottieAccent(height: 104),
+                      Spacer(),
+                      AuthLottieAccent(height: 104),
                     ],
                   ),
-                  const SizedBox(height: 26),
+                  SizedBox(height: 26),
                   Expanded(
                     child: SingleChildScrollView(
                       child: Form(
@@ -381,14 +386,14 @@ class _ModernLoginScreenState extends State<ModernLoginScreen> {
                           children: [
                             Text(
                               'Welcome\nto ${_branding.displayName}',
-                              style: const TextStyle(
+                              style: TextStyle(
                                 fontSize: 44,
                                 height: 0.98,
                                 fontWeight: FontWeight.w900,
                                 color: Color(0xFF423E3E),
                               ),
                             ),
-                            const SizedBox(height: 30),
+                            SizedBox(height: 30),
                             if (!AppConfig.isRoleLocked) ...[
                               _RoleSelector(
                                 selectedRole: _selectedRole,
@@ -399,7 +404,7 @@ class _ModernLoginScreenState extends State<ModernLoginScreen> {
                                   });
                                 },
                               ),
-                              const SizedBox(height: 18),
+                              SizedBox(height: 18),
                             ],
                             _AuthModeToggle(
                               useOtp: _useOtp,
@@ -410,7 +415,7 @@ class _ModernLoginScreenState extends State<ModernLoginScreen> {
                                 });
                               },
                             ),
-                            const SizedBox(height: 18),
+                            SizedBox(height: 18),
                             if (_useOtp) ...[
                               TextFormField(
                                 controller: _phoneController,
@@ -427,18 +432,18 @@ class _ModernLoginScreenState extends State<ModernLoginScreen> {
                                 },
                               ),
                               if (_otpSent) ...[
-                                const SizedBox(height: 16),
+                                SizedBox(height: 16),
                                 PinFieldAutoFill(
                                   controller: _otpController,
                                   codeLength: 6,
                                   decoration: UnderlineDecoration(
-                                    textStyle: const TextStyle(
+                                    textStyle: TextStyle(
                                       fontSize: 20,
                                       color: Color(0xFF222222),
                                       fontWeight: FontWeight.w700,
                                     ),
                                     colorBuilder: FixedColorBuilder(
-                                      const Color(0xFFB3ACA7),
+                                      Color(0xFFB3ACA7),
                                     ),
                                   ),
                                   currentCode: _otpController.text,
@@ -451,34 +456,36 @@ class _ModernLoginScreenState extends State<ModernLoginScreen> {
                                     }
                                   },
                                 ),
-                                const SizedBox(height: 12),
+                                SizedBox(height: 12),
                                 Row(
-                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                  mainAxisAlignment:
+                                      MainAxisAlignment.spaceBetween,
                                   children: [
                                     Text(
                                       _resendCountdown > 0
                                           ? 'Resend in ${_resendCountdown}s'
                                           : 'Didn\'t receive the code?',
-                                      style: const TextStyle(
+                                      style: TextStyle(
                                         fontSize: 12,
                                         color: Color(0xFF7A7A7A),
                                       ),
                                     ),
                                     TextButton(
-                                      onPressed: _isResendAvailable && !_isSendingOtp
-                                          ? () async {
-                                              await _requestOtp();
-                                            }
-                                          : null,
-                                      child: const Text('Resend'),
+                                      onPressed:
+                                          _isResendAvailable && !_isSendingOtp
+                                              ? () async {
+                                                  await _requestOtp();
+                                                }
+                                              : null,
+                                      child: Text(appText('Resend')),
                                     ),
                                   ],
                                 ),
                                 if (_authError != null) ...[
-                                  const SizedBox(height: 12),
+                                  SizedBox(height: 12),
                                   Text(
                                     _authError!,
-                                    style: const TextStyle(
+                                    style: TextStyle(
                                       color: Colors.red,
                                       fontSize: 12,
                                     ),
@@ -503,7 +510,7 @@ class _ModernLoginScreenState extends State<ModernLoginScreen> {
                                   return null;
                                 },
                               ),
-                              const SizedBox(height: 18),
+                              SizedBox(height: 18),
                               TextFormField(
                                 controller: _passwordController,
                                 obscureText: !_isPasswordVisible,
@@ -513,14 +520,15 @@ class _ModernLoginScreenState extends State<ModernLoginScreen> {
                                   suffix: IconButton(
                                     onPressed: () {
                                       setState(() {
-                                        _isPasswordVisible = !_isPasswordVisible;
+                                        _isPasswordVisible =
+                                            !_isPasswordVisible;
                                       });
                                     },
                                     icon: Icon(
                                       _isPasswordVisible
                                           ? Icons.visibility_off_outlined
                                           : Icons.visibility_outlined,
-                                      color: const Color(0xFF8A817C),
+                                      color: Color(0xFF8A817C),
                                     ),
                                   ),
                                 ),
@@ -534,7 +542,7 @@ class _ModernLoginScreenState extends State<ModernLoginScreen> {
                                   return null;
                                 },
                               ),
-                              const SizedBox(height: 10),
+                              SizedBox(height: 10),
                               Align(
                                 alignment: Alignment.centerLeft,
                                 child: TextButton(
@@ -548,8 +556,8 @@ class _ModernLoginScreenState extends State<ModernLoginScreen> {
                                     tapTargetSize:
                                         MaterialTapTargetSize.shrinkWrap,
                                   ),
-                                  child: const Text(
-                                    'Forgot your password?',
+                                  child: Text(
+                                    appText('Forgot your password?'),
                                     style: TextStyle(
                                       color: Color(0xFFFF5A1F),
                                       fontSize: 11,
@@ -559,16 +567,16 @@ class _ModernLoginScreenState extends State<ModernLoginScreen> {
                                 ),
                               ),
                             ],
-                            const SizedBox(height: 20),
+                            SizedBox(height: 20),
                             Row(
-                              children: const [
+                              children: [
                                 Expanded(
                                   child: Divider(color: Color(0xFFE6DDD8)),
                                 ),
                                 Padding(
                                   padding: EdgeInsets.symmetric(horizontal: 10),
                                   child: Text(
-                                    'or continue with',
+                                    appText('or continue with'),
                                     style: TextStyle(
                                       color: Color(0xFF9B928C),
                                       fontSize: 11,
@@ -580,10 +588,10 @@ class _ModernLoginScreenState extends State<ModernLoginScreen> {
                                 ),
                               ],
                             ),
-                            const SizedBox(height: 18),
+                            SizedBox(height: 18),
                             Row(
                               mainAxisAlignment: MainAxisAlignment.center,
-                              children: const [
+                              children: [
                                 _SocialCircle(label: 'G'),
                                 SizedBox(width: 14),
                                 _SocialCircle(label: 'f'),
@@ -594,7 +602,7 @@ class _ModernLoginScreenState extends State<ModernLoginScreen> {
                       ),
                     ),
                   ),
-                  const SizedBox(height: 18),
+                  SizedBox(height: 18),
                   SizedBox(
                     width: double.infinity,
                     child: ElevatedButton(
@@ -603,15 +611,15 @@ class _ModernLoginScreenState extends State<ModernLoginScreen> {
                               ? null
                               : _handleLogin,
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFFFF5A1F),
+                        backgroundColor: Color(0xFFFF5A1F),
                         foregroundColor: Colors.white,
-                        minimumSize: const Size.fromHeight(54),
+                        minimumSize: Size.fromHeight(54),
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(999),
                         ),
                       ),
                       child: auth.isLoading || _isSendingOtp || _isVerifyingOtp
-                          ? const SizedBox(
+                          ? SizedBox(
                               width: 18,
                               height: 18,
                               child: CircularProgressIndicator(
@@ -624,11 +632,12 @@ class _ModernLoginScreenState extends State<ModernLoginScreen> {
                               : 'Sign in'),
                     ),
                   ),
-                  const SizedBox(height: 14),
+                  SizedBox(height: 14),
                   Center(
                     child: TextButton(
-                      onPressed: () => Navigator.pushNamed(context, '/register'),
-                      child: const Text.rich(
+                      onPressed: () =>
+                          Navigator.pushNamed(context, '/register'),
+                      child: Text.rich(
                         TextSpan(
                           text: "Don't have an account? ",
                           style: TextStyle(color: Color(0xFF8A817C)),
@@ -666,14 +675,14 @@ class _SocialCircle extends StatelessWidget {
       width: 38,
       height: 38,
       decoration: BoxDecoration(
-        color: const Color(0xFFF3F0EE),
+        color: Color(0xFFF3F0EE),
         shape: BoxShape.circle,
-        border: Border.all(color: const Color(0xFFE2D9D4)),
+        border: Border.all(color: Color(0xFFE2D9D4)),
       ),
       alignment: Alignment.center,
       child: Text(
         label,
-        style: const TextStyle(
+        style: TextStyle(
           color: Color(0xFF6D6661),
           fontSize: 18,
           fontWeight: FontWeight.w700,
@@ -696,11 +705,11 @@ class _AuthModeToggle extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       width: 236,
-      padding: const EdgeInsets.all(4),
+      padding: EdgeInsets.all(4),
       decoration: BoxDecoration(
-        color: const Color(0xFFF7F3F1),
+        color: Color(0xFFF7F3F1),
         borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: const Color(0xFFD8CDC7)),
+        border: Border.all(color: Color(0xFFD8CDC7)),
       ),
       child: Row(
         children: [
@@ -712,7 +721,7 @@ class _AuthModeToggle extends StatelessWidget {
               onTap: () => onChanged(false),
             ),
           ),
-          const SizedBox(width: 4),
+          SizedBox(width: 4),
           Expanded(
             child: _AuthModeToggleChip(
               label: 'OTP',
@@ -742,19 +751,19 @@ class _AuthModeToggleChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: selected ? const Color(0xFFDDF3DD) : Colors.white,
+      color: selected ? Color(0xFFDDF3DD) : Colors.white,
       borderRadius: BorderRadius.circular(999),
       child: InkWell(
         onTap: onTap,
         borderRadius: BorderRadius.circular(999),
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          padding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               if (selected && icon != null) ...[
-                Icon(icon, size: 18, color: const Color(0xFF1C8A43)),
-                const SizedBox(width: 6),
+                Icon(icon, size: 18, color: Color(0xFF1C8A43)),
+                SizedBox(width: 6),
               ],
               Flexible(
                 child: Text(
@@ -764,7 +773,7 @@ class _AuthModeToggleChip extends StatelessWidget {
                   softWrap: false,
                   textAlign: TextAlign.center,
                   style: TextStyle(
-                    color: const Color(0xFF2E2A2A),
+                    color: Color(0xFF2E2A2A),
                     fontSize: 13,
                     fontWeight: selected ? FontWeight.w800 : FontWeight.w700,
                   ),
@@ -791,7 +800,7 @@ class _RoleSelector extends StatelessWidget {
   Widget build(BuildContext context) {
     const roles = [
       ('customer', 'Customer'),
-      ('restaurant', 'Restaurant'),
+      ('restaurant', 'Store'),
       ('driver', 'Driver'),
     ];
 
@@ -805,17 +814,13 @@ class _RoleSelector extends StatelessWidget {
               onTap: () => onChanged(role.$1),
               borderRadius: BorderRadius.circular(999),
               child: AnimatedContainer(
-                duration: const Duration(milliseconds: 180),
-                padding: const EdgeInsets.symmetric(vertical: 10),
+                duration: Duration(milliseconds: 180),
+                padding: EdgeInsets.symmetric(vertical: 10),
                 decoration: BoxDecoration(
-                  color: selected
-                      ? const Color(0xFFFFEFE9)
-                      : const Color(0xFFF7F3F1),
+                  color: selected ? Color(0xFFFFEFE9) : Color(0xFFF7F3F1),
                   borderRadius: BorderRadius.circular(999),
                   border: Border.all(
-                    color: selected
-                        ? const Color(0xFFFF5A1F)
-                        : const Color(0xFFE5DDD8),
+                    color: selected ? Color(0xFFFF5A1F) : Color(0xFFE5DDD8),
                   ),
                 ),
                 child: Text(
@@ -824,9 +829,7 @@ class _RoleSelector extends StatelessWidget {
                   style: TextStyle(
                     fontSize: 12,
                     fontWeight: FontWeight.w700,
-                    color: selected
-                        ? const Color(0xFFFF5A1F)
-                        : const Color(0xFF7D736E),
+                    color: selected ? Color(0xFFFF5A1F) : Color(0xFF7D736E),
                   ),
                 ),
               ),

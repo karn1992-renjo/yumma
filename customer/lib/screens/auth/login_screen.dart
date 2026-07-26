@@ -1,6 +1,9 @@
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:provider/provider.dart';
+
+import 'package:food_delivery_customer/utils/app_text.dart';
 
 import '../../config/app_config.dart';
 import '../../models/app_branding.dart';
@@ -8,9 +11,11 @@ import '../../providers/auth_provider.dart';
 import '../../services/app_branding_service.dart';
 import '../../services/firebase_phone_auth_service.dart';
 import '../../services/social_auth_service.dart';
-import '../../theme/brand_palette.dart';
+import '../../theme/foodflow_theme.dart';
 import '../../utils/phone_number_utils.dart';
+import 'a1paso_auth_widgets.dart';
 import 'otp_verification_screen.dart';
+import 'register_screen.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -20,9 +25,9 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen> {
-  static const _text = Color(0xFF111827);
-  static const _subtext = Color(0xFF6B7280);
-  static const _line = Color(0xFFE5E7EB);
+  static const _text = A1PasoAuthColors.text;
+  static const _subtext = A1PasoAuthColors.subtext;
+  static const _line = A1PasoAuthColors.border;
 
   final _formKey = GlobalKey<FormState>();
   final _phoneController = TextEditingController();
@@ -32,12 +37,14 @@ class _LoginScreenState extends State<LoginScreen> {
 
   AppBranding _branding = AppBranding.fallback();
   bool _isLoadingBranding = true;
-  bool _isSocialLoading = false;
   bool _isSendingOtp = false;
+  String? _socialLoadingProvider;
 
-  BrandPalette get _palette => BrandPalette.fromBranding(_branding);
-  Color get _primary => _palette.primary;
-  Color get _secondary => _palette.secondary;
+  bool get _isSocialLoading => _socialLoadingProvider != null;
+  bool get _hasSocialLogin =>
+      _branding.usesGoogleLogin || _branding.usesAppleLogin;
+
+  String get _countryCode => _branding.defaultMobileCountryCode;
 
   @override
   void initState() {
@@ -63,12 +70,12 @@ class _LoginScreenState extends State<LoginScreen> {
   String _normalizedPhone() {
     return PhoneNumberUtils.normalizeMobile(
       _phoneController.text,
-      countryCode: _branding.defaultMobileCountryCode,
+      countryCode: _countryCode,
       log: true,
     ).normalizedNumber;
   }
 
-  Future<void> _requestOtp() async {
+  Future<void> _continueWithPhone() async {
     if (_isSendingOtp) return;
     if (!_formKey.currentState!.validate()) return;
 
@@ -78,9 +85,7 @@ class _LoginScreenState extends State<LoginScreen> {
         forceRefresh: true,
       );
       if (!mounted) return;
-      setState(() {
-        _branding = latestBranding;
-      });
+      setState(() => _branding = latestBranding);
 
       final authProvider = context.read<AuthProvider>();
       final phone = _normalizedPhone();
@@ -91,90 +96,57 @@ class _LoginScreenState extends State<LoginScreen> {
 
       if (!mounted) return;
 
-      if (status != null) {
-        if (status['exists'] != true) {
-          Navigator.pushReplacementNamed(
-            context,
-            '/register',
-            arguments: {'phone': phone},
-          );
-          return;
-        }
+      if (status == null) {
+        _showMessage(
+          authProvider.error ??
+              appText('Unable to validate your mobile number.'),
+          isError: true,
+        );
+        return;
+      }
 
+      if (status['exists'] == true) {
         if (status['matches_role'] == false) {
           _showMessage(
-            'This mobile number is not registered for a customer account.',
+            appText(
+                'This mobile number is not registered for a customer account.'),
             isError: true,
           );
           return;
         }
-      }
 
-      String? firebaseVerificationId;
-
-      if (_branding.usesFirebasePhoneAuth) {
-        try {
-          firebaseVerificationId = await _firebasePhoneAuthService.sendOtp(
-            phone: phone,
-            countryCode: _branding.defaultMobileCountryCode,
-          );
-        } catch (error) {
-          if (!mounted) return;
-          _showMessage(
-            error.toString().replaceFirst('Exception: ', ''),
-            isError: true,
-          );
-          return;
-        }
-      } else {
-        final success = await authProvider.sendLoginOtp(
+        await _sendOtpAndOpenVerification(
           phone: phone,
-          role: 'customer',
+          flow: 'login',
         );
-
-        if (!mounted) return;
-
-        if (!success) {
-          final error = authProvider.error ?? 'Failed to send OTP';
-          if (_isAccountMissingError(error)) {
-            Navigator.pushReplacementNamed(
-              context,
-              '/register',
-              arguments: {'phone': phone},
-            );
-            return;
-          }
-          _showMessage(error, isError: true);
-          return;
-        }
+        return;
       }
 
-      await Navigator.of(context).push(
+      final signupResult = await _sendOtpAndOpenVerification(
+        phone: phone,
+        flow: 'signup',
+      );
+
+      if (!mounted || signupResult == null) return;
+
+      await Navigator.of(context).pushReplacement(
         MaterialPageRoute(
-          builder: (_) => OtpVerificationScreen(
-            phoneNumber: phone,
-            countryCode: _branding.defaultMobileCountryCode,
-            appName: _branding.displayName,
-            role: 'customer',
-            flow: 'login',
-            useFirebasePhoneAuth: _branding.usesFirebasePhoneAuth,
-            initialFirebaseVerificationId: firebaseVerificationId,
+          builder: (_) => RegisterScreen(
+            initialPhone: signupResult['phone']?.toString() ?? phone,
+            verifiedPhoneToken:
+                signupResult['verified_phone_token']?.toString(),
           ),
         ),
       );
+    } catch (error) {
+      if (!mounted) return;
+      _showMessage(
+        error.toString().replaceFirst('Exception: ', ''),
+        isError: true,
+      );
     } finally {
-      if (mounted) {
-        setState(() => _isSendingOtp = false);
-      }
+      if (mounted) setState(() => _isSendingOtp = false);
     }
-  }
-
-  bool _isAccountMissingError(String error) {
-    final normalized = error.toLowerCase();
-    return normalized.contains('no account found') ||
-        normalized.contains('no matching account') ||
-        normalized.contains('not registered') ||
-        normalized.contains('account_not_found');
   }
 
   Future<void> _handleSocialLogin(String provider) async {
@@ -184,17 +156,18 @@ class _LoginScreenState extends State<LoginScreen> {
       forceRefresh: true,
     );
     if (!mounted) return;
+
     setState(() {
       _branding = latestBranding;
-      _isSocialLoading = true;
+      _socialLoadingProvider = provider;
     });
 
     try {
       if (provider == 'google' && !_branding.usesGoogleLogin) {
-        throw Exception('Google login is disabled.');
+        throw Exception(appText('Google login is disabled.'));
       }
       if (provider == 'apple' && !_branding.usesAppleLogin) {
-        throw Exception('Apple login is disabled.');
+        throw Exception(appText('Apple login is disabled.'));
       }
 
       final socialResult = provider == 'google'
@@ -212,16 +185,21 @@ class _LoginScreenState extends State<LoginScreen> {
       );
 
       if (!mounted) return;
+
       if (!success) {
         _showMessage(
           authProvider.error?.replaceFirst('Exception: ', '') ??
-              'Social login failed',
+              appText('Social login failed'),
           isError: true,
         );
         return;
       }
 
-      Navigator.pushReplacementNamed(context, _homeRoute(authProvider));
+      Navigator.pushNamedAndRemoveUntil(
+        context,
+        _homeRoute(authProvider),
+        (_) => false,
+      );
     } catch (error) {
       if (!mounted) return;
       _showMessage(
@@ -229,11 +207,7 @@ class _LoginScreenState extends State<LoginScreen> {
         isError: true,
       );
     } finally {
-      if (mounted) {
-        setState(() {
-          _isSocialLoading = false;
-        });
-      }
+      if (mounted) setState(() => _socialLoadingProvider = null);
     }
   }
 
@@ -247,414 +221,614 @@ class _LoginScreenState extends State<LoginScreen> {
     return AppConfig.isRoleLocked ? '/home' : '/customer/home';
   }
 
+  Future<Map<String, dynamic>?> _sendOtpAndOpenVerification({
+    required String phone,
+    required String flow,
+  }) async {
+    final authProvider = context.read<AuthProvider>();
+    String? firebaseVerificationId;
+    Map<String, dynamic>? autoVerificationResult;
+    var autoVerificationHandled = false;
+    var verificationScreenOpen = false;
+
+    Future<void> handleFirebaseAutoVerified(String firebaseIdToken) async {
+      if (autoVerificationHandled || !mounted) return;
+      autoVerificationHandled = true;
+
+      autoVerificationResult = await _completeFirebasePhoneVerification(
+        phone: phone,
+        flow: flow,
+        firebaseIdToken: firebaseIdToken,
+      );
+
+      if (!mounted) return;
+      if (flow == 'signup' && verificationScreenOpen) {
+        Navigator.of(context).pop(autoVerificationResult);
+      }
+    }
+
+    if (_branding.usesFirebasePhoneAuth) {
+      final firebaseOtp =
+          await _firebasePhoneAuthService.sendOtpWithAutoVerification(
+        phone: phone,
+        countryCode: _countryCode,
+        onAutoVerified: handleFirebaseAutoVerified,
+      );
+      firebaseVerificationId = firebaseOtp.verificationId;
+
+      if (firebaseOtp.autoVerified) {
+        await handleFirebaseAutoVerified(firebaseOtp.firebaseIdToken!);
+      }
+
+      if (autoVerificationHandled) {
+        return autoVerificationResult;
+      }
+    } else {
+      final sent = await authProvider.sendLoginOtp(
+        phone: phone,
+        flow: flow,
+        role: 'customer',
+      );
+
+      if (!mounted) return null;
+
+      if (!sent) {
+        _showMessage(authProvider.error ?? appText('Failed to send OTP'),
+            isError: true);
+        return null;
+      }
+    }
+
+    if (!mounted) return null;
+
+    verificationScreenOpen = true;
+    final result = await Navigator.of(context).push<Map<String, dynamic>>(
+      MaterialPageRoute(
+        builder: (_) => OtpVerificationScreen(
+          phoneNumber: phone,
+          countryCode: _countryCode,
+          appName: _branding.displayName,
+          role: 'customer',
+          flow: flow,
+          useFirebasePhoneAuth: _branding.usesFirebasePhoneAuth,
+          otpServiceProvider: _branding.resolvedOtpServiceProvider,
+          initialFirebaseVerificationId: firebaseVerificationId,
+        ),
+      ),
+    );
+    verificationScreenOpen = false;
+
+    return result;
+  }
+
+  Future<Map<String, dynamic>?> _completeFirebasePhoneVerification({
+    required String phone,
+    required String flow,
+    required String firebaseIdToken,
+  }) async {
+    final authProvider = context.read<AuthProvider>();
+
+    if (flow == 'signup') {
+      final result = await authProvider.verifyFirebasePhone(
+        phone: phone,
+        firebaseIdToken: firebaseIdToken,
+        flow: flow,
+        role: 'customer',
+      );
+
+      if (!mounted) return null;
+      if (result == null) {
+        _showMessage(
+          authProvider.error ?? appText('OTP verification failed'),
+          isError: true,
+        );
+      }
+      return result;
+    }
+
+    final success = await authProvider.loginWithPhone(
+      phone: phone,
+      firebaseIdToken: firebaseIdToken,
+      role: 'customer',
+    );
+
+    if (!mounted) return null;
+
+    if (!success) {
+      _showMessage(authProvider.error ?? appText('OTP verification failed'),
+          isError: true);
+      return null;
+    }
+
+    if (!authProvider.canUseCurrentApp || !authProvider.isCustomer) {
+      await authProvider.logout();
+      if (!mounted) return null;
+      _showMessage(
+        appText('This mobile number is not linked to a customer account.'),
+        isError: true,
+      );
+      return null;
+    }
+
+    Navigator.pushNamedAndRemoveUntil(
+      context,
+      _homeRoute(authProvider),
+      (_) => false,
+    );
+    return null;
+  }
+
   @override
   Widget build(BuildContext context) {
+    final bottomInset = MediaQuery.of(context).viewInsets.bottom;
+
     return Scaffold(
       backgroundColor: Colors.white,
       body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(24, 12, 24, 24),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const SizedBox(height: 4),
-              Center(
-                child: Container(
-                  width: 96,
-                  height: 6,
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFE9EEF5),
-                    borderRadius: BorderRadius.circular(999),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 20),
-              _buildHero(),
-              const SizedBox(height: 26),
-              const Text(
-                'Mobile Number',
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w600,
-                  color: _subtext,
-                ),
-              ),
-              const SizedBox(height: 10),
-              Form(
-                key: _formKey,
-                child: TextFormField(
-                  controller: _phoneController,
-                  keyboardType: TextInputType.phone,
-                  style: const TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w500,
-                    color: _text,
-                  ),
-                  decoration: InputDecoration(
-                    hintText: 'Enter mobile number',
-                    hintStyle: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w500,
-                      color: Color(0xFF9CA3AF),
-                    ),
-                    filled: true,
-                    fillColor: Colors.white,
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 18,
-                      vertical: 18,
-                    ),
-                    enabledBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(18),
-                      borderSide: const BorderSide(color: _line),
-                    ),
-                    focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(18),
-                      borderSide: BorderSide(color: _primary, width: 1.4),
-                    ),
-                    prefixIcon: Padding(
-                      padding: const EdgeInsets.only(left: 14, right: 10),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Container(
-                            width: 26,
-                            height: 18,
-                            decoration: BoxDecoration(
-                              borderRadius: BorderRadius.circular(4),
-                              border:
-                                  Border.all(color: const Color(0xFFE5E7EB)),
-                              gradient: const LinearGradient(
-                                colors: [
-                                  Color(0xFFFF9933),
-                                  Color(0xFFFF9933),
-                                  Colors.white,
-                                  Colors.white,
-                                  Color(0xFF138808),
-                                  Color(0xFF138808),
-                                ],
-                                stops: [0, 0.33, 0.33, 0.66, 0.66, 1],
-                                begin: Alignment.topCenter,
-                                end: Alignment.bottomCenter,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 10),
-                          Text(
-                            _branding.defaultMobileCountryCode,
-                            style: const TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w600,
-                              color: _text,
-                            ),
-                          ),
-                          const SizedBox(width: 6),
-                          const Icon(Icons.keyboard_arrow_down_rounded,
-                              size: 20, color: _subtext),
-                          const SizedBox(width: 10),
-                          Container(width: 1, height: 24, color: _line),
-                        ],
-                      ),
-                    ),
-                    prefixIconConstraints: const BoxConstraints(minWidth: 148),
-                  ),
-                  validator: (value) {
-                    return PhoneNumberUtils.validateIndianMobile(
-                      value,
-                      countryCode: _branding.defaultMobileCountryCode,
-                    );
-                  },
-                ),
-              ),
-              const SizedBox(height: 22),
-              SizedBox(
-                width: double.infinity,
-                child: Consumer<AuthProvider>(
-                  builder: (context, auth, _) {
-                    return DecoratedBox(
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          colors: [
-                            _primary,
-                            Color.lerp(_primary, _secondary, 0.24) ?? _primary,
-                          ],
-                        ),
-                        borderRadius: BorderRadius.circular(18),
-                        boxShadow: [
-                          BoxShadow(
-                            color: _primary.withOpacity(0.2),
-                            blurRadius: 18,
-                            offset: const Offset(0, 10),
-                          ),
-                        ],
-                      ),
-                      child: ElevatedButton(
-                        onPressed: auth.isLoading ||
-                                _isLoadingBranding ||
-                                _isSendingOtp
-                            ? null
-                            : _requestOtp,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.transparent,
-                          shadowColor: Colors.transparent,
-                          minimumSize: const Size.fromHeight(58),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(18),
-                          ),
-                        ),
-                        child: Text(
-                          auth.isLoading || _isSendingOtp
-                              ? 'Sending OTP...'
-                              : 'Login',
-                          style: const TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.w600,
-                            color: Colors.black,
-                          ),
-                        ),
-                      ),
-                    );
-                  },
-                ),
-              ),
-              if (_branding.usesGoogleLogin || _branding.usesAppleLogin) ...[
-                const SizedBox(height: 24),
-                Row(
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final compact = constraints.maxHeight < 760;
+            return SingleChildScrollView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+              padding: EdgeInsets.only(bottom: bottomInset + 22),
+              child: ConstrainedBox(
+                constraints: BoxConstraints(minHeight: constraints.maxHeight),
+                child: Column(
                   children: [
-                    const Expanded(child: Divider(color: _line)),
+                    _HeroBackground(compact: compact),
                     Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 12),
-                      child: Text(
-                        'or continue with',
-                        style: TextStyle(
-                          color: _subtext.withOpacity(0.9),
-                          fontSize: 15,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                    ),
-                    const Expanded(child: Divider(color: _line)),
-                  ],
-                ),
-                const SizedBox(height: 18),
-                if (_branding.usesGoogleLogin) ...[
-                  _socialButton(
-                    'Continue with Google',
-                    'google',
-                    onPressed: () => _handleSocialLogin('google'),
-                  ),
-                  const SizedBox(height: 14),
-                ],
-                if (_branding.usesAppleLogin) ...[
-                  _socialButton(
-                    'Continue with Apple',
-                    'apple',
-                    onPressed: () => _handleSocialLogin('apple'),
-                  ),
-                  const SizedBox(height: 14),
-                ],
-                const SizedBox(height: 10),
-              ] else
-                const SizedBox(height: 24),
-              Center(
-                child: TextButton(
-                  onPressed: () => Navigator.pushNamed(context, '/register'),
-                  child: const Text.rich(
-                    TextSpan(
-                      text: 'New here? ',
-                      style: TextStyle(
-                        color: _subtext,
-                        fontSize: 16,
-                        fontWeight: FontWeight.w500,
-                      ),
-                      children: [
-                        TextSpan(
-                          text: 'Create Account',
-                          style: TextStyle(
-                            color: Color(0xFF1D4ED8),
-                            fontWeight: FontWeight.w700,
+                      padding: const EdgeInsets.symmetric(horizontal: 28),
+                      child: Column(
+                        children: [
+                          SizedBox(height: compact ? 16 : 28),
+                          Text(
+                            'Welcome Back!',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              color: _text,
+                              fontSize: compact ? 23 : 26,
+                              fontWeight: FontWeight.w900,
+                              height: 1,
+                            ),
                           ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildHero() {
-    return SizedBox(
-      height: 330,
-      child: Stack(
-        clipBehavior: Clip.none,
-        children: [
-          Container(
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(32),
-              boxShadow: const [
-                BoxShadow(
-                  color: Color(0x14000000),
-                  blurRadius: 24,
-                  offset: Offset(0, 12),
-                ),
-              ],
-            ),
-          ),
-          Positioned(
-            top: -18,
-            right: -12,
-            child: Container(
-              width: 250,
-              height: 220,
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [
-                    Color.lerp(_primary, Colors.white, 0.18) ?? _primary,
-                    _primary,
-                  ],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
-                borderRadius: const BorderRadius.only(
-                  topRight: Radius.circular(36),
-                  bottomLeft: Radius.circular(120),
-                  bottomRight: Radius.circular(26),
-                ),
-              ),
-            ),
-          ),
-          Positioned(
-            right: 20,
-            top: 34,
-            child: Column(
-              children: [
-                Container(
-                  width: 150,
-                  height: 150,
-                  decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.18),
-                    shape: BoxShape.circle,
-                  ),
-                  child: const Icon(
-                    Icons.delivery_dining_rounded,
-                    size: 108,
-                    color: Colors.white,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          Positioned(
-            left: 0,
-            right: 0,
-            bottom: 0,
-            top: 0,
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(22, 28, 22, 22),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const SizedBox(height: 90),
-                  const Text(
-                    'Welcome 👋',
-                    style: TextStyle(
-                      fontSize: 22,
-                      fontWeight: FontWeight.w600,
-                      color: _text,
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    _branding.displayName,
-                    style: const TextStyle(
-                      fontSize: 38,
-                      height: 1.08,
-                      fontWeight: FontWeight.w700,
-                      color: _text,
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  const SizedBox(
-                    width: 176,
-                    child: Text(
-                      'Order faster with secure OTP based sign in.',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.w400,
-                        color: _subtext,
-                        height: 1.45,
+                          const SizedBox(height: 16),
+                          const Text(
+                            'Login to continue your deliveries',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              color: _subtext,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w500,
+                              height: 1.2,
+                            ),
+                          ),
+                          const SizedBox(height: 30),
+                          Form(
+                            key: _formKey,
+                            child: TextFormField(
+                              controller: _phoneController,
+                              keyboardType: TextInputType.phone,
+                              textInputAction: TextInputAction.done,
+                              onFieldSubmitted: (_) => _continueWithPhone(),
+                              style: const TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w700,
+                                color: _text,
+                              ),
+                              decoration: _inputDecoration(),
+                              validator: (value) {
+                                return PhoneNumberUtils.validateIndianMobile(
+                                  value,
+                                  countryCode: _countryCode,
+                                );
+                              },
+                            ),
+                          ),
+                          const SizedBox(height: 18),
+                          Consumer<AuthProvider>(
+                            builder: (context, auth, _) {
+                              final busy = auth.isLoading ||
+                                  _isLoadingBranding ||
+                                  _isSendingOtp;
+                              return _continueButton(
+                                label:
+                                    busy ? appText('Checking...') : 'Continue',
+                                onPressed: busy ? null : _continueWithPhone,
+                              );
+                            },
+                          ),
+                          if (_hasSocialLogin) ...[
+                            const SizedBox(height: 20),
+                            const _DividerLabel(),
+                            const SizedBox(height: 16),
+                            _socialButtons(),
+                          ],
+                          SizedBox(height: compact ? 24 : 32),
+                          const _TermsText(),
+                        ],
                       ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
-            ),
-          ),
-        ],
+            );
+          },
+        ),
       ),
     );
   }
 
-  Widget _socialButton(
-    String label,
-    String provider, {
-    required VoidCallback onPressed,
-  }) {
-    return SizedBox(
-      height: 58,
-      width: double.infinity,
-      child: OutlinedButton(
-        onPressed: _isSocialLoading ? null : onPressed,
-        style: OutlinedButton.styleFrom(
-          backgroundColor: Colors.white,
-          side: const BorderSide(color: _line),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(18),
-          ),
-          padding: const EdgeInsets.symmetric(horizontal: 18),
-        ),
+  InputDecoration _inputDecoration() {
+    final primary = FoodFlowTheme.brandPrimary(context);
+    return InputDecoration(
+      hintText: 'Enter your mobile number',
+      hintStyle: const TextStyle(
+        fontSize: 13,
+        fontWeight: FontWeight.w500,
+        color: Color(0xFF8B919B),
+      ),
+      filled: true,
+      fillColor: Colors.white,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 19),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(8),
+        borderSide: const BorderSide(color: _line, width: 1.2),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(8),
+        borderSide: BorderSide(color: primary, width: 1.4),
+      ),
+      errorBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(8),
+        borderSide: const BorderSide(color: Colors.red),
+      ),
+      focusedErrorBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(8),
+        borderSide: const BorderSide(color: Colors.red, width: 1.4),
+      ),
+      prefixIcon: Padding(
+        padding: const EdgeInsets.only(left: 18, right: 12),
         child: Row(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            SizedBox(
-              width: 36,
-              child: Center(
-                child: SvgPicture.asset(
-                  provider == 'google'
-                      ? 'assets/icons/google-icon-logo-svgrepo-com.svg'
-                      : 'assets/icons/apple-black-logo-svgrepo-com.svg',
-                  width: provider == 'google' ? 24 : 26,
-                  height: provider == 'google' ? 24 : 26,
-                ),
-              ),
-            ),
+            CountryFlagBadge(countryCode: _countryCode),
             const SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                _isSocialLoading ? 'Signing in...' : label,
-                style: const TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.w600,
-                  color: _text,
-                ),
+            Text(
+              _countryCode,
+              style: const TextStyle(
+                color: _text,
+                fontSize: 13,
+                fontWeight: FontWeight.w800,
               ),
             ),
+            const SizedBox(width: 3),
+            const Icon(
+              Icons.keyboard_arrow_down_rounded,
+              color: _subtext,
+              size: 18,
+            ),
+            const SizedBox(width: 10),
           ],
         ),
       ),
+      prefixIconConstraints: const BoxConstraints(minWidth: 116),
+    );
+  }
+
+  Widget _continueButton({
+    required String label,
+    required VoidCallback? onPressed,
+  }) {
+    return _ThreeDButton(
+      height: 58,
+      onPressed: onPressed,
+      backgroundColor: FoodFlowTheme.brandPrimary(context),
+      disabledColor: FoodFlowTheme.brandPrimary(context).withOpacity(0.38),
+      shadowColor: FoodFlowTheme.brandPrimary(context),
+      child: Text(
+        label,
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 17,
+          fontWeight: FontWeight.w800,
+        ),
+      ),
+    );
+  }
+
+  Widget _socialButtons() {
+    final buttons = <Widget>[];
+    if (_branding.usesGoogleLogin) {
+      buttons.add(
+        _socialButton(
+          provider: 'google',
+          label: appText('Continue with Google'),
+          assetPath: 'assets/icons/google-icon-logo-svgrepo-com.svg',
+        ),
+      );
+    }
+    if (_branding.usesAppleLogin) {
+      if (buttons.isNotEmpty) buttons.add(const SizedBox(height: 12));
+      buttons.add(
+        _socialButton(
+          provider: 'apple',
+          label: appText('Continue with Apple'),
+          assetPath: 'assets/icons/apple-black-logo-svgrepo-com.svg',
+        ),
+      );
+    }
+
+    if (buttons.isEmpty) return const SizedBox.shrink();
+    return Column(children: buttons);
+  }
+
+  Widget _socialButton({
+    required String provider,
+    required String label,
+    required String assetPath,
+  }) {
+    final loading = _socialLoadingProvider == provider;
+    final disabled = _socialLoadingProvider != null || _isLoadingBranding;
+    return _ThreeDButton(
+      height: 58,
+      onPressed: disabled ? null : () => _handleSocialLogin(provider),
+      backgroundColor: Colors.white,
+      disabledColor: Colors.white,
+      shadowColor: Colors.black,
+      border: const BorderSide(color: _line, width: 1.2),
+      child: loading
+          ? const SizedBox(
+              width: 20,
+              height: 20,
+              child: CircularProgressIndicator(strokeWidth: 2.2),
+            )
+          : Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                SvgPicture.asset(
+                  assetPath,
+                  width: 22,
+                  height: 22,
+                ),
+                const SizedBox(width: 12),
+                Text(
+                  label,
+                  style: const TextStyle(
+                    color: _text,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ],
+            ),
     );
   }
 
   void _showMessage(String message, {bool isError = false}) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(message),
-        backgroundColor: isError ? Colors.red : _primary,
+        content: Text(appText(message)),
+        backgroundColor:
+            isError ? Colors.red : FoodFlowTheme.brandPrimary(context),
       ),
+    );
+  }
+}
+
+class _ThreeDButton extends StatefulWidget {
+  const _ThreeDButton({
+    required this.child,
+    required this.onPressed,
+    required this.backgroundColor,
+    required this.disabledColor,
+    required this.shadowColor,
+    this.border,
+    this.height = 58,
+  });
+
+  final Widget child;
+  final VoidCallback? onPressed;
+  final Color backgroundColor;
+  final Color disabledColor;
+  final Color shadowColor;
+  final BorderSide? border;
+  final double height;
+
+  @override
+  State<_ThreeDButton> createState() => _ThreeDButtonState();
+}
+
+class _ThreeDButtonState extends State<_ThreeDButton> {
+  bool _pressed = false;
+
+  bool get _enabled => widget.onPressed != null;
+
+  @override
+  Widget build(BuildContext context) {
+    final surfaceColor =
+        _enabled ? widget.backgroundColor : widget.disabledColor;
+    final y = _pressed && _enabled ? 3.0 : 0.0;
+
+    return GestureDetector(
+      onTapDown: _enabled ? (_) => setState(() => _pressed = true) : null,
+      onTapCancel: _enabled ? () => setState(() => _pressed = false) : null,
+      onTapUp: _enabled
+          ? (_) {
+              setState(() => _pressed = false);
+              widget.onPressed?.call();
+            }
+          : null,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 110),
+        curve: Curves.easeOut,
+        width: double.infinity,
+        height: widget.height,
+        padding: EdgeInsets.only(top: y),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(8),
+          boxShadow: [
+            BoxShadow(
+              color: widget.shadowColor.withOpacity(_enabled ? 0.28 : 0.12),
+              blurRadius: _pressed ? 7 : 18,
+              offset: Offset(0, _pressed ? 4 : 10),
+            ),
+          ],
+        ),
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: surfaceColor,
+            borderRadius: BorderRadius.circular(8),
+            border: widget.border == null
+                ? null
+                : Border.fromBorderSide(widget.border!),
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [
+                Color.lerp(surfaceColor, Colors.white, _enabled ? 0.13 : 0.05)!,
+                surfaceColor,
+                Color.lerp(surfaceColor, Colors.black, _enabled ? 0.08 : 0.02)!,
+              ],
+              stops: const [0, 0.58, 1],
+            ),
+          ),
+          child: Stack(
+            children: [
+              Positioned(
+                left: 1,
+                right: 1,
+                top: 1,
+                height: 15,
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    borderRadius:
+                        const BorderRadius.vertical(top: Radius.circular(7)),
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [
+                        Colors.white.withOpacity(_enabled ? 0.30 : 0.12),
+                        Colors.white.withOpacity(0),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              Center(child: widget.child),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _HeroBackground extends StatelessWidget {
+  const _HeroBackground({required this.compact});
+
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: double.infinity,
+      height: compact ? 398 : 474,
+      child: Stack(
+        clipBehavior: Clip.none,
+        alignment: Alignment.topCenter,
+        children: [
+          Positioned.fill(
+            child: Image.asset(
+              'assets/images/background.png',
+              fit: BoxFit.cover,
+              alignment: Alignment.topCenter,
+            ),
+          ),
+          Positioned(
+            top: compact ? 0 : 8,
+            left: 0,
+            right: 0,
+            child: Image.asset(
+              'assets/images/logo.png',
+              width: compact ? 190 : 216,
+              height: compact ? 96 : 110,
+              fit: BoxFit.contain,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _DividerLabel extends StatelessWidget {
+  const _DividerLabel();
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        const Expanded(child: Divider(color: _LoginScreenState._line)),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 18),
+          child: Text(
+            appText('or'),
+            style: const TextStyle(
+              color: _LoginScreenState._subtext,
+              fontSize: 13,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ),
+        const Expanded(child: Divider(color: _LoginScreenState._line)),
+      ],
+    );
+  }
+}
+
+class _TermsText extends StatelessWidget {
+  const _TermsText();
+
+  void _openLegal(BuildContext context) {
+    Navigator.of(context).pushNamed('/privacy-legal');
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final baseStyle = const TextStyle(
+      color: _LoginScreenState._subtext,
+      fontSize: 13,
+      fontWeight: FontWeight.w500,
+      height: 1.65,
+    );
+    final linkStyle = baseStyle.copyWith(
+      color: FoodFlowTheme.brandPrimary(context),
+      fontWeight: FontWeight.w900,
+    );
+
+    return Text.rich(
+      TextSpan(
+        text: appText('By continuing, you agree to our'),
+        style: baseStyle,
+        children: [
+          const TextSpan(text: '\n'),
+          TextSpan(
+            text: appText('Terms of Service'),
+            style: linkStyle,
+            recognizer: TapGestureRecognizer()
+              ..onTap = () => _openLegal(context),
+          ),
+          TextSpan(text: appText(' and our ')),
+          TextSpan(
+            text: appText('Privacy Policy'),
+            style: linkStyle,
+            recognizer: TapGestureRecognizer()
+              ..onTap = () => _openLegal(context),
+          ),
+        ],
+      ),
+      textAlign: TextAlign.center,
     );
   }
 }

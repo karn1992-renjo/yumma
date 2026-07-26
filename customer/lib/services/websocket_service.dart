@@ -171,11 +171,8 @@ class WebSocketService {
         } catch (e, stackTrace) {
           debugPrint('Pusher authorizer failed for $channelName: $e');
           debugPrintStack(stackTrace: stackTrace);
-          // pusher_channels_flutter 2.4.0 force-casts every non-null iOS
-          // authorizer result to [String: String]. If this exception crosses the
-          // method channel, Flutter returns a FlutterError object and the plugin
-          // aborts while casting it. A null result is explicitly handled by the
-          // native plugin as an authorization failure.
+          // Returning null is handled as an authorization failure by the native
+          // plugin. Letting a FlutterError cross this channel crashes iOS 2.4.0.
           return null;
         }
       },
@@ -240,8 +237,11 @@ class WebSocketService {
 
   bool _isNewOrderEvent(String eventName, Map<String, dynamic> data) {
     final type = data['type']?.toString().toLowerCase() ?? '';
+    final payloadEvent = data['event']?.toString().toLowerCase() ?? '';
     return eventName == 'new-order' ||
         eventName.endsWith(r'neworderevent') ||
+        payloadEvent == 'new_order' ||
+        payloadEvent == 'new-order' ||
         type == 'new_order' ||
         type == 'new-order' ||
         (data.containsKey('order_number') && data['status'] == 'pending');
@@ -249,15 +249,24 @@ class WebSocketService {
 
   bool _isOrderStatusEvent(String eventName, Map<String, dynamic> data) {
     return eventName == 'order-status-updated' ||
+        eventName == 'payment.completed' ||
+        eventName == 'payment.expired' ||
+        eventName == 'payment.pending' ||
+        eventName == 'driver.collection.started' ||
+        eventName == 'customer.paid.online' ||
         eventName.endsWith(r'orderstatusupdatedevent') ||
+        data.containsKey('payment_status') ||
         data.containsKey('status_label') ||
         data.containsKey('driver_id');
   }
 
   bool _isDriverOrderAssignedEvent(String eventName, Map<String, dynamic> data) {
     final type = data['type']?.toString().toLowerCase() ?? '';
+    final payloadEvent = data['event']?.toString().toLowerCase() ?? '';
     return eventName == 'driver-order-assigned' ||
         eventName.endsWith(r'driverorderassignedevent') ||
+        payloadEvent == 'driver_order_assigned' ||
+        payloadEvent == 'driver-order-assigned' ||
         type == 'driver_order_assigned' ||
         type == 'driver-order-assigned' ||
         (data.containsKey('restaurant_name') &&

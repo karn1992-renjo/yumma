@@ -176,7 +176,8 @@ class RestaurantCardAlt extends StatelessWidget {
                         children: [
                           Positioned.fill(
                             child: imageUrl.isNotEmpty
-                                ? AppCachedImage(imageUrl: imageUrl,
+                                ? AppCachedImage(
+                                    imageUrl: imageUrl,
                                     fit: BoxFit.cover,
                                     errorBuilder: (_, __, ___) =>
                                         _imageFallback())

@@ -23,6 +23,7 @@ class FreeDeliveryMilestoneTracker {
 }
 
 Future<void> showFreeDeliverySuccessPopup(BuildContext context) {
+  final primary = FoodFlowTheme.brandPrimary(context);
   return showDialog<void>(
     context: context,
     barrierColor: Colors.black.withOpacity(0.28),
@@ -42,7 +43,7 @@ Future<void> showFreeDeliverySuccessPopup(BuildContext context) {
           border: Border.all(color: const Color(0xFFD9F5E3)),
           boxShadow: <BoxShadow>[
             BoxShadow(
-              color: FoodFlowTheme.primaryColor.withOpacity(0.18),
+              color: primary.withOpacity(0.18),
               blurRadius: 30,
               offset: const Offset(0, 14),
             ),
@@ -84,7 +85,7 @@ Future<void> showFreeDeliverySuccessPopup(BuildContext context) {
               child: FilledButton(
                 onPressed: () => Navigator.of(dialogContext).pop(),
                 style: FilledButton.styleFrom(
-                  backgroundColor: FoodFlowTheme.primaryColor,
+                  backgroundColor: primary,
                   foregroundColor: Colors.white,
                   padding: const EdgeInsets.symmetric(vertical: 13),
                   shape: RoundedRectangleBorder(

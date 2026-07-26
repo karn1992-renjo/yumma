@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_lucide/flutter_lucide.dart';
 import '../../widgets/common/app_cached_image.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
@@ -9,7 +10,7 @@ import '../../models/user.dart';
 import '../../providers/auth_provider.dart';
 import '../../theme/foodflow_theme.dart';
 import '../../utils/phone_number_utils.dart';
-import '../../widgets/customer/account_chrome.dart';
+import '../../widgets/customer/profile_screen_chrome.dart';
 
 class EditProfileScreen extends StatefulWidget {
   const EditProfileScreen({super.key});
@@ -68,7 +69,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
               ? 'Profile updated successfully'
               : (authProvider.error ?? 'Failed to update profile'),
         ),
-        backgroundColor: ok ? scheme.primary : FoodFlowTheme.danger,
+        backgroundColor: ok ? profileAccentColor(context) : scheme.error,
       ),
     );
 
@@ -91,23 +92,22 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Unable to pick image: $e'),
-          backgroundColor: FoodFlowTheme.danger,
+          backgroundColor: Theme.of(context).colorScheme.error,
         ),
       );
     }
   }
 
   Future<void> _showPhotoOptions() async {
-    final scheme = Theme.of(context).colorScheme;
     await showModalBottomSheet<void>(
       context: context,
-      backgroundColor: Colors.transparent,
+      backgroundColor: Theme.of(context).colorScheme.scrim.withOpacity(0),
       builder: (sheetContext) => SafeArea(
         top: false,
         child: Container(
           padding: const EdgeInsets.fromLTRB(20, 14, 20, 20),
-          decoration: const BoxDecoration(
-            color: Colors.white,
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.surface,
             borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
           ),
           child: Column(
@@ -117,25 +117,25 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                 width: 42,
                 height: 4,
                 decoration: BoxDecoration(
-                  color: const Color(0xFFD5DCE5),
+                  color: profileLineColor(context),
                   borderRadius: BorderRadius.circular(999),
                 ),
               ),
               const SizedBox(height: 16),
-              const Text(
+              Text(
                 'Update profile photo',
                 style: TextStyle(
                   fontSize: 20,
                   fontWeight: FontWeight.w800,
-                  color: FoodFlowTheme.ink,
+                  color: profileTextColor(context),
                 ),
               ),
               const SizedBox(height: 6),
-              const Text(
+              Text(
                 'Choose a profile photo that looks clear and friendly.',
                 style: TextStyle(
-                  color: FoodFlowTheme.muted,
-                  fontSize: 13,
+                  color: profileMutedColor(context),
+                  fontSize: 12,
                   fontWeight: FontWeight.w500,
                 ),
               ),
@@ -146,7 +146,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                     child: _PhotoActionButton(
                       icon: Icons.photo_camera_outlined,
                       label: 'Camera',
-                      color: scheme.primary,
+                      color: profileButtonColor(context),
                       onTap: () {
                         Navigator.pop(sheetContext);
                         _pickProfileImage(ImageSource.camera);
@@ -158,7 +158,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                     child: _PhotoActionButton(
                       icon: Icons.photo_library_outlined,
                       label: 'Gallery',
-                      color: scheme.primary,
+                      color: profileButtonColor(context),
                       onTap: () {
                         Navigator.pop(sheetContext);
                         _pickProfileImage(ImageSource.gallery);
@@ -174,7 +174,15 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                     Navigator.pop(sheetContext);
                     setState(() => _selectedProfileImagePath = null);
                   },
-                  child: const Text('Remove selected photo'),
+                  style: TextButton.styleFrom(
+                    foregroundColor: profileButtonColor(context),
+                    textStyle: const TextStyle(
+                      fontSize: 13,
+                      height: 1.05,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  child: Text('Remove selected photo'),
                 ),
               ],
             ],
@@ -187,10 +195,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   @override
   Widget build(BuildContext context) {
     final user = context.watch<AuthProvider>().currentUser;
-    final scheme = Theme.of(context).colorScheme;
-
     return Scaffold(
-      backgroundColor: accountCanvas,
+      backgroundColor: profileCanvasColor(context),
       bottomNavigationBar: SafeArea(
         top: false,
         minimum: const EdgeInsets.fromLTRB(20, 8, 20, 14),
@@ -198,29 +204,21 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           height: 54,
           child: ElevatedButton(
             onPressed: _isSaving ? null : _saveProfile,
-            style: ElevatedButton.styleFrom(
-              backgroundColor: scheme.primary,
-              foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(20),
-              ),
+            style: FoodFlowTheme.zomatoPrimaryButton(
+              color: profileButtonColor(context),
+              foregroundColor: profileOnButtonColor(context),
+              radius: 14,
             ),
             child: _isSaving
-                ? const SizedBox(
+                ? SizedBox(
                     width: 22,
                     height: 22,
                     child: CircularProgressIndicator(
                       strokeWidth: 2.4,
-                      color: Colors.white,
+                      color: Theme.of(context).colorScheme.surface,
                     ),
                   )
-                : const Text(
-                    'Save Changes',
-                    style: TextStyle(
-                      fontSize: 15,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
+                : Text('Save Changes'),
           ),
         ),
       ),
@@ -228,35 +226,12 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         child: Form(
           key: _formKey,
           child: ListView(
-            padding: const EdgeInsets.fromLTRB(20, 16, 20, 120),
+            padding: const EdgeInsets.fromLTRB(18, 14, 18, 120),
             keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
             children: [
-              Row(
-                children: [
-                  InkWell(
-                    onTap: () => Navigator.of(context).maybePop(),
-                    borderRadius: BorderRadius.circular(16),
-                    child: Container(
-                      width: 44,
-                      height: 44,
-                      decoration: FoodFlowTheme.softSurface(radius: 16),
-                      child: const Icon(
-                        Icons.arrow_back_ios_new_rounded,
-                        size: 18,
-                        color: FoodFlowTheme.ink,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Text(
-                      'Edit Profile',
-                      style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                        fontWeight: FontWeight.w900,
-                      ),
-                    ),
-                  ),
-                ],
+              const ProfilePageTopBar(
+                title: 'Edit Profile',
+                subtitle: 'Update your account details',
               ),
               const SizedBox(height: 16),
               _EditProfileHero(
@@ -265,13 +240,6 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                 onAvatarTap: _showPhotoOptions,
               ),
               const SizedBox(height: 16),
-              _EditProfileCard(
-                title: 'Profile setup',
-                subtitle:
-                    'Keep your contact details updated for smooth delivery and support.',
-                child: _ProfileCompletionSummary(user: user),
-              ),
-              const SizedBox(height: 14),
               _EditProfileCard(
                 title: 'Personal details',
                 subtitle:
@@ -359,28 +327,27 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     required String hint,
     required IconData icon,
   }) {
-    final scheme = Theme.of(context).colorScheme;
     return InputDecoration(
       hintText: hint,
-      prefixIcon: Icon(icon, color: scheme.primary),
+      prefixIcon: Icon(icon, color: profileAccentColor(context)),
       filled: true,
-      fillColor: Colors.white,
+      fillColor: Theme.of(context).colorScheme.surface,
       contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
       border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(18),
-        borderSide: const BorderSide(color: accountBorder),
+        borderRadius: BorderRadius.circular(14),
+        borderSide: BorderSide(color: profileLineColor(context)),
       ),
       enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(18),
-        borderSide: const BorderSide(color: accountBorder),
+        borderRadius: BorderRadius.circular(14),
+        borderSide: BorderSide(color: profileLineColor(context)),
       ),
       focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(18),
-        borderSide: BorderSide(color: scheme.primary, width: 1.4),
+        borderRadius: BorderRadius.circular(14),
+        borderSide: BorderSide(color: profileButtonColor(context), width: 1.4),
       ),
       disabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(18),
-        borderSide: const BorderSide(color: accountBorder),
+        borderRadius: BorderRadius.circular(14),
+        borderSide: BorderSide(color: profileLineColor(context)),
       ),
     );
   }
@@ -399,81 +366,69 @@ class _EditProfileHero extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [
-            scheme.primary,
-            Color.lerp(scheme.primary, scheme.secondary, 0.4) ?? scheme.primary,
-          ],
-        ),
-        borderRadius: BorderRadius.circular(30),
-        boxShadow: [
-          BoxShadow(
-            color: scheme.primary.withOpacity(0.24),
-            blurRadius: 24,
-            offset: const Offset(0, 12),
-          ),
-        ],
-      ),
-      child: Row(
-        children: [
-          _EditAvatar(
-            user: user,
-            selectedProfileImagePath: selectedProfileImagePath,
-            onTap: onAvatarTap,
-          ),
-          const SizedBox(width: 16),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.16),
-                    borderRadius: BorderRadius.circular(999),
-                    border: Border.all(color: Colors.white.withOpacity(0.14)),
-                  ),
-                  child: const Text(
-                    'Profile details',
+    return InkWell(
+      onTap: onAvatarTap,
+      borderRadius: BorderRadius.circular(20),
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(14, 14, 14, 12),
+        decoration: profileSurfaceDecoration(context, radius: 20),
+        child: Row(
+          children: [
+            _EditAvatar(
+              user: user,
+              selectedProfileImagePath: selectedProfileImagePath,
+              onTap: onAvatarTap,
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    user?.name.isNotEmpty == true ? user!.name : 'Your profile',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                     style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 12,
+                      color: profileTextColor(context),
+                      fontSize: 16,
+                      height: 1.1,
                       fontWeight: FontWeight.w800,
                     ),
                   ),
-                ),
-                const SizedBox(height: 12),
-                Text(
-                  user?.name.isNotEmpty == true ? user!.name : 'Your profile',
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 24,
-                    fontWeight: FontWeight.w900,
+                  const SizedBox(height: 6),
+                  Text(
+                    'Tap your photo to update your profile image.',
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: profileMutedColor(context),
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
+                      height: 1.35,
+                    ),
                   ),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  'Tap your photo to update how your account appears across customer screens.',
-                  style: TextStyle(
-                    color: Colors.white.withOpacity(0.92),
-                    fontSize: 13,
-                    fontWeight: FontWeight.w500,
-                    height: 1.3,
-                  ),
-                ),
-              ],
+                ],
+              ),
             ),
-          ),
-        ],
+            const SizedBox(width: 8),
+            Container(
+              width: 34,
+              height: 34,
+              decoration: BoxDecoration(
+                color: profileSoftColor(context),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                    color: profileAccentColor(context).withOpacity(0.24)),
+              ),
+              child: Icon(
+                LucideIcons.pencil,
+                color: profileAccentColor(context),
+                size: 17,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -492,8 +447,6 @@ class _EditAvatar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-
     Widget avatarChild;
     if (selectedProfileImagePath != null) {
       avatarChild = Image.file(
@@ -517,12 +470,18 @@ class _EditAvatar extends StatelessWidget {
         clipBehavior: Clip.none,
         children: [
           Container(
-            width: 84,
-            height: 84,
+            width: 66,
+            height: 66,
             decoration: BoxDecoration(
-              color: Colors.white,
               shape: BoxShape.circle,
-              border: Border.all(color: Colors.white, width: 3),
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [
+                  profileSoftColor(context),
+                  profileAccentColor(context).withOpacity(0.35)
+                ],
+              ),
             ),
             clipBehavior: Clip.antiAlias,
             child: avatarChild,
@@ -531,17 +490,18 @@ class _EditAvatar extends StatelessWidget {
             right: 0,
             bottom: 0,
             child: Container(
-              width: 30,
-              height: 30,
+              width: 24,
+              height: 24,
               decoration: BoxDecoration(
-                color: Colors.white,
+                color: profileAccentColor(context),
                 shape: BoxShape.circle,
-                border: Border.all(color: Colors.white, width: 2),
+                border: Border.all(
+                    color: Theme.of(context).colorScheme.surface, width: 2),
               ),
               child: Icon(
-                Icons.edit_outlined,
-                size: 16,
-                color: scheme.primary,
+                LucideIcons.pencil,
+                size: 12,
+                color: Theme.of(context).colorScheme.surface,
               ),
             ),
           ),
@@ -558,17 +518,16 @@ class _AvatarFallback extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
     final initial = name.trim().isEmpty ? 'U' : name.trim()[0].toUpperCase();
     return Container(
-      color: const Color(0xFFF5F5F5),
+      color: profileSoftColor(context),
       alignment: Alignment.center,
       child: Text(
         initial,
         style: TextStyle(
-          color: scheme.primary,
-          fontSize: 28,
-          fontWeight: FontWeight.w900,
+          color: profileAccentColor(context),
+          fontSize: 22,
+          fontWeight: FontWeight.w800,
         ),
       ),
     );
@@ -590,25 +549,25 @@ class _EditProfileCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.all(18),
-      decoration: FoodFlowTheme.elevatedCard(radius: 28),
+      decoration: profileSurfaceDecoration(context, radius: 20),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
             title,
-            style: const TextStyle(
-              fontSize: 17,
+            style: TextStyle(
+              fontSize: 16,
               fontWeight: FontWeight.w800,
-              color: FoodFlowTheme.ink,
+              color: profileTextColor(context),
             ),
           ),
           const SizedBox(height: 6),
           Text(
             subtitle,
-            style: const TextStyle(
-              fontSize: 13,
+            style: TextStyle(
+              fontSize: 12,
               height: 1.35,
-              color: FoodFlowTheme.muted,
+              color: profileMutedColor(context),
               fontWeight: FontWeight.w500,
             ),
           ),
@@ -617,76 +576,6 @@ class _EditProfileCard extends StatelessWidget {
         ],
       ),
     );
-  }
-}
-
-class _ProfileCompletionSummary extends StatelessWidget {
-  const _ProfileCompletionSummary({required this.user});
-
-  final User? user;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final completion = _completion(user);
-
-    return Column(
-      children: [
-        Row(
-          children: [
-            Expanded(
-              child: Text(
-                'Profile completeness helps with smoother order delivery and customer support.',
-                style: const TextStyle(
-                  color: FoodFlowTheme.muted,
-                  fontSize: 13,
-                  fontWeight: FontWeight.w500,
-                  height: 1.3,
-                ),
-              ),
-            ),
-            const SizedBox(width: 12),
-            Container(
-              width: 64,
-              height: 64,
-              decoration: BoxDecoration(
-                color: scheme.primary.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(20),
-              ),
-              alignment: Alignment.center,
-              child: Text(
-                '${completion.toStringAsFixed(0)}%',
-                style: TextStyle(
-                  color: scheme.primary,
-                  fontSize: 18,
-                  fontWeight: FontWeight.w900,
-                ),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 14),
-        ClipRRect(
-          borderRadius: BorderRadius.circular(999),
-          child: LinearProgressIndicator(
-            minHeight: 10,
-            value: completion / 100,
-            backgroundColor: scheme.primary.withOpacity(0.10),
-            valueColor: AlwaysStoppedAnimation<Color>(scheme.primary),
-          ),
-        ),
-      ],
-    );
-  }
-
-  double _completion(User? user) {
-    if (user == null) return 0;
-    var completed = 0;
-    const total = 3;
-    if (user.name.trim().isNotEmpty && user.name != 'Guest User') completed++;
-    if (user.email.trim().isNotEmpty) completed++;
-    if (user.phone.trim().isNotEmpty) completed++;
-    return (completed / total) * 100;
   }
 }
 
@@ -703,9 +592,9 @@ class _ProfileFieldLabel extends StatelessWidget {
         alignment: Alignment.centerLeft,
         child: Text(
           label,
-          style: const TextStyle(
-            color: FoodFlowTheme.ink,
-            fontSize: 13,
+          style: TextStyle(
+            color: profileTextColor(context),
+            fontSize: 12,
             fontWeight: FontWeight.w800,
           ),
         ),
@@ -731,12 +620,12 @@ class _PhotoActionButton extends StatelessWidget {
   Widget build(BuildContext context) {
     return InkWell(
       onTap: onTap,
-      borderRadius: BorderRadius.circular(20),
+      borderRadius: BorderRadius.circular(18),
       child: Container(
         padding: const EdgeInsets.symmetric(vertical: 16),
         decoration: BoxDecoration(
           color: color.withOpacity(0.08),
-          borderRadius: BorderRadius.circular(20),
+          borderRadius: BorderRadius.circular(14),
           border: Border.all(color: color.withOpacity(0.16)),
         ),
         child: Column(
@@ -747,7 +636,8 @@ class _PhotoActionButton extends StatelessWidget {
               label,
               style: TextStyle(
                 color: color,
-                fontSize: 14,
+                fontSize: 13,
+                height: 1.05,
                 fontWeight: FontWeight.w800,
               ),
             ),
@@ -771,7 +661,6 @@ class _TipRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -779,10 +668,10 @@ class _TipRow extends StatelessWidget {
           width: 42,
           height: 42,
           decoration: BoxDecoration(
-            color: scheme.primary.withOpacity(0.1),
+            color: profileSoftColor(context),
             borderRadius: BorderRadius.circular(14),
           ),
-          child: Icon(icon, color: scheme.primary, size: 20),
+          child: Icon(icon, color: profileButtonColor(context), size: 20),
         ),
         const SizedBox(width: 12),
         Expanded(
@@ -791,8 +680,8 @@ class _TipRow extends StatelessWidget {
             children: [
               Text(
                 title,
-                style: const TextStyle(
-                  color: FoodFlowTheme.ink,
+                style: TextStyle(
+                  color: profileTextColor(context),
                   fontSize: 14,
                   fontWeight: FontWeight.w800,
                 ),
@@ -800,9 +689,9 @@ class _TipRow extends StatelessWidget {
               const SizedBox(height: 3),
               Text(
                 subtitle,
-                style: const TextStyle(
-                  color: FoodFlowTheme.muted,
-                  fontSize: 12.5,
+                style: TextStyle(
+                  color: profileMutedColor(context),
+                  fontSize: 12,
                   fontWeight: FontWeight.w500,
                   height: 1.3,
                 ),

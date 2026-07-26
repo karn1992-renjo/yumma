@@ -7,6 +7,7 @@ import android.content.pm.PackageManager
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.net.Uri
+import android.os.Bundle
 import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
@@ -101,6 +102,7 @@ class MainActivity : FlutterActivity() {
                 else -> result.notImplemented()
             }
         }
+
     }
 
     private fun startOrderAlertService(status: String, fullScreen: Boolean = false) {

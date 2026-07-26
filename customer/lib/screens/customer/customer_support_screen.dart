@@ -191,7 +191,9 @@ class _CustomerSupportScreenState extends State<CustomerSupportScreen> {
         queryParams: {'requester_role': 'customer'},
       );
       final tickets = response['data'];
-      if (response['success'] == true && tickets is List && tickets.isNotEmpty) {
+      if (response['success'] == true &&
+          tickets is List &&
+          tickets.isNotEmpty) {
         Map? ticket;
         if (widget.order == null) {
           ticket = tickets.first as Map;
@@ -224,8 +226,8 @@ class _CustomerSupportScreenState extends State<CustomerSupportScreen> {
               : int.tryParse('${selectedTicket['id']}');
           _supportChoice ??=
               selectedTicket['category']?.toString() == 'live_chat'
-              ? 'agent'
-              : 'ticket';
+                  ? 'agent'
+                  : 'ticket';
           _messages
             ..clear()
             ..addAll(nextMessages);
@@ -276,7 +278,8 @@ class _CustomerSupportScreenState extends State<CustomerSupportScreen> {
           ? await _api.post(ApiConstants.supportTickets, data: {
               'subject': subject,
               'message': message,
-              'category': _supportChoice == 'agent' ? 'live_chat' : 'order_issue',
+              'category':
+                  _supportChoice == 'agent' ? 'live_chat' : 'order_issue',
               'priority': _supportChoice == 'agent' ? 'high' : 'medium',
               'requester_role': 'customer',
               'target_app': 'customer',
@@ -348,23 +351,22 @@ class _CustomerSupportScreenState extends State<CustomerSupportScreen> {
       length: 2,
       initialIndex: widget.openChat ? 1 : 0,
       child: Scaffold(
-        backgroundColor: accountCanvas,
-        appBar: AppBar(
-          title: const Text('Help & Support'),
-          backgroundColor: accountCanvas,
-          foregroundColor: FoodFlowTheme.ink,
-          bottom: const TabBar(
-            tabs: [
-              Tab(text: 'Help'),
-              Tab(text: 'Chat'),
-            ],
-          ),
-        ),
-        body: Builder(
-          builder: (tabContext) => TabBarView(
+        backgroundColor: Colors.white,
+        body: SafeArea(
+          child: Column(
             children: [
-              _buildHelpTab(tabContext),
-              _buildChatTab(),
+              _buildHeader(),
+              _buildTabs(),
+              Expanded(
+                child: Builder(
+                  builder: (tabContext) => TabBarView(
+                    children: [
+                      _buildHelpTab(tabContext),
+                      _buildChatTab(),
+                    ],
+                  ),
+                ),
+              ),
             ],
           ),
         ),
@@ -372,18 +374,151 @@ class _CustomerSupportScreenState extends State<CustomerSupportScreen> {
     );
   }
 
+  Widget _buildHeader() {
+    return SizedBox(
+      height: 68,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 6),
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            Align(
+              alignment: Alignment.centerLeft,
+              child: IconButton(
+                onPressed: () => Navigator.maybePop(context),
+                icon: const Icon(Icons.arrow_back_rounded),
+                iconSize: 28,
+                color: Colors.black,
+                tooltip: 'Back',
+              ),
+            ),
+            const Text(
+              'Help & Support',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: Colors.black,
+                fontSize: 20,
+                height: 1.05,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTabs() {
+    return Container(
+      height: 58,
+      decoration: const BoxDecoration(
+        border: Border(bottom: BorderSide(color: Color(0xFFEDEDED))),
+      ),
+      child: const TabBar(
+        indicatorColor: FoodFlowTheme.crimson,
+        indicatorWeight: 2.5,
+        labelColor: FoodFlowTheme.crimson,
+        unselectedLabelColor: Color(0xFF6B6B73),
+        labelStyle: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w900),
+        unselectedLabelStyle:
+            TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700),
+        tabs: [
+          Tab(text: 'Help'),
+          Tab(text: 'Chat'),
+        ],
+      ),
+    );
+  }
+
+  BoxDecoration _supportCardDecoration({double radius = 14}) {
+    return BoxDecoration(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(radius),
+      border: Border.all(color: const Color(0xFFE8E8EE)),
+      boxShadow: [
+        BoxShadow(
+          color: Colors.black.withOpacity(0.055),
+          blurRadius: 18,
+          offset: const Offset(0, 7),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSupportHeroCard() {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 14),
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+      decoration: _supportCardDecoration(),
+      child: Row(
+        children: [
+          Container(
+            width: 52,
+            height: 52,
+            decoration: BoxDecoration(
+              color: const Color(0xFFFFF1EE),
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: const Icon(
+              Icons.support_agent_rounded,
+              color: FoodFlowTheme.crimson,
+              size: 26,
+            ),
+          ),
+          const SizedBox(width: 14),
+          const Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Support that feels personal',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: Colors.black,
+                    fontSize: 14.5,
+                    height: 1.1,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                SizedBox(height: 6),
+                Text(
+                  'Call, email, or chat with support without leaving your account area.',
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: Color(0xFF5E5F66),
+                    fontSize: 12.5,
+                    height: 1.35,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _sectionLabel(String label) {
+    return Text(
+      label,
+      style: const TextStyle(
+        color: Color(0xFF666666),
+        fontSize: 11.5,
+        letterSpacing: 0.8,
+        fontWeight: FontWeight.w800,
+      ),
+    );
+  }
+
   Widget _buildHelpTab(BuildContext tabContext) {
     return ListView(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
       children: [
-        const AccountHeroCard(
-          title: 'Support that feels personal',
-          subtitle:
-              'Call, email, or chat with support without leaving your account area.',
-          icon: Icons.support_agent_rounded,
-          badge: 'PROFILE SPACE',
-          margin: EdgeInsets.fromLTRB(0, 0, 0, 16),
-        ),
+        _buildSupportHeroCard(),
         if (_orderContextText != null) _buildOrderBanner(),
         _buildActionTile(
           icon: Icons.call_outlined,
@@ -404,7 +539,7 @@ class _CustomerSupportScreenState extends State<CustomerSupportScreen> {
           onTap: () => DefaultTabController.of(tabContext).animateTo(1),
         ),
         const SizedBox(height: 18),
-        const AccountSectionTitle(title: 'COMMON ISSUES'),
+        _sectionLabel('COMMON ISSUES'),
         const SizedBox(height: 10),
         _buildFaq(
           'Where is my order?',
@@ -448,12 +583,13 @@ class _CustomerSupportScreenState extends State<CustomerSupportScreen> {
                     child: Text(
                       'Send a message to start a support chat.',
                       textAlign: TextAlign.center,
-                      style: TextStyle(color: Colors.grey.shade600),
+                      style: TextStyle(
+                          color: Colors.grey.shade600, fontSize: 12.5),
                     ),
                   ),
                 )
               : ListView.builder(
-                  padding: const EdgeInsets.all(16),
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
                   itemCount: _messages.length,
                   itemBuilder: (context, index) {
                     final message = _messages[index];
@@ -531,7 +667,7 @@ class _CustomerSupportScreenState extends State<CustomerSupportScreen> {
   Widget _buildSatisfactionChoice() {
     return Container(
       padding: const EdgeInsets.all(14),
-      decoration: FoodFlowTheme.elevatedCard(radius: 20),
+      decoration: _supportCardDecoration(),
       child: Row(
         children: [
           const Expanded(
@@ -573,14 +709,14 @@ class _CustomerSupportScreenState extends State<CustomerSupportScreen> {
 
   Widget _buildSupportChoice() {
     return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: FoodFlowTheme.elevatedCard(radius: 22),
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+      decoration: _supportCardDecoration(),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Text(
             'Choose how you want help',
-            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
+            style: TextStyle(fontSize: 14.5, fontWeight: FontWeight.w900),
           ),
           const SizedBox(height: 12),
           Row(
@@ -614,13 +750,13 @@ class _CustomerSupportScreenState extends State<CustomerSupportScreen> {
   }) {
     return OutlinedButton.icon(
       onPressed: onTap,
-      icon: Icon(icon, size: 20),
+      icon: Icon(icon, size: 18),
       label: Text(label, textAlign: TextAlign.center),
       style: OutlinedButton.styleFrom(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 14),
         foregroundColor: FoodFlowTheme.crimson,
         side: const BorderSide(color: Color(0xFFFFD2AA)),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
       ),
     );
   }
@@ -661,7 +797,8 @@ class _CustomerSupportScreenState extends State<CustomerSupportScreen> {
               children: [
                 Text(
                   _orderContextText!,
-                  style: const TextStyle(fontWeight: FontWeight.w900),
+                  style: const TextStyle(
+                      fontSize: 13, fontWeight: FontWeight.w900),
                 ),
                 Text(
                   widget.order!.statusText,
@@ -681,29 +818,62 @@ class _CustomerSupportScreenState extends State<CustomerSupportScreen> {
     required String subtitle,
     required VoidCallback onTap,
   }) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      decoration: FoodFlowTheme.elevatedCard(radius: 22),
-      child: ListTile(
-        leading: Container(
-          width: 44,
-          height: 44,
-          decoration: BoxDecoration(
-            color: const Color(0xFFFFF1EE),
-            borderRadius: BorderRadius.circular(14),
-          ),
-          child: Icon(icon, color: FoodFlowTheme.crimson),
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(14),
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 10),
+        padding: const EdgeInsets.all(14),
+        decoration: _supportCardDecoration(),
+        child: Row(
+          children: [
+            Container(
+              width: 44,
+              height: 44,
+              decoration: BoxDecoration(
+                color: const Color(0xFFFFF1EE),
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Icon(icon, color: FoodFlowTheme.crimson, size: 22),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Colors.black,
+                      fontSize: 14.5,
+                      height: 1.1,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    subtitle,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Color(0xFF5E5F66),
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            const Icon(
+              Icons.chevron_right_rounded,
+              color: Color(0xFF56575E),
+              size: 25,
+            ),
+          ],
         ),
-        title: Text(title, style: const TextStyle(fontWeight: FontWeight.w800)),
-        subtitle: Text(
-          subtitle,
-          style: const TextStyle(
-            color: FoodFlowTheme.muted,
-            fontWeight: FontWeight.w500,
-          ),
-        ),
-        trailing: const Icon(Icons.chevron_right),
-        onTap: onTap,
       ),
     );
   }
@@ -711,12 +881,12 @@ class _CustomerSupportScreenState extends State<CustomerSupportScreen> {
   Widget _buildFaq(String title, String body) {
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
-      decoration: FoodFlowTheme.elevatedCard(radius: 22),
+      decoration: _supportCardDecoration(),
       child: ExpansionTile(
         tilePadding: const EdgeInsets.symmetric(horizontal: 16),
         title: Text(
           title,
-          style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w800),
+          style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w800),
         ),
         childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
         children: [

@@ -30,7 +30,35 @@ class AppConfig {
 
   static const String walletMoneyLabel = 'Yumma! Money';
 
-  // Firebase Config (if using)
+  static String get apiOrigin {
+    final uri = Uri.parse(apiBaseUrl);
+    if (!uri.hasScheme || uri.host.isEmpty) return apiBaseUrl;
+    return uri.hasPort ? '${uri.scheme}://${uri.host}:${uri.port}' : uri.origin;
+  }
+
+  static String resolveMediaUrl(dynamic rawValue) {
+    final value = rawValue?.toString().trim() ?? '';
+    if (value.isEmpty || value == 'null') return '';
+    if (value.startsWith('http://') ||
+        value.startsWith('https://') ||
+        value.startsWith('data:') ||
+        value.startsWith('blob:')) {
+      return value;
+    }
+    if (value.startsWith('//')) {
+      final scheme = Uri.tryParse(apiBaseUrl)?.scheme;
+      return '${scheme?.isNotEmpty == true ? scheme : 'https'}:$value';
+    }
+
+    final normalized = value.replaceFirst(RegExp(r'^/+'), '');
+    if (normalized.startsWith('storage/')) return '$apiOrigin/$normalized';
+    if (normalized.startsWith('public/')) {
+      return '$apiOrigin/storage/${normalized.substring('public/'.length)}';
+    }
+    return '$apiOrigin/storage/$normalized';
+  }
+
+// Firebase Config (if using)
   static const String firebaseProjectId = String.fromEnvironment(
     'FIREBASE_PROJECT_ID',
     defaultValue: 'yumma-458b0',

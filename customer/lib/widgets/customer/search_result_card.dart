@@ -24,6 +24,31 @@ class SearchResultCard extends StatelessWidget {
     return {};
   }
 
+  String? _firstString(Map<String, dynamic> data, List<String> keys) {
+    for (final key in keys) {
+      final value = data[key];
+      if (value is String && value.trim().isNotEmpty) {
+        return value.trim();
+      }
+    }
+    return null;
+  }
+
+  String? _firstNestedString(
+    Map<String, dynamic> data,
+    List<String> parents,
+    List<String> keys,
+  ) {
+    for (final parent in parents) {
+      final value = data[parent];
+      if (value is Map) {
+        final found = _firstString(Map<String, dynamic>.from(value), keys);
+        if (found != null) return found;
+      }
+    }
+    return null;
+  }
+
   double _parseDouble(dynamic value, {double defaultValue = 0.0}) {
     if (value == null) return defaultValue;
     if (value is double) return value;
@@ -42,12 +67,12 @@ class SearchResultCard extends StatelessWidget {
 
   String _getOfferText() {
     final data = _toMap();
-    
+
     final offer = data['offer'] ?? data['discount'] ?? data['promotion'];
     if (offer != null && offer.toString().isNotEmpty) {
       return offer.toString();
     }
-    
+
     final discountPercent = data['discount_percent'];
     if (discountPercent != null) {
       final percent = _parseDouble(discountPercent);
@@ -55,32 +80,66 @@ class SearchResultCard extends StatelessWidget {
         return '${percent.toStringAsFixed(0)}% OFF';
       }
     }
-    
+
     return '';
   }
 
   String _getImageUrl() {
     final data = _toMap();
-    
+
     final imageUrl = data['logo_image'] ??
-                     data['logo'] ??
-                     data['image_url'] ??
-                     data['banner_url'] ??
-                     data['banner_image'] ??
-                     data['image'];
-    
-    if (imageUrl != null && imageUrl.toString().isNotEmpty) {
-      if (imageUrl.toString().startsWith('http')) {
-        return imageUrl;
-      }
-      return '${AppConfig.apiBaseUrl}/storage/$imageUrl';
-    }
-    return '';
+        data['logo'] ??
+        data['image_url'] ??
+        data['banner_url'] ??
+        data['banner_image'] ??
+        data['image'];
+
+    return AppConfig.resolveMediaUrl(imageUrl);
   }
 
   String _getName() {
     final data = _toMap();
-    return data['name']?.toString() ?? 'Restaurant';
+    final directName = _firstString(data, const [
+      'restaurant_name',
+      'restaurantName',
+      'store_name',
+      'storeName',
+      'business_name',
+      'businessName',
+      'vendor_name',
+      'vendorName',
+      'merchant_name',
+      'merchantName',
+    ]);
+    final nestedName = _firstNestedString(data, const [
+      'restaurant',
+      'store',
+      'vendor',
+      'merchant',
+    ], const [
+      'name',
+      'restaurant_name',
+      'restaurantName',
+      'title',
+      'store_name',
+      'business_name',
+    ]);
+    final fallbackName = _firstString(data, const ['title', 'name']);
+    final resolved = directName ??
+        nestedName ??
+        (fallbackName != null && fallbackName.toLowerCase() != 'restaurant'
+            ? fallbackName
+            : null) ??
+        'Restaurant';
+    assert(() {
+      debugPrint(
+        'SEARCH_CARD_NAME resolved="$resolved" direct="$directName" '
+        'nested="$nestedName" fallback="$fallbackName" '
+        'id=${data['id']} keys=${data.keys.take(28).join(',')}',
+      );
+      return true;
+    }());
+    return resolved;
   }
 
   double _getRating() {
@@ -166,6 +225,7 @@ class SearchResultCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final primary = FoodFlowTheme.brandPrimary(context);
     final name = _getName();
     final rating = _getRating();
     final hasVisibleRating = _hasVisibleRating();
@@ -173,163 +233,158 @@ class SearchResultCard extends StatelessWidget {
     final offerText = _getOfferText();
     final imageUrl = _getImageUrl();
     final searchHint = _getSearchHint();
-    
+
+    Widget placeholder() => Container(
+          color: FoodFlowTheme.tagOrangeSoft,
+          child: const Icon(
+            Icons.restaurant_rounded,
+            size: 34,
+            color: FoodFlowTheme.tagOrange,
+          ),
+        );
+
     return GestureDetector(
       onTap: onTap,
       child: Container(
         margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+        padding: const EdgeInsets.fromLTRB(14, 13, 14, 13),
         decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(18),
-          border: Border.all(color: const Color(0xFFF1E8E1)),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.045),
-              blurRadius: 16,
-              offset: const Offset(0, 6),
-            ),
-          ],
+          border: Border.all(color: const Color(0xFFE9EDF3)),
         ),
         child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
+          crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            // Restaurant Image
             ClipRRect(
-              borderRadius: const BorderRadius.only(
-                topLeft: Radius.circular(18),
-                bottomLeft: Radius.circular(18),
+              borderRadius: BorderRadius.circular(16),
+              child: SizedBox(
+                width: 88,
+                height: 82,
+                child: imageUrl.isNotEmpty
+                    ? AppCachedImage(
+                        imageUrl: imageUrl,
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) => placeholder(),
+                      )
+                    : placeholder(),
               ),
-              child: imageUrl.isNotEmpty
-                  ? AppCachedImage(
-                      imageUrl: imageUrl,
-                      width: 104,
-                      height: 112,
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) => Container(
-                        width: 104,
-                        height: 112,
-                        color: const Color(0xFFFFF4EC),
-                        child: const Icon(
-                          Icons.restaurant,
-                          size: 36,
-                          color: FoodFlowTheme.orange,
-                        ),
-                      ),
-                    )
-                  : Container(
-                      width: 104,
-                      height: 112,
-                      color: const Color(0xFFFFF4EC),
-                      child: const Icon(
-                        Icons.restaurant,
-                        size: 36,
-                        color: FoodFlowTheme.orange,
-                      ),
-                    ),
             ),
-            
-            // Restaurant Info
+            const SizedBox(width: 14),
             Expanded(
-              child: Padding(
-                padding: const EdgeInsets.all(12),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Text(
-                      name,
-                      style: const TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w700,
-                        color: FoodFlowTheme.ink,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(
+                        Icons.storefront_rounded,
+                        size: 14,
+                        color: primary,
                       ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    const SizedBox(height: 4),
-                    if (searchHint.isNotEmpty) ...[
-                      Text(
-                        searchHint,
+                      const SizedBox(width: 8),
+                      const Text(
+                        'Restaurant',
                         style: TextStyle(
-                          fontSize: 12,
                           color: FoodFlowTheme.muted,
-                          height: 1.35,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
                         ),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
                       ),
-                      const SizedBox(height: 6),
                     ],
-                    Row(
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 4,
-                          ),
-                          decoration: BoxDecoration(
-                            color: hasVisibleRating
-                                ? const Color(0xFFEAF9EF)
-                                : const Color(0xFF0A9443),
-                            borderRadius: BorderRadius.circular(999),
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(
-                                Icons.star_rounded,
-                                size: 13,
-                                color: hasVisibleRating
-                                    ? FoodFlowTheme.success
-                                    : Colors.white,
-                              ),
-                              const SizedBox(width: 4),
-                              Text(
-                                hasVisibleRating
-                                    ? rating.toStringAsFixed(1)
-                                    : 'New',
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w700,
-                                  color: hasVisibleRating
-                                      ? FoodFlowTheme.success
-                                      : Colors.white,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Text(
-                          '$deliveryTime mins',
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: FoodFlowTheme.ink.withOpacity(0.72),
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ],
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    name,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 15,
+                      height: 1.2,
+                      fontWeight: FontWeight.w700,
+                      color: FoodFlowTheme.ink,
                     ),
-                    if (offerText.isNotEmpty) ...[
-                      const SizedBox(height: 8),
+                  ),
+                  if (searchHint.isNotEmpty) ...[
+                    const SizedBox(height: 5),
+                    Text(
+                      searchHint,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: FoodFlowTheme.muted,
+                        fontSize: 12,
+                        height: 1.35,
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 4,
+                        ),
                         decoration: BoxDecoration(
-                          color: const Color(0xFFFFF4EC),
+                          color: hasVisibleRating
+                              ? const Color(0xFFEAF9EF)
+                              : primary.withOpacity(0.1),
                           borderRadius: BorderRadius.circular(999),
                         ),
-                        child: Text(
-                          offerText,
-                          style: const TextStyle(
-                            color: FoodFlowTheme.orange,
-                            fontSize: 10,
-                            fontWeight: FontWeight.w700,
-                          ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.star_rounded,
+                              size: 13,
+                              color: hasVisibleRating
+                                  ? FoodFlowTheme.success
+                                  : primary,
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              hasVisibleRating
+                                  ? rating.toStringAsFixed(1)
+                                  : 'New',
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w700,
+                                color: hasVisibleRating
+                                    ? FoodFlowTheme.success
+                                    : primary,
+                              ),
+                            ),
+                          ],
                         ),
                       ),
+                      const SizedBox(width: 8),
+                      Text(
+                        '$deliveryTime mins',
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: FoodFlowTheme.inkSoft,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const Spacer(),
+                      if (offerText.isNotEmpty)
+                        Flexible(
+                          child: Text(
+                            offerText,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            textAlign: TextAlign.right,
+                            style: const TextStyle(
+                              color: FoodFlowTheme.tagOrange,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
                     ],
-                  ],
-                ),
+                  ),
+                ],
               ),
             ),
           ],

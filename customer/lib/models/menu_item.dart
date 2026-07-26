@@ -49,6 +49,7 @@ class MenuItem {
   final int id;
   final int restaurantId;
   final int? categoryId;
+  final int? subcategoryId;
   final int? cuisineId;
   final String name;
   final String? description;
@@ -63,6 +64,7 @@ class MenuItem {
   final int totalOrders;
   final double? rating;
   final String? categoryName;
+  final String? subcategoryName;
   final String? cuisineName;
   final bool isRecommended;
   final bool isBestseller;
@@ -78,6 +80,7 @@ class MenuItem {
     required this.id,
     required this.restaurantId,
     this.categoryId,
+    this.subcategoryId,
     this.cuisineId,
     required this.name,
     this.description,
@@ -92,6 +95,7 @@ class MenuItem {
     this.totalOrders = 0,
     this.rating,
     this.categoryName,
+    this.subcategoryName,
     this.cuisineName,
     this.isRecommended = false,
     this.isBestseller = false,
@@ -111,6 +115,12 @@ class MenuItem {
       id: parseIntValue(json['menu_item_id'] ?? json['id']),
       restaurantId: parseIntValue(json['restaurant_id']),
       categoryId: parseNullableInt(json['category_id']),
+      subcategoryId: parseNullableInt(
+        json['subcategory_id'] ??
+            json['sub_category_id'] ??
+            json['subCategoryId'] ??
+            (json['subcategory'] is Map ? json['subcategory']['id'] : null),
+      ),
       cuisineId: parseNullableInt(json['cuisine_id']),
       name: json['name'] ?? '',
       description: json['description'],
@@ -130,6 +140,12 @@ class MenuItem {
       totalOrders: parseIntValue(json['total_orders']),
       rating: parseNullableDouble(json['rating']),
       categoryName: json['category_name'] ?? json['category']?['name'],
+      subcategoryName: json['subcategory_name'] ??
+          json['sub_category_name'] ??
+          json['subCategoryName'] ??
+          (json['subcategory'] is Map
+              ? json['subcategory']['name']
+              : json['subcategory']),
       cuisineName: json['cuisine_name'] ?? json['cuisine']?['name'],
       isRecommended: parseBoolValue(json['is_recommended'], false),
       isBestseller: parseBoolValue(json['is_bestseller'], false),
@@ -149,6 +165,7 @@ class MenuItem {
       'id': id,
       'restaurant_id': restaurantId,
       'category_id': categoryId,
+      'subcategory_id': subcategoryId,
       'cuisine_id': cuisineId,
       'name': name,
       'description': description,
@@ -163,6 +180,7 @@ class MenuItem {
       'total_orders': totalOrders,
       'rating': rating,
       'category_name': categoryName,
+      'subcategory_name': subcategoryName,
       'cuisine_name': cuisineName,
       'is_recommended': isRecommended,
       'is_bestseller': isBestseller,
@@ -178,7 +196,8 @@ class MenuItem {
 
   double get finalPrice => discountedPrice ?? price;
   bool get hasCustomizations => variants.isNotEmpty || addOns.isNotEmpty;
-  String get imageUrl => images.isNotEmpty ? _resolveImageUrl(images[0]) : '';
+  String get imageUrl =>
+      images.isNotEmpty ? AppConfig.resolveMediaUrl(images[0]) : '';
   bool get isEgg => foodType == 'egg';
   bool get isNonVeg => foodType == 'non_veg';
   bool get hasDiscount => discountedPrice != null && discountedPrice! < price;
@@ -198,21 +217,35 @@ class MenuItem {
         .where((tag) => seen.add(tag.toLowerCase()))
         .toList(growable: false);
   }
+
   double get discountPercent => hasDiscount
       ? ((price - discountedPrice!) / price * 100).roundToDouble()
       : 0;
 
-  static double _parsePrice(Map<String, dynamic> json, {required bool discounted}) {
+  static double _parsePrice(Map<String, dynamic> json,
+      {required bool discounted}) {
     final keys = discounted
         ? const [
             'discounted_price',
             'discountedPrice',
+            'discount_price',
+            'discountPrice',
             'final_price',
             'finalPrice',
+            'effective_price',
+            'effectivePrice',
             'sale_price',
             'offer_price',
+            'price',
           ]
         : const [
+            'actual_price',
+            'actualPrice',
+            'original_price',
+            'originalPrice',
+            'strike_price',
+            'strikePrice',
+            'strike_through_price',
             'price',
             'base_price',
             'regular_price',
@@ -235,7 +268,11 @@ class MenuItem {
       if (parsed != null && parsed > 0) return parsed;
     }
 
-    for (final key in const ['variant', 'default_variant', 'selected_variant']) {
+    for (final key in const [
+      'variant',
+      'default_variant',
+      'selected_variant'
+    ]) {
       final value = json[key];
       if (value is Map) {
         final parsed = _parsePriceValue(value['price'] ?? value['final_price']);
@@ -282,30 +319,6 @@ class MenuItem {
     return null;
   }
 
-  String _resolveImageUrl(String rawValue) {
-    final value = rawValue.trim();
-    if (value.isEmpty) return '';
-    if (value.startsWith('http://') || value.startsWith('https://')) {
-      return value;
-    }
-
-    final apiUri = Uri.parse(AppConfig.apiBaseUrl);
-    final origin = '${apiUri.scheme}://${apiUri.host}';
-    final normalized = value.startsWith('/') ? value.substring(1) : value;
-
-    if (normalized.startsWith('storage/')) {
-      return '$origin/$normalized';
-    }
-
-    if (normalized.startsWith('uploads/') ||
-        normalized.startsWith('menu_items/') ||
-        normalized.startsWith('restaurants/')) {
-      return '$origin/storage/$normalized';
-    }
-
-    return '$origin/storage/$normalized';
-  }
-
   static List<String> _parseImages(Map<String, dynamic> json) {
     final images = <String>[];
 
@@ -318,7 +331,18 @@ class MenuItem {
         return;
       }
       if (value is Map) {
-        for (final key in ['url', 'path', 'image', 'image_url', 'file']) {
+        for (final key in const [
+          'image_url',
+          'media_url',
+          'original_url',
+          'preview_url',
+          'url',
+          'src',
+          'path',
+          'image',
+          'file',
+          'file_url',
+        ]) {
           addImage(value[key]);
         }
         return;
@@ -328,6 +352,16 @@ class MenuItem {
           addImage(item);
         }
       }
+    }
+
+    for (final key in const [
+      'image_url',
+      'media_url',
+      'original_url',
+      'preview_url',
+      'url',
+    ]) {
+      addImage(json[key]);
     }
 
     final rawImages = json['images'];
@@ -341,13 +375,25 @@ class MenuItem {
       addImage(rawImages);
     }
 
-    for (final key in [
-      'image_url',
+    for (final key in const [
       'image',
       'photo',
       'thumbnail',
+      'thumbnail_url',
       'thumb',
       'picture',
+      'item_image',
+      'item_image_url',
+      'menu_item_image',
+      'menu_item_image_url',
+      'menu_image',
+      'menu_image_url',
+      'cover_image',
+      'cover_image_url',
+      'product_image',
+      'product_image_url',
+      'dish_image',
+      'dish_image_url',
     ]) {
       addImage(json[key]);
     }
@@ -430,13 +476,10 @@ class MenuItem {
         .trim()
         .replaceAll(RegExp(r'\s+'), ' ');
     if (normalized.isEmpty) return '';
-    return normalized
-        .split(' ')
-        .map((word) {
-          if (word.isEmpty) return '';
-          return word[0].toUpperCase() + word.substring(1).toLowerCase();
-        })
-        .join(' ');
+    return normalized.split(' ').map((word) {
+      if (word.isEmpty) return '';
+      return word[0].toUpperCase() + word.substring(1).toLowerCase();
+    }).join(' ');
   }
 
   static String _labelForFoodType(String? value, bool isVeg) {

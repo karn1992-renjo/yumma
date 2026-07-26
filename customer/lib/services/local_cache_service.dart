@@ -47,11 +47,21 @@ class LocalCacheService {
     bool allowExpired = false,
   }) {
     if (!Hive.isBoxOpen(_boxName)) return null;
-    final value = Hive.box<String>(_boxName).get(key);
+    final box = Hive.box<String>(_boxName);
+    final value = box.get(key);
     if (value == null) return null;
     final decoded = jsonDecode(value);
     if (decoded is! Map || decoded['_cache_schema'] != _schemaVersion) {
+      if (_isFailedApiResponse(decoded)) {
+        box.delete(key);
+        return null;
+      }
       return allowExpired || maxAge == null ? decoded : null;
+    }
+    final data = decoded['data'];
+    if (_isFailedApiResponse(data)) {
+      box.delete(key);
+      return null;
     }
     final cachedAt = DateTime.tryParse(decoded['cached_at']?.toString() ?? '');
     final storedSeconds = int.tryParse(
@@ -63,7 +73,11 @@ class LocalCacheService {
         (effectiveMaxAge != null &&
             DateTime.now().toUtc().difference(cachedAt) > effectiveMaxAge);
     if (expired && !allowExpired) return null;
-    return decoded['data'];
+    return data;
+  }
+
+  static bool _isFailedApiResponse(dynamic value) {
+    return value is Map && value['success'] == false;
   }
 
   static bool contains(String key) {

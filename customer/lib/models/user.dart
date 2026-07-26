@@ -15,6 +15,9 @@ class User {
   final String? vehicleType;
   final String? vehicleNumber;
   final String? licenseNumber;
+  final String? referralCode;
+  final int? referredByUserId;
+  final int rewardPointsBalance;
   final DateTime createdAt;
   final Map<String, dynamic> settings;
 
@@ -29,6 +32,9 @@ class User {
     this.vehicleType,
     this.vehicleNumber,
     this.licenseNumber,
+    this.referralCode,
+    this.referredByUserId,
+    this.rewardPointsBalance = 0,
     required this.createdAt,
     this.settings = const {},
   });
@@ -59,6 +65,10 @@ class User {
       vehicleType: json['vehicle_type'],
       vehicleNumber: json['vehicle_number'],
       licenseNumber: json['license_number'],
+      referralCode: json['referral_code']?.toString(),
+      referredByUserId: int.tryParse('${json['referred_by_user_id'] ?? ''}'),
+      rewardPointsBalance:
+          int.tryParse('${json['reward_points_balance'] ?? 0}') ?? 0,
       createdAt: DateTime.parse(
         json['created_at'] ?? DateTime.now().toIso8601String(),
       ),
@@ -78,6 +88,9 @@ class User {
       'vehicle_type': vehicleType,
       'vehicle_number': vehicleNumber,
       'license_number': licenseNumber,
+      'referral_code': referralCode,
+      'referred_by_user_id': referredByUserId,
+      'reward_points_balance': rewardPointsBalance,
       'created_at': createdAt.toIso8601String(),
       'settings': settings,
     };

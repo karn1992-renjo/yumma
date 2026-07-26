@@ -40,18 +40,15 @@ class _OrderChatScreenState extends State<OrderChatScreen>
   final LocationService _locationService = LocationService();
   final ImagePicker _imagePicker = ImagePicker();
   final TextEditingController _messageController = TextEditingController();
-  final TextEditingController _assistantController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
 
   Order? _resolvedOrder;
   List<Map<String, dynamic>> _messages = const [];
-  List<Map<String, String>> _assistantHistory = const [];
   Map<String, dynamic> _participants = const {};
   Map<String, dynamic> _summary = const {};
   String _recipientRole = 'restaurant';
   bool _isLoading = true;
   bool _isSending = false;
-  bool _isAnswering = false;
   bool _otherPartyTyping = false;
   Timer? _typingDebounce;
 
@@ -97,7 +94,6 @@ class _OrderChatScreenState extends State<OrderChatScreen>
     _typingDebounce?.cancel();
     _messageController.removeListener(_handleTypingInput);
     _messageController.dispose();
-    _assistantController.dispose();
     _scrollController.dispose();
     super.dispose();
   }
@@ -341,38 +337,6 @@ class _OrderChatScreenState extends State<OrderChatScreen>
     }
   }
 
-  Future<void> _askAssistant() async {
-    final question = _assistantController.text.trim();
-    if (question.isEmpty || _isAnswering) return;
-
-    setState(() => _isAnswering = true);
-    try {
-      final response = await _api.post(
-        '${ApiConstants.orderChat(_orderId)}/assistant',
-        data: {'question': question},
-      );
-      final data = Map<String, dynamic>.from(response['data'] as Map);
-      if (!mounted) return;
-      setState(() {
-        _assistantHistory = [
-          ..._assistantHistory,
-          {
-            'question': data['question']?.toString() ?? question,
-            'answer': data['answer']?.toString() ?? '',
-          },
-        ];
-        _assistantController.clear();
-      });
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Assistant unavailable: $e')),
-      );
-    } finally {
-      if (mounted) setState(() => _isAnswering = false);
-    }
-  }
-
   Future<void> _openSharedLocation(Map<String, dynamic> message) async {
     final meta = Map<String, dynamic>.from(message['meta'] as Map? ?? const {});
     final lat = meta['location_lat'];
@@ -445,49 +409,35 @@ class _OrderChatScreenState extends State<OrderChatScreen>
 
   @override
   Widget build(BuildContext context) {
-    return DefaultTabController(
-      length: 2,
-      child: Scaffold(
-        backgroundColor: _canvas,
-        appBar: AppBar(
-          backgroundColor: Colors.white,
-          elevation: 0,
-          titleSpacing: 0,
-          title: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                _participantName(_recipientRole),
-                style: const TextStyle(
-                  color: _ink,
-                  fontSize: 18,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-              Text(
-                _otherPartyTyping ? 'typing...' : 'Realtime order communication',
-                style: const TextStyle(
-                  color: _muted,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ],
-          ),
-          bottom: const TabBar(
-            tabs: [
-              Tab(text: 'Live Chat'),
-              Tab(text: 'AI Assistant'),
-            ],
-          ),
-        ),
-        body: TabBarView(
+    return Scaffold(
+      backgroundColor: _canvas,
+      appBar: AppBar(
+        backgroundColor: Colors.white,
+        elevation: 0,
+        titleSpacing: 0,
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _buildLiveChatTab(),
-            _buildAssistantTab(),
+            Text(
+              _participantName(_recipientRole),
+              style: const TextStyle(
+                color: _ink,
+                fontSize: 18,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            Text(
+              _otherPartyTyping ? 'typing...' : 'Realtime order communication',
+              style: const TextStyle(
+                color: _muted,
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
           ],
         ),
       ),
+      body: _buildLiveChatTab(),
     );
   }
 
@@ -646,129 +596,6 @@ class _OrderChatScreenState extends State<OrderChatScreen>
                               ),
                             )
                           : const Icon(Icons.send_rounded),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildAssistantTab() {
-    return Column(
-      children: [
-        Expanded(
-          child: ListView(
-            padding: const EdgeInsets.all(16),
-            children: [
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  _assistantChip('What is my order status?'),
-                  _assistantChip('Where is the driver now?'),
-                  _assistantChip('Restaurant contact details'),
-                  _assistantChip('Delivery OTP'),
-                ],
-              ),
-              const SizedBox(height: 16),
-              if (_assistantHistory.isEmpty)
-                Container(
-                  padding: const EdgeInsets.all(18),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(22),
-                    border: Border.all(color: _line),
-                  ),
-                  child: const Text(
-                    'Ask about order progress, rider assignment, restaurant contact, tracking, or delivery OTP.',
-                    style: TextStyle(
-                      color: _muted,
-                      fontWeight: FontWeight.w600,
-                      height: 1.45,
-                    ),
-                  ),
-                )
-              else
-                ..._assistantHistory.map(
-                  (item) => Container(
-                    margin: const EdgeInsets.only(bottom: 12),
-                    padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(22),
-                      border: Border.all(color: _line),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          item['question'] ?? '',
-                          style: const TextStyle(
-                            color: _ink,
-                            fontWeight: FontWeight.w800,
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          item['answer'] ?? '',
-                          style: const TextStyle(
-                            color: _muted,
-                            fontWeight: FontWeight.w600,
-                            height: 1.45,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-            ],
-          ),
-        ),
-        SafeArea(
-          top: false,
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
-            child: Container(
-              padding: const EdgeInsets.fromLTRB(14, 8, 8, 8),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(28),
-                border: Border.all(color: _line),
-              ),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: TextField(
-                      controller: _assistantController,
-                      minLines: 1,
-                      maxLines: 3,
-                      decoration: const InputDecoration(
-                        hintText: 'Ask AI assistant about this order',
-                        border: InputBorder.none,
-                      ),
-                    ),
-                  ),
-                  Container(
-                    decoration: BoxDecoration(
-                      color: _primary.withOpacity(0.12),
-                      borderRadius: BorderRadius.circular(18),
-                    ),
-                    child: IconButton(
-                      onPressed: _isAnswering ? null : _askAssistant,
-                      icon: _isAnswering
-                          ? SizedBox(
-                              width: 18,
-                              height: 18,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                color: _primary,
-                              ),
-                            )
-                          : Icon(Icons.auto_awesome_rounded, color: _primary),
                     ),
                   ),
                 ],
@@ -1060,15 +887,4 @@ class _OrderChatScreenState extends State<OrderChatScreen>
     );
   }
 
-  Widget _assistantChip(String text) {
-    return ActionChip(
-      backgroundColor: Colors.white,
-      side: const BorderSide(color: _line),
-      label: Text(text),
-      onPressed: () {
-        _assistantController.text = text;
-        _askAssistant();
-      },
-    );
-  }
 }

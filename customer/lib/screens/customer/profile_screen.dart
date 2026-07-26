@@ -1,5 +1,8 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:provider/provider.dart';
 
 import '../../config/api_constants.dart';
@@ -8,12 +11,81 @@ import '../../providers/auth_provider.dart';
 import '../../providers/order_provider.dart';
 import '../../services/api_service.dart';
 import '../../theme/foodflow_theme.dart';
-import '../../widgets/customer/account_chrome.dart';
+import '../../utils/currency_utils.dart';
 import '../../widgets/common/app_cached_image.dart';
 import 'edit_profile_screen.dart';
 
+const _profileText = FoodFlowTheme.ink;
+const _profileSubtext = FoodFlowTheme.muted;
+const _profileLine = FoodFlowTheme.line;
+const _profileSuccess = FoodFlowTheme.success;
+const _profileBg = Colors.white;
+const _profileAccent = Color(0xFFFF6A00);
+
+Color _profilePrimary(BuildContext context) =>
+    FoodFlowTheme.brandPrimary(context);
+
+BoxDecoration _profilePanelDecoration(BuildContext context,
+    {double radius = 28}) {
+  return BoxDecoration(
+    gradient: const LinearGradient(
+      begin: Alignment.topLeft,
+      end: Alignment.bottomRight,
+      colors: [
+        FoodFlowTheme.surfaceColor,
+        FoodFlowTheme.surfaceWarm,
+        FoodFlowTheme.surfaceCool,
+      ],
+      stops: [0, 0.56, 1],
+    ),
+    borderRadius: BorderRadius.circular(radius),
+    border: Border.all(color: _profileLine),
+    boxShadow: [
+      BoxShadow(
+        color: Colors.white.withOpacity(0.95),
+        blurRadius: 3,
+        offset: const Offset(-2, -2),
+      ),
+      BoxShadow(
+        color: _profilePrimary(context).withOpacity(0.13),
+        blurRadius: 22,
+        spreadRadius: -3,
+        offset: const Offset(0, 14),
+      ),
+      BoxShadow(
+        color: Colors.black.withOpacity(0.06),
+        blurRadius: 24,
+        spreadRadius: -4,
+        offset: const Offset(0, 14),
+      ),
+    ],
+  );
+}
+
+BoxDecoration _profileCircleDecoration(Color color) {
+  return BoxDecoration(
+    color: Colors.white,
+    shape: BoxShape.circle,
+    border: Border.all(color: _profileLine),
+    boxShadow: [
+      BoxShadow(
+        color: color.withOpacity(0.14),
+        blurRadius: 18,
+        offset: const Offset(0, 10),
+      ),
+      BoxShadow(
+        color: Colors.black.withOpacity(0.05),
+        blurRadius: 16,
+        offset: const Offset(0, 8),
+      ),
+    ],
+  );
+}
+
 class ProfileScreen extends StatefulWidget {
-  const ProfileScreen({super.key});
+  const ProfileScreen({super.key, this.onBackToHome});
+
+  final VoidCallback? onBackToHome;
 
   @override
   State<ProfileScreen> createState() => _ProfileScreenState();
@@ -22,27 +94,58 @@ class ProfileScreen extends StatefulWidget {
 class _ProfileScreenState extends State<ProfileScreen> {
   bool _isLoading = false;
   bool _isLoggingOut = false;
+  String _appVersionLabel = '';
   double _walletBalance = 0;
   int _savedAddressCount = 0;
+  int _savedRestaurantCount = 0;
   int _offersCount = 0;
   final ApiService _api = ApiService();
 
   @override
   void initState() {
     super.initState();
-    _loadData();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _loadData();
+        _loadAppVersion();
+      }
+    });
   }
 
-  Future<void> _loadData() async {
+  Future<void> _loadAppVersion() async {
+    try {
+      final packageInfo = await PackageInfo.fromPlatform();
+      final version = packageInfo.version.trim();
+      final buildNumber = packageInfo.buildNumber.trim();
+      final label = buildNumber.isEmpty ? version : '$version+$buildNumber';
+
+      if (mounted) {
+        setState(() => _appVersionLabel = label);
+      }
+    } catch (error) {
+      debugPrint('Could not load app version: $error');
+    }
+  }
+
+  Future<void> _loadData({bool forceRefresh = false}) async {
     if (!mounted) return;
     setState(() => _isLoading = true);
 
+    final authProvider = context.read<AuthProvider>();
+    final orderProvider = context.read<OrderProvider>();
+
     try {
-      await Future.wait([
-        context.read<AuthProvider>().loadUser(),
-        context.read<OrderProvider>().fetchMyOrders(),
-        _loadProfileStats(),
-      ]);
+      await authProvider.loadUser(forceRefresh: forceRefresh);
+
+      if (forceRefresh) {
+        await Future.wait([
+          orderProvider.fetchMyOrders(notifyLoading: false),
+          _loadProfileStats(cacheFirst: false, refreshCached: false),
+        ]);
+      } else {
+        await _loadProfileStats(cacheFirst: true, refreshCached: true);
+        unawaited(_refreshProfileDataInBackground());
+      }
     } catch (e) {
       debugPrint('Error loading profile data: $e');
     }
@@ -52,50 +155,94 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
   }
 
-  Future<void> _loadProfileStats() async {
+  Future<void> _refreshProfileDataInBackground() async {
+    try {
+      await Future.wait([
+        context.read<AuthProvider>().loadUser(forceRefresh: true),
+        context.read<OrderProvider>().fetchMyOrders(notifyLoading: false),
+      ]);
+    } catch (error) {
+      debugPrint('Background profile refresh failed: $error');
+    }
+  }
+
+  Future<void> _loadProfileStats({
+    required bool cacheFirst,
+    required bool refreshCached,
+  }) async {
     Future<dynamic> safelyLoad(String endpoint) async {
       try {
-        return await _api.get(endpoint);
+        return await _api.get(
+          endpoint,
+          cachePolicy: ApiCachePolicy.discovery,
+          cacheFirst: cacheFirst,
+          refreshCached: refreshCached,
+          onCacheRefreshed: (freshData) {
+            if (!mounted) return;
+            setState(() => _applyProfileStatResponse(endpoint, freshData));
+          },
+        );
       } catch (error) {
         debugPrint('Could not load profile stat $endpoint: $error');
         return null;
       }
     }
 
-    final results = await Future.wait<dynamic>([
-      safelyLoad(ApiConstants.wallet),
-      safelyLoad(ApiConstants.addresses),
-      safelyLoad(ApiConstants.activeOffers),
-    ]);
+    final endpoints = [
+      ApiConstants.wallet,
+      ApiConstants.addresses,
+      ApiConstants.savedRestaurants,
+      ApiConstants.activeOffers,
+    ];
+    final results = await Future.wait<dynamic>(endpoints.map(safelyLoad));
 
-    final walletResponse = results[0];
-    final walletData =
-        walletResponse is Map ? walletResponse['data'] : null;
-    final wallet = walletData is Map ? walletData['wallet'] : null;
-    _walletBalance = double.tryParse('${wallet is Map ? wallet['balance'] : 0}') ?? 0;
+    for (var index = 0; index < endpoints.length; index += 1) {
+      _applyProfileStatResponse(endpoints[index], results[index]);
+    }
+  }
 
-    final addressResponse = results[1];
-    final addressData =
-        addressResponse is Map ? addressResponse['data'] : addressResponse;
-    final addressItems = addressData is List
-        ? addressData
-        : addressData is Map && addressData['data'] is List
-            ? addressData['data'] as List
+  void _applyProfileStatResponse(String endpoint, dynamic response) {
+    if (response == null) return;
+
+    if (endpoint == ApiConstants.wallet) {
+      final walletResponse = response;
+      final walletData = walletResponse is Map ? walletResponse['data'] : null;
+      final wallet = walletData is Map ? walletData['wallet'] : null;
+      _walletBalance =
+          double.tryParse('${wallet is Map ? wallet['balance'] : 0}') ?? 0;
+      return;
+    }
+
+    if (endpoint == ApiConstants.addresses) {
+      _savedAddressCount = _extractProfileItems(response).length;
+      return;
+    }
+
+    if (endpoint == ApiConstants.savedRestaurants) {
+      _savedRestaurantCount = _extractProfileItems(response).length;
+      return;
+    }
+
+    if (endpoint == ApiConstants.activeOffers) {
+      _offersCount = _extractProfileItems(response).length;
+    }
+  }
+
+  List<dynamic> _extractProfileItems(dynamic response) {
+    final data = response is Map ? response['data'] : response;
+    return data is List
+        ? data
+        : data is Map && data['data'] is List
+            ? data['data'] as List
             : const <dynamic>[];
-    _savedAddressCount = addressItems.length;
-
-    final offerResponse = results[2];
-    final offerData = offerResponse is Map ? offerResponse['data'] : offerResponse;
-    final offerItems = offerData is List
-        ? offerData
-        : offerData is Map && offerData['data'] is List
-            ? offerData['data'] as List
-            : const <dynamic>[];
-    _offersCount = offerItems.length;
   }
 
   Future<void> _refreshData() async {
-    await _loadData();
+    await _loadData(forceRefresh: true);
+  }
+
+  String _countLabel(int count, String singular, String plural) {
+    return count == 1 ? '1 $singular' : '$count $plural';
   }
 
   Future<void> _openEditProfileScreen() async {
@@ -104,11 +251,21 @@ class _ProfileScreenState extends State<ProfileScreen> {
     ).push<bool>(MaterialPageRoute(builder: (_) => const EditProfileScreen()));
 
     if (updated == true && mounted) {
-      await _loadData();
+      await _loadData(forceRefresh: true);
     }
   }
 
   Future<bool> _handleBackNavigation() async {
+    if (widget.onBackToHome != null) {
+      widget.onBackToHome!();
+      return false;
+    }
+
+    if (Navigator.of(context).canPop()) {
+      Navigator.of(context).pop();
+      return false;
+    }
+
     final authProvider = context.read<AuthProvider>();
     if (authProvider.isAuthenticated && authProvider.canUseCurrentApp) {
       Navigator.pushNamedAndRemoveUntil(context, '/home', (route) => false);
@@ -121,162 +278,139 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Widget build(BuildContext context) {
     final authProvider = context.watch<AuthProvider>();
     final orderProvider = context.watch<OrderProvider>();
-    final scheme = Theme.of(context).colorScheme;
     final user = authProvider.currentUser;
 
     return WillPopScope(
       onWillPop: _handleBackNavigation,
       child: Scaffold(
-        backgroundColor: accountCanvas,
+        backgroundColor: _profileBg,
         body: SafeArea(
           child: RefreshIndicator(
             onRefresh: _refreshData,
-            color: scheme.primary,
+            color: _profilePrimary(context),
             child: Stack(
               children: [
                 ListView(
-                    physics: const AlwaysScrollableScrollPhysics(),
-                    padding: const EdgeInsets.fromLTRB(18, 14, 18, 116),
-                    children: [
-                      _ProfileTopBar(
-                        canPop: Navigator.canPop(context),
-                        onBack: _handleBackNavigation,
-                      ),
-                      const SizedBox(height: 16),
-                      _ProfileHeroWithStats(
-                        user: user,
-                        orderCount: orderProvider.orders.length,
-                        walletBalance: _walletBalance,
-                        savedAddressCount: _savedAddressCount,
-                        offersCount: _offersCount,
-                        onEdit: _openEditProfileScreen,
-                      ),
-                      const SizedBox(height: 72),
-                      _ProfileSectionCard(
-                        title: 'Account',
-                        children: [
-                          _ProfileMenuTile(
-                            icon: LucideIcons.user_round_pen,
-                            title: 'Edit Profile',
-                            subtitle: 'Update your personal information',
-                            onTap: _openEditProfileScreen,
+                  physics: const AlwaysScrollableScrollPhysics(),
+                  padding: const EdgeInsets.fromLTRB(18, 14, 18, 116),
+                  children: [
+                    _ProfileTopBar(
+                      onBack: _handleBackNavigation,
+                    ),
+                    const SizedBox(height: 22),
+                    _ProfileHeroWithStats(
+                      user: user,
+                      orderCount: orderProvider.orders.length,
+                      walletBalance: _walletBalance,
+                      savedRestaurantCount: _savedRestaurantCount,
+                      offersCount: _offersCount,
+                      onEdit: _openEditProfileScreen,
+                    ),
+                    const SizedBox(height: 18),
+                    _ProfileSectionCard(
+                      children: [
+                        _ProfileMenuTile(
+                          icon: LucideIcons.map_pin,
+                          title: 'My Addresses',
+                          subtitle: _countLabel(
+                            _savedAddressCount,
+                            'saved address',
+                            'saved addresses',
                           ),
-                          _ProfileMenuTile(
-                            icon: LucideIcons.map_pin,
-                            title: 'Addresses',
-                            subtitle: 'Manage your saved addresses',
-                            onTap: () =>
-                                Navigator.pushNamed(context, '/addresses'),
-                          ),
-                          _ProfileMenuTile(
-                            icon: LucideIcons.wallet_cards,
-                            title: 'Payments & Wallet',
-                            subtitle: 'Payment methods, wallet, refund history',
-                            onTap: () =>
-                                Navigator.pushNamed(context, '/wallet'),
-                          ),
-                          _ProfileMenuTile(
-                            icon: LucideIcons.bell,
-                            title: 'Notifications',
-                            subtitle: 'Manage your notification preferences',
-                            onTap: () =>
-                                Navigator.pushNamed(context, '/notifications'),
-                          ),
-                          _ProfileMenuTile(
-                            icon: LucideIcons.shield_check,
-                            title: 'Privacy & Security',
-                            subtitle: 'Privacy settings and account security',
-                            onTap: () =>
-                                Navigator.pushNamed(context, '/privacy-legal'),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 20),
-                      _ProfileSectionCard(
-                        title: 'Orders & More',
-                        children: [
-                          _ProfileMenuTile(
-                            icon: LucideIcons.shopping_bag,
-                            title: 'My Orders',
-                            subtitle: 'Track current orders and view history',
-                            onTap: () =>
-                                Navigator.pushNamed(context, '/orders'),
-                          ),
-                          _ProfileMenuTile(
-                            icon: LucideIcons.calendar_days,
-                            title: 'Dining Reservations',
-                            subtitle: 'View and manage your reservations',
-                            iconColor: const Color(0xFFF43F5E),
-                            iconBackground: const Color(0xFFFFEEF1),
-                            onTap: () => Navigator.pushNamed(
-                              context,
-                              '/dining/bookings',
-                            ),
-                          ),
-                          _ProfileMenuTile(
-                            icon: LucideIcons.heart,
-                            title: 'Favorites',
-                            subtitle: 'Your favorite restaurants and items',
-                            iconColor: const Color(0xFFF59E0B),
-                            iconBackground: const Color(0xFFFFF4DE),
-                            onTap: () => Navigator.pushNamed(
-                              context,
-                              '/saved-restaurants',
-                            ),
-                          ),
-                          _ProfileMenuTile(
-                            icon: LucideIcons.ticket_percent,
-                            title: 'Coupons & Offers',
-                            subtitle: 'View all available offers and discounts',
-                            iconColor: const Color(0xFF14B8A6),
-                            iconBackground: const Color(0xFFE0F8F5),
-                            onTap: () =>
-                                Navigator.pushNamed(context, '/offers'),
-                          ),
-                          _ProfileMenuTile(
-                            icon: LucideIcons.headset,
-                            title: 'Help Center',
-                            subtitle: 'FAQs, chat support and more',
-                            iconColor: const Color(0xFF3B82F6),
-                            iconBackground: const Color(0xFFEAF3FF),
-                            onTap: () =>
-                                Navigator.pushNamed(context, '/support'),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 20),
-                      OutlinedButton.icon(
-                        onPressed: _isLoggingOut ? null : _showLogoutDialog,
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: const Color(0xFFFF2D2D),
-                          side: BorderSide(
-                            color: const Color(0xFFFF2D2D).withOpacity(0.62),
-                          ),
-                          minimumSize: const Size.fromHeight(52),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(18),
-                          ),
+                          iconColor: const Color(0xFFD34B35),
+                          iconBackground: const Color(0xFFFCEFED),
+                          onTap: () =>
+                              Navigator.pushNamed(context, '/addresses'),
                         ),
-                        icon: _isLoggingOut
-                            ? const SizedBox(
-                                width: 18,
-                                height: 18,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  color: Color(0xFFFF2D2D),
-                                ),
-                              )
-                            : const Icon(LucideIcons.log_out, size: 18),
-                        label: const Text(
-                          'Logout',
-                          style: TextStyle(
-                            fontSize: 15,
-                            fontWeight: FontWeight.w800,
-                          ),
+                        _ProfileMenuTile(
+                          icon: LucideIcons.wallet_cards,
+                          title: 'Payments',
+                          subtitle:
+                              'Balance ${formatCurrency(context, _walletBalance)}',
+                          iconColor: const Color(0xFF159947),
+                          iconBackground: const Color(0xFFEAF8EF),
+                          onTap: () => Navigator.pushNamed(context, '/wallet'),
                         ),
-                      ),
-                    ],
-                  ),
+                        _ProfileMenuTile(
+                          icon: LucideIcons.heart,
+                          title: 'Favourites',
+                          subtitle: _countLabel(
+                            _savedRestaurantCount,
+                            'saved restaurant',
+                            'saved restaurants',
+                          ),
+                          iconColor: const Color(0xFFE8387E),
+                          iconBackground: const Color(0xFFFCEAF3),
+                          onTap: () => Navigator.pushNamed(
+                              context, '/saved-restaurants'),
+                        ),
+                        _ProfileMenuTile(
+                          icon: LucideIcons.ticket_percent,
+                          title: 'My Offers',
+                          subtitle: _countLabel(
+                            _offersCount,
+                            'active offer',
+                            'active offers',
+                          ),
+                          iconColor: const Color(0xFFB245D5),
+                          iconBackground: const Color(0xFFF8ECFD),
+                          onTap: () => Navigator.pushNamed(context, '/offers'),
+                        ),
+                        _ProfileMenuTile(
+                          icon: LucideIcons.history,
+                          title: 'Order History',
+                          subtitle: _countLabel(
+                            orderProvider.orders.length,
+                            'past order',
+                            'past orders',
+                          ),
+                          iconColor: const Color(0xFFE78317),
+                          iconBackground: const Color(0xFFFFF3E6),
+                          onTap: () => Navigator.pushNamed(context, '/orders'),
+                        ),
+                        _ProfileMenuTile(
+                          icon: LucideIcons.headset,
+                          title: 'Help & Support',
+                          subtitle: 'FAQs, contact us & more',
+                          iconColor: const Color(0xFF2A7FD6),
+                          iconBackground: const Color(0xFFEAF4FF),
+                          onTap: () => Navigator.pushNamed(context, '/support'),
+                        ),
+                        _ProfileMenuTile(
+                          icon: LucideIcons.shield_check,
+                          title: 'Privacy Policy',
+                          subtitle: 'Learn how we protect your data',
+                          iconColor: const Color(0xFF16A34A),
+                          iconBackground: const Color(0xFFEAF8EF),
+                          onTap: () =>
+                              Navigator.pushNamed(context, '/privacy-legal'),
+                        ),
+                        _ProfileMenuTile(
+                          icon: LucideIcons.file_text,
+                          title: 'Terms & Conditions',
+                          subtitle: 'Read our terms and conditions',
+                          iconColor: const Color(0xFF222222),
+                          iconBackground: const Color(0xFFF3F4F6),
+                          onTap: () =>
+                              Navigator.pushNamed(context, '/privacy-legal'),
+                        ),
+                        _ProfileMenuTile(
+                          icon: _isLoggingOut
+                              ? LucideIcons.loader
+                              : LucideIcons.log_out,
+                          title: 'Logout',
+                          subtitle: 'Sign out from your account',
+                          iconColor: FoodFlowTheme.danger,
+                          iconBackground: const Color(0xFFFFEEEE),
+                          titleColor: FoodFlowTheme.danger,
+                          onTap: _isLoggingOut ? null : _showLogoutDialog,
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 24),
+                    _ProfileVersionFooter(versionLabel: _appVersionLabel),
+                  ],
+                ),
                 if (_isLoading)
                   const Positioned(
                     left: 0,
@@ -293,7 +427,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   void _showLogoutDialog() {
-    final scheme = Theme.of(context).colorScheme;
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -310,13 +443,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 Container(
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
-                    color: scheme.primary.withOpacity(0.1),
+                    color: _profilePrimary(context).withOpacity(0.1),
                     shape: BoxShape.circle,
                   ),
                   child: Icon(
                     LucideIcons.log_out,
                     size: 34,
-                    color: scheme.primary,
+                    color: _profilePrimary(context),
                   ),
                 ),
                 const SizedBox(height: 16),
@@ -328,12 +461,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     color: FoodFlowTheme.ink,
                   ),
                 ),
-                const SizedBox(height: 8),
+                const SizedBox(height: 4),
                 const Text(
                   'Are you sure you want to logout from your account?',
                   textAlign: TextAlign.center,
                   style: TextStyle(
-                    fontSize: 14,
+                    fontSize: 10.5,
                     color: FoodFlowTheme.muted,
                     fontWeight: FontWeight.w500,
                   ),
@@ -382,60 +515,70 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 }
 
+class _ProfileVersionFooter extends StatelessWidget {
+  const _ProfileVersionFooter({required this.versionLabel});
+
+  final String versionLabel;
+
+  @override
+  Widget build(BuildContext context) {
+    if (versionLabel.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    return Text(
+      'Version $versionLabel',
+      textAlign: TextAlign.center,
+      style: const TextStyle(
+        color: Color(0xFF9CA3AF),
+        fontSize: 11,
+        fontWeight: FontWeight.w600,
+      ),
+    );
+  }
+}
+
 class _ProfileTopBar extends StatelessWidget {
   const _ProfileTopBar({
-    required this.canPop,
     required this.onBack,
   });
 
-  final bool canPop;
   final Future<bool> Function() onBack;
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
     return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        if (canPop)
-          Padding(
-            padding: const EdgeInsets.only(right: 12),
-            child: InkWell(
-              onTap: () {
-                onBack();
-              },
-              borderRadius: BorderRadius.circular(16),
-              child: Container(
-                width: 44,
-                height: 44,
-                decoration: FoodFlowTheme.softSurface(radius: 16),
-                child: const Icon(
-                  LucideIcons.arrow_left,
-                  size: 20,
-                  color: FoodFlowTheme.ink,
-                ),
-              ),
-            ),
-          ),
+        _RoundHeaderButton(
+          icon: LucideIcons.arrow_left,
+          color: Colors.black,
+          onTap: () async {
+            await onBack();
+          },
+        ),
+        const SizedBox(width: 12),
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                'Profile',
-                style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                      color: const Color(0xFF081033),
-                      fontSize: 29,
-                      fontWeight: FontWeight.w900,
-                    ),
+              const Text(
+                'My Profile',
+                style: TextStyle(
+                  color: Colors.black,
+                  fontSize: 20,
+                  height: 1.05,
+                  fontWeight: FontWeight.w900,
+                ),
               ),
-              const SizedBox(height: 2),
+              const SizedBox(height: 4),
               const Text(
                 'Manage your account and preferences',
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
-                  color: FoodFlowTheme.muted,
-                  fontSize: 15,
+                  color: Color(0xFF676875),
+                  fontSize: 13,
                   fontWeight: FontWeight.w500,
                 ),
               ),
@@ -444,14 +587,14 @@ class _ProfileTopBar extends StatelessWidget {
         ),
         _RoundHeaderButton(
           icon: LucideIcons.bell,
-          color: scheme.primary,
+          color: Colors.black,
           showDot: true,
           onTap: () => Navigator.pushNamed(context, '/notifications'),
         ),
-        const SizedBox(width: 10),
+        const SizedBox(width: 12),
         _RoundHeaderButton(
           icon: LucideIcons.settings,
-          color: const Color(0xFF111827),
+          color: Colors.black,
           onTap: () => Navigator.pushNamed(context, '/privacy-legal'),
         ),
       ],
@@ -476,37 +619,25 @@ class _RoundHeaderButton extends StatelessWidget {
   Widget build(BuildContext context) {
     return InkWell(
       onTap: onTap,
-      borderRadius: BorderRadius.circular(24),
-      child: Container(
-        width: 48,
-        height: 48,
-        decoration: BoxDecoration(
-          color: Colors.white.withOpacity(0.9),
-          shape: BoxShape.circle,
-          border: Border.all(color: accountBorder),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.035),
-              blurRadius: 14,
-              offset: const Offset(0, 8),
-            ),
-          ],
-        ),
+      borderRadius: BorderRadius.circular(18),
+      child: SizedBox(
+        width: 44,
+        height: 44,
         child: Stack(
           alignment: Alignment.center,
           children: [
-            Icon(icon, size: 22, color: color),
+            Icon(icon, size: 29, color: color),
             if (showDot)
               Positioned(
-                top: 11,
-                right: 11,
+                top: 8,
+                right: 9,
                 child: Container(
-                  width: 8,
-                  height: 8,
+                  width: 10,
+                  height: 10,
                   decoration: BoxDecoration(
-                    color: color,
+                    color: const Color(0xFFFF3B1F),
                     shape: BoxShape.circle,
-                    border: Border.all(color: Colors.white, width: 1.3),
+                    border: Border.all(color: Colors.white, width: 1.4),
                   ),
                 ),
               ),
@@ -522,7 +653,7 @@ class _ProfileHeroWithStats extends StatelessWidget {
     required this.user,
     required this.orderCount,
     required this.walletBalance,
-    required this.savedAddressCount,
+    required this.savedRestaurantCount,
     required this.offersCount,
     required this.onEdit,
   });
@@ -530,168 +661,137 @@ class _ProfileHeroWithStats extends StatelessWidget {
   final User? user;
   final int orderCount;
   final double walletBalance;
-  final int savedAddressCount;
+  final int savedRestaurantCount;
   final int offersCount;
   final VoidCallback onEdit;
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final currencySymbol = user?.currencySymbol ?? '₹';
+    final name =
+        user?.name.trim().isNotEmpty == true ? user!.name.trim() : 'Guest User';
+    final phone = user?.phone.trim() ?? '';
 
-    return Stack(
-      clipBehavior: Clip.none,
-      children: [
-        Container(
-          height: 260,
-          padding: const EdgeInsets.fromLTRB(22, 24, 22, 84),
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [
-                scheme.primary,
-                const Color(0xFF4C1D95),
-                Color.lerp(scheme.primary, scheme.secondary, 0.45) ??
-                    scheme.primary,
-              ],
+    return InkWell(
+      onTap: onEdit,
+      borderRadius: BorderRadius.circular(16),
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(14, 14, 14, 12),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: const Color(0xFFE9E2DD)),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.025),
+              blurRadius: 12,
+              offset: const Offset(0, 6),
             ),
-            borderRadius: BorderRadius.circular(26),
-            boxShadow: [
-              BoxShadow(
-                color: scheme.primary.withOpacity(0.22),
-                blurRadius: 24,
-                offset: const Offset(0, 14),
-              ),
-            ],
-          ),
-          child: Stack(
-            children: [
-              const Positioned(
-                right: -40,
-                top: -56,
-                child: _HeroGlowCircle(size: 166),
-              ),
-              Positioned(
-                right: 42,
-                top: 8,
-                child: _HeroDots(color: Colors.white.withOpacity(0.16)),
-              ),
-              const Positioned(
-                left: 82,
-                bottom: -116,
-                child: _HeroGlowCircle(size: 238, opacity: 0.08),
-              ),
-              Positioned(
-                right: 0,
-                top: 0,
-                child: OutlinedButton.icon(
-                  onPressed: onEdit,
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: Colors.white,
-                    side: BorderSide(color: Colors.white.withOpacity(0.62)),
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 11,
-                    ),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(999),
-                    ),
-                  ),
-                  icon: const Icon(LucideIcons.pencil, size: 15),
-                  label: const Text(
-                    'Edit Profile',
-                    style: TextStyle(
-                      fontSize: 12.5,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                ),
-              ),
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _ProfilePhoto(user: user, onEdit: onEdit),
-                  const SizedBox(width: 20),
-                  Expanded(
-                    child: Padding(
-                      padding: const EdgeInsets.only(top: 50),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            user?.name.isNotEmpty == true
-                                ? user!.name
-                                : 'Guest User',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 25,
-                              fontWeight: FontWeight.w900,
-                              height: 1,
+          ],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              children: [
+                _ProfilePhoto(user: user, onEdit: onEdit),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Color(0xFF111827),
+                          fontSize: 17,
+                          height: 1.1,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                      if (phone.isNotEmpty) ...[
+                        const SizedBox(height: 6),
+                        Row(
+                          children: [
+                            const Icon(
+                              LucideIcons.phone,
+                              size: 14,
+                              color: Color(0xFF6B7280),
                             ),
-                          ),
-                          const SizedBox(height: 14),
-                          if ((user?.phone ?? '').isNotEmpty)
-                            _HeroContactLine(
-                              icon: LucideIcons.phone,
-                              text: user!.phone,
-                            ),
-                          if ((user?.email ?? '').isNotEmpty) ...[
-                            const SizedBox(height: 9),
-                            _HeroContactLine(
-                              icon: LucideIcons.mail,
-                              text: user!.email,
+                            const SizedBox(width: 6),
+                            Expanded(
+                              child: Text(
+                                phone,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  color: Color(0xFF6B7280),
+                                  fontSize: 12.5,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
                             ),
                           ],
-                        ],
-                      ),
-                    ),
+                        ),
+                      ],
+                    ],
                   ),
-                ],
-              ),
-            ],
-          ),
+                ),
+                const SizedBox(width: 8),
+                Container(
+                  width: 34,
+                  height: 34,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFFF2E8),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: const Color(0xFFFFDFC8)),
+                  ),
+                  child: const Icon(
+                    LucideIcons.pencil,
+                    color: _profileAccent,
+                    size: 17,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            _StatsPanel(
+              stats: [
+                _ProfileStatData(
+                  icon: LucideIcons.shopping_bag,
+                  value: '$orderCount',
+                  label: 'Orders',
+                  color: _profileAccent,
+                  background: Colors.transparent,
+                ),
+                _ProfileStatData(
+                  icon: LucideIcons.wallet_cards,
+                  value: formatCurrency(context, walletBalance),
+                  label: 'Wallet',
+                  color: _profileAccent,
+                  background: Colors.transparent,
+                ),
+                _ProfileStatData(
+                  icon: LucideIcons.ticket_percent,
+                  value: '$offersCount',
+                  label: 'Offers',
+                  color: _profileAccent,
+                  background: Colors.transparent,
+                ),
+                _ProfileStatData(
+                  icon: LucideIcons.heart,
+                  value: '$savedRestaurantCount',
+                  label: 'Saved',
+                  color: _profileAccent,
+                  background: Colors.transparent,
+                ),
+              ],
+            ),
+          ],
         ),
-        Positioned(
-          left: 18,
-          right: 18,
-          bottom: -46,
-          child: _StatsPanel(
-            stats: [
-              _ProfileStatData(
-                icon: LucideIcons.shopping_bag,
-                value: '$orderCount',
-                label: 'Total Orders',
-                color: scheme.primary,
-                background: scheme.primary.withOpacity(0.11),
-              ),
-              _ProfileStatData(
-                icon: LucideIcons.wallet_cards,
-                value: '$currencySymbol${walletBalance.toStringAsFixed(2)}',
-                label: 'Wallet Balance',
-                color: const Color(0xFF10B981),
-                background: const Color(0xFFE2F8F1),
-              ),
-              _ProfileStatData(
-                icon: LucideIcons.map_pin,
-                value: '$savedAddressCount',
-                label: 'Saved Addresses',
-                color: const Color(0xFFF97316),
-                background: const Color(0xFFFFEDE4),
-              ),
-              _ProfileStatData(
-                icon: LucideIcons.gift,
-                value: '$offersCount',
-                label: 'Offers & Rewards',
-                color: const Color(0xFFEC4899),
-                background: const Color(0xFFFFE7F1),
-              ),
-            ],
-          ),
-        ),
-      ],
+      ),
     );
   }
 }
@@ -707,64 +807,52 @@ class _ProfilePhoto extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
     return Stack(
       clipBehavior: Clip.none,
       children: [
         Container(
-          width: 104,
-          height: 104,
-          decoration: BoxDecoration(
-            color: Colors.white,
+          width: 66,
+          height: 66,
+          decoration: const BoxDecoration(
             shape: BoxShape.circle,
-            border: Border.all(color: Colors.white, width: 5),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.12),
-                blurRadius: 18,
-                offset: const Offset(0, 8),
-              ),
-            ],
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [Color(0xFFFFE6D7), Color(0xFFFFC093)],
+            ),
           ),
-          child: ClipOval(
-            child: user?.profileImage?.isNotEmpty == true
-                ? AppCachedImage(
-                    imageUrl: user!.profileImage!,
-                    fit: BoxFit.cover,
-                    errorBuilder: (_, __, ___) => _ProfileAvatarFallback(
-                      name: user?.name ?? 'Guest User',
-                    ),
-                  )
-                : _ProfileAvatarFallback(
+          clipBehavior: Clip.antiAlias,
+          child: user?.profileImage?.isNotEmpty == true
+              ? AppCachedImage(
+                  imageUrl: user!.profileImage!,
+                  fit: BoxFit.cover,
+                  width: 66,
+                  height: 66,
+                  errorBuilder: (_, __, ___) => _ProfileAvatarFallback(
                     name: user?.name ?? 'Guest User',
                   ),
-          ),
+                )
+              : _ProfileAvatarFallback(
+                  name: user?.name ?? 'Guest User',
+                ),
         ),
         Positioned(
           right: -2,
-          bottom: 0,
-          child: InkWell(
+          bottom: -2,
+          child: GestureDetector(
             onTap: onEdit,
-            borderRadius: BorderRadius.circular(999),
             child: Container(
-              width: 42,
-              height: 42,
+              width: 24,
+              height: 24,
               decoration: BoxDecoration(
-                color: Colors.white,
+                color: _profileAccent,
                 shape: BoxShape.circle,
                 border: Border.all(color: Colors.white, width: 2),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.1),
-                    blurRadius: 12,
-                    offset: const Offset(0, 5),
-                  ),
-                ],
               ),
-              child: Icon(
-                LucideIcons.camera,
-                color: scheme.primary,
-                size: 20,
+              child: const Icon(
+                LucideIcons.pencil,
+                color: Colors.white,
+                size: 12,
               ),
             ),
           ),
@@ -783,13 +871,13 @@ class _ProfileAvatarFallback extends StatelessWidget {
   Widget build(BuildContext context) {
     final initial = name.trim().isEmpty ? 'G' : name.trim()[0].toUpperCase();
     return Container(
-      color: const Color(0xFFF5F5F5),
+      color: FoodFlowTheme.canvas,
       alignment: Alignment.center,
       child: Text(
         initial,
         style: TextStyle(
           color: Theme.of(context).colorScheme.primary,
-          fontSize: 34,
+          fontSize: 22,
           fontWeight: FontWeight.w900,
         ),
       ),
@@ -810,7 +898,7 @@ class _HeroContactLine extends StatelessWidget {
   Widget build(BuildContext context) {
     return Row(
       children: [
-        Icon(icon, color: Colors.white, size: 16),
+        Icon(icon, color: _profilePrimary(context), size: 16),
         const SizedBox(width: 10),
         Expanded(
           child: FittedBox(
@@ -820,9 +908,9 @@ class _HeroContactLine extends StatelessWidget {
               text,
               maxLines: 1,
               style: TextStyle(
-                color: Colors.white.withOpacity(0.94),
-                fontSize: 13.2,
-                fontWeight: FontWeight.w600,
+                color: _profileSubtext,
+                fontSize: 12,
+                fontWeight: FontWeight.w800,
                 height: 1.18,
               ),
             ),
@@ -834,13 +922,9 @@ class _HeroContactLine extends StatelessWidget {
 }
 
 class _HeroGlowCircle extends StatelessWidget {
-  const _HeroGlowCircle({
-    required this.size,
-    this.opacity = 0.1,
-  });
+  const _HeroGlowCircle({required this.size});
 
   final double size;
-  final double opacity;
 
   @override
   Widget build(BuildContext context) {
@@ -849,7 +933,7 @@ class _HeroGlowCircle extends StatelessWidget {
       height: size,
       decoration: BoxDecoration(
         shape: BoxShape.circle,
-        color: Colors.white.withOpacity(opacity),
+        color: Colors.white.withOpacity(0.1),
       ),
     );
   }
@@ -909,26 +993,21 @@ class _StatsPanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 16),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 9),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(26),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.08),
-            blurRadius: 26,
-            offset: const Offset(0, 12),
-          ),
-        ],
+        color: const Color(0xFFFFFAF6),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFF0E3DA)),
+        boxShadow: const [],
       ),
       child: Row(
         children: List.generate(stats.length * 2 - 1, (index) {
           if (index.isOdd) {
             return Container(
               width: 1,
-              height: 58,
-              margin: const EdgeInsets.symmetric(horizontal: 6),
-              color: accountBorder,
+              height: 34,
+              margin: const EdgeInsets.symmetric(horizontal: 4),
+              color: const Color(0xFFE0E0E4),
             );
           }
           final stat = stats[index ~/ 2];
@@ -949,37 +1028,29 @@ class _ProfileStatItem extends StatelessWidget {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Container(
-          width: 42,
-          height: 42,
-          decoration: BoxDecoration(
-            color: stat.background,
-            borderRadius: BorderRadius.circular(16),
-          ),
-          child: Icon(stat.icon, color: stat.color, size: 21),
-        ),
-        const SizedBox(height: 9),
+        Icon(stat.icon, color: stat.color, size: 16),
+        const SizedBox(height: 4),
         Text(
           stat.value,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
           style: const TextStyle(
-            color: Color(0xFF081033),
-            fontSize: 14,
+            color: Color(0xFF111827),
+            fontSize: 13,
+            height: 1,
             fontWeight: FontWeight.w900,
           ),
         ),
-        const SizedBox(height: 4),
+        const SizedBox(height: 3),
         Text(
           stat.label,
-          maxLines: 2,
-          overflow: TextOverflow.visible,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
           textAlign: TextAlign.center,
           style: const TextStyle(
-            color: FoodFlowTheme.muted,
-            fontSize: 10.2,
-            fontWeight: FontWeight.w600,
-            height: 1.08,
+            color: Color(0xFF6B7280),
+            fontSize: 10.5,
+            fontWeight: FontWeight.w500,
           ),
         ),
       ],
@@ -989,57 +1060,38 @@ class _ProfileStatItem extends StatelessWidget {
 
 class _ProfileSectionCard extends StatelessWidget {
   const _ProfileSectionCard({
-    required this.title,
     required this.children,
   });
 
-  final String title;
   final List<Widget> children;
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: const EdgeInsets.only(left: 2, bottom: 12),
-          child: Text(
-            title,
-            style: const TextStyle(
-              color: Color(0xFF081033),
-              fontSize: 18,
-              fontWeight: FontWeight.w900,
-            ),
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFE4E5EA)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.025),
+            blurRadius: 12,
+            offset: const Offset(0, 6),
           ),
-        ),
-        Container(
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(24),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.035),
-                blurRadius: 22,
-                offset: const Offset(0, 10),
-              ),
-            ],
-          ),
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
-            child: Column(
-              children: List.generate(children.length * 2 - 1, (index) {
-                if (index.isOdd) {
-                  return const Padding(
-                    padding: EdgeInsets.only(left: 62),
-                    child: Divider(height: 1, color: accountBorder),
-                  );
-                }
-                return children[index ~/ 2];
-              }),
-            ),
-          ),
-        ),
-      ],
+        ],
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        children: List.generate(children.length * 2 - 1, (index) {
+          if (index.isOdd) {
+            return const Padding(
+              padding: EdgeInsets.only(left: 80),
+              child: Divider(height: 1, color: Color(0xFFE8E8ED)),
+            );
+          }
+          return children[index ~/ 2];
+        }),
+      ),
     );
   }
 }
@@ -1052,66 +1104,69 @@ class _ProfileMenuTile extends StatelessWidget {
     required this.onTap,
     this.iconColor,
     this.iconBackground,
+    this.titleColor,
   });
 
   final IconData icon;
   final String title;
   final String subtitle;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
   final Color? iconColor;
   final Color? iconBackground;
+  final Color? titleColor;
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final resolvedColor = iconColor ?? scheme.primary;
+    final resolvedColor = iconColor ?? _profileAccent;
     return InkWell(
       onTap: onTap,
-      borderRadius: BorderRadius.circular(18),
       child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 12),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         child: Row(
           children: [
             Container(
-              width: 44,
-              height: 44,
+              width: 48,
+              height: 48,
               decoration: BoxDecoration(
-                color: iconBackground ?? scheme.primary.withOpacity(0.1),
+                color: iconBackground ?? const Color(0xFFFFF2E8),
                 borderRadius: BorderRadius.circular(14),
               ),
-              child: Icon(icon, color: resolvedColor, size: 21),
+              child: Icon(icon, color: resolvedColor, size: 22),
             ),
-            const SizedBox(width: 14),
+            const SizedBox(width: 18),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
                     title,
-                    style: const TextStyle(
-                      color: Color(0xFF081033),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: titleColor ?? const Color(0xFF111827),
                       fontSize: 15,
                       fontWeight: FontWeight.w800,
                     ),
                   ),
-                  const SizedBox(height: 3),
+                  const SizedBox(height: 6),
                   Text(
                     subtitle,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
-                      color: FoodFlowTheme.muted,
-                      fontSize: 12,
+                      color: Color(0xFF6B7280),
+                      fontSize: 10.5,
                       fontWeight: FontWeight.w500,
-                      height: 1.25,
                     ),
                   ),
                 ],
               ),
             ),
-            const SizedBox(width: 8),
+            const SizedBox(width: 12),
             const Icon(
               LucideIcons.chevron_right,
-              color: FoodFlowTheme.muted,
-              size: 20,
+              color: Color(0xFF5F626B),
+              size: 25,
             ),
           ],
         ),

@@ -10,6 +10,11 @@ class CartItemCard extends StatelessWidget {
   final VoidCallback onIncrement;
   final VoidCallback onDecrement;
   final VoidCallback onRemove;
+  final String? promotionTag;
+  final int? displayQuantity;
+  final double? displayTotal;
+  final int freeQuantity;
+  final String? freePromotionTitle;
 
   const CartItemCard({
     super.key,
@@ -17,42 +22,52 @@ class CartItemCard extends StatelessWidget {
     required this.onIncrement,
     required this.onDecrement,
     required this.onRemove,
+    this.promotionTag,
+    this.displayQuantity,
+    this.displayTotal,
+    this.freeQuantity = 0,
+    this.freePromotionTitle,
   });
 
   @override
   Widget build(BuildContext context) {
+    final promoTag = promotionTag?.trim() ?? '';
+    final paidQuantity = displayQuantity ?? item.quantity;
+    final total = displayTotal ?? item.totalPrice;
+    final freeTitle = freePromotionTitle?.trim() ?? '';
+    final primary = FoodFlowTheme.brandPrimary(context);
+    final compact = MediaQuery.sizeOf(context).width < 380;
+    final imageSize = compact ? 72.0 : 88.0;
+    final cardPadding = compact
+        ? const EdgeInsets.fromLTRB(12, 12, 12, 12)
+        : const EdgeInsets.fromLTRB(14, 13, 14, 13);
+
     return Container(
-      margin: const EdgeInsets.only(bottom: 14),
-      padding: const EdgeInsets.all(14),
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: cardPadding,
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(24),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 22,
-            offset: const Offset(0, 10),
-          ),
-        ],
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFE9EDF3)),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           ClipRRect(
-            borderRadius: BorderRadius.circular(16),
+            borderRadius: BorderRadius.circular(12),
             child: SizedBox(
-              width: 88,
-              height: 88,
+              width: imageSize,
+              height: imageSize,
               child: item.menuItem.imageUrl.isNotEmpty
                   ? AppCachedImage(
                       imageUrl: item.menuItem.imageUrl,
                       fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) => _placeholder(),
+                      errorBuilder: (_, __, ___) => _placeholder(context),
                     )
-                  : _placeholder(),
+                  : _placeholder(context),
             ),
           ),
-          const SizedBox(width: 14),
+          SizedBox(width: compact ? 10 : 14),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -71,18 +86,47 @@ class CartItemCard extends StatelessWidget {
                     ),
                   ],
                 ),
-                const SizedBox(height: 8),
+                const SizedBox(height: 6),
                 Text(
                   item.menuItem.name,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
-                    fontSize: 16,
+                    fontSize: 13.8,
                     height: 1.2,
                     fontWeight: FontWeight.w700,
                     color: FoodFlowTheme.ink,
                   ),
                 ),
+                if (promoTag.isNotEmpty) ...[
+                  const SizedBox(height: 7),
+                  _CartPromotionTag(label: promoTag),
+                ],
+                if (freeQuantity > 0) ...[
+                  const SizedBox(height: 7),
+                  Row(
+                    children: [
+                      const Icon(
+                        Icons.check_circle_rounded,
+                        color: Color(0xFF2E7BE6),
+                        size: 16,
+                      ),
+                      const SizedBox(width: 5),
+                      Flexible(
+                        child: Text(
+                          '$freeQuantity free${freeTitle.isEmpty ? '' : ' with $freeTitle'}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Color(0xFF2E7BE6),
+                            fontSize: 12,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
                 if (item.selectedVariant != null) ...[
                   const SizedBox(height: 6),
                   Text(
@@ -113,30 +157,30 @@ class CartItemCard extends StatelessWidget {
                     Text(
                       formatCurrency(context, item.unitPrice),
                       style: const TextStyle(
-                        fontSize: 15,
+                        fontSize: 13.8,
                         fontWeight: FontWeight.w700,
                         color: FoodFlowTheme.ink,
                       ),
                     ),
                     const Spacer(),
                     Text(
-                      formatCurrency(context, item.totalPrice),
+                      formatCurrency(context, total),
                       style: const TextStyle(
-                        fontSize: 16,
+                        fontSize: 14.1,
                         fontWeight: FontWeight.w800,
                         color: FoodFlowTheme.ink,
                       ),
                     ),
                   ],
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 10),
                 Row(
                   children: [
                     Container(
                       decoration: BoxDecoration(
-                        color: FoodFlowTheme.orange.withOpacity(0.08),
+                        color: primary.withOpacity(0.08),
                         borderRadius: BorderRadius.circular(14),
-                        border: Border.all(color: FoodFlowTheme.orange.withOpacity(0.25)),
+                        border: Border.all(color: primary.withOpacity(0.25)),
                       ),
                       child: Row(
                         children: [
@@ -147,11 +191,11 @@ class CartItemCard extends StatelessWidget {
                           SizedBox(
                             width: 34,
                             child: Text(
-                              '${item.quantity}',
+                              '$paidQuantity',
                               textAlign: TextAlign.center,
-                              style: const TextStyle(
-                                color: FoodFlowTheme.orange,
-                                fontSize: 16,
+                              style: TextStyle(
+                                color: primary,
+                                fontSize: 14.1,
                                 fontWeight: FontWeight.w700,
                               ),
                             ),
@@ -182,13 +226,55 @@ class CartItemCard extends StatelessWidget {
     );
   }
 
-  Widget _placeholder() {
+  Widget _placeholder(BuildContext context) {
+    final primary = FoodFlowTheme.brandPrimary(context);
     return Container(
-      color: const Color(0xFFF8EFE7),
-      child: const Icon(
+      color: primary.withOpacity(0.08),
+      child: Icon(
         Icons.fastfood_rounded,
-        color: FoodFlowTheme.orange,
+        color: primary,
         size: 34,
+      ),
+    );
+  }
+}
+
+class _CartPromotionTag extends StatelessWidget {
+  final String label;
+
+  const _CartPromotionTag({required this.label});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+      decoration: BoxDecoration(
+        color: const Color(0xFFEFF8F1),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: const Color(0xFFBFE7C8)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(
+            Icons.local_offer_rounded,
+            size: 13,
+            color: Color(0xFF168A35),
+          ),
+          const SizedBox(width: 5),
+          Flexible(
+            child: Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: Color(0xFF168A35),
+                fontSize: 11,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -205,13 +291,14 @@ class _CounterButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final primary = FoodFlowTheme.brandPrimary(context);
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(12),
       child: SizedBox(
         width: 40,
         height: 40,
-        child: Icon(icon, color: FoodFlowTheme.orange, size: 18),
+        child: Icon(icon, color: primary, size: 18),
       ),
     );
   }

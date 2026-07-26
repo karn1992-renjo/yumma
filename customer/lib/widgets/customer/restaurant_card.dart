@@ -7,6 +7,7 @@ import '../../config/app_config.dart';
 import '../../providers/cart_provider.dart';
 import '../../theme/foodflow_theme.dart';
 import '../../utils/currency_utils.dart';
+import '../../utils/promotion_display_utils.dart';
 
 class RestaurantCard extends StatelessWidget {
   final dynamic restaurant;
@@ -120,23 +121,17 @@ class RestaurantCard extends StatelessWidget {
     return '${getCurrencySymbol(context)}${fee.toStringAsFixed(fee == fee.roundToDouble() ? 0 : 2)} delivery';
   }
 
-  static String _offerText(dynamic restaurant) {
+  static String _offerText(BuildContext context, dynamic restaurant) {
     final discount = restaurant['discount']?.toString().trim() ?? '';
     if (discount.isNotEmpty) return discount;
     final offer = restaurant['offer']?.toString().trim() ?? '';
     if (offer.isNotEmpty) return offer;
-    final promos = restaurant['active_promos'];
-    if (promos is List && promos.isNotEmpty) {
-      final first = promos.first;
-      if (first is Map<String, dynamic>) {
-        final text = first['title']?.toString().trim() ?? '';
-        if (text.isNotEmpty) return text;
-        final value = first['discount_value']?.toString().trim() ?? '';
-        final type = first['discount_type']?.toString().trim() ?? 'percentage';
-        if (value.isNotEmpty) {
-          return type == 'percentage' ? '$value% OFF' : '$value OFF';
-        }
-      }
+    final promos = PromotionDisplayUtils.activePromos(restaurant);
+    if (promos.isNotEmpty) {
+      return PromotionDisplayUtils.labelForPromo(
+        promos.first,
+        currencySymbol: getCurrencySymbol(context),
+      );
     }
     return '';
   }
@@ -231,9 +226,13 @@ class RestaurantCard extends StatelessWidget {
             restaurant['is_open_now'] ?? restaurant['is_open'],
             fallback: true,
           );
-    final offerText = _offerText(restaurant);
+    final offerText = _offerText(context, restaurant);
     final signalTags = _signalTags(context, restaurant);
     final deliveryFeeText = _deliveryFeeText(context, restaurant);
+    final compact = MediaQuery.sizeOf(context).width < 380;
+    final imageHeight = compact ? 132.0 : 152.0;
+    final overlayMaxWidth =
+        MediaQuery.sizeOf(context).width - (compact ? 96 : 112);
 
     return Consumer<CartProvider>(
       builder: (context, cart, _) {
@@ -266,7 +265,7 @@ class RestaurantCard extends StatelessWidget {
                     Stack(
                       children: [
                         SizedBox(
-                          height: 152,
+                          height: imageHeight,
                           width: double.infinity,
                           child: imageUrl.isNotEmpty
                               ? AppCachedImage(
@@ -281,6 +280,8 @@ class RestaurantCard extends StatelessWidget {
                           left: 12,
                           top: 12,
                           child: Container(
+                            constraints:
+                                BoxConstraints(maxWidth: overlayMaxWidth),
                             padding: const EdgeInsets.symmetric(
                               horizontal: 8,
                               vertical: 5,
@@ -312,15 +313,19 @@ class RestaurantCard extends StatelessWidget {
                                   ),
                                 ),
                                 const SizedBox(width: 8),
-                                Text(
-                                  offerText.isNotEmpty
-                                      ? offerText
-                                      : '${name.split(' ').first} · ${restaurant['price_range'] ?? ''}'
-                                          .trim(),
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 10,
-                                    fontWeight: FontWeight.w700,
+                                Flexible(
+                                  child: Text(
+                                    offerText.isNotEmpty
+                                        ? offerText
+                                        : '${name.split(' ').first} · ${restaurant['price_range'] ?? ''}'
+                                            .trim(),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.w700,
+                                    ),
                                   ),
                                 ),
                               ],
@@ -350,7 +355,8 @@ class RestaurantCard extends StatelessWidget {
                       ],
                     ),
                     Padding(
-                      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+                      padding: EdgeInsets.fromLTRB(
+                          12, compact ? 8 : 10, 12, compact ? 8 : 10),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
@@ -363,14 +369,14 @@ class RestaurantCard extends StatelessWidget {
                                   maxLines: 2,
                                   overflow: TextOverflow.ellipsis,
                                   style: const TextStyle(
-                                    fontSize: 16,
+                                    fontSize: 14.1,
                                     height: 1.1,
                                     fontWeight: FontWeight.w800,
                                     color: FoodFlowTheme.ink,
                                   ),
                                 ),
                               ),
-                              const SizedBox(width: 10),
+                              SizedBox(width: compact ? 6 : 10),
                               if (rating > 0)
                                 Column(
                                   crossAxisAlignment: CrossAxisAlignment.end,
@@ -517,7 +523,7 @@ class RestaurantCard extends StatelessWidget {
                                       ),
                               ),
                               if (hasCart) ...[
-                                const SizedBox(width: 10),
+                                SizedBox(width: compact ? 6 : 10),
                                 GestureDetector(
                                   onTap: () =>
                                       Navigator.pushNamed(context, '/cart'),
@@ -633,7 +639,7 @@ class _MiniViewCartButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final primary = Theme.of(context).colorScheme.primary;
-    final secondary = Theme.of(context).colorScheme.secondary;
+    final cartColor = FoodFlowTheme.brandSecondary(context);
     final cart = context.watch<CartProvider>();
     final itemCount = cart.itemCount;
 
@@ -642,14 +648,14 @@ class _MiniViewCartButton extends StatelessWidget {
       decoration: BoxDecoration(
         gradient: LinearGradient(
           colors: <Color>[
-            primary,
-            Color.lerp(primary, secondary, 0.24) ?? primary,
+            cartColor,
+            Color.lerp(cartColor, primary, 0.18) ?? cartColor,
           ],
         ),
         borderRadius: BorderRadius.circular(24),
         boxShadow: [
           BoxShadow(
-            color: primary.withOpacity(0.24),
+            color: cartColor.withOpacity(0.24),
             blurRadius: 8,
             offset: const Offset(0, 3),
           ),

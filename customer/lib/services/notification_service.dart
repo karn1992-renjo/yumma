@@ -29,6 +29,13 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
           .showCustomerOrderStatusNotificationFromMessage(
         message,
       );
+      return;
+    }
+
+    if (FirebaseNotificationService.isCustomBroadcastPayload(data)) {
+      await FirebaseNotificationService.showCustomBroadcastNotification(
+        message,
+      );
     }
   } catch (e, stackTrace) {
     debugPrint('Background FCM notification skipped: $e');
@@ -197,6 +204,11 @@ class FirebaseNotificationService {
       return;
     }
 
+    if (_isCustomBroadcastMessage(message)) {
+      await showCustomBroadcastNotification(message);
+      return;
+    }
+
     if (_shouldPlayForegroundAlertSound(message)) {
       unawaited(SoundService.playMessageSound());
     }
@@ -231,7 +243,7 @@ class FirebaseNotificationService {
             AndroidFlutterLocalNotificationsPlugin>()
         ?.createNotificationChannel(androidChannel);
 
-    final imageStyle = await _bigPictureStyleFor(message);
+    final imageStyle = await _bigPictureStyleForMessage(message);
     final platformDetails = NotificationDetails(
       android: AndroidNotificationDetails(
         androidChannel.id,
@@ -242,6 +254,7 @@ class FirebaseNotificationService {
         priority: Priority.high,
         playSound: true,
         sound: _customPushSound,
+        visibility: NotificationVisibility.public,
         styleInformation: imageStyle,
       ),
       iOS: const DarwinNotificationDetails(sound: 'custom-push.mp3'),
@@ -279,9 +292,85 @@ class FirebaseNotificationService {
     ));
   }
 
-  Future<BigPictureStyleInformation?> _bigPictureStyleFor(
+  static Future<void> showCustomBroadcastNotification(
     RemoteMessage message,
   ) async {
+    final data = _safeDataMap(message.data);
+    if (_isForeignOrderData(data)) {
+      return;
+    }
+
+    final notification = message.notification;
+    final title = notification?.title?.toString() ??
+        data['notification_title']?.toString() ??
+        data['title']?.toString();
+    final body = notification?.body?.toString() ??
+        data['notification_body']?.toString() ??
+        data['body']?.toString() ??
+        data['message']?.toString();
+
+    if ((title == null || title.trim().isEmpty) &&
+        (body == null || body.trim().isEmpty)) {
+      return;
+    }
+
+    final plugin = FlutterLocalNotificationsPlugin();
+    const androidSettings =
+        AndroidInitializationSettings('@mipmap/ic_launcher');
+    const iosSettings = DarwinInitializationSettings();
+    await plugin.initialize(
+      settings: const InitializationSettings(
+        android: androidSettings,
+        iOS: iosSettings,
+      ),
+    );
+
+    const channel = AndroidNotificationChannel(
+      _defaultChannelId,
+      'Default Notifications',
+      description: 'General notifications from FoodFlow',
+      importance: Importance.high,
+      playSound: true,
+      sound: _customPushSound,
+    );
+
+    await plugin
+        .resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin>()
+        ?.createNotificationChannel(channel);
+
+    final imageStyle = await _bigPictureStyleForMessage(
+      message,
+      showSummaryText: false,
+    );
+    final android = message.notification?.android;
+    await plugin.show(
+      id: DateTime.now().millisecondsSinceEpoch ~/ 1000,
+      title: title,
+      body: imageStyle == null ? body : null,
+      notificationDetails: NotificationDetails(
+        android: AndroidNotificationDetails(
+          _defaultChannelId,
+          'Default Notifications',
+          channelDescription: 'General notifications from FoodFlow',
+          icon: android?.smallIcon,
+          importance: Importance.high,
+          priority: Priority.max,
+          playSound: true,
+          sound: _customPushSound,
+          visibility: NotificationVisibility.public,
+          styleInformation: imageStyle,
+        ),
+        iOS: const DarwinNotificationDetails(sound: 'custom-push.mp3'),
+      ),
+      payload: jsonEncode(data),
+    );
+  }
+
+  static Future<BigPictureStyleInformation?> _bigPictureStyleForMessage(
+    RemoteMessage message, {
+    bool showSummaryText = true,
+  }) async {
     final imageUrl = (message.data['image_url'] ??
             message.data['image'] ??
             message.notification?.android?.imageUrl)
@@ -301,8 +390,16 @@ class FirebaseNotificationService {
       return BigPictureStyleInformation(
         bitmap,
         largeIcon: bitmap,
-        contentTitle: message.notification?.title,
-        summaryText: message.notification?.body,
+        hideExpandedLargeIcon: true,
+        contentTitle: message.notification?.title?.toString() ??
+            message.data['notification_title']?.toString() ??
+            message.data['title']?.toString(),
+        summaryText: showSummaryText
+            ? message.notification?.body?.toString() ??
+                message.data['notification_body']?.toString() ??
+                message.data['body']?.toString() ??
+                message.data['message']?.toString()
+            : null,
       );
     } catch (_) {
       return null;
@@ -496,6 +593,10 @@ class FirebaseNotificationService {
     return _isForeignOrderData(_safeDataMap(message.data));
   }
 
+  bool _isCustomBroadcastMessage(RemoteMessage message) {
+    return _isCustomBroadcastData(_safeDataMap(message.data));
+  }
+
   bool _shouldPlayForegroundAlertSound(RemoteMessage message) {
     final data = _normalizeOrderData(_safeDataMap(message.data));
     final type = data['type']?.toString().toLowerCase() ?? '';
@@ -542,6 +643,19 @@ class FirebaseNotificationService {
 
   static bool isCustomerOrderStatusPayload(Map<String, dynamic> data) {
     return _isCustomerOrderStatusData(data);
+  }
+
+  static bool isCustomBroadcastPayload(Map<String, dynamic> data) {
+    return _isCustomBroadcastData(data);
+  }
+
+  static bool _isCustomBroadcastData(Map<String, dynamic> data) {
+    final normalized = _normalizeOrderData(data);
+    final type = normalized['type']?.toString().toLowerCase() ?? '';
+    final targetApp = normalized['target_app']?.toString().toLowerCase() ?? '';
+    final dataOnly = normalized['data_only']?.toString().toLowerCase() == 'true' ||
+        normalized['data_only']?.toString() == '1';
+    return type == 'admin_broadcast' && (targetApp == 'customer' || dataOnly);
   }
 
   static int? _parseOrderId(dynamic value) {

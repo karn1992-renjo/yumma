@@ -9,13 +9,19 @@ class AppImageCache {
 
   static final CacheManager instance = CacheManager(
     Config(
-      'yumma_image_cache_v1',
-      stalePeriod: const Duration(days: 7),
-      maxNrOfCacheObjects: 600,
-      repo: JsonCacheInfoRepository(databaseName: 'yumma_image_cache_v1'),
+      'yumma_image_cache_v3',
+      stalePeriod: const Duration(days: 30),
+      maxNrOfCacheObjects: 1000,
+      repo: JsonCacheInfoRepository(databaseName: 'yumma_image_cache_v3'),
       fileService: HttpFileService(),
     ),
   );
+
+  static void configureMemoryCache() {
+    final cache = PaintingBinding.instance.imageCache;
+    cache.maximumSize = 300;
+    cache.maximumSizeBytes = 96 << 20;
+  }
 
   static String resolveUrl(String rawValue) {
     final value = rawValue.trim();
@@ -31,9 +37,23 @@ class AppImageCache {
     final apiUri = Uri.parse(AppConfig.apiBaseUrl);
     final port = apiUri.hasPort ? ':${apiUri.port}' : '';
     final origin = '${apiUri.scheme}://${apiUri.host}$port';
-    final normalized = value.startsWith('/') ? value.substring(1) : value;
+    var normalized = value.startsWith('/') ? value.substring(1) : value;
+    if (normalized.startsWith('public/')) {
+      normalized = normalized.substring('public/'.length);
+    }
     if (normalized.startsWith('storage/')) return '$origin/$normalized';
     if (value.startsWith('/')) return '$origin/$normalized';
+    if (normalized.startsWith('uploads/') ||
+        normalized.startsWith('menu_items/') ||
+        normalized.startsWith('restaurants/') ||
+        normalized.startsWith('categories/') ||
+        normalized.startsWith('global-categories/') ||
+        normalized.startsWith('global_categories/') ||
+        normalized.startsWith('global-menu-categories/') ||
+        normalized.startsWith('promotions/') ||
+        normalized.startsWith('home-sections/')) {
+      return '$origin/storage/$normalized';
+    }
     return '$origin/storage/$normalized';
   }
 

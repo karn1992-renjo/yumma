@@ -130,11 +130,12 @@ class FoodFlowRestaurantCard extends StatelessWidget {
                       children: [
                         Positioned.fill(
                           child: imageUrl.isNotEmpty
-                              ? AppCachedImage(imageUrl: imageUrl,
+                              ? AppCachedImage(
+                                  imageUrl: imageUrl,
                                   fit: BoxFit.cover,
                                   errorBuilder: (_, __, ___) =>
-                                      _imageFallback())
-                              : _imageFallback(),
+                                      _imageFallback(context))
+                              : _imageFallback(context),
                         ),
                         // Offer / Sponsored overlay
                         if ((restaurant['offer'] ??
@@ -184,7 +185,7 @@ class FoodFlowRestaurantCard extends StatelessWidget {
                         Positioned(
                           left: 8,
                           bottom: 8,
-                          child: _statusBadge(isOpen),
+                          child: _statusBadge(context, isOpen),
                         ),
                       ],
                     ),
@@ -212,7 +213,7 @@ class FoodFlowRestaurantCard extends StatelessWidget {
                               if (rating > 0)
                                 FoodFlowTheme.ratingBadge(rating,
                                     compact: true),
-                              if (rating <= 0) _newBadge(),
+                              if (rating <= 0) _newBadge(context),
                             ],
                           ),
                           const SizedBox(height: 8),
@@ -309,14 +310,15 @@ class FoodFlowRestaurantCard extends StatelessWidget {
     );
   }
 
-  Widget _imageFallback() {
+  Widget _imageFallback(BuildContext context) {
+    final primary = FoodFlowTheme.brandPrimary(context);
     return Container(
-      color: const Color(0xFFFFF3E8),
-      child: const Center(
+      color: primary.withOpacity(0.08),
+      child: Center(
         child: Icon(
           Icons.restaurant_rounded,
           size: 42,
-          color: FoodFlowTheme.orange,
+          color: primary,
         ),
       ),
     );
@@ -363,11 +365,12 @@ class FoodFlowRestaurantCard extends StatelessWidget {
     return const [];
   }
 
-  Widget _newBadge() {
+  Widget _newBadge(BuildContext context) {
+    final primary = FoodFlowTheme.brandPrimary(context);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
       decoration: BoxDecoration(
-        color: const Color(0xFF0A9443),
+        color: primary,
         borderRadius: BorderRadius.circular(999),
       ),
       child: const Row(
@@ -388,11 +391,12 @@ class FoodFlowRestaurantCard extends StatelessWidget {
     );
   }
 
-  Widget _statusBadge(bool isOpen) {
+  Widget _statusBadge(BuildContext context, bool isOpen) {
+    final primary = FoodFlowTheme.brandPrimary(context);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
       decoration: BoxDecoration(
-        color: isOpen ? const Color(0xFF0A9443) : const Color(0xFFD14343),
+        color: isOpen ? primary : FoodFlowTheme.dangerDark,
         borderRadius: BorderRadius.circular(999),
         boxShadow: [
           BoxShadow(
@@ -419,14 +423,15 @@ class _MiniViewCartButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final primary = FoodFlowTheme.brandPrimary(context);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
-        color: FoodFlowTheme.orange,
+        color: primary,
         borderRadius: BorderRadius.circular(10),
         boxShadow: [
           BoxShadow(
-            color: FoodFlowTheme.orange.withOpacity(0.15),
+            color: primary.withOpacity(0.15),
             blurRadius: 8,
             offset: const Offset(0, 4),
           ),

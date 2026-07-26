@@ -1,20 +1,17 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
-import '../../widgets/common/app_cached_image.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:lottie/lottie.dart';
 import 'package:provider/provider.dart';
 
 import '../../config/api_constants.dart';
-import '../../models/address.dart' as app_address;
+import '../../models/menu_item.dart';
+import '../../models/restaurant.dart';
 import '../../providers/cart_provider.dart';
 import '../../services/api_service.dart';
 import '../../theme/foodflow_theme.dart';
 import '../../utils/currency_utils.dart';
-import '../../widgets/common/lucide_icon.dart';
-import '../../widgets/customer/cart_item_card.dart';
-import '../../widgets/customer/account_chrome.dart';
-import '../../widgets/customer/free_delivery_success_popup.dart';
-import 'checkout_screen.dart';
+import '../../widgets/common/app_cached_image.dart';
 
 class CartScreen extends StatefulWidget {
   const CartScreen({
@@ -32,1365 +29,1598 @@ class CartScreen extends StatefulWidget {
 
 class _CartScreenState extends State<CartScreen> {
   final ApiService _api = ApiService();
-  bool _isSummaryLoading = false;
-  double? _summarySubtotal;
-  double? _summaryDeliveryFee;
-  double? _summaryPlatformFee;
-  double? _summaryTax;
-  double? _summaryTotal;
-  double? _freeDeliveryThreshold;
-  double? _freeDeliveryRemaining;
-  double? _deliveryDistanceKm;
-  String _summaryTaxLabel = 'Taxes';
-  List<_ChargeBreakdownItem> _summaryTaxBreakdown = [];
+  final List<Map<String, dynamic>> _rewardLines = <Map<String, dynamic>>[];
   String? _lastCartSignature;
-  int _summaryRequestId = 0;
-  List<app_address.Address> _addresses = [];
-  app_address.Address? _selectedAddress;
-  bool _isAddressLoading = false;
-  int? _loadedAddressRestaurantId;
+  String? _rewardCartSignature;
+  String? _inFlightRewardSignature;
+  int _rewardRequestId = 0;
+  Timer? _rewardDebounce;
+  bool _isRewardLoading = false;
+  double? _summaryDiscount;
+  double? _summaryTotal;
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _refreshCartSummary());
+    WidgetsBinding.instance.addPostFrameCallback((_) => _refreshCartRewards());
   }
 
-  Future<void> _refreshCartSummary() async {
-    final cart = context.read<CartProvider>();
-    final restaurant = cart.restaurant;
-    if (restaurant == null || cart.items.isEmpty) {
-      if (!mounted) return;
-      setState(() {
-        _summarySubtotal = null;
-        _summaryDeliveryFee = null;
-        _summaryPlatformFee = null;
-        _summaryTax = null;
-        _summaryTotal = null;
-        _freeDeliveryThreshold = null;
-        _freeDeliveryRemaining = null;
-        _deliveryDistanceKm = null;
-        _summaryTaxBreakdown = [];
-        _addresses = [];
-        _selectedAddress = null;
-        _loadedAddressRestaurantId = null;
-      });
+  @override
+  void dispose() {
+    _rewardDebounce?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cart = context.watch<CartProvider>();
+    final primary = FoodFlowTheme.brandPrimary(context);
+    _scheduleRewardRefreshIfNeeded(cart);
+    final cartSignature = _cartSignature(cart);
+    final hasFreshSummary = _rewardCartSignature == cartSignature;
+    final localDiscount = cart.promotionDisplayDiscount;
+    final localTotal = cart.displayTotal;
+    final double checkoutTotal =
+        hasFreshSummary ? (_summaryTotal ?? localTotal) : localTotal;
+    final double checkoutDiscount =
+        hasFreshSummary ? (_summaryDiscount ?? 0) : localDiscount;
+
+    return Scaffold(
+      backgroundColor: FoodFlowTheme.canvas,
+      body: SafeArea(
+        bottom: false,
+        child: cart.totalCartItemCount == 0
+            ? _EmptyCartView(
+                onBrowse: widget.onBrowseRestaurants ?? _goHome,
+              )
+            : CustomScrollView(
+                physics: const BouncingScrollPhysics(
+                  parent: AlwaysScrollableScrollPhysics(),
+                ),
+                slivers: [
+                  SliverToBoxAdapter(
+                    child: _CartHeader(
+                      cart: cart,
+                      onBrowse: widget.onBrowseRestaurants ?? _goHome,
+                    ),
+                  ),
+                  if (cart.carts.length > 1)
+                    SliverToBoxAdapter(
+                      child: _CartSwitcher(carts: cart.carts),
+                    ),
+                  SliverPadding(
+                    padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
+                    sliver: SliverList.separated(
+                      itemCount: cart.items.length,
+                      separatorBuilder: (_, __) => const SizedBox(height: 12),
+                      itemBuilder: (context, index) {
+                        final item = cart.items[index];
+                        return _CartReviewItem(
+                          item: item,
+                          restaurant: cart.restaurant,
+                          rewardLine: _rewardLineForCartItem(item),
+                        );
+                      },
+                    ),
+                  ),
+                  if (_detachedRewardLines.isNotEmpty || _isRewardLoading)
+                    SliverPadding(
+                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+                      sliver: SliverToBoxAdapter(
+                        child: _CartRewardSection(
+                          rewardLines: _detachedRewardLines,
+                          isLoading: _isRewardLoading,
+                        ),
+                      ),
+                    ),
+                  const SliverToBoxAdapter(child: SizedBox(height: 150)),
+                ],
+              ),
+      ),
+      bottomNavigationBar: cart.totalCartItemCount == 0
+          ? null
+          : _CartBottomBar(
+              total: checkoutTotal,
+              discount: checkoutDiscount,
+              itemCount: cart.itemCount,
+              primary: primary,
+              onAddMore: widget.onAddMore ?? _addMore,
+              onCheckout: () => Navigator.pushNamed(context, '/checkout'),
+            ),
+    );
+  }
+
+  void _goHome() {
+    Navigator.pushNamedAndRemoveUntil(context, '/home', (route) => false);
+  }
+
+  void _addMore() {
+    final restaurant = context.read<CartProvider>().restaurant;
+    if (restaurant == null) {
+      _goHome();
       return;
     }
-
-    final requestId = ++_summaryRequestId;
-    setState(() => _isSummaryLoading = true);
-    try {
-      final address = await _loadAddressesForCart(restaurant.id);
-      final response = await _api.post(
-        ApiConstants.orderSummary,
-        data: {
-          'restaurant_id': restaurant.id,
-          'items': cart.items
-              .map(
-                (item) => {
-                  'id': item.menuItem.id,
-                  'quantity': item.quantity,
-                  'selected_variant': item.selectedVariant?.toJson(),
-                  'selected_add_ons': item.selectedAddOns
-                      .map((option) => option.toJson())
-                      .toList(),
-                },
-              )
-              .toList(),
-          'delivery_address_id': address?.id,
-          'delivery_lat': address?.latitude,
-          'delivery_lng': address?.longitude,
-          'order_type': 'delivery',
-        },
-      );
-
-      if (!mounted || requestId != _summaryRequestId) return;
-      if (response['success'] == true) {
-        final data = Map<String, dynamic>.from(response['data'] ?? {});
-        final threshold = _nullableDouble(data['free_delivery_threshold']);
-        final remaining = _nullableDouble(data['free_delivery_remaining']);
-        final celebrate = FreeDeliveryMilestoneTracker.shouldCelebrate(
-          eligible: threshold != null,
-          achieved: threshold != null && (remaining ?? 0) <= 0,
-        );
-        setState(() {
-          _summarySubtotal = _toDouble(data['subtotal']);
-          _summaryDeliveryFee = _toDouble(data['delivery_fee']);
-          _summaryPlatformFee = _toDouble(data['platform_fee']);
-          _summaryTax = _toDouble(data['tax']);
-          _summaryTotal = _toDouble(data['total']);
-          _freeDeliveryThreshold = threshold;
-          _freeDeliveryRemaining = remaining;
-          _deliveryDistanceKm = _nullableDouble(data['delivery_distance_km'] ??
-              (data['eta'] is Map
-                  ? (data['eta'] as Map)['travel_distance_km']
-                  : null));
-          _summaryTaxLabel =
-              data['tax_label']?.toString().trim().isNotEmpty == true
-                  ? data['tax_label'].toString()
-                  : 'Taxes';
-          _summaryTaxBreakdown = _parseTaxBreakdown(data['tax_breakdown']);
-        });
-        if (celebrate) {
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted) showFreeDeliverySuccessPopup(context);
-          });
-        }
-      }
-    } catch (e) {
-      debugPrint('Cart summary error: $e');
-    } finally {
-      if (mounted && requestId == _summaryRequestId) {
-        setState(() => _isSummaryLoading = false);
-      }
-    }
+    Navigator.pushNamed(context, '/restaurant/detail',
+        arguments: restaurant.id);
   }
 
-  Future<app_address.Address?> _loadAddressesForCart(
-    int restaurantId, {
-    bool force = false,
-  }) async {
-    if (!force &&
-        _loadedAddressRestaurantId == restaurantId &&
-        _addresses.isNotEmpty) {
-      return _selectedAddress;
-    }
-
-    if (mounted) setState(() => _isAddressLoading = true);
-    try {
-      final response = await _api.get(
-        ApiConstants.addresses,
-        queryParams: {'restaurant_id': restaurantId},
-      );
-      if (response['success'] != true || response['data'] is! List) {
-        return _selectedAddress;
-      }
-
-      final addresses = (response['data'] as List)
-          .whereType<Map>()
-          .map((json) =>
-              app_address.Address.fromJson(Map<String, dynamic>.from(json)))
-          .toList(growable: false);
-
-      addresses.sort((a, b) {
-        if (a.isDeliverable != b.isDeliverable) {
-          return a.isDeliverable ? -1 : 1;
-        }
-        if (a.isDefault != b.isDefault) {
-          return a.isDefault ? -1 : 1;
-        }
-        return a.name.compareTo(b.name);
-      });
-
-      final previousSelectedId = _selectedAddress?.id;
-      app_address.Address? selected;
-      if (previousSelectedId != null) {
-        for (final address in addresses) {
-          if (address.id == previousSelectedId) {
-            selected = address;
-            break;
-          }
-        }
-      }
-      if (selected == null && addresses.isNotEmpty) {
-        final defaultAddress = addresses.firstWhere(
-          (address) => address.isDefault,
-          orElse: () => addresses.first,
-        );
-        selected = addresses.firstWhere(
-          (address) => address.isDeliverable,
-          orElse: () => defaultAddress,
-        );
-      }
-
-      if (!mounted) return selected;
-      setState(() {
-        _addresses = addresses;
-        _selectedAddress = selected;
-        _loadedAddressRestaurantId = restaurantId;
-      });
-      return selected;
-    } finally {
-      if (mounted) setState(() => _isAddressLoading = false);
-    }
-  }
-
-  double _toDouble(dynamic value) {
-    if (value is num) return value.toDouble();
-    return double.tryParse(value?.toString() ?? '') ?? 0;
-  }
-
-  double? _nullableDouble(dynamic value) {
-    if (value is num) return value.toDouble();
-    return double.tryParse(value?.toString() ?? '');
-  }
-
-  List<_ChargeBreakdownItem> _parseTaxBreakdown(dynamic value) {
-    if (value is! List) return const <_ChargeBreakdownItem>[];
-    return value
-        .whereType<Map>()
-        .map((item) => _ChargeBreakdownItem(
-              label: item['name']?.toString().trim() ?? 'Tax',
-              amount: _toDouble(item['amount']),
-              rate: _nullableDouble(item['rate']),
-              description: item['description']?.toString().trim(),
-            ))
-        .where((item) => item.amount > 0)
+  List<Map<String, dynamic>> get _detachedRewardLines {
+    return _rewardLines
+        .where((line) => !_rewardLineMatchesAnyCartItem(line))
         .toList(growable: false);
-  }
-
-  List<_ChargeBreakdownItem> _taxAndChargesBreakdown() {
-    return <_ChargeBreakdownItem>[
-      ..._summaryTaxBreakdown,
-    ];
-  }
-
-  void _showTaxBreakdownPopup(double tax) {
-    final charges = _taxAndChargesBreakdown();
-    showDialog<void>(
-      context: context,
-      barrierColor: Colors.black.withOpacity(0.18),
-      builder: (dialogContext) => _TaxBreakdownDialog(charges: charges),
-    );
   }
 
   String _cartSignature(CartProvider cart) {
     final restaurantId = cart.restaurant?.id ?? 0;
-    final itemSignature = cart.items
+    final itemSignature = cart.paidItems
         .map((item) => '${item.signature}:${item.quantity}')
         .join('|');
     return '$restaurantId::$itemSignature';
   }
 
-  void _scheduleSummaryRefreshIfNeeded(CartProvider cart) {
+  void _scheduleRewardRefreshIfNeeded(CartProvider cart) {
     if (cart.isEmpty) {
       _lastCartSignature = null;
+      if (_rewardLines.isNotEmpty || _rewardCartSignature != null) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          setState(() {
+            _rewardLines.clear();
+            _rewardCartSignature = null;
+            _summaryDiscount = null;
+            _summaryTotal = null;
+          });
+        });
+      }
       return;
     }
+
     final signature = _cartSignature(cart);
     if (signature == _lastCartSignature) return;
     _lastCartSignature = signature;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _refreshCartSummary();
+      if (mounted) _queueCartRewardRefresh();
     });
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final primary = Theme.of(context).colorScheme.primary;
-    final cart = Provider.of<CartProvider>(context);
-    _scheduleSummaryRefreshIfNeeded(cart);
-
-    if (cart.isEmpty) {
-      return _EmptyCartView(onBrowseRestaurants: widget.onBrowseRestaurants);
-    }
-
-    final restaurant = cart.restaurant;
-    final subtotal = _summarySubtotal ?? cart.subtotal;
-    final deliveryFee = _summaryDeliveryFee ?? 0;
-    final platformFee = _summaryPlatformFee ?? 0;
-    final tax = _summaryTax ?? 0;
-    final total = _summaryTotal ?? subtotal + deliveryFee + platformFee + tax;
-    final deliveryLabel = _deliveryDistanceKm != null
-        ? 'Delivery fee (${_deliveryDistanceKm!.toStringAsFixed(_deliveryDistanceKm! >= 10 ? 0 : 1)} km)'
-        : 'Delivery fee';
-
-    final baseTheme = Theme.of(context);
-    final cartTheme = baseTheme.copyWith(
-      textTheme: GoogleFonts.nunitoSansTextTheme(baseTheme.textTheme),
-      primaryTextTheme:
-          GoogleFonts.nunitoSansTextTheme(baseTheme.primaryTextTheme),
-    );
-
-    return Theme(
-      data: cartTheme,
-      child: Scaffold(
-        backgroundColor: accountCanvas,
-        body: SafeArea(
-          child: Column(
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(10, 6, 10, 5),
-                child: Row(
-                  children: [
-                    IconButton.filledTonal(
-                      onPressed: () => Navigator.of(context).maybePop(),
-                      style: IconButton.styleFrom(
-                        backgroundColor: Colors.white,
-                        foregroundColor: FoodFlowTheme.ink,
-                      ),
-                      icon: const AppIcon(AppIcons.arrowBack, size: 18),
-                    ),
-                    const SizedBox(width: 12),
-                    const Expanded(
-                      child: Text(
-                        'View cart',
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.w800,
-                          color: FoodFlowTheme.ink,
-                        ),
-                      ),
-                    ),
-                    IconButton.filledTonal(
-                      onPressed: () => _showClearCartDialog(context, cart),
-                      style: IconButton.styleFrom(
-                        backgroundColor: Colors.white,
-                        foregroundColor: FoodFlowTheme.inkSoft,
-                      ),
-                      icon: const AppIcon(AppIcons.delete, size: 18),
-                    ),
-                  ],
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(12, 2, 12, 8),
-                child: AccountSurfaceCard(
-                  radius: 28,
-                  padding: const EdgeInsets.all(10),
-                  child: Row(
-                    children: [
-                      Container(
-                        width: 64,
-                        height: 64,
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFF7EFE7),
-                          borderRadius: BorderRadius.circular(24),
-                        ),
-                        clipBehavior: Clip.antiAlias,
-                        child: restaurant?.logoUrl.isNotEmpty == true
-                            ? AppCachedImage(
-                                imageUrl: restaurant!.logoUrl,
-                                fit: BoxFit.cover,
-                                errorBuilder: (_, __, ___) =>
-                                    _restaurantIcon(context),
-                              )
-                            : _restaurantIcon(context),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              restaurant?.name ?? 'Restaurant',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.w800,
-                                color: FoodFlowTheme.ink,
-                              ),
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              '${cart.itemCount} item${cart.itemCount == 1 ? '' : 's'} in this cart',
-                              style: const TextStyle(
-                                color: FoodFlowTheme.muted,
-                                fontSize: 12,
-                                fontWeight: FontWeight.w500,
-                              ),
-                            ),
-                            if (restaurant?.isPureVeg == true) ...[
-                              const SizedBox(height: 8),
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 10,
-                                  vertical: 5,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: primary.withOpacity(0.1),
-                                  borderRadius: BorderRadius.circular(999),
-                                ),
-                                child: Text(
-                                  'Pure Veg',
-                                  style: TextStyle(
-                                    color: primary,
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ],
-                        ),
-                      ),
-                      TextButton(
-                        onPressed: () => _addMoreItems(context),
-                        style: TextButton.styleFrom(
-                          foregroundColor: primary,
-                        ),
-                        child: const Text(
-                          'Add more',
-                          style: TextStyle(fontWeight: FontWeight.w700),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
-                child: _buildDeliveryAddressCard(primary, restaurant?.id),
-              ),
-              if (_freeDeliveryThreshold != null)
-                _buildFreeDeliveryMilestone(primary, subtotal),
-              Expanded(
-                child: ListView(
-                  padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-                  children: [
-                    ...cart.items.map(
-                      (item) => CartItemCard(
-                        item: item,
-                        onIncrement: () =>
-                            cart.incrementBySignature(item.signature),
-                        onDecrement: () =>
-                            cart.decrementBySignature(item.signature),
-                        onRemove: () => cart.removeBySignature(item.signature),
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Container(
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(22),
-                        border: Border.all(color: accountBorder),
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const AccountSectionTitle(title: 'BILL DETAILS'),
-                          const SizedBox(height: 14),
-                          if (_isSummaryLoading)
-                            Padding(
-                              padding: const EdgeInsets.only(bottom: 12),
-                              child: LinearProgressIndicator(
-                                color: primary,
-                                minHeight: 3,
-                                backgroundColor: primary.withOpacity(0.1),
-                              ),
-                            ),
-                          _billRow(context, 'Item total', subtotal),
-                          _billRow(context, deliveryLabel, deliveryFee),
-                          if (platformFee > 0)
-                            _billRow(context, 'Platform fee', platformFee),
-                          _billRow(
-                            context,
-                            _summaryTaxLabel,
-                            tax,
-                            onTap: () => _showTaxBreakdownPopup(tax),
-                            tappable: true,
-                          ),
-                          const Divider(height: 26),
-                          _billRow(context, 'To pay', total, isTotal: true),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-        bottomNavigationBar: SafeArea(
-          top: false,
-          child: Container(
-            padding: const EdgeInsets.fromLTRB(10, 6, 10, 10),
-            decoration: const BoxDecoration(
-              color: Colors.white,
-              boxShadow: [
-                BoxShadow(
-                  color: Color(0x12000000),
-                  blurRadius: 18,
-                  offset: Offset(0, -4),
-                ),
-              ],
-            ),
-            child: SizedBox(
-              height: 60,
-              child: ElevatedButton(
-                onPressed: () => _proceedToCheckout(context, restaurant?.id),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: primary,
-                  foregroundColor: Colors.white,
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(18),
-                  ),
-                ),
-                child: Row(
-                  children: [
-                    Column(
-                      mainAxisSize: MainAxisSize.min,
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          formatCurrency(context, total),
-                          style: const TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w800,
-                            color: Colors.white,
-                          ),
-                        ),
-                        Text(
-                          '${cart.itemCount} item${cart.itemCount == 1 ? '' : 's'}',
-                          style: TextStyle(
-                            color: Colors.white.withOpacity(0.84),
-                            fontSize: 12,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const Spacer(),
-                    Text(
-                      'Proceed to checkout',
-                      style: GoogleFonts.nunitoSans(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w700,
-                        color: Colors.white,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
+  void _queueCartRewardRefresh([
+    Duration delay = const Duration(milliseconds: 220),
+  ]) {
+    _rewardDebounce?.cancel();
+    _rewardDebounce = Timer(delay, () {
+      if (mounted) _refreshCartRewards();
+    });
   }
 
-  Widget _buildFreeDeliveryMilestone(Color primary, double subtotal) {
-    final threshold = _freeDeliveryThreshold ?? 0;
-    final remaining = _freeDeliveryRemaining ??
-        (threshold > subtotal ? threshold - subtotal : 0);
-    final achieved = remaining <= 0;
-    final progress =
-        threshold > 0 ? (subtotal / threshold).clamp(0.0, 1.0) : 1.0;
+  Future<void> _refreshCartRewards() async {
+    final cart = context.read<CartProvider>();
+    final restaurant = cart.restaurant;
+    if (restaurant == null || cart.paidItems.isEmpty) {
+      if (!mounted) return;
+      setState(() {
+        _rewardLines.clear();
+        _rewardCartSignature = null;
+        _summaryDiscount = null;
+        _summaryTotal = null;
+        _isRewardLoading = false;
+      });
+      return;
+    }
+
+    final requestSignature = _cartSignature(cart);
+    if (_inFlightRewardSignature == requestSignature) {
+      return;
+    }
+    _inFlightRewardSignature = requestSignature;
+    final requestId = ++_rewardRequestId;
+    setState(() => _isRewardLoading = true);
+    final summaryItems = cart.paidItems
+        .map(
+          (item) => {
+            'id': item.menuItem.id,
+            'quantity': item.quantity,
+            'selected_variant': item.selectedVariant?.toJson(),
+            'selected_add_ons':
+                item.selectedAddOns.map((option) => option.toJson()).toList(),
+            if (item.promotionId != null) 'promotion_id': item.promotionId,
+            if ((item.promotionTitle ?? '').trim().isNotEmpty)
+              'promotion_title': item.promotionTitle,
+            if ((item.promotionGroupKey ?? '').trim().isNotEmpty)
+              'promotion_group_key': item.promotionGroupKey,
+            if (item.promotionGroupSize != null)
+              'promotion_group_size': item.promotionGroupSize,
+            if (item.promotionDealPrice != null)
+              'promotion_deal_price': item.promotionDealPrice,
+            if (item.promotionOriginalPrice != null)
+              'promotion_original_price': item.promotionOriginalPrice,
+          },
+        )
+        .toList();
+    debugPrint(
+      '[SwaadPromoCart] cart summary request: restaurant=${restaurant.id}, '
+      'signature=$requestSignature, items=$summaryItems',
+    );
+    try {
+      final response = await _api.post(
+        ApiConstants.orderSummary,
+        data: {
+          'restaurant_id': restaurant.id,
+          'items': summaryItems,
+          'order_type': 'delivery',
+          if (cart.promotionCouponCode.isNotEmpty)
+            'coupon_code': cart.promotionCouponCode,
+        },
+      );
+
+      if (!mounted ||
+          requestId != _rewardRequestId ||
+          requestSignature != _cartSignature(context.read<CartProvider>())) {
+        return;
+      }
+
+      final lines = response['success'] == true
+          ? _mapList((response['data'] as Map?)?['reward_lines'])
+          : const <Map<String, dynamic>>[];
+      final data = response['data'] is Map
+          ? Map<String, dynamic>.from(response['data'] as Map)
+          : const <String, dynamic>{};
+      debugPrint(
+        '[SwaadPromoCart] cart summary response: success=${response['success']}, '
+        'rewardLines=${lines.length}, rewards=${_rewardLineDebug(lines)}, '
+        '${_summaryDebug(data)}',
+      );
+      context.read<CartProvider>().syncPromotionRewards(lines);
+      setState(() {
+        _rewardLines
+          ..clear()
+          ..addAll(lines);
+        _rewardCartSignature = requestSignature;
+        _summaryDiscount = _doubleValue(data['discount']);
+        _summaryTotal = _doubleValue(data['total']);
+      });
+    } catch (e) {
+      debugPrint('Cart reward summary error: $e');
+      debugPrint('[SwaadPromoCart] cart summary failed: $e');
+    } finally {
+      if (_inFlightRewardSignature == requestSignature) {
+        _inFlightRewardSignature = null;
+      }
+      if (mounted && requestId == _rewardRequestId) {
+        setState(() => _isRewardLoading = false);
+      }
+    }
+  }
+
+  List<Map<String, dynamic>> _mapList(dynamic value) {
+    if (value is! List) return const <Map<String, dynamic>>[];
+    return value
+        .whereType<Map>()
+        .map((item) => Map<String, dynamic>.from(item))
+        .toList(growable: false);
+  }
+
+  Map<String, dynamic>? _rewardLineForCartItem(CartItem item) {
+    if (_rewardCartSignature != _cartSignature(context.read<CartProvider>())) {
+      return null;
+    }
+    final cart = context.read<CartProvider>();
+    if (!item.isPromotionReward &&
+        cart.promotionRewardItems.any(
+          (reward) => reward.menuItem.id == item.menuItem.id,
+        )) {
+      return null;
+    }
+    for (final line in _rewardLines) {
+      if (_rewardLineMatchesCartItem(line, item)) {
+        return line;
+      }
+    }
+    return null;
+  }
+
+  double? _doubleValue(dynamic value) {
+    if (value == null) return null;
+    if (value is num) return value.toDouble();
+    return double.tryParse(value.toString());
+  }
+
+  String _rewardLineDebug(List<Map<String, dynamic>> lines) {
+    return lines
+        .map(
+          (line) =>
+              '${line['promotion_id']}:${line['menu_item_id'] ?? line['item_id']}x${line['quantity'] ?? line['qty']}',
+        )
+        .join(',');
+  }
+
+  String _summaryDebug(Map<String, dynamic> data) {
+    return [
+      'applied=${_promotionDebug(_mapList(data['applied_promotions']))}',
+      'eligible=${_promotionDebug(_mapList(data['eligible_promotions']))}',
+      'actions=${_actionDebug(_mapList(data['reward_actions']))}',
+      'progress=${_progressDebug(_mapList(data['promotion_progress']))}',
+      'invalid=${_invalidDebug(_mapList(data['invalid_reasons']))}',
+      'discounts=${_discountDebug(_mapList(data['discount_lines']))}',
+    ].join(', ');
+  }
+
+  String _promotionDebug(List<Map<String, dynamic>> items) {
+    if (items.isEmpty) return '-';
+    return items
+        .take(5)
+        .map((item) =>
+            '${item['id']}:${item['promotion_type'] ?? item['title']}')
+        .join('|');
+  }
+
+  String _actionDebug(List<Map<String, dynamic>> items) {
+    if (items.isEmpty) return '-';
+    return items
+        .take(5)
+        .map(
+          (item) =>
+              '${item['promotion_id']}:${item['action']}:units=${item['reward_units']}',
+        )
+        .join('|');
+  }
+
+  String _progressDebug(List<Map<String, dynamic>> items) {
+    if (items.isEmpty) return '-';
+    return items
+        .take(5)
+        .map(
+          (item) =>
+              '${item['promotion_id']}:${item['current']}/${item['required']}:${item['message']}',
+        )
+        .join('|');
+  }
+
+  String _invalidDebug(List<Map<String, dynamic>> items) {
+    if (items.isEmpty) return '-';
+    return items
+        .take(5)
+        .map(
+          (item) =>
+              '${item['promotion_id']}:${item['reason_code'] ?? ''}:${item['reason']}',
+        )
+        .join('|');
+  }
+
+  String _discountDebug(List<Map<String, dynamic>> items) {
+    if (items.isEmpty) return '-';
+    return items
+        .take(5)
+        .map(
+          (item) =>
+              '${item['promotion_id']}:${item['type']}:discount=${item['discount_amount']}:free=${item['free_item_id']}',
+        )
+        .join('|');
+  }
+
+  bool _rewardLineMatchesAnyCartItem(Map<String, dynamic> line) {
+    final cart = context.read<CartProvider>();
+    return cart.items.any((item) => _rewardLineMatchesCartItem(line, item));
+  }
+
+  static bool _rewardLineMatchesCartItem(
+    Map<String, dynamic> line,
+    CartItem item,
+  ) {
+    final rewardItemId = line['menu_item_id'] ?? line['item_id'];
+    return rewardItemId?.toString() == item.menuItem.id.toString();
+  }
+
+  static bool _rewardLineIncludedInCart(Map<String, dynamic>? line) {
+    if (line == null) return false;
+    final value = line['included_in_cart'];
+    if (value is bool) return value;
+    final normalized = value?.toString().toLowerCase().trim();
+    return normalized == '1' || normalized == 'true' || normalized == 'yes';
+  }
+}
+
+class _CartHeader extends StatelessWidget {
+  const _CartHeader({
+    required this.cart,
+    required this.onBrowse,
+  });
+
+  final CartProvider cart;
+  final VoidCallback onBrowse;
+
+  @override
+  Widget build(BuildContext context) {
+    final restaurant = cart.restaurant;
+    final restaurantName = _cartRestaurantDisplayName(cart);
+    final primary = FoodFlowTheme.brandPrimary(context);
 
     return Container(
-      margin: const EdgeInsets.fromLTRB(12, 0, 12, 10),
-      padding: const EdgeInsets.all(14),
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 14),
       decoration: BoxDecoration(
-        color: primary.withOpacity(0.08),
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: primary.withOpacity(0.18)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(
-                achieved
-                    ? Icons.check_circle_rounded
-                    : Icons.local_shipping_rounded,
-                color: primary,
-                size: 20,
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  achieved
-                      ? 'You unlocked free delivery!'
-                      : 'Add ${formatCurrency(context, remaining)} more for free delivery',
-                  style: GoogleFonts.nunitoSans(
-                    color: FoodFlowTheme.ink,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(999),
-            child: LinearProgressIndicator(
-              value: progress,
-              minHeight: 7,
-              color: primary,
-              backgroundColor: primary.withOpacity(0.14),
-            ),
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            FoodFlowTheme.brandSoft(context, 0.86),
+            Colors.white,
+          ],
+        ),
+        borderRadius: const BorderRadius.vertical(
+          bottom: Radius.circular(28),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 22,
+            offset: const Offset(0, 10),
           ),
         ],
       ),
-    );
-  }
-
-  Widget _buildDeliveryAddressCard(Color primary, int? restaurantId) {
-    final address = _selectedAddress;
-    final hasAddresses = _addresses.isNotEmpty;
-    final canDeliver = address?.isDeliverable ?? true;
-    final statusText = address?.deliveryStatusLabel ??
-        (canDeliver ? 'Delivery address' : 'Outside delivery zone');
-
-    return AccountSurfaceCard(
-      radius: 24,
-      padding: const EdgeInsets.all(14),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Container(
-                width: 42,
-                height: 42,
-                decoration: BoxDecoration(
-                  color: canDeliver
-                      ? primary.withOpacity(0.1)
-                      : FoodFlowTheme.danger.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(15),
-                ),
-                child: Icon(
-                  canDeliver
-                      ? Icons.location_on_outlined
-                      : Icons.location_off_outlined,
-                  color: canDeliver ? primary : FoodFlowTheme.danger,
-                  size: 22,
+              _RoundIconButton(
+                icon: Icons.arrow_back_ios_new_rounded,
+                onTap: () {
+                  if (Navigator.canPop(context)) {
+                    Navigator.pop(context);
+                  } else {
+                    onBrowse();
+                  }
+                },
+              ),
+              const Spacer(),
+              Text(
+                'Cart',
+                style: GoogleFonts.nunitoSans(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w800,
+                  color: FoodFlowTheme.ink,
                 ),
               ),
+              const Spacer(),
+              _RoundIconButton(
+                icon: Icons.delete_outline_rounded,
+                color: FoodFlowTheme.danger,
+                onTap: () => _confirmClearCart(context),
+              ),
+            ],
+          ),
+          const SizedBox(height: 18),
+          Row(
+            children: [
+              _RestaurantAvatar(restaurant: restaurant, size: 58),
               const SizedBox(width: 12),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      statusText,
-                      style: TextStyle(
-                        color: canDeliver ? primary : FoodFlowTheme.danger,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w900,
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      address?.name ?? 'Select delivery address',
+                      restaurantName,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
+                      style: GoogleFonts.nunitoSans(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w800,
                         color: FoodFlowTheme.ink,
-                        fontSize: 15,
-                        fontWeight: FontWeight.w900,
                       ),
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      address?.fullAddress ??
-                          'Choose from your saved addresses before checkout.',
-                      maxLines: 2,
+                      '${cart.itemCount} item${cart.itemCount == 1 ? '' : 's'} ready for checkout',
+                      maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: FoodFlowTheme.inkSoft,
-                        fontSize: 12,
-                        height: 1.3,
+                      style: GoogleFonts.nunitoSans(
+                        fontSize: 12.5,
                         fontWeight: FontWeight.w600,
+                        color: FoodFlowTheme.muted,
                       ),
                     ),
-                    if (address?.phone.trim().isNotEmpty == true) ...[
-                      const SizedBox(height: 5),
-                      Text(
-                        'Phone: ${address!.phone}',
-                        style: const TextStyle(
-                          color: FoodFlowTheme.muted,
-                          fontSize: 11,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ],
                   ],
-                ),
-              ),
-              TextButton(
-                onPressed: _isAddressLoading
-                    ? null
-                    : () => hasAddresses
-                        ? _showAddressSelector()
-                        : _addAddressAndRefresh(restaurantId),
-                style: TextButton.styleFrom(foregroundColor: primary),
-                child: Text(
-                  hasAddresses ? 'Change' : 'Add',
-                  style: const TextStyle(fontWeight: FontWeight.w900),
                 ),
               ),
             ],
           ),
-          if (_isAddressLoading) ...[
-            const SizedBox(height: 12),
-            LinearProgressIndicator(
-              color: primary,
-              minHeight: 3,
-              backgroundColor: primary.withOpacity(0.1),
+          const SizedBox(height: 14),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.88),
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(color: FoodFlowTheme.line),
             ),
-          ],
-          if (address != null && !canDeliver) ...[
-            const SizedBox(height: 10),
-            Text(
-              'Please change to a deliverable saved address for this restaurant.',
-              style: TextStyle(
-                color: FoodFlowTheme.danger,
-                fontSize: 12,
-                fontWeight: FontWeight.w700,
-              ),
+            child: Row(
+              children: [
+                Icon(Icons.shopping_bag_outlined, color: primary, size: 20),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    'Review items here. Payment and order placement happen on checkout.',
+                    style: GoogleFonts.nunitoSans(
+                      fontSize: 12,
+                      height: 1.35,
+                      fontWeight: FontWeight.w600,
+                      color: FoodFlowTheme.inkSoft,
+                    ),
+                  ),
+                ),
+              ],
             ),
-          ],
+          ),
         ],
       ),
     );
   }
 
-  Future<void> _addAddressAndRefresh(int? restaurantId) async {
-    final result = await Navigator.pushNamed(context, '/addresses/add');
-    if (!mounted) return;
-    if (result == true && restaurantId != null) {
-      await _loadAddressesForCart(restaurantId, force: true);
-      await _refreshCartSummary();
-    }
-  }
-
-  void _showAddressSelector() {
-    final primary = Theme.of(context).colorScheme.primary;
+  void _confirmClearCart(BuildContext context) {
     showModalBottomSheet<void>(
       context: context,
-      isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (sheetContext) {
-        return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.only(top: 42),
-            child: DraggableScrollableSheet(
-              expand: false,
-              initialChildSize: 0.78,
-              minChildSize: 0.45,
-              maxChildSize: 0.92,
-              builder: (context, scrollController) {
-                return Container(
-                  decoration: const BoxDecoration(
-                    color: Color(0xFFF5F6FB),
-                    borderRadius:
-                        BorderRadius.vertical(top: Radius.circular(26)),
+        return Container(
+          margin: const EdgeInsets.all(12),
+          padding: const EdgeInsets.fromLTRB(18, 18, 18, 12),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(24),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.16),
+                blurRadius: 30,
+                offset: const Offset(0, 18),
+              ),
+            ],
+          ),
+          child: SafeArea(
+            top: false,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Clear this cart?',
+                  style: GoogleFonts.nunitoSans(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w800,
+                    color: FoodFlowTheme.ink,
                   ),
-                  child: ListView(
-                    controller: scrollController,
-                    padding: const EdgeInsets.fromLTRB(16, 18, 16, 28),
-                    children: [
-                      Row(
-                        children: [
-                          const Expanded(
-                            child: Text(
-                              'Select delivery address',
-                              style: TextStyle(
-                                color: FoodFlowTheme.ink,
-                                fontSize: 21,
-                                fontWeight: FontWeight.w900,
-                              ),
-                            ),
-                          ),
-                          IconButton.filled(
-                            onPressed: () => Navigator.pop(sheetContext),
-                            style: IconButton.styleFrom(
-                              backgroundColor: FoodFlowTheme.ink,
-                              foregroundColor: Colors.white,
-                            ),
-                            icon: const Icon(Icons.close_rounded),
-                          ),
-                        ],
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Items from the current restaurant cart will be removed.',
+                  style: GoogleFonts.nunitoSans(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w500,
+                    color: FoodFlowTheme.muted,
+                  ),
+                ),
+                const SizedBox(height: 18),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: () => Navigator.pop(sheetContext),
+                        child: const Text('Keep items'),
                       ),
-                      const SizedBox(height: 12),
-                      _addressSheetAction(
-                        icon: Icons.add_location_alt_outlined,
-                        title: 'Add new address',
-                        subtitle: 'Save another delivery location',
-                        color: primary,
-                        onTap: () async {
-                          Navigator.pop(sheetContext);
-                          await _addAddressAndRefresh(
-                            context.read<CartProvider>().restaurant?.id,
-                          );
-                        },
-                      ),
-                      const SizedBox(height: 16),
-                      const Text(
-                        'Saved addresses',
-                        style: TextStyle(
-                          color: FoodFlowTheme.muted,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w900,
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: ElevatedButton(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: FoodFlowTheme.danger,
+                          foregroundColor: Colors.white,
                         ),
+                        onPressed: () {
+                          context.read<CartProvider>().clearCart();
+                          Navigator.pop(sheetContext);
+                        },
+                        child: const Text('Clear'),
                       ),
-                      const SizedBox(height: 8),
-                      if (_addresses.isEmpty)
-                        const Padding(
-                          padding: EdgeInsets.symmetric(vertical: 16),
-                          child: Text(
-                            'No saved addresses yet.',
-                            style: TextStyle(
-                              color: FoodFlowTheme.muted,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                        )
-                      else
-                        ..._addresses.map(_addressSheetCard),
-                    ],
-                  ),
-                );
-              },
+                    ),
+                  ],
+                ),
+              ],
             ),
           ),
         );
       },
     );
   }
+}
 
-  Widget _addressSheetAction({
-    required IconData icon,
-    required String title,
-    required String subtitle,
-    required Color color,
-    required VoidCallback onTap,
-  }) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(18),
-      child: Container(
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(18),
-          border: Border.all(color: accountBorder),
-        ),
+String _cartRestaurantDisplayName(CartProvider cart) {
+  final activeId = cart.restaurant?.id ?? 0;
+  final names = <String>[
+    cart.restaurant?.name ?? '',
+    if (activeId > 0)
+      ...cart.carts
+          .where((entry) => entry.restaurant.id == activeId)
+          .map((entry) => entry.restaurant.name),
+    ...cart.carts.map((entry) => entry.restaurant.name),
+  ];
+  for (final name in names) {
+    final trimmed = name.trim();
+    if (trimmed.isNotEmpty && trimmed.toLowerCase() != 'restaurant') {
+      return trimmed;
+    }
+  }
+  return 'Current cart';
+}
+
+class _CartSwitcher extends StatelessWidget {
+  const _CartSwitcher({required this.carts});
+
+  final List<RestaurantCart> carts;
+
+  @override
+  Widget build(BuildContext context) {
+    final activeId = context.select<CartProvider, int?>(
+      (cart) => cart.restaurant?.id,
+    );
+
+    return SizedBox(
+      height: 96,
+      child: ListView.separated(
+        padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
+        scrollDirection: Axis.horizontal,
+        itemCount: carts.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 10),
+        itemBuilder: (context, index) {
+          final restaurantCart = carts[index];
+          final restaurant = restaurantCart.restaurant;
+          final isActive = restaurant.id == activeId;
+          final primary = FoodFlowTheme.brandPrimary(context);
+
+          return InkWell(
+            borderRadius: BorderRadius.circular(18),
+            onTap: () => context.read<CartProvider>().setActiveCart(
+                  restaurant.id,
+                ),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 180),
+              width: 190,
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(18),
+                border: Border.all(
+                  color: isActive ? primary : FoodFlowTheme.line,
+                  width: isActive ? 1.4 : 1,
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(isActive ? 0.12 : 0.05),
+                    blurRadius: isActive ? 18 : 10,
+                    offset: const Offset(0, 8),
+                  ),
+                ],
+              ),
+              child: Row(
+                children: [
+                  _RestaurantAvatar(restaurant: restaurant, size: 44),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Text(
+                          restaurant.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: GoogleFonts.nunitoSans(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w800,
+                            color: FoodFlowTheme.ink,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          '${restaurantCart.itemCount} item${restaurantCart.itemCount == 1 ? '' : 's'}',
+                          style: GoogleFonts.nunitoSans(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                            color: isActive ? primary : FoodFlowTheme.muted,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _CartReviewItem extends StatelessWidget {
+  const _CartReviewItem({
+    required this.item,
+    required this.restaurant,
+    required this.rewardLine,
+  });
+
+  final CartItem item;
+  final Restaurant? restaurant;
+  final Map<String, dynamic>? rewardLine;
+
+  @override
+  Widget build(BuildContext context) {
+    final menuItem = item.menuItem;
+    final isReward = item.isPromotionReward;
+    final hasOptions = !isReward &&
+        (item.selectedVariant != null || item.selectedAddOns.isNotEmpty);
+    final freeQuantity =
+        isReward ? item.quantity : _rewardLineQuantity(rewardLine);
+    final promotionTitle =
+        item.promotionTitle ?? _rewardLinePromotionTitle(rewardLine);
+
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(color: FoodFlowTheme.line.withOpacity(0.8)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.06),
+            blurRadius: 18,
+            offset: const Offset(0, 10),
+          ),
+        ],
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
         child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Icon(icon, color: color, size: 25),
+            _ItemImage(menuItem: menuItem),
             const SizedBox(width: 12),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    title,
-                    style: const TextStyle(
-                      color: FoodFlowTheme.ink,
-                      fontSize: 14,
-                      fontWeight: FontWeight.w900,
-                    ),
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _DietDot(item: menuItem),
+                      const SizedBox(width: 7),
+                      Expanded(
+                        child: Text(
+                          menuItem.name,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: GoogleFonts.nunitoSans(
+                            fontSize: 14.5,
+                            height: 1.24,
+                            fontWeight: FontWeight.w800,
+                            color: FoodFlowTheme.ink,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
-                  const SizedBox(height: 2),
-                  Text(
-                    subtitle,
-                    style: const TextStyle(
-                      color: FoodFlowTheme.muted,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
+                  if (!isReward &&
+                      menuItem.description?.trim().isNotEmpty == true) ...[
+                    const SizedBox(height: 5),
+                    Text(
+                      menuItem.description!.trim(),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: GoogleFonts.nunitoSans(
+                        fontSize: 11.5,
+                        height: 1.35,
+                        fontWeight: FontWeight.w500,
+                        color: FoodFlowTheme.muted,
+                      ),
                     ),
+                  ],
+                  if (hasOptions) ...[
+                    const SizedBox(height: 8),
+                    _OptionText(item: item),
+                  ],
+                  if (freeQuantity > 0) ...[
+                    const SizedBox(height: 8),
+                    _InlineRewardBadge(
+                      quantity: freeQuantity,
+                      title: promotionTitle,
+                    ),
+                  ],
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: isReward
+                            ? Text(
+                                'FREE',
+                                style: GoogleFonts.nunitoSans(
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w900,
+                                  color: FoodFlowTheme.successDark,
+                                ),
+                              )
+                            : _PriceLine(item: item),
+                      ),
+                      if (!isReward)
+                        _QuantityStepper(
+                          quantity: item.quantity,
+                          onDecrease: () => context
+                              .read<CartProvider>()
+                              .decrementBySignature(item.signature),
+                          onIncrease: () => context
+                              .read<CartProvider>()
+                              .incrementBySignature(item.signature),
+                        ),
+                    ],
                   ),
                 ],
               ),
             ),
-            const Icon(Icons.chevron_right_rounded,
-                color: FoodFlowTheme.inkSoft),
           ],
         ),
       ),
     );
   }
 
-  Widget _addressSheetCard(app_address.Address address) {
-    final primary = Theme.of(context).colorScheme.primary;
-    final selected = address.id == _selectedAddress?.id;
-    final canDeliver = address.isDeliverable;
-    final distanceText = address.distanceKm == null
-        ? null
-        : '${address.distanceKm!.toStringAsFixed(address.distanceKm! >= 10 ? 0 : 1)} km';
-
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
-      child: InkWell(
-        onTap: canDeliver
-            ? () async {
-                Navigator.pop(context);
-                setState(() => _selectedAddress = address);
-                try {
-                  await _api.post(
-                    '${ApiConstants.setDefaultAddress}/${address.id}',
-                  );
-                } catch (e) {
-                  debugPrint('Set default address error: $e');
-                }
-                await _refreshCartSummary();
-              }
-            : null,
-        borderRadius: BorderRadius.circular(18),
-        child: Container(
-          padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(18),
-            border: Border.all(
-              color: selected ? primary : accountBorder,
-              width: selected ? 1.3 : 1,
-            ),
-          ),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Icon(
-                address.name.toLowerCase().contains('work')
-                    ? Icons.business_center_outlined
-                    : Icons.home_outlined,
-                color: canDeliver ? primary : FoodFlowTheme.muted,
-                size: 28,
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      address.deliveryStatusLabel ??
-                          (canDeliver
-                              ? 'DELIVERS TO'
-                              : 'DOES NOT DELIVER HERE'),
-                      style: TextStyle(
-                        color: canDeliver ? primary : FoodFlowTheme.danger,
-                        fontSize: 10.5,
-                        fontWeight: FontWeight.w900,
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      address.name,
-                      style: const TextStyle(
-                        color: FoodFlowTheme.ink,
-                        fontSize: 14,
-                        fontWeight: FontWeight.w900,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      address.fullAddress,
-                      style: const TextStyle(
-                        color: FoodFlowTheme.inkSoft,
-                        fontSize: 12,
-                        height: 1.3,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    if (distanceText != null) ...[
-                      const SizedBox(height: 6),
-                      Text(
-                        distanceText,
-                        style: const TextStyle(
-                          color: FoodFlowTheme.muted,
-                          fontSize: 11,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-              if (selected)
-                Icon(Icons.check_circle_rounded, color: primary, size: 22),
-            ],
-          ),
-        ),
-      ),
-    );
+  static int _rewardLineQuantity(Map<String, dynamic>? line) {
+    if (line == null) return 0;
+    final value = line['quantity'] ?? line['qty'];
+    if (value is num) return value.toInt().clamp(1, 999);
+    return (int.tryParse(value?.toString() ?? '') ?? 1).clamp(1, 999);
   }
 
-  static Widget _restaurantIcon(BuildContext context) {
+  static String _rewardLinePromotionTitle(Map<String, dynamic>? line) {
+    final text =
+        (line?['promotion_title'] ?? line?['title'])?.toString().trim();
+    return text == null || text.isEmpty ? 'Promotion' : text;
+  }
+}
+
+class _InlineRewardBadge extends StatelessWidget {
+  const _InlineRewardBadge({
+    required this.quantity,
+    required this.title,
+  });
+
+  final int quantity;
+  final String title;
+
+  @override
+  Widget build(BuildContext context) {
     return Container(
-      color: const Color(0xFFF8EFE7),
-      child: Icon(
-        Icons.restaurant_rounded,
-        color: Theme.of(context).colorScheme.primary,
-        size: 34,
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+      decoration: BoxDecoration(
+        color: FoodFlowTheme.tagGreenSoft,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: FoodFlowTheme.tagGreenBorder),
       ),
-    );
-  }
-
-  void _proceedToCheckout(BuildContext context, int? restaurantId) {
-    if (_selectedAddress == null) {
-      if (_addresses.isNotEmpty) {
-        _showAddressSelector();
-      } else {
-        _addAddressAndRefresh(restaurantId);
-      }
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please select a delivery address')),
-      );
-      return;
-    }
-
-    if (_selectedAddress?.isDeliverable == false) {
-      _showAddressSelector();
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Please choose an address in this delivery zone'),
-        ),
-      );
-      return;
-    }
-
-    Navigator.push(
-      context,
-      MaterialPageRoute(builder: (_) => const CheckoutScreen()),
-    );
-  }
-
-  static Widget _billRow(
-    BuildContext context,
-    String label,
-    double value, {
-    bool isTotal = false,
-    VoidCallback? onTap,
-    bool tappable = false,
-  }) {
-    final row = Padding(
-      padding: const EdgeInsets.only(bottom: 12),
       child: Row(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          Expanded(
-            child: Row(
-              children: [
-                Flexible(
-                  child: Text(
-                    label,
-                    style: TextStyle(
-                      fontSize: isTotal ? 16 : 14,
-                      fontWeight: isTotal ? FontWeight.w700 : FontWeight.w500,
-                      color:
-                          isTotal ? FoodFlowTheme.ink : FoodFlowTheme.inkSoft,
-                      decoration: tappable ? TextDecoration.underline : null,
-                      decorationStyle: TextDecorationStyle.dotted,
-                    ),
-                  ),
-                ),
-                if (tappable) ...[
-                  const SizedBox(width: 5),
-                  const Icon(
-                    Icons.info_outline_rounded,
-                    size: 15,
-                    color: FoodFlowTheme.muted,
-                  ),
-                ],
-              ],
-            ),
+          const Icon(
+            Icons.check_circle_rounded,
+            color: FoodFlowTheme.tagGreenDark,
+            size: 15,
           ),
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                formatCurrency(context, value),
-                style: TextStyle(
-                  fontSize: isTotal ? 16 : 14,
-                  fontWeight: isTotal ? FontWeight.w800 : FontWeight.w600,
-                  color: FoodFlowTheme.ink,
-                ),
+          const SizedBox(width: 6),
+          Flexible(
+            child: Text(
+              '$quantity free item • $title',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: GoogleFonts.nunitoSans(
+                fontSize: 11,
+                fontWeight: FontWeight.w800,
+                color: FoodFlowTheme.tagGreenDark,
               ),
-            ],
+            ),
           ),
         ],
       ),
     );
-    if (onTap == null) return row;
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(8),
-      child: row,
-    );
   }
+}
 
-  static Future<void> _showClearCartDialog(
-    BuildContext context,
-    CartProvider cart,
-  ) {
-    return showDialog<void>(
-      context: context,
-      builder: (dialogContext) => Dialog(
-        backgroundColor: const Color(0xFFF5F6FB),
-        insetPadding: const EdgeInsets.symmetric(horizontal: 22),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
+class _CartRewardSection extends StatelessWidget {
+  const _CartRewardSection({
+    required this.rewardLines,
+    required this.isLoading,
+  });
+
+  final List<Map<String, dynamic>> rewardLines;
+  final bool isLoading;
+
+  @override
+  Widget build(BuildContext context) {
+    if (rewardLines.isEmpty && !isLoading) return const SizedBox.shrink();
+
+    return Container(
+      margin: const EdgeInsets.only(top: 12),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(color: FoodFlowTheme.tagGreenBorder),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.06),
+            blurRadius: 18,
+            offset: const Offset(0, 10),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
             children: [
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.fromLTRB(16, 16, 16, 14),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(color: const Color(0xFFE8ECF3)),
-                ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Container(
-                      width: 52,
-                      height: 52,
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFFFF3E8),
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                      child: Icon(
-                        Icons.delete_outline_rounded,
-                        size: 27,
-                        color: Theme.of(dialogContext).colorScheme.primary,
-                      ),
-                    ),
-                    const SizedBox(height: 14),
-                    const Text(
-                      'Clear cart?',
-                      style: TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.w800,
-                        color: FoodFlowTheme.ink,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    const Text(
-                      'This will remove all selected items from your current restaurant cart.',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        fontSize: 13,
-                        height: 1.35,
-                        color: FoodFlowTheme.muted,
-                      ),
-                    ),
-                    const SizedBox(height: 18),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: OutlinedButton(
-                            onPressed: () => Navigator.pop(dialogContext),
-                            style: OutlinedButton.styleFrom(
-                              foregroundColor: FoodFlowTheme.ink,
-                              side: const BorderSide(color: FoodFlowTheme.line),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(14),
-                              ),
-                              padding: const EdgeInsets.symmetric(vertical: 13),
-                            ),
-                            child: const Text('Keep items'),
-                          ),
-                        ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: FilledButton(
-                            onPressed: () {
-                              cart.clearCart();
-                              Navigator.pop(dialogContext);
-                            },
-                            style: FilledButton.styleFrom(
-                              backgroundColor:
-                                  Theme.of(dialogContext).colorScheme.primary,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(14),
-                              ),
-                              padding: const EdgeInsets.symmetric(vertical: 13),
-                            ),
-                            child: const Text('Clear cart'),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
+              const Icon(
+                Icons.card_giftcard_rounded,
+                color: FoodFlowTheme.tagGreenDark,
+                size: 19,
+              ),
+              const SizedBox(width: 8),
+              Text(
+                'Free items added',
+                style: GoogleFonts.nunitoSans(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w900,
+                  color: FoodFlowTheme.ink,
                 ),
               ),
+              if (isLoading) ...[
+                const Spacer(),
+                SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: FoodFlowTheme.brandPrimary(context),
+                  ),
+                ),
+              ],
             ],
           ),
-        ),
+          if (rewardLines.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            ...rewardLines.map((line) => _DetachedRewardLine(line: line)),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _DetachedRewardLine extends StatelessWidget {
+  const _DetachedRewardLine({required this.line});
+
+  final Map<String, dynamic> line;
+
+  @override
+  Widget build(BuildContext context) {
+    final quantity = _rewardLineQuantity(line);
+    final name =
+        (line['name'] ?? line['title'] ?? 'Free item').toString().trim();
+    final imageUrl = (line['image_url'] ?? line['image'] ?? '').toString();
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Row(
+        children: [
+          ClipRRect(
+            borderRadius: BorderRadius.circular(12),
+            child: SizedBox(
+              width: 46,
+              height: 46,
+              child: imageUrl.isEmpty
+                  ? _rewardPlaceholder(context)
+                  : AppCachedImage(
+                      imageUrl: imageUrl,
+                      width: 46,
+                      height: 46,
+                      fit: BoxFit.cover,
+                      errorBuilder: (context, _, __) =>
+                          _rewardPlaceholder(context),
+                    ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              name.isEmpty ? 'Free item' : name,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: GoogleFonts.nunitoSans(
+                fontSize: 13,
+                height: 1.25,
+                fontWeight: FontWeight.w800,
+                color: FoodFlowTheme.ink,
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            '$quantity x FREE',
+            style: GoogleFonts.nunitoSans(
+              fontSize: 12,
+              fontWeight: FontWeight.w900,
+              color: FoodFlowTheme.tagGreenDark,
+            ),
+          ),
+        ],
       ),
     );
   }
 
-  void _addMoreItems(BuildContext context) {
-    if (widget.onAddMore != null) {
-      widget.onAddMore!();
-      return;
-    }
+  static int _rewardLineQuantity(Map<String, dynamic> line) {
+    final value = line['quantity'] ?? line['qty'];
+    if (value is num) return value.toInt().clamp(1, 999);
+    return (int.tryParse(value?.toString() ?? '') ?? 1).clamp(1, 999);
+  }
 
-    if (Navigator.of(context).canPop()) {
-      Navigator.of(context).pop();
-      return;
-    }
-
-    Navigator.of(context).pushReplacementNamed('/home');
+  static Widget _rewardPlaceholder(BuildContext context) {
+    return Container(
+      color: FoodFlowTheme.tagGreenSoft,
+      child: const Icon(
+        Icons.card_giftcard_rounded,
+        color: FoodFlowTheme.tagGreenDark,
+        size: 20,
+      ),
+    );
   }
 }
 
-class _ChargeBreakdownItem {
-  const _ChargeBreakdownItem({
-    required this.label,
-    required this.amount,
-    this.rate,
-    this.description,
-  });
+class _ItemImage extends StatelessWidget {
+  const _ItemImage({required this.menuItem});
 
-  final String label;
-  final double amount;
-  final double? rate;
-  final String? description;
-}
-
-class _TaxBreakdownDialog extends StatelessWidget {
-  const _TaxBreakdownDialog({required this.charges});
-
-  final List<_ChargeBreakdownItem> charges;
+  final MenuItem menuItem;
 
   @override
   Widget build(BuildContext context) {
-    return Dialog(
-      alignment: Alignment.center,
-      insetPadding: const EdgeInsets.symmetric(horizontal: 44),
-      backgroundColor: Colors.white,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(18, 18, 18, 14),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Tax & Other Charges',
-              style: TextStyle(
-                color: FoodFlowTheme.ink,
-                fontSize: 16,
-                fontWeight: FontWeight.w900,
-              ),
-            ),
-            const SizedBox(height: 14),
-            if (charges.isEmpty)
-              const Text(
-                'No tax or extra charges on this order.',
-                style: TextStyle(
-                  color: FoodFlowTheme.inkSoft,
-                  fontSize: 13,
-                  height: 1.35,
-                  fontWeight: FontWeight.w500,
+    final imageUrl = menuItem.imageUrl;
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(18),
+      child: SizedBox(
+        width: 90,
+        height: 96,
+        child: imageUrl.isEmpty
+            ? Container(
+                color: FoodFlowTheme.surfaceCool,
+                child: Icon(
+                  Icons.restaurant_menu_rounded,
+                  color: FoodFlowTheme.brandPrimary(context),
+                  size: 30,
                 ),
               )
-            else
-              ...charges.map(
-                (charge) => Padding(
-                  padding: const EdgeInsets.only(bottom: 12),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              charge.rate == null
-                                  ? charge.label
-                                  : '${charge.label} (${charge.rate!.toStringAsFixed(charge.rate! == charge.rate!.roundToDouble() ? 0 : 2)}%)',
-                              style: const TextStyle(
-                                color: FoodFlowTheme.ink,
-                                fontSize: 13,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                          ),
-                          Text(
-                            formatCurrency(context, charge.amount),
-                            style: const TextStyle(
-                              color: FoodFlowTheme.ink,
-                              fontSize: 13,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                        ],
-                      ),
-                      if (charge.description?.isNotEmpty == true) ...[
-                        const SizedBox(height: 4),
-                        Text(
-                          charge.description!,
-                          style: const TextStyle(
-                            color: FoodFlowTheme.muted,
-                            fontSize: 11,
-                            height: 1.3,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                      ],
-                    ],
+            : AppCachedImage(
+                imageUrl: imageUrl,
+                fit: BoxFit.cover,
+                width: 90,
+                height: 96,
+                errorBuilder: (context, _, __) => Container(
+                  color: FoodFlowTheme.surfaceCool,
+                  child: Icon(
+                    Icons.restaurant_menu_rounded,
+                    color: FoodFlowTheme.brandPrimary(context),
+                    size: 30,
                   ),
                 ),
               ),
-          ],
+      ),
+    );
+  }
+}
+
+class _PriceLine extends StatelessWidget {
+  const _PriceLine({required this.item});
+
+  final CartItem item;
+
+  @override
+  Widget build(BuildContext context) {
+    final menuItem = item.menuItem;
+    final displayTotal = item.totalPrice;
+    return Wrap(
+      spacing: 7,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        Text(
+          formatCurrency(context, displayTotal),
+          style: GoogleFonts.nunitoSans(
+            fontSize: 17,
+            fontWeight: FontWeight.w900,
+            color: FoodFlowTheme.ink,
+          ),
         ),
+        if (menuItem.hasDiscount)
+          Text(
+            formatCurrency(
+              context,
+              menuItem.price * item.quantity,
+            ),
+            style: GoogleFonts.nunitoSans(
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              color: FoodFlowTheme.faint,
+              decoration: TextDecoration.lineThrough,
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _OptionText extends StatelessWidget {
+  const _OptionText({required this.item});
+
+  final CartItem item;
+
+  @override
+  Widget build(BuildContext context) {
+    final values = <String>[
+      if (item.selectedVariant != null) item.selectedVariant!.name,
+      ...item.selectedAddOns.map((option) => option.name),
+    ].where((value) => value.trim().isNotEmpty).join(' + ');
+
+    if (values.isEmpty) return const SizedBox.shrink();
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: FoodFlowTheme.tagOrangeSoft,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: FoodFlowTheme.tagOrangeBorder),
+      ),
+      child: Text(
+        values,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: GoogleFonts.nunitoSans(
+          fontSize: 10.5,
+          fontWeight: FontWeight.w700,
+          color: FoodFlowTheme.tagOrangeDark,
+        ),
+      ),
+    );
+  }
+}
+
+class _QuantityStepper extends StatelessWidget {
+  const _QuantityStepper({
+    required this.quantity,
+    required this.onDecrease,
+    required this.onIncrease,
+  });
+
+  final int quantity;
+  final VoidCallback onDecrease;
+  final VoidCallback onIncrease;
+
+  @override
+  Widget build(BuildContext context) {
+    final primary = FoodFlowTheme.brandPrimary(context);
+    return Container(
+      height: 34,
+      padding: const EdgeInsets.symmetric(horizontal: 4),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: primary.withOpacity(0.45)),
+        boxShadow: [
+          BoxShadow(
+            color: primary.withOpacity(0.18),
+            blurRadius: 12,
+            offset: const Offset(0, 5),
+          ),
+        ],
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _StepperButton(icon: Icons.remove_rounded, onTap: onDecrease),
+          SizedBox(
+            width: 28,
+            child: Text(
+              quantity.toString(),
+              textAlign: TextAlign.center,
+              style: GoogleFonts.nunitoSans(
+                fontSize: 13,
+                fontWeight: FontWeight.w900,
+                color: primary,
+              ),
+            ),
+          ),
+          _StepperButton(icon: Icons.add_rounded, onTap: onIncrease),
+        ],
+      ),
+    );
+  }
+}
+
+class _StepperButton extends StatelessWidget {
+  const _StepperButton({
+    required this.icon,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(10),
+      onTap: onTap,
+      child: SizedBox(
+        width: 28,
+        height: 28,
+        child: Icon(
+          icon,
+          size: 18,
+          color: FoodFlowTheme.brandPrimary(context),
+        ),
+      ),
+    );
+  }
+}
+
+class _CartBottomBar extends StatelessWidget {
+  const _CartBottomBar({
+    required this.total,
+    required this.discount,
+    required this.itemCount,
+    required this.primary,
+    required this.onAddMore,
+    required this.onCheckout,
+  });
+
+  final double total;
+  final double discount;
+  final int itemCount;
+  final Color primary;
+  final VoidCallback onAddMore;
+  final VoidCallback onCheckout;
+
+  @override
+  Widget build(BuildContext context) {
+    final bottom = MediaQuery.paddingOf(context).bottom;
+    return Container(
+      padding: EdgeInsets.fromLTRB(14, 12, 14, 12 + bottom),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.12),
+            blurRadius: 26,
+            offset: const Offset(0, -10),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: OutlinedButton.icon(
+              onPressed: onAddMore,
+              icon: Icon(Icons.add_rounded, color: primary, size: 20),
+              label: Text(
+                'Add more',
+                overflow: TextOverflow.ellipsis,
+                style: GoogleFonts.nunitoSans(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w800,
+                  color: primary,
+                ),
+              ),
+              style: OutlinedButton.styleFrom(
+                minimumSize: const Size(0, 52),
+                side: BorderSide(color: primary.withOpacity(0.25)),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(17),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            flex: 2,
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: FoodFlowTheme.brandGradientOf(context),
+                borderRadius: BorderRadius.circular(18),
+                boxShadow: [
+                  BoxShadow(
+                    color: primary.withOpacity(0.30),
+                    blurRadius: 18,
+                    offset: const Offset(0, 9),
+                  ),
+                  BoxShadow(
+                    color: Colors.white.withOpacity(0.35),
+                    blurRadius: 2,
+                    offset: const Offset(-1, -1),
+                  ),
+                ],
+              ),
+              child: Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(18),
+                  onTap: onCheckout,
+                  child: Container(
+                    height: 54,
+                    padding: const EdgeInsets.symmetric(horizontal: 14),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                formatCurrency(context, total),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: GoogleFonts.nunitoSans(
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w900,
+                                  color: FoodFlowTheme.brandOnPrimary(context),
+                                ),
+                              ),
+                              Text(
+                                discount > 0
+                                    ? 'Saved ${formatCurrency(context, discount)}'
+                                    : '$itemCount item${itemCount == 1 ? '' : 's'}',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: GoogleFonts.nunitoSans(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w700,
+                                  color: FoodFlowTheme.brandOnPrimary(context)
+                                      .withOpacity(0.85),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        Text(
+                          'Checkout',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: GoogleFonts.nunitoSans(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w900,
+                            color: FoodFlowTheme.brandOnPrimary(context),
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        Icon(
+                          Icons.arrow_forward_ios_rounded,
+                          size: 16,
+                          color: FoodFlowTheme.brandOnPrimary(context),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
 }
 
 class _EmptyCartView extends StatelessWidget {
-  final VoidCallback? onBrowseRestaurants;
+  const _EmptyCartView({required this.onBrowse});
 
-  const _EmptyCartView({this.onBrowseRestaurants});
+  final VoidCallback onBrowse;
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: accountCanvas,
-      appBar: AppBar(
-        title: const Text('View cart'),
-        backgroundColor: Colors.transparent,
-      ),
-      body: Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
+    final primary = FoodFlowTheme.brandPrimary(context);
+    return Padding(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        children: [
+          Row(
             children: [
-              Lottie.asset(
-                'assets/animations/empty.json',
-                width: 225,
-                height: 195,
-                fit: BoxFit.contain,
+              _RoundIconButton(
+                icon: Icons.arrow_back_ios_new_rounded,
+                onTap: () {
+                  if (Navigator.canPop(context)) {
+                    Navigator.pop(context);
+                  } else {
+                    onBrowse();
+                  }
+                },
               ),
-              const SizedBox(height: 24),
-              const Text(
-                'Your cart is empty',
-                style: TextStyle(
-                  fontSize: 24,
+              const Spacer(),
+              Text(
+                'Cart',
+                style: GoogleFonts.nunitoSans(
+                  fontSize: 18,
                   fontWeight: FontWeight.w800,
                   color: FoodFlowTheme.ink,
                 ),
               ),
-              const SizedBox(height: 10),
-              const Text(
-                'Add dishes from your favorite restaurant and they will appear here.',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  color: FoodFlowTheme.muted,
-                  fontSize: 14,
-                  height: 1.4,
+              const Spacer(),
+              const SizedBox(width: 44),
+            ],
+          ),
+          const Spacer(),
+          Container(
+            width: 150,
+            height: 150,
+            decoration: BoxDecoration(
+              color: FoodFlowTheme.brandSoft(context, 0.88),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(
+              Icons.shopping_cart_outlined,
+              size: 64,
+              color: primary,
+            ),
+          ),
+          const SizedBox(height: 28),
+          Text(
+            'Your cart is empty',
+            textAlign: TextAlign.center,
+            style: GoogleFonts.nunitoSans(
+              fontSize: 24,
+              fontWeight: FontWeight.w900,
+              color: FoodFlowTheme.ink,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Add dishes from restaurants and review them here before checkout.',
+            textAlign: TextAlign.center,
+            style: GoogleFonts.nunitoSans(
+              fontSize: 13,
+              height: 1.45,
+              fontWeight: FontWeight.w500,
+              color: FoodFlowTheme.muted,
+            ),
+          ),
+          const SizedBox(height: 24),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton(
+              onPressed: onBrowse,
+              style: ElevatedButton.styleFrom(
+                minimumSize: const Size.fromHeight(54),
+                backgroundColor: primary,
+                foregroundColor: FoodFlowTheme.brandOnPrimary(context),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(18),
                 ),
               ),
-              const SizedBox(height: 26),
-              FilledButton(
-                onPressed: () {
-                  if (onBrowseRestaurants != null) {
-                    onBrowseRestaurants!();
-                    return;
-                  }
-                  Navigator.of(context)
-                      .pushNamedAndRemoveUntil('/home', (route) => false);
-                },
-                child: const Text('Browse restaurants'),
+              child: Text(
+                'Browse restaurants',
+                style: GoogleFonts.nunitoSans(
+                  fontWeight: FontWeight.w800,
+                ),
               ),
-            ],
+            ),
+          ),
+          const Spacer(),
+        ],
+      ),
+    );
+  }
+}
+
+class _RestaurantAvatar extends StatelessWidget {
+  const _RestaurantAvatar({
+    required this.restaurant,
+    required this.size,
+  });
+
+  final Restaurant? restaurant;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    final logoUrl = restaurant?.logoUrl ?? '';
+    return ClipOval(
+      child: SizedBox(
+        width: size,
+        height: size,
+        child: logoUrl.isEmpty
+            ? Container(
+                color: FoodFlowTheme.brandSoft(context, 0.84),
+                child: Icon(
+                  Icons.storefront_rounded,
+                  color: FoodFlowTheme.brandPrimary(context),
+                  size: size * 0.44,
+                ),
+              )
+            : AppCachedImage(
+                imageUrl: logoUrl,
+                fit: BoxFit.cover,
+                width: size,
+                height: size,
+                errorBuilder: (context, _, __) => Container(
+                  color: FoodFlowTheme.brandSoft(context, 0.84),
+                  child: Icon(
+                    Icons.storefront_rounded,
+                    color: FoodFlowTheme.brandPrimary(context),
+                    size: size * 0.44,
+                  ),
+                ),
+              ),
+      ),
+    );
+  }
+}
+
+class _DietDot extends StatelessWidget {
+  const _DietDot({required this.item});
+
+  final MenuItem item;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = item.isNonVeg
+        ? FoodFlowTheme.danger
+        : item.isEgg
+            ? FoodFlowTheme.tagOrange
+            : FoodFlowTheme.tagGreen;
+    return Container(
+      width: 14,
+      height: 14,
+      margin: const EdgeInsets.only(top: 2),
+      decoration: BoxDecoration(
+        border: Border.all(color: color, width: 1.4),
+        borderRadius: BorderRadius.circular(3),
+      ),
+      child: Center(
+        child: Container(
+          width: 6,
+          height: 6,
+          decoration: BoxDecoration(
+            color: color,
+            shape: BoxShape.circle,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _RoundIconButton extends StatelessWidget {
+  const _RoundIconButton({
+    required this.icon,
+    required this.onTap,
+    this.color,
+  });
+
+  final IconData icon;
+  final VoidCallback onTap;
+  final Color? color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.white,
+      shape: const CircleBorder(),
+      elevation: 0,
+      child: InkWell(
+        customBorder: const CircleBorder(),
+        onTap: onTap,
+        child: SizedBox(
+          width: 44,
+          height: 44,
+          child: Icon(
+            icon,
+            size: 20,
+            color: color ?? FoodFlowTheme.ink,
           ),
         ),
       ),

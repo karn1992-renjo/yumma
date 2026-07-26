@@ -7,7 +7,7 @@ import '../../config/app_config.dart';
 import '../../services/api_service.dart';
 import '../../theme/foodflow_theme.dart';
 import '../../utils/currency_utils.dart';
-import '../../widgets/customer/account_chrome.dart';
+import '../../widgets/customer/profile_screen_chrome.dart';
 import 'restaurant_detail_screen.dart';
 
 class SavedRestaurantsScreen extends StatefulWidget {
@@ -201,11 +201,12 @@ class _SavedRestaurantsScreenState extends State<SavedRestaurantsScreen> {
     final fallbackIds = _restaurants.isEmpty ? _ids : <int>[];
 
     return Scaffold(
-      backgroundColor: accountCanvas,
+      backgroundColor: profileCanvasColor(context),
       body: SafeArea(
         bottom: false,
         child: RefreshIndicator(
           onRefresh: _loadSaved,
+          color: profileAccentColor(context),
           child: CustomScrollView(
             slivers: [
               SliverToBoxAdapter(
@@ -218,14 +219,14 @@ class _SavedRestaurantsScreenState extends State<SavedRestaurantsScreen> {
                         onTap: () => Navigator.of(context).maybePop(),
                       ),
                       const SizedBox(width: 12),
-                      const Expanded(
+                      Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
                               'Saved Restaurants',
                               style: TextStyle(
-                                color: FoodFlowTheme.ink,
+                                color: profileTextColor(context),
                                 fontSize: 20,
                                 height: 1.05,
                                 fontWeight: FontWeight.w800,
@@ -237,7 +238,7 @@ class _SavedRestaurantsScreenState extends State<SavedRestaurantsScreen> {
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: TextStyle(
-                                color: FoodFlowTheme.inkSoft,
+                                color: profileMutedColor(context),
                                 fontSize: 12,
                                 fontWeight: FontWeight.w500,
                               ),
@@ -260,12 +261,7 @@ class _SavedRestaurantsScreenState extends State<SavedRestaurantsScreen> {
                 )
               else if (_restaurants.isEmpty && fallbackIds.isEmpty)
                 SliverFillRemaining(
-                  child: FoodFlowTheme.emptyState(
-                    icon: Icons.bookmark_border_rounded,
-                    title: 'No saved restaurants yet',
-                    subtitle:
-                        'Tap the heart or bookmark on a restaurant to save it here.',
-                  ),
+                  child: _SavedEmptyState(),
                 )
               else if (_restaurants.isNotEmpty)
                 SliverPadding(
@@ -378,12 +374,12 @@ class _SavedRestaurantCard extends StatelessWidget {
       borderRadius: BorderRadius.circular(20),
       child: Container(
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: Theme.of(context).colorScheme.surface,
           borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: const Color(0xFFE8ECF3)),
+          border: Border.all(color: profileLineColor(context)),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.04),
+              color: Theme.of(context).colorScheme.shadow.withOpacity(0.04),
               blurRadius: 18,
               offset: const Offset(0, 8),
             ),
@@ -406,14 +402,15 @@ class _SavedRestaurantCard extends StatelessWidget {
                           ? AppCachedImage(
                               imageUrl: imageUrl,
                               fit: BoxFit.cover,
-                              errorBuilder: (_, __, ___) => _imageFallback(),
+                              errorBuilder: (_, __, ___) =>
+                                  _imageFallback(context),
                             )
-                          : _imageFallback(),
+                          : _imageFallback(context),
                     ),
                     Positioned(
                       left: 8,
                       bottom: 8,
-                      child: _statusBadge(isOpen),
+                      child: _statusBadge(context, isOpen),
                     ),
                   ],
                 ),
@@ -432,8 +429,8 @@ class _SavedRestaurantCard extends StatelessWidget {
                               name,
                               maxLines: 2,
                               overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                color: FoodFlowTheme.ink,
+                              style: TextStyle(
+                                color: profileTextColor(context),
                                 fontSize: 16,
                                 height: 1.12,
                                 fontWeight: FontWeight.w800,
@@ -443,11 +440,11 @@ class _SavedRestaurantCard extends StatelessWidget {
                           InkWell(
                             onTap: onRemove,
                             borderRadius: BorderRadius.circular(999),
-                            child: const Padding(
-                              padding: EdgeInsets.all(4),
+                            child: Padding(
+                              padding: const EdgeInsets.all(4),
                               child: Icon(
                                 Icons.bookmark_rounded,
-                                color: Color(0xFF0A9443),
+                                color: profileButtonColor(context),
                                 size: 22,
                               ),
                             ),
@@ -463,18 +460,18 @@ class _SavedRestaurantCard extends StatelessWidget {
                             : cuisineText,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: FoodFlowTheme.inkSoft,
+                        style: TextStyle(
+                          color: profileMutedColor(context),
                           fontSize: 12,
                           fontWeight: FontWeight.w500,
                         ),
                       ),
                       const SizedBox(height: 10),
                       if (!isOpen) ...[
-                        const Text(
+                        Text(
                           'Closed - ordering unavailable',
                           style: TextStyle(
-                            color: Color(0xFFD14343),
+                            color: Theme.of(context).colorScheme.error,
                             fontSize: 11,
                             fontWeight: FontWeight.w800,
                           ),
@@ -513,8 +510,8 @@ class _SavedRestaurantCard extends StatelessWidget {
                         const SizedBox(height: 10),
                         Text(
                           'Min order ${formatCurrency(context, minOrder)}',
-                          style: const TextStyle(
-                            color: FoodFlowTheme.muted,
+                          style: TextStyle(
+                            color: profileMutedColor(context),
                             fontSize: 12,
                             fontWeight: FontWeight.w700,
                           ),
@@ -531,26 +528,28 @@ class _SavedRestaurantCard extends StatelessWidget {
     );
   }
 
-  Widget _imageFallback() {
+  Widget _imageFallback(BuildContext context) {
     return Container(
-      color: const Color(0xFFFFF3E8),
-      child: const Icon(
+      color: profileSoftColor(context),
+      child: Icon(
         Icons.restaurant_rounded,
-        color: FoodFlowTheme.orange,
+        color: profileAccentColor(context),
         size: 34,
       ),
     );
   }
 
-  Widget _statusBadge(bool isOpen) {
+  Widget _statusBadge(BuildContext context, bool isOpen) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
       decoration: BoxDecoration(
-        color: isOpen ? const Color(0xFF0A9443) : const Color(0xFFD14343),
+        color: isOpen
+            ? profileAccentColor(context)
+            : Theme.of(context).colorScheme.error,
         borderRadius: BorderRadius.circular(999),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.18),
+            color: Theme.of(context).colorScheme.shadow.withOpacity(0.18),
             blurRadius: 8,
             offset: const Offset(0, 2),
           ),
@@ -561,14 +560,14 @@ class _SavedRestaurantCard extends StatelessWidget {
         children: [
           Icon(
             isOpen ? Icons.check_circle_rounded : Icons.lock_clock_rounded,
-            color: Colors.white,
+            color: Theme.of(context).colorScheme.surface,
             size: 13,
           ),
           const SizedBox(width: 4),
           Text(
             isOpen ? 'Open' : 'Closed',
-            style: const TextStyle(
-              color: Colors.white,
+            style: TextStyle(
+              color: Theme.of(context).colorScheme.surface,
               fontSize: 11,
               fontWeight: FontWeight.w800,
             ),
@@ -598,9 +597,9 @@ class _SavedIdCard extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: Theme.of(context).colorScheme.surface,
           borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: const Color(0xFFE8ECF3)),
+          border: Border.all(color: profileLineColor(context)),
         ),
         child: Row(
           children: [
@@ -608,27 +607,28 @@ class _SavedIdCard extends StatelessWidget {
               width: 48,
               height: 48,
               decoration: BoxDecoration(
-                color: const Color(0xFFFFF3E8),
+                color: profileSoftColor(context),
                 borderRadius: BorderRadius.circular(16),
               ),
-              child: const Icon(
+              child: Icon(
                 Icons.restaurant_rounded,
-                color: FoodFlowTheme.orange,
+                color: profileAccentColor(context),
               ),
             ),
             const SizedBox(width: 12),
             Expanded(
               child: Text(
                 'Saved restaurant #$id',
-                style: const TextStyle(
-                  color: FoodFlowTheme.ink,
+                style: TextStyle(
+                  color: profileTextColor(context),
                   fontWeight: FontWeight.w800,
                 ),
               ),
             ),
             IconButton(
               onPressed: onRemove,
-              icon: const Icon(Icons.bookmark_remove_rounded),
+              icon: Icon(Icons.bookmark_remove_rounded,
+                  color: profileButtonColor(context)),
             ),
           ],
         ),
@@ -655,10 +655,10 @@ class _MiniChip extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
       decoration: BoxDecoration(
         color: isNewBadge
-            ? const Color(0xFF0A9443)
+            ? profileAccentColor(context)
             : active
-                ? const Color(0xFFE9F8EE)
-                : const Color(0xFFF5F7FC),
+                ? profileSoftColor(context)
+                : profileLineColor(context).withOpacity(0.3),
         borderRadius: BorderRadius.circular(999),
       ),
       child: Row(
@@ -668,25 +668,73 @@ class _MiniChip extends StatelessWidget {
             icon,
             size: 13,
             color: isNewBadge
-                ? Colors.white
+                ? Theme.of(context).colorScheme.surface
                 : active
-                    ? const Color(0xFF0A9443)
-                    : FoodFlowTheme.inkSoft,
+                    ? profileAccentColor(context)
+                    : profileMutedColor(context),
           ),
           const SizedBox(width: 5),
           Text(
             label,
             style: TextStyle(
               color: isNewBadge
-                  ? Colors.white
+                  ? Theme.of(context).colorScheme.surface
                   : active
-                      ? const Color(0xFF0A9443)
-                      : FoodFlowTheme.inkSoft,
+                      ? profileAccentColor(context)
+                      : profileMutedColor(context),
               fontSize: 11,
               fontWeight: FontWeight.w700,
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _SavedEmptyState extends StatelessWidget {
+  const _SavedEmptyState();
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: ProfileSurfaceCard(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ProfileAccentIcon(
+                icon: Icons.bookmark_border_rounded,
+                size: 66,
+                iconSize: 30,
+                radius: 20,
+              ),
+              const SizedBox(height: 16),
+              Text(
+                'No saved restaurants yet',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: profileTextColor(context),
+                  fontSize: 16,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Tap the heart or bookmark on a restaurant to save it here.',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: profileMutedColor(context),
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                  height: 1.35,
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -709,11 +757,11 @@ class _CircleIconButton extends StatelessWidget {
       child: Container(
         width: 38,
         height: 38,
-        decoration: const BoxDecoration(
-          color: Colors.white,
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.surface,
           shape: BoxShape.circle,
         ),
-        child: Icon(icon, color: FoodFlowTheme.ink),
+        child: Icon(icon, color: profileButtonColor(context)),
       ),
     );
   }

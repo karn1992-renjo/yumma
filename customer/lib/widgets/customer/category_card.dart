@@ -16,11 +16,35 @@ class CategoryCard extends StatelessWidget {
 
   String _resolveImageUrl(dynamic item, List<String> keys) {
     if (item == null) return '';
-    for (final key in keys) {
-      final value = item[key];
-      if (value is String && value.isNotEmpty) {
+
+    String resolve(dynamic value) {
+      if (value is String && value.trim().isNotEmpty) {
         return _resolveStoredImageUrl(value);
       }
+      if (value is Map) {
+        for (final key in const <String>[
+          'url',
+          'image_url',
+          'path',
+          'file',
+          'src',
+        ]) {
+          final resolved = resolve(value[key]);
+          if (resolved.isNotEmpty) return resolved;
+        }
+      }
+      if (value is List) {
+        for (final child in value) {
+          final resolved = resolve(child);
+          if (resolved.isNotEmpty) return resolved;
+        }
+      }
+      return '';
+    }
+
+    for (final key in keys) {
+      final resolved = resolve(item[key]);
+      if (resolved.isNotEmpty) return resolved;
     }
     return '';
   }
@@ -56,9 +80,19 @@ class CategoryCard extends StatelessWidget {
     final imageUrl = _resolveImageUrl(category, [
       'image_url',
       'icon_url',
+      'thumbnail_url',
+      'thumb_url',
+      'photo_url',
+      'asset_url',
+      'media_url',
       'image',
       'icon',
+      'thumbnail',
       'thumb',
+      'photo',
+      'url',
+      'images',
+      'media',
     ]);
 
     return GestureDetector(
@@ -137,6 +171,7 @@ class CategoryCard extends StatelessWidget {
     ];
 
     if (seed.isEmpty) return palette.first;
-    return palette[seed.codeUnits.fold<int>(0, (sum, code) => sum + code) % palette.length];
+    return palette[seed.codeUnits.fold<int>(0, (sum, code) => sum + code) %
+        palette.length];
   }
 }

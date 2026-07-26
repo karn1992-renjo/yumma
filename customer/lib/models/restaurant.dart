@@ -113,12 +113,16 @@ class Restaurant {
     if (value is int) return value != 0;
     if (value is String) {
       final normalized = value.toLowerCase().trim();
-      return normalized == 'true' || normalized == '1' || normalized == 'yes' || normalized == 'y';
+      return normalized == 'true' ||
+          normalized == '1' ||
+          normalized == 'yes' ||
+          normalized == 'y';
     }
     return fallback;
   }
 
-  static String? _resolveImageString(Map<String, dynamic> json, List<String> keys) {
+  static String? _resolveImageString(
+      Map<String, dynamic> json, List<String> keys) {
     for (final key in keys) {
       final value = json[key];
       if (value is String && value.isNotEmpty) {
@@ -129,11 +133,7 @@ class Restaurant {
   }
 
   static String _resolveFullImageUrl(String? image) {
-    if (image == null || image.isEmpty) return '';
-    final trimmed = image.trim();
-    if (trimmed.startsWith('http')) return trimmed;
-    if (trimmed.startsWith('/')) return '${AppConfig.apiBaseUrl}$trimmed';
-    return '${AppConfig.apiBaseUrl}/storage/$trimmed';
+    return AppConfig.resolveMediaUrl(image);
   }
 
   factory Restaurant.fromJson(Map<String, dynamic> json) {
@@ -150,7 +150,20 @@ class Restaurant {
 
     return Restaurant(
       id: _parseInt(json['id'], fallback: 0),
-      name: json['name'] ?? '',
+      name: (json['restaurant_name'] ??
+              json['restaurantName'] ??
+              json['store_name'] ??
+              json['storeName'] ??
+              json['business_name'] ??
+              json['businessName'] ??
+              json['vendor_name'] ??
+              json['vendorName'] ??
+              json['merchant_name'] ??
+              json['merchantName'] ??
+              json['title'] ??
+              json['name'] ??
+              '')
+          .toString(),
       slug: json['slug'] ?? '',
       email: json['email'] ?? '',
       phone: json['phone'] ?? '',
@@ -168,13 +181,13 @@ class Restaurant {
           : null,
       deliveryFee: _parseDouble(json['delivery_fee'], fallback: 40.0),
       deliveryTime: _parseInt(json['delivery_time'], fallback: 30),
-      etaMinutes: (json['eta_minutes'] ?? json['estimated_delivery_minutes']) !=
-              null
-          ? _parseInt(
-              json['eta_minutes'] ?? json['estimated_delivery_minutes'],
-              fallback: 0,
-            )
-          : null,
+      etaMinutes:
+          (json['eta_minutes'] ?? json['estimated_delivery_minutes']) != null
+              ? _parseInt(
+                  json['eta_minutes'] ?? json['estimated_delivery_minutes'],
+                  fallback: 0,
+                )
+              : null,
       etaRange: json['eta_range']?.toString() ??
           json['estimated_delivery_label']?.toString(),
       travelMinutes: json['travel_minutes'] != null
@@ -216,7 +229,8 @@ class Restaurant {
             json['rating_count'],
         fallback: 0,
       ),
-      isOpen: _parseBool(json['is_open_now'] ?? json['is_open'], fallback: false),
+      isOpen:
+          _parseBool(json['is_open_now'] ?? json['is_open'], fallback: false),
       isVerified: _parseBool(json['is_verified'], fallback: false),
       isFeatured: _parseBool(json['is_featured'], fallback: false),
       isPureVeg: _parseBool(
@@ -251,7 +265,8 @@ class Restaurant {
               .map((item) => Map<String, dynamic>.from(item))
               .toList() ??
           const [],
-      createdAt: DateTime.tryParse(json['created_at']?.toString() ?? '') ?? DateTime.now(),
+      createdAt: DateTime.tryParse(json['created_at']?.toString() ?? '') ??
+          DateTime.now(),
     );
   }
 
@@ -373,5 +388,3 @@ List<String> _parseCuisineNames(Map<String, dynamic> json) {
 
   return const [];
 }
-
-

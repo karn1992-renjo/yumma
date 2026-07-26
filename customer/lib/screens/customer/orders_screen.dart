@@ -13,8 +13,8 @@ import '../../providers/cart_provider.dart';
 import '../../services/api_service.dart';
 import '../../services/websocket_service.dart';
 import '../../providers/auth_provider.dart';
+import '../../theme/foodflow_theme.dart';
 import '../../utils/currency_utils.dart';
-import '../../widgets/customer/account_chrome.dart';
 import 'order_tracking_screen.dart';
 
 class OrdersScreen extends StatefulWidget {
@@ -26,13 +26,18 @@ class OrdersScreen extends StatefulWidget {
 
 class _OrdersScreenState extends State<OrdersScreen>
     with SingleTickerProviderStateMixin, WidgetsBindingObserver {
-  static const _text = Color(0xFF111827);
-  static const _muted = Color(0xFF6B7280);
-  static const _softLine = Color(0xFFE5E7EB);
-  static const _softCanvas = Colors.white;
+  static const _text = FoodFlowTheme.ink;
+  static const _muted = FoodFlowTheme.muted;
+  static const _softLine = FoodFlowTheme.line;
+  static const _success = FoodFlowTheme.success;
+  static const _softCanvas = FoodFlowTheme.warmCanvas;
   final ApiService _api = ApiService();
 
+  Color get _primary => FoodFlowTheme.brandPrimary(context);
+  Color get _secondary => FoodFlowTheme.brandSecondary(context);
+
   late final TabController _tabController;
+  final TextEditingController _searchController = TextEditingController();
   bool _isLoading = true;
   Timer? _refreshTimer;
   int? _realtimeUserId;
@@ -42,7 +47,7 @@ class _OrdersScreenState extends State<OrdersScreen>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _tabController = TabController(length: 3, vsync: this);
+    _tabController = TabController(length: 4, vsync: this);
     _tabController.addListener(_onTabChanged);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
@@ -67,6 +72,7 @@ class _OrdersScreenState extends State<OrdersScreen>
         _realtimeHandlerId,
       );
     }
+    _searchController.dispose();
     _tabController.removeListener(_onTabChanged);
     _tabController.dispose();
     super.dispose();
@@ -119,277 +125,163 @@ class _OrdersScreenState extends State<OrdersScreen>
     await context.read<OrderProvider>().fetchMyOrders();
   }
 
+  void _handleBack() {
+    if (Navigator.canPop(context)) {
+      Navigator.pop(context);
+      return;
+    }
+    Navigator.pushReplacementNamed(context, '/customer/home');
+  }
+
+  Future<bool> _handleSystemBack() async {
+    if (Navigator.canPop(context)) {
+      return true;
+    }
+    Navigator.pushReplacementNamed(context, '/customer/home');
+    return false;
+  }
+
   List<Order> _ordersForTab(List<Order> orders, int tabIndex) {
     switch (tabIndex) {
       case 0:
-        return orders.where((o) => !o.isDelivered && !o.isCancelled).toList();
+        return List<Order>.from(orders);
       case 1:
-        return orders.where((o) => o.isDelivered).toList();
+        return orders.where((o) => !o.isDelivered && !o.isCancelled).toList();
       case 2:
+        return orders.where((o) => o.isDelivered).toList();
+      case 3:
         return orders.where((o) => o.isCancelled).toList();
       default:
         return const <Order>[];
     }
   }
 
+  List<Order> _visibleOrders(List<Order> orders) {
+    final query = _searchController.text.trim().toLowerCase();
+    final tabbed = _ordersForTab(orders, _tabController.index);
+    return tabbed.where((order) {
+      if (query.isEmpty) return true;
+      final restaurant = order.restaurant?.name.toLowerCase() ?? '';
+      final orderNumber = order.orderNumber.toLowerCase();
+      final items =
+          order.items.map((item) => item.name.toLowerCase()).join(' ');
+      return restaurant.contains(query) ||
+          orderNumber.contains(query) ||
+          items.contains(query);
+    }).toList(growable: false);
+  }
+
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
+    return WillPopScope(
+      onWillPop: _handleSystemBack,
+      child: Scaffold(
+        backgroundColor: Colors.white,
+        body: SafeArea(
+          child: Consumer<OrderProvider>(
+            builder: (context, orderProvider, _) {
+              final allCount = orderProvider.orders.length;
+              final ongoingCount =
+                  _ordersForTab(orderProvider.orders, 1).length;
+              final completedCount =
+                  _ordersForTab(orderProvider.orders, 2).length;
+              final cancelledCount =
+                  _ordersForTab(orderProvider.orders, 3).length;
+              final filteredOrders = _visibleOrders(orderProvider.orders);
 
-    return Scaffold(
-      backgroundColor: _softCanvas,
-      body: SafeArea(
-        child: Consumer<OrderProvider>(
-          builder: (context, orderProvider, _) {
-            final activeOrders = _ordersForTab(orderProvider.orders, 0).length;
-            final pastOrders = _ordersForTab(orderProvider.orders, 1).length;
-            final cancelledOrders =
-                _ordersForTab(orderProvider.orders, 2).length;
-            final filteredOrders =
-                _ordersForTab(orderProvider.orders, _tabController.index);
-
-            return Column(
-              children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-                  child: Column(
-                    children: [
-                      Row(
-                        children: [
-                          Container(
-                            width: 46,
-                            height: 46,
-                            decoration: BoxDecoration(
-                              color: Colors.white,
-                              borderRadius: BorderRadius.circular(18),
-                              border: Border.all(color: accountBorder),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.black.withOpacity(0.04),
-                                  blurRadius: 18,
-                                  offset: const Offset(0, 8),
-                                ),
-                              ],
-                            ),
-                            child: IconButton(
-                              onPressed: () => Navigator.of(context).maybePop(),
-                              icon: const Icon(
-                                Icons.arrow_back_ios_new_rounded,
-                                size: 18,
-                                color: _text,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: const [
-                                Text(
-                                  'My Orders',
-                                  style: TextStyle(
-                                    fontSize: 26,
-                                    fontWeight: FontWeight.w900,
-                                    color: _text,
-                                    height: 1.05,
-                                  ),
-                                ),
-                                SizedBox(height: 4),
-                                Text(
-                                  'Track deliveries, reorder favourites, and manage active meals.',
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    color: _muted,
-                                    fontWeight: FontWeight.w400,
-                                    height: 1.35,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                      AccountHeroCard(
-                        title: 'Orders made simple',
-                        subtitle:
-                            'Keep every update, payment status, and reorder action in one clean place.',
-                        icon: Icons.receipt_long_rounded,
-                        badge: '${orderProvider.orders.length} TOTAL ORDERS',
-                        margin: const EdgeInsets.fromLTRB(0, 18, 0, 16),
-                        trailing: Container(
-                          width: 78,
-                          height: 78,
-                          decoration: BoxDecoration(
-                            color: Colors.white.withOpacity(0.16),
-                            borderRadius: BorderRadius.circular(24),
-                            border: Border.all(
-                              color: Colors.white.withOpacity(0.12),
-                            ),
-                          ),
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(
-                                Icons.local_shipping_outlined,
-                                color: Colors.white,
-                                size: 30,
-                              ),
-                              const SizedBox(height: 6),
-                              Text(
-                                '$activeOrders active',
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w800,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                      _buildTabs(
-                        scheme: scheme,
-                        activeCount: activeOrders,
-                        pastCount: pastOrders,
-                        cancelledCount: cancelledOrders,
-                      ),
-                    ],
+              return Column(
+                children: [
+                  _buildHeader(),
+                  _buildTabs(
+                    allCount: allCount,
+                    ongoingCount: ongoingCount,
+                    completedCount: completedCount,
+                    cancelledCount: cancelledCount,
                   ),
-                ),
-                const SizedBox(height: 8),
-                Expanded(
-                  child: _isLoading || orderProvider.isLoading
-                      ? _buildLoadingState(scheme.primary)
-                      : filteredOrders.isEmpty
-                          ? _buildEmptyState(
-                              tabIndex: _tabController.index,
-                              primary: scheme.primary,
-                            )
-                          : RefreshIndicator(
-                              onRefresh: _refreshOrders,
-                              color: scheme.primary,
-                              child: ListView.builder(
-                                physics: const BouncingScrollPhysics(
-                                  parent: AlwaysScrollableScrollPhysics(),
+                  _buildSearchRow(),
+                  Expanded(
+                    child: _isLoading || orderProvider.isLoading
+                        ? _buildLoadingState(_primary)
+                        : filteredOrders.isEmpty
+                            ? _buildEmptyState(
+                                tabIndex: _tabController.index,
+                                primary: _primary,
+                              )
+                            : RefreshIndicator(
+                                onRefresh: _refreshOrders,
+                                color: _primary,
+                                child: ListView.builder(
+                                  physics: const BouncingScrollPhysics(
+                                    parent: AlwaysScrollableScrollPhysics(),
+                                  ),
+                                  padding: const EdgeInsets.fromLTRB(
+                                    16,
+                                    16,
+                                    16,
+                                    24,
+                                  ),
+                                  itemCount: filteredOrders.length,
+                                  itemBuilder: (context, index) {
+                                    return _buildOrderCard(
+                                      context,
+                                      filteredOrders[index],
+                                    );
+                                  },
                                 ),
-                                padding: const EdgeInsets.fromLTRB(
-                                  16,
-                                  4,
-                                  16,
-                                  24,
-                                ),
-                                itemCount: filteredOrders.length,
-                                itemBuilder: (context, index) {
-                                  return _buildOrderCard(
-                                    context,
-                                    filteredOrders[index],
-                                  );
-                                },
                               ),
-                            ),
-                ),
-              ],
-            );
-          },
+                  ),
+                ],
+              );
+            },
+          ),
         ),
       ),
     );
   }
 
-  Widget _buildTabs({
-    required ColorScheme scheme,
-    required int activeCount,
-    required int pastCount,
-    required int cancelledCount,
-  }) {
-    return Container(
-      padding: const EdgeInsets.all(6),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: accountBorder),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.03),
-            blurRadius: 18,
-            offset: const Offset(0, 8),
-          ),
-        ],
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: _tabPill(
-              label: 'Active',
-              count: activeCount,
-              selected: _tabController.index == 0,
-              primary: scheme.primary,
-              onTap: () => _tabController.animateTo(0),
-            ),
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: _tabPill(
-              label: 'Past',
-              count: pastCount,
-              selected: _tabController.index == 1,
-              primary: scheme.primary,
-              onTap: () => _tabController.animateTo(1),
-            ),
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: _tabPill(
-              label: 'Cancelled',
-              count: cancelledCount,
-              selected: _tabController.index == 2,
-              primary: scheme.primary,
-              onTap: () => _tabController.animateTo(2),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _tabPill({
-    required String label,
-    required int count,
-    required bool selected,
-    required Color primary,
-    required VoidCallback onTap,
-  }) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(18),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 180),
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
-        decoration: BoxDecoration(
-          color: selected ? primary : Colors.white,
-          borderRadius: BorderRadius.circular(18),
-          border: Border.all(
-            color: selected ? primary : _softLine,
-          ),
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
+  Widget _buildHeader() {
+    return SizedBox(
+      height: 68,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 6),
+        child: Stack(
+          alignment: Alignment.center,
           children: [
-            Text(
-              '$count',
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.w900,
-                color: selected ? Colors.white : _text,
+            Align(
+              alignment: Alignment.centerLeft,
+              child: IconButton(
+                onPressed: _handleBack,
+                icon: const Icon(Icons.arrow_back_rounded),
+                iconSize: 28,
+                color: Colors.black,
+                tooltip: 'Back',
               ),
             ),
-            const SizedBox(height: 2),
-            Text(
-              label,
+            const Text(
+              'My Orders',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
               style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w400,
-                color: selected ? Colors.white : _muted,
+                color: Colors.black,
+                fontSize: 20,
+                height: 1.05,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton.icon(
+                onPressed: () => Navigator.pushNamed(context, '/support'),
+                icon: const Icon(Icons.support_agent_rounded, size: 23),
+                label: const Text('Help'),
+                style: TextButton.styleFrom(
+                  foregroundColor: Colors.black,
+                  padding: const EdgeInsets.symmetric(horizontal: 6),
+                  textStyle: const TextStyle(
+                    fontSize: 14.5,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
               ),
             ),
           ],
@@ -398,29 +290,262 @@ class _OrdersScreenState extends State<OrdersScreen>
     );
   }
 
-  Widget _buildLoadingState(Color primary) {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          SizedBox(
-            width: 30,
-            height: 30,
-            child: CircularProgressIndicator(
-              strokeWidth: 2.6,
-              color: primary,
+  Widget _roundIconButton({
+    required IconData icon,
+    required VoidCallback onTap,
+  }) {
+    return Material(
+      color: Colors.white,
+      shape: const CircleBorder(),
+      elevation: 10,
+      shadowColor: Colors.black.withOpacity(0.16),
+      child: InkWell(
+        customBorder: const CircleBorder(),
+        onTap: onTap,
+        child: SizedBox(
+          width: 44,
+          height: 44,
+          child: Icon(icon, color: _text, size: 22),
+        ),
+      ),
+    );
+  }
+
+  Widget _heroChip(String label) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: _softLine),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 12,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      child: Text(
+        label,
+        style: const TextStyle(
+          color: _text,
+          fontSize: 11.5,
+          fontWeight: FontWeight.w900,
+        ),
+      ),
+    );
+  }
+
+  Widget _gradientButton({
+    required String label,
+    required IconData icon,
+    required VoidCallback onPressed,
+    double? minWidth,
+  }) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [_primary, _secondary],
+        ),
+        borderRadius: BorderRadius.circular(18),
+        boxShadow: [
+          BoxShadow(
+            color: _primary.withOpacity(0.24),
+            blurRadius: 18,
+            offset: const Offset(0, 10),
+          ),
+        ],
+      ),
+      child: SizedBox(
+        height: 52,
+        width: minWidth,
+        child: FilledButton.icon(
+          onPressed: onPressed,
+          icon: Icon(icon, size: 18),
+          label: Text(label),
+          style: FilledButton.styleFrom(
+            backgroundColor: Colors.transparent,
+            foregroundColor: Colors.white,
+            shadowColor: Colors.transparent,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(18),
+            ),
+            textStyle: const TextStyle(
+              fontWeight: FontWeight.w900,
+              fontSize: 12.5,
             ),
           ),
-          const SizedBox(height: 14),
-          const Text(
-            'Loading your orders...',
-            style: TextStyle(
-              fontSize: 15,
-              fontWeight: FontWeight.w600,
-              color: _muted,
+        ),
+      ),
+    );
+  }
+
+  Widget _outlineActionButton({
+    required String label,
+    required IconData icon,
+    required Color color,
+    required VoidCallback onPressed,
+  }) {
+    return OutlinedButton.icon(
+      onPressed: onPressed,
+      icon: Icon(icon, color: color, size: 18),
+      label: Text(
+        label,
+        style: TextStyle(color: color, fontWeight: FontWeight.w900),
+      ),
+      style: OutlinedButton.styleFrom(
+        foregroundColor: color,
+        side: BorderSide(color: color.withOpacity(0.22)),
+        minimumSize: const Size.fromHeight(52),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(18),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTabs({
+    required int allCount,
+    required int ongoingCount,
+    required int completedCount,
+    required int cancelledCount,
+  }) {
+    return Container(
+      height: 58,
+      decoration: const BoxDecoration(
+        border: Border(
+          bottom: BorderSide(color: Color(0xFFEDEDED)),
+        ),
+      ),
+      child: Row(
+        children: [
+          _tabText('All Orders', 0, allCount),
+          _tabText('Ongoing', 1, ongoingCount),
+          _tabText('Completed', 2, completedCount),
+          _tabText('Cancelled', 3, cancelledCount),
+        ],
+      ),
+    );
+  }
+
+  Widget _tabText(String label, int index, int count) {
+    final selected = _tabController.index == index;
+    return Expanded(
+      child: InkWell(
+        onTap: () => _tabController.animateTo(index),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.end,
+          children: [
+            Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 12.5,
+                fontWeight: selected ? FontWeight.w900 : FontWeight.w700,
+                color: selected ? _primary : const Color(0xFF6B6B73),
+              ),
+            ),
+            const SizedBox(height: 15),
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 180),
+              height: 2.5,
+              width: selected ? 78 : 0,
+              color: _primary,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSearchRow() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 18, 16, 12),
+      child: Row(
+        children: [
+          Expanded(
+            child: SizedBox(
+              height: 52,
+              child: TextField(
+                controller: _searchController,
+                onChanged: (_) => setState(() {}),
+                textInputAction: TextInputAction.search,
+                decoration: InputDecoration(
+                  hintText: 'Search by restaurant or item',
+                  hintStyle: const TextStyle(
+                    color: Color(0xFF76767D),
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w500,
+                  ),
+                  prefixIcon: const Icon(
+                    Icons.search_rounded,
+                    color: Colors.black,
+                    size: 27,
+                  ),
+                  suffixIcon: _searchController.text.isEmpty
+                      ? null
+                      : IconButton(
+                          onPressed: () {
+                            _searchController.clear();
+                            setState(() {});
+                          },
+                          icon: const Icon(Icons.close_rounded),
+                        ),
+                  filled: true,
+                  fillColor: Colors.white,
+                  contentPadding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: const BorderSide(color: Color(0xFFE1E1E6)),
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: const BorderSide(color: Color(0xFFE1E1E6)),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide(color: _primary, width: 1.2),
+                  ),
+                ),
+              ),
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildLoadingState(Color primary) {
+    return Center(
+      child: Container(
+        margin: const EdgeInsets.all(22),
+        padding: const EdgeInsets.fromLTRB(22, 26, 22, 24),
+        decoration: _ordersPanelDecoration(context),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            SizedBox(
+              width: 30,
+              height: 30,
+              child: CircularProgressIndicator(
+                strokeWidth: 2.6,
+                color: primary,
+              ),
+            ),
+            const SizedBox(height: 14),
+            const Text(
+              'Loading your orders...',
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w800,
+                color: _muted,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -453,58 +578,193 @@ class _OrdersScreenState extends State<OrdersScreen>
     return Center(
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 24),
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(22, 26, 22, 22),
+          decoration: _ordersPanelDecoration(context),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _OrdersFloatingIcon(icon: icon, color: primary, size: 72),
+              const SizedBox(height: 18),
+              Text(
+                title,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w900,
+                  color: _text,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                subtitle,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  fontSize: 12.5,
+                  height: 1.4,
+                  fontWeight: FontWeight.w700,
+                  color: _muted,
+                ),
+              ),
+              if (tabIndex == 0) ...[
+                const SizedBox(height: 22),
+                _gradientButton(
+                  label: 'Browse Restaurants',
+                  icon: Icons.restaurant_menu_rounded,
+                  onPressed: () =>
+                      Navigator.pushNamed(context, '/customer/home'),
+                  minWidth: 190,
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildOrderCard(BuildContext context, Order order) {
+    final isLive = !order.isDelivered && !order.isCancelled;
+    final restaurantName = order.restaurant?.name ?? 'Restaurant';
+    final itemCount =
+        order.items.fold<int>(0, (total, item) => total + item.quantity);
+    final actionLabel = order.isDelivered
+        ? 'Reorder'
+        : isLive
+            ? 'Track Order'
+            : 'View Details';
+
+    return GestureDetector(
+      onTap: () => _openOrder(order),
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 14),
+        padding: const EdgeInsets.fromLTRB(14, 14, 14, 14),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: const Color(0xFFE8E8EE)),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.055),
+              blurRadius: 18,
+              offset: const Offset(0, 7),
+            ),
+          ],
+        ),
         child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Container(
-              width: 108,
-              height: 108,
-              decoration: BoxDecoration(
-                color: primary.withOpacity(0.08),
-                borderRadius: BorderRadius.circular(34),
-              ),
-              child: Icon(icon, size: 48, color: primary),
-            ),
-            const SizedBox(height: 24),
-            Text(
-              title,
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                fontSize: 22,
-                fontWeight: FontWeight.w900,
-                color: _text,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              subtitle,
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                fontSize: 14,
-                height: 1.4,
-                fontWeight: FontWeight.w500,
-                color: _muted,
-              ),
-            ),
-            if (tabIndex == 0) ...[
-              const SizedBox(height: 22),
-              ElevatedButton(
-                onPressed: () => Navigator.pushNamed(context, '/customer/home'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: primary,
-                  foregroundColor: Colors.white,
-                  minimumSize: const Size(190, 54),
-                  elevation: 0,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(18),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _statusChip(order),
+                const Spacer(),
+                Text(
+                  _formatOrderTime(order.createdAt),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Color(0xFF62636A),
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w600,
                   ),
                 ),
-                child: const Text(
-                  'Browse Restaurants',
-                  style: TextStyle(
-                    fontWeight: FontWeight.w500,
+                const SizedBox(width: 8),
+                const Icon(
+                  Icons.chevron_right_rounded,
+                  color: Color(0xFF56575E),
+                  size: 25,
+                ),
+              ],
+            ),
+            const SizedBox(height: 14),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _restaurantThumb(order),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        restaurantName,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Colors.black,
+                          fontSize: 14.5,
+                          height: 1.1,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        'Order ID: #${order.orderNumber}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Color(0xFF5E5F66),
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        '${itemCount == 1 ? '1 Item' : '$itemCount Items'}  -  ${formatCurrency(context, order.total)}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Color(0xFF3E3F46),
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
+                const SizedBox(width: 8),
+                const Icon(
+                  Icons.chevron_right_rounded,
+                  color: Color(0xFF56575E),
+                  size: 25,
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Expanded(child: _orderTimelineLine(order)),
+                const SizedBox(width: 12),
+                _orderActionButton(
+                  label: actionLabel,
+                  filled: isLive,
+                  onPressed: () {
+                    if (order.isDelivered) {
+                      _reorderItems(order);
+                    } else {
+                      _openOrder(order);
+                    }
+                  },
+                ),
+              ],
+            ),
+            if (order.canCancel || order.canRequestRefund) ...[
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  if (order.canCancel)
+                    TextButton(
+                      onPressed: () => _showCancelOrderDialog(order),
+                      child: const Text('Cancel Order'),
+                    ),
+                  if (order.canRequestRefund)
+                    TextButton(
+                      onPressed: () => _showRefundRequestDialog(order),
+                      child: const Text('Request Refund'),
+                    ),
+                ],
               ),
             ],
           ],
@@ -513,283 +773,11 @@ class _OrdersScreenState extends State<OrdersScreen>
     );
   }
 
-  Widget _buildOrderCard(BuildContext context, Order order) {
-    final primary = Theme.of(context).colorScheme.primary;
-    final itemPreview = order.items.take(2).toList();
-
-    return GestureDetector(
-      onTap: () => Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (_) => OrderTrackingScreen(orderId: order.id),
-        ),
-      ),
-      child: AccountSurfaceCard(
-        margin: const EdgeInsets.only(bottom: 14),
-        padding: EdgeInsets.zero,
-        radius: 28,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
-              child: Row(
-                children: [
-                  _restaurantThumb(order),
-                  const SizedBox(width: 14),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          order.restaurant?.name ?? 'Restaurant',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.w800,
-                            color: _text,
-                            height: 1.1,
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          'Order #${order.orderNumber}',
-                          style: const TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w400,
-                            color: _muted,
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        Wrap(
-                          spacing: 8,
-                          runSpacing: 8,
-                          crossAxisAlignment: WrapCrossAlignment.center,
-                          children: [
-                            _statusChip(order),
-                            _metaPill(
-                              icon: Icons.calendar_today_rounded,
-                              label: _formatDate(order.createdAt),
-                            ),
-                            _metaPill(
-                              icon: Icons.payment_rounded,
-                              label: order.paymentMethod.toUpperCase(),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            Container(
-              width: double.infinity,
-              margin: const EdgeInsets.symmetric(horizontal: 18),
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: const Color(0xFFFAFAFA),
-                borderRadius: BorderRadius.circular(22),
-                border: Border.all(color: _softLine),
-              ),
-              child: Column(
-                children: [
-                  for (final item in itemPreview) ...[
-                    Row(
-                      children: [
-                        Container(
-                          width: 8,
-                          height: 8,
-                          decoration: BoxDecoration(
-                            color: primary,
-                            borderRadius: BorderRadius.circular(99),
-                          ),
-                        ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: Text(
-                            '${item.quantity}x ${item.name}',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.w600,
-                              color: _text,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Text(
-                          formatCurrency(context, item.totalPrice),
-                          style: const TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w800,
-                            color: _text,
-                          ),
-                        ),
-                      ],
-                    ),
-                    if (item != itemPreview.last) const SizedBox(height: 10),
-                  ],
-                  if (order.items.length > 2) ...[
-                    const SizedBox(height: 10),
-                    Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text(
-                        '+${order.items.length - 2} more items',
-                        style: const TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w700,
-                          color: _muted,
-                        ),
-                      ),
-                    ),
-                  ],
-                ],
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(18, 16, 18, 8),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: const [
-                        Text(
-                          'Total Amount',
-                          style: TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w700,
-                            color: _muted,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  Text(
-                    formatCurrency(context, order.total),
-                    style: TextStyle(
-                      fontSize: 22,
-                      fontWeight: FontWeight.w900,
-                      color: primary,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            if (!order.isDelivered && !order.isCancelled)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(18, 10, 18, 18),
-                child: Row(
-                  children: [
-                    if (order.canCancel) ...[
-                      Expanded(
-                        child: OutlinedButton(
-                          onPressed: () => _showCancelOrderDialog(order),
-                          style: OutlinedButton.styleFrom(
-                            foregroundColor: const Color(0xFFE11D48),
-                            side: const BorderSide(color: Color(0xFFF3D6D9)),
-                            minimumSize: const Size.fromHeight(52),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(18),
-                            ),
-                          ),
-                          child: const Text(
-                            'Cancel Order',
-                            style: TextStyle(
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                    ],
-                    Expanded(
-                      child: ElevatedButton(
-                        onPressed: () => Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) =>
-                                OrderTrackingScreen(orderId: order.id),
-                          ),
-                        ),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: primary,
-                          foregroundColor: Colors.white,
-                          elevation: 0,
-                          minimumSize: const Size.fromHeight(52),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(18),
-                          ),
-                        ),
-                        child: const Text(
-                          'Track Order',
-                          style: TextStyle(
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            if (order.isDelivered)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(18, 10, 18, 18),
-                child: SizedBox(
-                  width: double.infinity,
-                  child: OutlinedButton.icon(
-                    onPressed: () => _reorderItems(order),
-                    icon: Icon(Icons.repeat_rounded, color: primary),
-                    label: Text(
-                      'Order Again',
-                      style: TextStyle(
-                        color: primary,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                    style: OutlinedButton.styleFrom(
-                      side: BorderSide(color: primary.withOpacity(0.18)),
-                      minimumSize: const Size.fromHeight(52),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(18),
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            if (order.canRequestRefund)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(18, 0, 18, 18),
-                child: SizedBox(
-                  width: double.infinity,
-                  child: OutlinedButton.icon(
-                    onPressed: () => _showRefundRequestDialog(order),
-                    icon: const Icon(
-                      Icons.monetization_on_outlined,
-                      color: Color(0xFF138A5A),
-                    ),
-                    label: const Text(
-                      'Request Refund',
-                      style: TextStyle(
-                        color: Color(0xFF138A5A),
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                    style: OutlinedButton.styleFrom(
-                      side: const BorderSide(color: Color(0xFFCDEBDE)),
-                      minimumSize: const Size.fromHeight(52),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(18),
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-          ],
-        ),
+  void _openOrder(Order order) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => OrderTrackingScreen(orderId: order.id),
       ),
     );
   }
@@ -802,78 +790,208 @@ class _OrdersScreenState extends State<OrdersScreen>
             ? restaurant.logoUrl
             : restaurant.bannerUrl);
     return Container(
-      width: 78,
-      height: 78,
+      width: 74,
+      height: 74,
       decoration: BoxDecoration(
-        color: const Color(0xFFF6F7F9),
-        borderRadius: BorderRadius.circular(22),
+        color: const Color(0xFFF5F5F5),
+        borderRadius: BorderRadius.circular(13),
       ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(22),
-        child: logoUrl.isNotEmpty
-            ? AppCachedImage(
-                imageUrl: logoUrl,
-                fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) => const Icon(
-                  Icons.restaurant_rounded,
-                  size: 34,
-                  color: _muted,
-                ),
-              )
-            : const Icon(
-                Icons.restaurant_rounded,
-                size: 34,
-                color: _muted,
-              ),
+      clipBehavior: Clip.antiAlias,
+      child: logoUrl.isNotEmpty
+          ? AppCachedImage(
+              imageUrl: logoUrl,
+              fit: BoxFit.cover,
+              width: 74,
+              height: 74,
+              errorBuilder: (_, __, ___) => _restaurantThumbFallback(order),
+            )
+          : _restaurantThumbFallback(order),
+    );
+  }
+
+  Widget _restaurantThumbFallback(Order order) {
+    final name = (order.restaurant?.name ?? 'Restaurant').trim();
+    final words = name.split(RegExp(r'\s+')).where((word) => word.isNotEmpty);
+    final label =
+        words.take(2).map((word) => word.substring(0, 1).toUpperCase()).join();
+    return Container(
+      color: _primary.withOpacity(0.10),
+      alignment: Alignment.center,
+      child: Text(
+        label.isEmpty ? 'FOOD' : label,
+        textAlign: TextAlign.center,
+        style: TextStyle(
+          color: _primary,
+          fontSize: label.length <= 2 ? 18 : 12,
+          fontWeight: FontWeight.w900,
+        ),
       ),
     );
   }
 
   Widget _statusChip(Order order) {
+    final style = _statusStyle(order);
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
-        color: order.statusColor.withOpacity(0.12),
-        borderRadius: BorderRadius.circular(999),
+        color: style.background,
+        borderRadius: BorderRadius.circular(6),
       ),
       child: Text(
-        order.statusText,
+        style.label,
         style: TextStyle(
-          fontSize: 12,
-          fontWeight: FontWeight.w800,
-          color: order.statusColor,
+          color: style.foreground,
+          fontSize: 11.5,
+          fontWeight: FontWeight.w900,
+          letterSpacing: 0.2,
         ),
       ),
     );
+  }
+
+  Widget _orderTimelineLine(Order order) {
+    final style = _statusStyle(order);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Icon(style.icon, color: style.foreground, size: 18),
+            const SizedBox(width: 7),
+            Expanded(
+              child: Text(
+                _orderPrimaryLine(order),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: style.foreground,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+            ),
+          ],
+        ),
+        if (_orderSecondaryLine(order).isNotEmpty) ...[
+          const SizedBox(height: 6),
+          Padding(
+            padding: const EdgeInsets.only(left: 25),
+            child: Text(
+              _orderSecondaryLine(order),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: Color(0xFF67686F),
+                fontSize: 12,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _orderActionButton({
+    required String label,
+    required bool filled,
+    required VoidCallback onPressed,
+  }) {
+    return SizedBox(
+      height: 42,
+      child: filled
+          ? FilledButton(
+              onPressed: onPressed,
+              style: FilledButton.styleFrom(
+                backgroundColor: _primary.withOpacity(0.13),
+                foregroundColor: _primary,
+                elevation: 0,
+                padding: const EdgeInsets.symmetric(horizontal: 18),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(999),
+                ),
+              ),
+              child: Text(label,
+                  style: const TextStyle(fontWeight: FontWeight.w900)),
+            )
+          : OutlinedButton(
+              onPressed: onPressed,
+              style: OutlinedButton.styleFrom(
+                foregroundColor: _primary,
+                side: BorderSide(color: _primary),
+                padding: const EdgeInsets.symmetric(horizontal: 18),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(999),
+                ),
+              ),
+              child: Text(label,
+                  style: const TextStyle(fontWeight: FontWeight.w900)),
+            ),
+    );
+  }
+
+  _OrderStatusStyle _statusStyle(Order order) {
+    if (order.isCancelled) {
+      return const _OrderStatusStyle(
+        label: 'CANCELLED',
+        foreground: Color(0xFFE11D28),
+        background: Color(0xFFFFECEC),
+        icon: Icons.cancel_outlined,
+      );
+    }
+    if (order.isDelivered) {
+      return const _OrderStatusStyle(
+        label: 'DELIVERED',
+        foreground: Color(0xFF169B3A),
+        background: Color(0xFFE8F8EA),
+        icon: Icons.check_circle_outline_rounded,
+      );
+    }
+    if (order.isOnTheWay || order.isPickedUp) {
+      return const _OrderStatusStyle(
+        label: 'LIVE',
+        foreground: Color(0xFF11832D),
+        background: Color(0xFFE6F7E7),
+        icon: Icons.schedule_rounded,
+      );
+    }
+    return const _OrderStatusStyle(
+      label: 'CONFIRMED',
+      foreground: Color(0xFF2563EB),
+      background: Color(0xFFEAF2FF),
+      icon: Icons.access_time_rounded,
+    );
+  }
+
+  String _orderPrimaryLine(Order order) {
+    if (order.isCancelled) return 'Cancelled';
+    if (order.isDelivered) return 'Delivered on time';
+    if (order.isOnTheWay || order.isPickedUp) {
+      final eta = order.etaRange ??
+          (order.etaMinutes == null
+              ? null
+              : '${order.etaMinutes}-${order.etaMinutes! + 5} mins');
+      return eta == null ? 'Order on the way' : 'Arriving in $eta';
+    }
+    final eta = order.etaRange ??
+        (order.etaMinutes == null
+            ? null
+            : '${order.etaMinutes}-${order.etaMinutes! + 5} mins');
+    return eta == null ? 'Estimated delivery' : 'Estimated delivery: $eta';
+  }
+
+  String _orderSecondaryLine(Order order) {
+    if (order.isCancelled) return order.cancellationReason ?? '';
+    if (order.isDelivered) return '';
+    if (order.isOnTheWay || order.isPickedUp) return 'Your order is on the way';
+    return order.statusText;
   }
 
   Widget _metaPill({
     required IconData icon,
     required String label,
   }) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: _softLine),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 13, color: _muted),
-          const SizedBox(width: 6),
-          Text(
-            label,
-            style: const TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w700,
-              color: _muted,
-            ),
-          ),
-        ],
-      ),
-    );
+    return const SizedBox.shrink();
   }
 
   void _showCancelOrderDialog(Order order) {
@@ -908,12 +1026,12 @@ class _OrdersScreenState extends State<OrdersScreen>
                       width: 54,
                       height: 54,
                       decoration: BoxDecoration(
-                        color: const Color(0xFFFFF1F2),
+                        color: FoodFlowTheme.danger.withOpacity(0.10),
                         borderRadius: BorderRadius.circular(18),
                       ),
                       child: const Icon(
                         Icons.close_rounded,
-                        color: Color(0xFFE11D48),
+                        color: FoodFlowTheme.dangerDark,
                         size: 28,
                       ),
                     ),
@@ -925,7 +1043,7 @@ class _OrdersScreenState extends State<OrdersScreen>
                           Text(
                             'Cancel this order?',
                             style: TextStyle(
-                              fontSize: 20,
+                              fontSize: 17,
                               fontWeight: FontWeight.w900,
                               color: _text,
                             ),
@@ -934,7 +1052,7 @@ class _OrdersScreenState extends State<OrdersScreen>
                           Text(
                             'You can cancel only before the restaurant accepts it.',
                             style: TextStyle(
-                              fontSize: 13,
+                              fontSize: 11.5,
                               color: _muted,
                               fontWeight: FontWeight.w500,
                             ),
@@ -949,9 +1067,9 @@ class _OrdersScreenState extends State<OrdersScreen>
                   width: double.infinity,
                   padding: const EdgeInsets.all(16),
                   decoration: BoxDecoration(
-                    color: const Color(0xFFFFFBFA),
+                    color: FoodFlowTheme.surfaceWarm,
                     borderRadius: BorderRadius.circular(22),
-                    border: Border.all(color: accountBorder),
+                    border: Border.all(color: _softLine),
                   ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -959,7 +1077,7 @@ class _OrdersScreenState extends State<OrdersScreen>
                       Text(
                         'Order #${order.orderNumber}',
                         style: const TextStyle(
-                          fontSize: 15,
+                          fontSize: 13,
                           fontWeight: FontWeight.w800,
                           color: _text,
                         ),
@@ -968,7 +1086,7 @@ class _OrdersScreenState extends State<OrdersScreen>
                       Text(
                         order.restaurant?.name ?? 'Restaurant',
                         style: const TextStyle(
-                          fontSize: 13,
+                          fontSize: 12.5,
                           color: _muted,
                           fontWeight: FontWeight.w600,
                         ),
@@ -998,7 +1116,7 @@ class _OrdersScreenState extends State<OrdersScreen>
                     focusedBorder: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(18),
                       borderSide: const BorderSide(
-                        color: Color(0xFFE11D48),
+                        color: FoodFlowTheme.dangerDark,
                         width: 1.4,
                       ),
                     ),
@@ -1034,7 +1152,7 @@ class _OrdersScreenState extends State<OrdersScreen>
                                 content: Text(
                                   'Please enter a cancellation reason.',
                                 ),
-                                backgroundColor: Colors.red,
+                                backgroundColor: FoodFlowTheme.danger,
                               ),
                             );
                             return;
@@ -1049,7 +1167,7 @@ class _OrdersScreenState extends State<OrdersScreen>
                             ScaffoldMessenger.of(context).showSnackBar(
                               const SnackBar(
                                 content: Text('Order cancelled successfully'),
-                                backgroundColor: Colors.green,
+                                backgroundColor: FoodFlowTheme.success,
                               ),
                             );
                             _refreshOrders();
@@ -1060,13 +1178,13 @@ class _OrdersScreenState extends State<OrdersScreen>
                                   orderProvider.error ??
                                       'Order can only be cancelled before the restaurant accepts it.',
                                 ),
-                                backgroundColor: Colors.red,
+                                backgroundColor: FoodFlowTheme.danger,
                               ),
                             );
                           }
                         },
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFFE11D48),
+                          backgroundColor: FoodFlowTheme.dangerDark,
                           foregroundColor: Colors.white,
                           elevation: 0,
                           minimumSize: const Size.fromHeight(52),
@@ -1141,7 +1259,7 @@ class _OrdersScreenState extends State<OrdersScreen>
                           Text(
                             'Request refund',
                             style: TextStyle(
-                              fontSize: 20,
+                              fontSize: 17,
                               fontWeight: FontWeight.w900,
                               color: _text,
                             ),
@@ -1150,7 +1268,7 @@ class _OrdersScreenState extends State<OrdersScreen>
                           Text(
                             'Share the issue and optionally suggest a refund amount.',
                             style: TextStyle(
-                              fontSize: 13,
+                              fontSize: 11.5,
                               color: _muted,
                               fontWeight: FontWeight.w500,
                             ),
@@ -1239,7 +1357,7 @@ class _OrdersScreenState extends State<OrdersScreen>
                             ScaffoldMessenger.of(context).showSnackBar(
                               const SnackBar(
                                 content: Text('Please enter a refund reason.'),
-                                backgroundColor: Colors.red,
+                                backgroundColor: FoodFlowTheme.danger,
                               ),
                             );
                             return;
@@ -1259,7 +1377,7 @@ class _OrdersScreenState extends State<OrdersScreen>
                                 content: Text(
                                   'Refund request submitted successfully.',
                                 ),
-                                backgroundColor: Colors.green,
+                                backgroundColor: FoodFlowTheme.success,
                               ),
                             );
                             _refreshOrders();
@@ -1270,7 +1388,7 @@ class _OrdersScreenState extends State<OrdersScreen>
                                   orderProvider.error ??
                                       'Failed to submit refund request.',
                                 ),
-                                backgroundColor: Colors.red,
+                                backgroundColor: FoodFlowTheme.danger,
                               ),
                             );
                           }
@@ -1360,7 +1478,7 @@ class _OrdersScreenState extends State<OrdersScreen>
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('$added item${added == 1 ? '' : 's'} added to cart'),
-          backgroundColor: Colors.green,
+          backgroundColor: FoodFlowTheme.success,
         ),
       );
       Navigator.pushNamed(context, '/checkout');
@@ -1374,7 +1492,181 @@ class _OrdersScreenState extends State<OrdersScreen>
     }
   }
 
+  String _formatOrderTime(DateTime date) {
+    final now = DateTime.now();
+    final time = _formatClock(date);
+    final today = DateTime(now.year, now.month, now.day);
+    final orderDay = DateTime(date.year, date.month, date.day);
+    final diff = today.difference(orderDay).inDays;
+    if (diff == 0) return 'Today, $time';
+    if (diff == 1) return 'Yesterday, $time';
+    return '${date.day} ${_monthName(date.month)}, $time';
+  }
+
+  String _formatClock(DateTime date) {
+    final hour = date.hour % 12 == 0 ? 12 : date.hour % 12;
+    final minute = date.minute.toString().padLeft(2, '0');
+    final suffix = date.hour >= 12 ? 'PM' : 'AM';
+    return '$hour:$minute $suffix';
+  }
+
+  String _monthName(int month) {
+    const months = [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
+    ];
+    return months[(month - 1).clamp(0, 11)];
+  }
+
   String _formatDate(DateTime date) {
     return '${date.day.toString().padLeft(2, '0')}/${date.month.toString().padLeft(2, '0')}/${date.year}';
   }
+}
+
+class _OrderStatusStyle {
+  const _OrderStatusStyle({
+    required this.label,
+    required this.foreground,
+    required this.background,
+    required this.icon,
+  });
+
+  final String label;
+  final Color foreground;
+  final Color background;
+  final IconData icon;
+}
+
+class _OrdersFloatingIcon extends StatelessWidget {
+  const _OrdersFloatingIcon({
+    required this.icon,
+    required this.color,
+    this.size = 54,
+  });
+
+  final IconData icon;
+  final Color color;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.12),
+        shape: BoxShape.circle,
+        boxShadow: [
+          BoxShadow(
+            color: color.withOpacity(0.18),
+            blurRadius: 18,
+            offset: const Offset(0, 10),
+          ),
+        ],
+      ),
+      child: Icon(icon, color: color, size: 28),
+    );
+  }
+}
+
+class _OrdersHeroPainter extends CustomPainter {
+  const _OrdersHeroPainter(this.color);
+
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final wash = Paint()
+      ..color = color.withOpacity(0.045)
+      ..style = PaintingStyle.fill;
+    canvas.drawCircle(Offset(size.width * 0.88, size.height * 0.45), 120, wash);
+
+    final dotPaint = Paint()
+      ..color = color.withOpacity(0.06)
+      ..style = PaintingStyle.fill;
+    for (var row = 0; row < 7; row++) {
+      for (var col = 0; col < 3; col++) {
+        canvas.drawCircle(Offset(4 + col * 20.0, 34 + row * 20.0), 4, dotPaint);
+      }
+    }
+
+    final linePaint = Paint()
+      ..color = color.withOpacity(0.13)
+      ..strokeWidth = 2
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round;
+    final baseY = size.height * 0.82;
+    canvas.drawLine(
+      Offset(size.width * 0.46, baseY),
+      Offset(size.width * 0.98, baseY),
+      linePaint,
+    );
+    _drawCloud(canvas, linePaint, Offset(size.width * 0.68, 58), 22);
+    _drawCloud(canvas, linePaint, Offset(size.width * 0.88, 38), 28);
+    _drawCloud(canvas, linePaint, Offset(size.width * 0.54, 110), 18);
+  }
+
+  void _drawCloud(Canvas canvas, Paint paint, Offset center, double width) {
+    final path = Path()
+      ..moveTo(center.dx - width * 0.50, center.dy)
+      ..quadraticBezierTo(center.dx - width * 0.28, center.dy - width * 0.22,
+          center.dx - width * 0.08, center.dy - width * 0.06)
+      ..quadraticBezierTo(center.dx + width * 0.08, center.dy - width * 0.36,
+          center.dx + width * 0.30, center.dy - width * 0.08)
+      ..quadraticBezierTo(center.dx + width * 0.48, center.dy - width * 0.06,
+          center.dx + width * 0.55, center.dy);
+    canvas.drawPath(path, paint);
+  }
+
+  @override
+  bool shouldRepaint(covariant _OrdersHeroPainter oldDelegate) {
+    return oldDelegate.color != color;
+  }
+}
+
+BoxDecoration _ordersPanelDecoration(BuildContext context,
+    {double radius = 28}) {
+  return BoxDecoration(
+    gradient: const LinearGradient(
+      begin: Alignment.topLeft,
+      end: Alignment.bottomRight,
+      colors: [
+        FoodFlowTheme.surfaceColor,
+        FoodFlowTheme.surfaceWarm,
+        FoodFlowTheme.surfaceCool,
+      ],
+      stops: [0, 0.56, 1],
+    ),
+    borderRadius: BorderRadius.circular(radius),
+    border: Border.all(color: _OrdersScreenState._softLine),
+    boxShadow: [
+      BoxShadow(
+        color: Colors.white.withOpacity(0.95),
+        blurRadius: 3,
+        offset: const Offset(-2, -2),
+      ),
+      BoxShadow(
+        color: FoodFlowTheme.brandPrimary(context).withOpacity(0.14),
+        blurRadius: 22,
+        spreadRadius: -3,
+        offset: const Offset(0, 14),
+      ),
+      BoxShadow(
+        color: Colors.black.withOpacity(0.07),
+        blurRadius: 26,
+        spreadRadius: -4,
+        offset: const Offset(0, 16),
+      ),
+    ],
+  );
 }

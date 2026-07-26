@@ -1,12 +1,24 @@
+import 'dart:io';
+import 'dart:ui' as ui;
+
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import '../../widgets/common/app_cached_image.dart';
 import 'package:intl/intl.dart' show DateFormat;
 import 'package:lottie/lottie.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
 
+import '../../config/api_constants.dart';
+import '../../config/app_config.dart';
+import '../../models/scratch_card.dart';
+import '../../services/api_service.dart';
 import '../../theme/foodflow_theme.dart';
 import '../../utils/currency_utils.dart';
 import '../../widgets/common/lucide_icon.dart';
 import '../../widgets/customer/account_chrome.dart';
+import '../../widgets/customer/scratch_card_art.dart';
+import '../../widgets/customer/scratch_card_reveal_dialog.dart';
 
 class OrderConfirmationScreen extends StatefulWidget {
   final int orderId;
@@ -17,6 +29,7 @@ class OrderConfirmationScreen extends StatefulWidget {
   final String paymentGatewayLogoUrl;
   final double subtotal;
   final double discount;
+  final double savedAmount;
   final double deliveryFee;
   final double platformFee;
   final double tax;
@@ -35,6 +48,7 @@ class OrderConfirmationScreen extends StatefulWidget {
     this.paymentGatewayLogoUrl = '',
     required this.subtotal,
     required this.discount,
+    this.savedAmount = 0,
     required this.deliveryFee,
     required this.platformFee,
     required this.tax,
@@ -51,8 +65,12 @@ class OrderConfirmationScreen extends StatefulWidget {
 
 class _OrderConfirmationScreenState extends State<OrderConfirmationScreen>
     with SingleTickerProviderStateMixin {
+  final ApiService _api = ApiService();
+  final GlobalKey _shareCardKey = GlobalKey();
   late final AnimationController _animationController;
   late final Animation<double> _scaleAnimation;
+  List<ScratchCard> _scratchCards = const [];
+  bool _scratchPopupShown = false;
 
   @override
   void initState() {
@@ -66,6 +84,7 @@ class _OrderConfirmationScreenState extends State<OrderConfirmationScreen>
       curve: Curves.elasticOut,
     );
     _animationController.forward();
+    _loadScratchCards();
   }
 
   @override
@@ -114,6 +133,14 @@ class _OrderConfirmationScreenState extends State<OrderConfirmationScreen>
                   _buildRestaurantCard(),
                   const SizedBox(height: 12),
                   _buildSuccessCard(),
+                  if (_shareSavingsAmount > 0) ...[
+                    const SizedBox(height: 12),
+                    _buildSavingsShareCard(context),
+                  ],
+                  if (_scratchCards.isNotEmpty) ...[
+                    const SizedBox(height: 12),
+                    _buildScratchCard(),
+                  ],
                   const SizedBox(height: 12),
                   _buildBillCard(context),
                   const SizedBox(height: 16),
@@ -151,6 +178,52 @@ class _OrderConfirmationScreenState extends State<OrderConfirmationScreen>
     );
   }
 
+  Future<void> _loadScratchCards({
+    bool showPopup = true,
+    int attempt = 0,
+  }) async {
+    try {
+      final response = await _api.get(ApiConstants.scratchCards);
+      final rows = response['success'] == true && response['data'] is List
+          ? response['data'] as List
+          : const [];
+      final cards = rows
+          .whereType<Map>()
+          .map((row) => ScratchCard.fromJson(Map<String, dynamic>.from(row)))
+          .where((card) => card.orderId == widget.orderId)
+          .toList(growable: false);
+      if (!mounted) return;
+      setState(() => _scratchCards = cards);
+      if (cards.isEmpty && showPopup && attempt < 5) {
+        await Future.delayed(Duration(milliseconds: 900 + (attempt * 350)));
+        if (!mounted || _scratchPopupShown) return;
+        await _loadScratchCards(showPopup: showPopup, attempt: attempt + 1);
+        return;
+      }
+      if (showPopup) {
+        _showScratchPopupIfNeeded(cards);
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _showScratchPopupIfNeeded(List<ScratchCard> cards) async {
+    if (_scratchPopupShown || cards.isEmpty) return;
+    final index = cards.indexWhere((card) => !card.isRevealed);
+    if (index < 0) return;
+
+    _scratchPopupShown = true;
+    await Future.delayed(const Duration(milliseconds: 650));
+    if (!mounted) return;
+
+    final updated = await showScratchCardRevealDialog(
+      context,
+      card: cards[index],
+    );
+    if (updated != null && mounted) {
+      await _loadScratchCards(showPopup: false);
+    }
+  }
+
   void _goToTrackOrder() {
     Navigator.pushNamedAndRemoveUntil(
       context,
@@ -159,6 +232,167 @@ class _OrderConfirmationScreenState extends State<OrderConfirmationScreen>
           route.settings.name == '/home' ||
           route.settings.name == '/customer/home',
       arguments: widget.orderId,
+    );
+  }
+
+  double get _shareSavingsAmount =>
+      (widget.savedAmount > 0 ? widget.savedAmount : widget.discount)
+          .clamp(0.0, double.infinity)
+          .toDouble();
+
+  String _appShareLink() {
+    final domain = AppConfig.appsFlyerOneLinkDomain
+        .replaceFirst(RegExp(r'^https?://'), '')
+        .replaceFirst(RegExp(r'/$'), '')
+        .trim();
+    final pathSegments = AppConfig.appsFlyerOneLinkPath
+        .split('/')
+        .map((segment) => segment.trim())
+        .where((segment) => segment.isNotEmpty)
+        .toList(growable: true);
+    final params = <String, String>{
+      'pid': 'share',
+      'c': 'order_savings_share',
+      'deep_link_value': 'home',
+      'screen': 'home',
+    };
+
+    if (domain.isNotEmpty) {
+      return Uri.https(domain, pathSegments.join('/'), params).toString();
+    }
+
+    return AppConfig.apiBaseUrl.replaceFirst('/api', '');
+  }
+
+  Future<void> _shareSavings() async {
+    final amount = _shareSavingsAmount;
+    if (amount <= 0) return;
+
+    final message =
+        'Yeah! We have saved ${formatCurrency(context, amount)} from ${AppConfig.appName}. Download it now.\n${_appShareLink()}';
+
+    try {
+      final boundary = _shareCardKey.currentContext?.findRenderObject()
+          as RenderRepaintBoundary?;
+      if (boundary == null) {
+        await Share.share(message, subject: AppConfig.appName);
+        return;
+      }
+
+      final image = await boundary.toImage(pixelRatio: 3);
+      final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
+      final bytes = byteData?.buffer.asUint8List();
+      if (bytes == null) {
+        await Share.share(message, subject: AppConfig.appName);
+        return;
+      }
+
+      final tempDir = await getTemporaryDirectory();
+      final file = File('${tempDir.path}/yumma-savings-${widget.orderId}.png');
+      await file.writeAsBytes(bytes, flush: true);
+      await Share.shareXFiles(
+        [XFile(file.path)],
+        text: message,
+        subject: AppConfig.appName,
+      );
+    } catch (_) {
+      await Share.share(message, subject: AppConfig.appName);
+    }
+  }
+
+  Widget _buildSavingsShareCard(BuildContext context) {
+    final amount = _shareSavingsAmount;
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: FoodFlowTheme.surface(radius: 24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          RepaintBoundary(
+            key: _shareCardKey,
+            child: Container(
+              padding: const EdgeInsets.all(18),
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [
+                    FoodFlowTheme.brandPrimary(context),
+                    FoodFlowTheme.brandSecondary(context),
+                  ],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+                borderRadius: BorderRadius.circular(22),
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    width: 64,
+                    height: 64,
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(22),
+                    ),
+                    child: Image.asset(
+                      'assets/images/offer-icon.png',
+                      fit: BoxFit.contain,
+                    ),
+                  ),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'You saved ${formatCurrency(context, amount)}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 19,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                        const SizedBox(height: 5),
+                        Text(
+                          'Yeah! We have saved from ${AppConfig.appName}. Download it now.',
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: Colors.white.withOpacity(0.9),
+                            fontSize: 12,
+                            height: 1.25,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          OutlinedButton.icon(
+            onPressed: _shareSavings,
+            style: OutlinedButton.styleFrom(
+              foregroundColor: FoodFlowTheme.brandPrimary(context),
+              side: BorderSide(
+                color: FoodFlowTheme.brandPrimary(context).withOpacity(0.24),
+              ),
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+              ),
+            ),
+            icon: const Icon(Icons.ios_share_rounded, size: 18),
+            label: const Text(
+              'Share savings',
+              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w900),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -364,6 +598,130 @@ class _OrderConfirmationScreenState extends State<OrderConfirmationScreen>
               ),
             ),
           ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildScratchCard() {
+    final card = _scratchCards.first;
+    final revealed = card.isRevealed;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(14, 14, 14, 12),
+      decoration: FoodFlowTheme.surface(radius: 24),
+      child: Column(
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      revealed
+                          ? ScratchRewardText.title(context, card)
+                          : 'You unlocked a scratch card!',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w900,
+                        color: FoodFlowTheme.ink,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      revealed
+                          ? ScratchRewardText.subtitle(card)
+                          : 'Scratch now and win exciting rewards',
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        color: FoodFlowTheme.muted,
+                        height: 1.25,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 12),
+              const ScratchGiftBox(size: 62),
+            ],
+          ),
+          const SizedBox(height: 12),
+          ScratchCardFace(
+            card: card,
+            height: 124,
+            compact: true,
+            showOrderTag: false,
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: ElevatedButton(
+                  onPressed: () async {
+                    if (revealed) {
+                      Navigator.pushNamed(
+                        context,
+                        '/scratch-cards',
+                        arguments: widget.orderId,
+                      ).then((_) => _loadScratchCards(showPopup: false));
+                      return;
+                    }
+
+                    final updated = await showScratchCardRevealDialog(
+                      context,
+                      card: card,
+                    );
+                    if (updated != null && mounted) {
+                      await _loadScratchCards(showPopup: false);
+                    }
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: FoodFlowTheme.tagOrange,
+                    foregroundColor: Colors.white,
+                    elevation: 8,
+                    shadowColor: FoodFlowTheme.tagOrange.withOpacity(0.24),
+                    padding: const EdgeInsets.symmetric(vertical: 13),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                  ),
+                  child: Text(
+                    revealed ? 'View Reward' : 'Scratch Now',
+                    style: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              TextButton(
+                onPressed: () {
+                  Navigator.pushNamed(
+                    context,
+                    '/scratch-cards',
+                    arguments: widget.orderId,
+                  ).then((_) => _loadScratchCards(showPopup: false));
+                },
+                style: TextButton.styleFrom(
+                  foregroundColor: FoodFlowTheme.tagOrange,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 12,
+                  ),
+                ),
+                child: const Text(
+                  'All cards',
+                  style: TextStyle(fontWeight: FontWeight.w900),
+                ),
+              ),
+            ],
+          ),
         ],
       ),
     );

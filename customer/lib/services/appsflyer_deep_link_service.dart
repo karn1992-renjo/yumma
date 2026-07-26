@@ -312,7 +312,13 @@ class AppsFlyerDeepLinkDestination {
       'type',
     ])?.toLowerCase();
     var type = _typeFrom(value);
-    var primaryRaw = _read(payload, const ['deep_link_sub1', 'deepLinkSub1']);
+    var primaryRaw = _read(payload, const [
+      'deep_link_sub1',
+      'deepLinkSub1',
+      'referral_code',
+      'referralCode',
+      'code',
+    ]);
     var secondaryRaw = _read(payload, const ['deep_link_sub2', 'deepLinkSub2']);
     var tertiaryRaw = _read(payload, const ['deep_link_sub3', 'deepLinkSub3']);
 
@@ -330,10 +336,20 @@ class AppsFlyerDeepLinkDestination {
     }
 
     if (type == null) {
-      if (primaryRaw != null && secondaryRaw != null) {
-        type = AppsFlyerDeepLinkType.product;
-      } else if (primaryRaw != null) {
-        type = AppsFlyerDeepLinkType.restaurant;
+      final hasReferralCode = _read(payload, const [
+            'referral_code',
+            'referralCode',
+            'code',
+          ]) !=
+          null;
+      if (hasReferralCode) {
+        type = AppsFlyerDeepLinkType.referral;
+      } else {
+        if (primaryRaw != null && secondaryRaw != null) {
+          type = AppsFlyerDeepLinkType.product;
+        } else if (primaryRaw != null) {
+          type = AppsFlyerDeepLinkType.restaurant;
+        }
       }
     }
 
@@ -367,7 +383,23 @@ class AppsFlyerDeepLinkDestination {
     final segments = uri.pathSegments.where((s) => s.isNotEmpty).toList();
     if (segments.isEmpty) return null;
 
-    if (uri.scheme == 'foodflow' || uri.host == 'foodflow.in') {
+    final isSupportedAppLink = uri.scheme == 'foodflow' ||
+        uri.scheme == 'yumma' ||
+        uri.host == 'foodflow.in' ||
+        uri.host == 'yumma.in';
+    if (isSupportedAppLink) {
+      if (segments.isNotEmpty &&
+          (segments[0] == 'referral' || segments[0] == 'invite')) {
+        final referralCode =
+            uri.queryParameters['code'] ?? uri.queryParameters['referral_code'];
+        if (referralCode != null && referralCode.trim().isNotEmpty) {
+          return _DeepLinkParseResult(
+            type: AppsFlyerDeepLinkType.referral,
+            primaryRaw: referralCode,
+          );
+        }
+      }
+
       if (segments.length >= 2 &&
           (segments[0] == 'restaurants' || segments[0] == 'restaurant')) {
         final restaurantId = segments[1];

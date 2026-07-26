@@ -3,7 +3,7 @@ description: A complete food delivery application with customer, restaurant, and
 
 publish_to: 'none'
 
-version: 2.4.8+29
+version: 2.4.10+31
 
 environment:
   sdk: '>=3.0.0 <4.0.0'
@@ -22,6 +22,7 @@ dependencies:
   hive_flutter: ^1.1.0
   audioplayers: ^6.6.0
   pusher_channels_flutter: ^2.2.0
+  country_flags: ^4.1.2
   
   # Networking
   http: ^1.1.0

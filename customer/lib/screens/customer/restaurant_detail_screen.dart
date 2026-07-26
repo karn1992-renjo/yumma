@@ -17,6 +17,7 @@ import '../../services/app_image_cache.dart';
 import '../../services/location_service.dart';
 import '../../theme/foodflow_theme.dart';
 import '../../utils/currency_utils.dart';
+import '../../utils/promotion_display_utils.dart';
 import '../../widgets/common/network_error_screen.dart';
 import '../../widgets/customer/menu_item_card.dart';
 import '../../widgets/customer/account_chrome.dart';
@@ -225,9 +226,7 @@ class _RestaurantDetailScreenState extends State<RestaurantDetailScreen> {
 
       final grouped = <String, List<MenuItem>>{};
       for (final item in menuItems) {
-        final category = (item.categoryName?.trim().isNotEmpty ?? false)
-            ? item.categoryName!.trim()
-            : 'Recommended for you';
+        final category = _menuGroupLabel(item);
         grouped.putIfAbsent(category, () => <MenuItem>[]).add(item);
       }
 
@@ -237,6 +236,26 @@ class _RestaurantDetailScreenState extends State<RestaurantDetailScreen> {
 
       _itemsByCategory = grouped;
     } catch (_) {}
+  }
+
+  String _menuGroupLabel(MenuItem item) {
+    final subcategory = item.subcategoryName?.trim();
+    if (subcategory != null && subcategory.isNotEmpty) {
+      return subcategory;
+    }
+
+    final category = item.categoryName?.trim();
+    if (category != null && category.isNotEmpty) {
+      final parts = category
+          .split('/')
+          .map((part) => part.trim())
+          .where((part) => part.isNotEmpty)
+          .toList(growable: false);
+      if (parts.length > 1) return parts.last;
+      return category;
+    }
+
+    return 'Recommended for you';
   }
 
   Future<void> _loadRestaurantPromos() async {
@@ -680,6 +699,7 @@ class _RestaurantDetailScreenState extends State<RestaurantDetailScreen> {
               selectedAddOns: result.addOns,
             );
           }
+          Navigator.of(context).pop();
           _showMessage('${item.name} added to cart');
         },
       ),
@@ -1546,6 +1566,12 @@ class _RestaurantDetailScreenState extends State<RestaurantDetailScreen> {
                                   onSave: () => _toggleSavedMenuItem(item),
                                   onShare: () => _shareMenuItem(item),
                                   orderingEnabled: restaurant.isOpen,
+                                  promotionTag:
+                                      PromotionDisplayUtils.tagForMenuItem(
+                                    item,
+                                    _restaurantPromos,
+                                    currencySymbol: getCurrencySymbol(context),
+                                  ),
                                   onQuantityChanged: item.hasCustomizations
                                       ? (_) => _openItemDetails(item)
                                       : (quantity) {
@@ -1656,7 +1682,7 @@ class _RestaurantDetailScreenState extends State<RestaurantDetailScreen> {
                             ),
                             const SizedBox(height: 2),
                             Text(
-                              '${cart.itemCount} item${cart.itemCount == 1 ? '' : 's'} · ${formatCurrency(context, cart.total)}',
+                              '${cart.itemCount} item${cart.itemCount == 1 ? '' : 's'} · ${formatCurrency(context, cart.displayTotal)}',
                               style: const TextStyle(
                                 color: FoodFlowTheme.muted,
                                 fontSize: 11,
@@ -1831,6 +1857,12 @@ class _FloatingMenuDialog extends StatelessWidget {
         color: Colors.transparent,
         child: Stack(
           children: [
+            Positioned.fill(
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: onClose,
+              ),
+            ),
             Align(
               alignment: Alignment.center,
               child: ConstrainedBox(

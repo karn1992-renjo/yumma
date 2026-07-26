@@ -110,7 +110,7 @@ class ApiService {
       ).timeout(_requestTimeout);
 
       final result = await _handleResponse(response, includeAuth: includeAuth);
-      if (shouldCache) {
+      if (shouldCache && _isCacheableResponse(result)) {
         await LocalCacheService.put(uri.toString(), result, maxAge: maxAge);
       }
       return result;
@@ -174,6 +174,7 @@ class ApiService {
           .timeout(_requestTimeout);
       final result = await _handleResponse(response, includeAuth: includeAuth);
       final previous = LocalCacheService.get(uri.toString());
+      if (!_isCacheableResponse(result)) return;
       await LocalCacheService.put(uri.toString(), result, maxAge: maxAge);
       if (jsonEncode(previous) != jsonEncode(result)) {
         onRefreshed?.call(result);
@@ -183,6 +184,10 @@ class ApiService {
         debugPrint('Background refresh skipped for $uri: $error');
       }
     }
+  }
+
+  bool _isCacheableResponse(dynamic result) {
+    return result is! Map || result['success'] != false;
   }
 
   Future<dynamic> post(String endpoint,

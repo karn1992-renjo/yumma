@@ -12,8 +12,52 @@ class FoodFlowTheme {
   static const Color line = Color(0xFFE5E7EB);
   static const Color canvas = Color(0xFFF8F8F8);
   static const Color warmCanvas = Color(0xFFFFF3E8);
+  static const Color surfaceColor = Colors.white;
+  static const Color surfaceWarm = Color(0xFFFFFCF8);
+  static const Color surfaceCool = Color(0xFFF4F7FB);
+  static const Color warmTint = Color(0xFFFFF3E8);
+  static const Color warmTintBorder = Color(0xFFFFD7AF);
+  static const Color primaryDark = Color(0xFF0F8F45);
   static const Color success = Color(0xFF22C55E);
+  static const Color successDark = Color(0xFF168A35);
   static const Color danger = Color(0xFFE53935);
+  static const Color dangerDark = Color(0xFFE11D48);
+  static const Color disabledFill = Color(0xFFCBD5E1);
+  static const Color disabledText = Color(0xFF94A3B8);
+  static const Color tagGreen = Color(0xFF0A9443);
+  static const Color tagGreenDark = Color(0xFF0C7038);
+  static const Color tagGreenSoft = Color(0xFFEFF8F1);
+  static const Color tagGreenBorder = Color(0xFFBFE7C8);
+  static const Color tagOrange = Color(0xFFFF6B00);
+  static const Color tagOrangeDark = Color(0xFFE85D00);
+  static const Color tagOrangeSoft = Color(0xFFFFF3E8);
+  static const Color tagOrangeBorder = Color(0xFFFFD7AF);
+
+  static Color brandPrimary(BuildContext context) =>
+      Theme.of(context).colorScheme.primary;
+
+  static Color brandSecondary(BuildContext context) =>
+      Theme.of(context).colorScheme.secondary;
+
+  static Color brandOnPrimary(BuildContext context) =>
+      Theme.of(context).colorScheme.onPrimary;
+
+  static LinearGradient brandGradientOf(BuildContext context) {
+    final primary = brandPrimary(context);
+    final secondary = brandSecondary(context);
+    return LinearGradient(
+      begin: Alignment.topLeft,
+      end: Alignment.bottomRight,
+      colors: [
+        primary,
+        Color.lerp(primary, secondary, 0.28) ?? primary,
+      ],
+    );
+  }
+
+  static Color brandSoft(BuildContext context, [double amount = 0.88]) =>
+      Color.lerp(brandPrimary(context), Colors.white, amount) ??
+      brandPrimary(context);
 
   static const LinearGradient brandGradient = LinearGradient(
     begin: Alignment.topLeft,
@@ -80,21 +124,23 @@ class FoodFlowTheme {
 
   static ButtonStyle zomatoPrimaryButton({
     Color color = crimson,
+    Color foregroundColor = Colors.white,
     EdgeInsetsGeometry padding =
         const EdgeInsets.symmetric(horizontal: 22, vertical: 16),
     double radius = 18,
   }) {
     return ElevatedButton.styleFrom(
       backgroundColor: color,
-      foregroundColor: Colors.white,
+      foregroundColor: foregroundColor,
       elevation: 0,
       padding: padding,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(radius),
       ),
       textStyle: const TextStyle(
-        fontSize: 15,
-        fontWeight: FontWeight.w800,
+        fontSize: 14,
+        height: 1.05,
+        fontWeight: FontWeight.w900,
       ),
     ).copyWith(
       shadowColor: MaterialStatePropertyAll(color.withOpacity(0.25)),
@@ -118,7 +164,8 @@ class FoodFlowTheme {
         borderRadius: BorderRadius.circular(radius),
       ),
       textStyle: const TextStyle(
-        fontSize: 14,
+        fontSize: 13,
+        height: 1.05,
         fontWeight: FontWeight.w800,
       ),
     );

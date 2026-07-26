@@ -8,6 +8,7 @@ import 'user.dart';
 class Order {
   final int id;
   final String orderNumber;
+  final String serviceType;
   final int restaurantId;
   final int? customerId;
   final int? driverId;
@@ -28,6 +29,11 @@ class Order {
   String status;
   final String paymentMethod;
   final String paymentStatus;
+  final String? paymentSource;
+  final String? paymentGateway;
+  final String? paymentLinkId;
+  final DateTime? paidAt;
+  final PaymentAttempt? activePaymentAttempt;
   final String? deliveryPaymentMode;
   final double? cashCollectedAmount;
   final DateTime? cashCollectedAt;
@@ -42,6 +48,15 @@ class Order {
   final String? refundTransactionId;
   final DateTime createdAt;
   final DateTime? confirmedAt;
+  final DateTime? preparingAt;
+  final int? preparationTimeMinutes;
+  final DateTime? readyByAt;
+  final DateTime? readyAt;
+  final DateTime? reachedAt;
+  final int? readyCountdownSeconds;
+  final bool isPreparationDelayed;
+  final int preparationDelayMinutes;
+  final int? remainingPreparationMinutes;
   final DateTime? deliveredAt;
   final DateTime? cancelledAt;
   final int? restaurantRating;
@@ -52,6 +67,9 @@ class Order {
   final int driverAssignmentAttempts;
   final DateTime? driverAssignedAt;
   final DateTime? driverAcceptedAt;
+  final double? driverLat;
+  final double? driverLng;
+  final DateTime? driverLocationUpdatedAt;
   final Map<String, dynamic> eta;
 
   // Relations (loaded separately)
@@ -62,6 +80,7 @@ class Order {
   Order({
     required this.id,
     required this.orderNumber,
+    this.serviceType = 'food',
     required this.restaurantId,
     this.customerId,
     this.driverId,
@@ -82,6 +101,11 @@ class Order {
     required this.status,
     required this.paymentMethod,
     required this.paymentStatus,
+    this.paymentSource,
+    this.paymentGateway,
+    this.paymentLinkId,
+    this.paidAt,
+    this.activePaymentAttempt,
     this.deliveryPaymentMode,
     this.cashCollectedAmount,
     this.cashCollectedAt,
@@ -96,6 +120,15 @@ class Order {
     this.refundTransactionId,
     required this.createdAt,
     this.confirmedAt,
+    this.preparingAt,
+    this.preparationTimeMinutes,
+    this.readyByAt,
+    this.readyAt,
+    this.reachedAt,
+    this.readyCountdownSeconds,
+    this.isPreparationDelayed = false,
+    this.preparationDelayMinutes = 0,
+    this.remainingPreparationMinutes,
     this.deliveredAt,
     this.cancelledAt,
     this.restaurantRating,
@@ -106,6 +139,9 @@ class Order {
     this.driverAssignmentAttempts = 0,
     this.driverAssignedAt,
     this.driverAcceptedAt,
+    this.driverLat,
+    this.driverLng,
+    this.driverLocationUpdatedAt,
     this.eta = const {},
     this.restaurant,
     this.driver,
@@ -113,6 +149,9 @@ class Order {
   });
 
   factory Order.fromJson(Map<String, dynamic> json) {
+    final preparation = json['preparation'] is Map
+        ? Map<String, dynamic>.from(json['preparation'] as Map)
+        : const <String, dynamic>{};
     List<OrderItem> itemsList = [];
     if (json['items'] != null) {
       if (json['items'] is String) {
@@ -132,9 +171,18 @@ class Order {
       }
     }
 
+    final driverLocation = json['driver_location'] is Map
+        ? Map<String, dynamic>.from(json['driver_location'] as Map)
+        : const <String, dynamic>{};
+
     return Order(
       id: parseIntValue(json['id']),
       orderNumber: json['order_number'] ?? 'ORD${json['id']}',
+      serviceType: json['service_type']?.toString() ??
+          (json['restaurant'] is Map
+              ? ((json['restaurant'] as Map)['service_type']?.toString() ??
+                  'food')
+              : 'food'),
       restaurantId: parseIntValue(json['restaurant_id']),
       customerId: parseNullableInt(json['customer_id']),
       driverId: parseNullableInt(json['driver_id']),
@@ -162,6 +210,18 @@ class Order {
           .replaceAll(' ', '_'),
       paymentMethod: json['payment_method'] ?? 'cod',
       paymentStatus: json['payment_status'] ?? 'pending',
+      paymentSource: json['payment_source']?.toString(),
+      paymentGateway: json['payment_gateway']?.toString(),
+      paymentLinkId: json['payment_link_id']?.toString(),
+      paidAt: json['paid_at'] != null
+          ? DateTime.tryParse(json['paid_at'].toString())
+          : null,
+      activePaymentAttempt: PaymentAttempt.fromJsonOrNull(
+        json['active_payment_attempt'] ??
+            (json['payment_summary'] is Map
+                ? (json['payment_summary'] as Map)['active_attempt']
+                : null),
+      ),
       deliveryPaymentMode: json['delivery_payment_mode']?.toString(),
       cashCollectedAmount: parseNullableDouble(json['cash_collected_amount']),
       cashCollectedAt: json['cash_collected_at'] != null
@@ -185,6 +245,37 @@ class Order {
       confirmedAt: json['confirmed_at'] != null
           ? DateTime.parse(json['confirmed_at'])
           : null,
+      preparingAt: json['preparing_at'] != null
+          ? DateTime.tryParse(json['preparing_at'].toString())
+          : null,
+      preparationTimeMinutes: parseNullableInt(
+          json['preparation_time_minutes'] ??
+              preparation['preparation_time_minutes']),
+      readyByAt: (json['ready_by_at'] ?? preparation['ready_by_at']) != null
+          ? DateTime.tryParse(
+              (json['ready_by_at'] ?? preparation['ready_by_at']).toString())
+          : null,
+      readyAt: json['ready_at'] != null
+          ? DateTime.tryParse(json['ready_at'].toString())
+          : null,
+      reachedAt: json['reached_at'] != null
+          ? DateTime.tryParse(json['reached_at'].toString())
+          : null,
+      readyCountdownSeconds: parseNullableInt(
+        json['ready_countdown_seconds'] ??
+            preparation['ready_countdown_seconds'],
+      ),
+      isPreparationDelayed: json['is_preparation_delayed'] == true ||
+          preparation['is_preparation_delayed'] == true ||
+          json['is_preparation_delayed']?.toString() == '1' ||
+          preparation['is_preparation_delayed']?.toString() == '1',
+      preparationDelayMinutes: parseIntValue(
+          json['preparation_delay_minutes'] ??
+              preparation['preparation_delay_minutes'] ??
+              0),
+      remainingPreparationMinutes: parseNullableInt(
+          json['remaining_preparation_minutes'] ??
+              preparation['remaining_preparation_minutes']),
       deliveredAt: json['delivered_at'] != null
           ? DateTime.parse(json['delivered_at'])
           : null,
@@ -205,6 +296,21 @@ class Order {
           : null,
       driverAcceptedAt: json['driver_accepted_at'] != null
           ? DateTime.parse(json['driver_accepted_at'])
+          : null,
+      driverLat: parseNullableDouble(
+        driverLocation['lat'] ??
+            driverLocation['latitude'] ??
+            json['driver_lat'] ??
+            json['driver_latitude'],
+      ),
+      driverLng: parseNullableDouble(
+        driverLocation['lng'] ??
+            driverLocation['longitude'] ??
+            json['driver_lng'] ??
+            json['driver_longitude'],
+      ),
+      driverLocationUpdatedAt: driverLocation['updated_at'] != null
+          ? DateTime.tryParse(driverLocation['updated_at'].toString())
           : null,
       eta: json['eta'] is Map
           ? Map<String, dynamic>.from(json['eta'])
@@ -236,6 +342,11 @@ class Order {
   bool get isDelivered => status == 'delivered';
   bool get isCancelled => status == 'cancelled';
   bool get isTakeaway => orderType == 'takeaway';
+  bool get hasLiveDriverLocation =>
+      driverLat != null &&
+      driverLat != 0.0 &&
+      driverLng != null &&
+      driverLng != 0.0;
   bool get isDriverAssignmentPending =>
       !isTakeaway &&
       driverId != null &&
@@ -256,8 +367,7 @@ class Order {
   Duration get remainingCancellationTime =>
       customerCancellationClosesAt.difference(DateTime.now());
 
-  bool get canCancel =>
-      isPending && remainingCancellationTime.inSeconds > 0;
+  bool get canCancel => isPending && remainingCancellationTime.inSeconds > 0;
 
   bool get canForceCancel =>
       !isCancelled &&
@@ -265,6 +375,37 @@ class Order {
       ['confirmed', 'preparing', 'ready_for_pickup'].contains(status);
 
   bool get canRequestRefund => isDelivered && refundStatus == null;
+  bool get isPaymentPaid =>
+      paymentStatus == 'success' || paymentStatus == 'paid';
+  bool get isCodPayment => paymentMethod.toLowerCase() == 'cod';
+  bool get canPayOnlineNow =>
+      !isPaymentPaid && !isDelivered && !isCancelled && isCodPayment;
+  bool get hasActivePreparationTimer =>
+      (isConfirmed || isPreparing) && readyByAt != null;
+  Duration get readyTimeRemaining {
+    final target = readyByAt;
+    if (target == null || !(isConfirmed || isPreparing)) {
+      return Duration.zero;
+    }
+    final remaining = target.difference(DateTime.now());
+    return remaining.isNegative ? Duration.zero : remaining;
+  }
+
+  String get preparationStatusLabel {
+    if (isReadyForPickup) return 'Ready now';
+    if (isPreparationDelayed) {
+      final minutes =
+          preparationDelayMinutes <= 0 ? 1 : preparationDelayMinutes;
+      return 'Restaurant needs more time - delayed $minutes min';
+    }
+    if (!hasActivePreparationTimer) return statusText;
+    final remaining = readyTimeRemaining;
+    if (remaining.inSeconds <= 0) return 'Expected any moment';
+    final minutes = remaining.inMinutes;
+    if (minutes <= 0) return 'Ready in under 1 min';
+    return 'Ready in about $minutes min';
+  }
+
   int? get etaMinutes {
     final value = eta['eta_minutes'];
     if (value is int) return value;
@@ -296,7 +437,7 @@ class Order {
         case 'pending':
           return 'Order Placed';
         case 'confirmed':
-          return 'Restaurant Confirmed';
+          return 'Store Confirmed';
         case 'preparing':
           return 'Preparing Food';
         case 'ready_for_pickup':
@@ -342,7 +483,7 @@ class Order {
       case 'confirmed':
         return Colors.blue;
       case 'preparing':
-        return Colors.purple;
+        return const Color(0xFFFF6E00);
       case 'ready_for_pickup':
         return Colors.teal;
       case 'reached_pickup':
@@ -361,6 +502,53 @@ class Order {
   }
 }
 
+class PaymentAttempt {
+  final int id;
+  final String gateway;
+  final String source;
+  final String status;
+  final double amount;
+  final String currency;
+  final String? paymentLink;
+  final String? qrReference;
+  final DateTime? expiresAt;
+
+  const PaymentAttempt({
+    required this.id,
+    required this.gateway,
+    required this.source,
+    required this.status,
+    required this.amount,
+    required this.currency,
+    this.paymentLink,
+    this.qrReference,
+    this.expiresAt,
+  });
+
+  factory PaymentAttempt.fromJson(Map<String, dynamic> json) {
+    return PaymentAttempt(
+      id: parseIntValue(json['id']),
+      gateway: json['gateway']?.toString() ?? '',
+      source: json['source']?.toString() ?? '',
+      status: json['status']?.toString() ?? 'pending',
+      amount: parseDoubleValue(json['amount']),
+      currency: json['currency']?.toString() ?? 'INR',
+      paymentLink: json['payment_link']?.toString(),
+      qrReference: json['qr_reference']?.toString(),
+      expiresAt: json['expires_at'] != null
+          ? DateTime.tryParse(json['expires_at'].toString())
+          : null,
+    );
+  }
+
+  static PaymentAttempt? fromJsonOrNull(dynamic value) {
+    if (value is Map<String, dynamic>) return PaymentAttempt.fromJson(value);
+    if (value is Map)
+      return PaymentAttempt.fromJson(Map<String, dynamic>.from(value));
+    return null;
+  }
+}
+
 class OrderItem {
   final int? menuItemId;
   final String name;
@@ -368,6 +556,7 @@ class OrderItem {
   final double unitPrice;
   final double totalPrice;
   final double price; // Non-nullable, defaults to unitPrice
+  final String imageUrl;
 
   OrderItem({
     this.menuItemId,
@@ -376,10 +565,40 @@ class OrderItem {
     required this.unitPrice,
     required this.totalPrice,
     double? price,
+    this.imageUrl = '',
   }) : price = price ?? unitPrice;
 
   factory OrderItem.fromJson(Map<String, dynamic> json) {
     final unitPrice = parseDoubleValue(json['price'] ?? json['unit_price']);
+    final menuItem = json['menu_item'] is Map
+        ? Map<String, dynamic>.from(json['menu_item'] as Map)
+        : const <String, dynamic>{};
+    final imageUrl = _firstStringValue(json, const [
+      'image_url',
+      'image',
+      'thumbnail',
+      'thumbnail_url',
+      'item_image',
+      'item_image_url',
+      'menu_item_image',
+      'menu_item_image_url',
+      'menu_image_url',
+      'product_image_url',
+      'dish_image_url',
+    ]);
+    final nestedImageUrl = _firstStringValue(menuItem, const [
+      'image_url',
+      'image',
+      'thumbnail',
+      'thumbnail_url',
+      'item_image',
+      'item_image_url',
+      'menu_item_image',
+      'menu_item_image_url',
+      'menu_image_url',
+      'product_image_url',
+      'dish_image_url',
+    ]);
     return OrderItem(
       menuItemId: parseNullableInt(json['menu_item_id'] ?? json['id']),
       name: json['name'] ?? json['item_name'] ?? '',
@@ -387,7 +606,19 @@ class OrderItem {
       unitPrice: unitPrice,
       totalPrice: parseDoubleValue(json['total'] ?? json['total_price']),
       price: unitPrice,
+      imageUrl: imageUrl.isNotEmpty ? imageUrl : nestedImageUrl,
     );
+  }
+
+  static String _firstStringValue(
+      Map<String, dynamic> json, List<String> keys) {
+    for (final key in keys) {
+      final value = json[key];
+      if (value == null) continue;
+      final text = value.toString().trim();
+      if (text.isNotEmpty && text != 'null') return text;
+    }
+    return '';
   }
 
   Map<String, dynamic> toJson() {
@@ -397,6 +628,7 @@ class OrderItem {
       'quantity': quantity,
       'unit_price': unitPrice,
       'total_price': totalPrice,
+      'image_url': imageUrl,
     };
   }
 }

@@ -29,18 +29,9 @@ class PhoneNumberUtils {
 
     final hasCountryCode =
         countryDigits.isNotEmpty && digits.startsWith(countryDigits);
-    var localDigits = hasCountryCode
+    final localDigits = hasCountryCode
         ? digits.substring(countryDigits.length)
-        : digits.replaceFirst(RegExp(r'^0+'), '');
-
-    if (localDigits.startsWith('0')) {
-      localDigits = localDigits.replaceFirst(RegExp(r'^0+'), '');
-    }
-
-    if (selectedCountryCode == '+91' &&
-        !RegExp(r'^[6-9]\d{9}$').hasMatch(localDigits)) {
-      throw const FormatException(invalidMobileMessage);
-    }
+        : digits;
 
     if (localDigits.isEmpty) {
       throw const FormatException(invalidMobileMessage);
@@ -59,13 +50,17 @@ class PhoneNumberUtils {
     return result;
   }
 
-  static String? validateIndianMobile(String? value, {String? countryCode}) {
+  static String? validateMobile(String? value, {String? countryCode}) {
     try {
       normalizeMobile(value ?? '', countryCode: countryCode);
       return null;
     } on FormatException catch (error) {
       return error.message;
     }
+  }
+
+  static String? validateIndianMobile(String? value, {String? countryCode}) {
+    return validateMobile(value, countryCode: countryCode);
   }
 
   static String localMobile(

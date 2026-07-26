@@ -6,6 +6,8 @@ import '../../providers/auth_provider.dart';
 import '../../services/firebase_phone_auth_service.dart';
 import '../../utils/phone_number_utils.dart';
 
+import 'package:food_delivery_customer/utils/app_text.dart';
+
 class FirebasePhoneLoginScreen extends StatefulWidget {
   const FirebasePhoneLoginScreen({
     super.key,
@@ -21,7 +23,8 @@ class FirebasePhoneLoginScreen extends StatefulWidget {
   final String role;
 
   @override
-  State<FirebasePhoneLoginScreen> createState() => _FirebasePhoneLoginScreenState();
+  State<FirebasePhoneLoginScreen> createState() =>
+      _FirebasePhoneLoginScreenState();
 }
 
 class _FirebasePhoneLoginScreenState extends State<FirebasePhoneLoginScreen> {
@@ -60,7 +63,8 @@ class _FirebasePhoneLoginScreenState extends State<FirebasePhoneLoginScreen> {
 
   String _initialLocalNumber(String phone) {
     try {
-      return PhoneNumberUtils.localMobile(phone, countryCode: widget.countryCode);
+      return PhoneNumberUtils.localMobile(phone,
+          countryCode: widget.countryCode);
     } on FormatException {
       return PhoneNumberUtils.sanitizedDigits(phone);
     }
@@ -135,7 +139,8 @@ class _FirebasePhoneLoginScreenState extends State<FirebasePhoneLoginScreen> {
       if (!authProvider.canUseCurrentApp) {
         await authProvider.logout();
         if (!mounted) return;
-        _showMessage('Please login with a ${AppConfig.appRole} account.', isError: true);
+        _showMessage('Please login with a ${AppConfig.appRole} account.',
+            isError: true);
         return;
       }
 
@@ -154,7 +159,7 @@ class _FirebasePhoneLoginScreenState extends State<FirebasePhoneLoginScreen> {
   void _startResendCountdown() {
     Future.doWhile(() async {
       if (!mounted || _resendCountdown <= 0) return false;
-      await Future.delayed(const Duration(seconds: 1));
+      await Future.delayed(Duration(seconds: 1));
       if (!mounted) return false;
       setState(() {
         _resendCountdown -= 1;
@@ -201,7 +206,7 @@ class _FirebasePhoneLoginScreenState extends State<FirebasePhoneLoginScreen> {
       ),
       body: SafeArea(
         child: SingleChildScrollView(
-          padding: const EdgeInsets.all(24),
+          padding: EdgeInsets.all(24),
           child: Form(
             key: _formKey,
             child: Column(
@@ -209,24 +214,24 @@ class _FirebasePhoneLoginScreenState extends State<FirebasePhoneLoginScreen> {
               children: [
                 Text(
                   _otpSent ? 'Verify your phone' : 'Continue with phone',
-                  style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w700),
+                  style: TextStyle(fontSize: 28, fontWeight: FontWeight.w700),
                 ),
-                const SizedBox(height: 8),
+                SizedBox(height: 8),
                 Text(
                   _otpSent
                       ? 'Enter the 6-digit code sent to your mobile number.'
                       : 'We will verify your number with Firebase and then sign you in.',
-                  style: const TextStyle(color: Color(0xFF6B7280)),
+                  style: TextStyle(color: Color(0xFF6B7280)),
                 ),
-                const SizedBox(height: 24),
+                SizedBox(height: 24),
                 TextFormField(
                   controller: _phoneController,
                   enabled: !isLoading && !_otpSent,
                   keyboardType: TextInputType.phone,
                   decoration: InputDecoration(
-                    labelText: 'Mobile number',
+                    labelText: appText('Mobile number'),
                     prefixText: '${widget.countryCode} ',
-                    border: const OutlineInputBorder(),
+                    border: OutlineInputBorder(),
                   ),
                   validator: (value) {
                     return PhoneNumberUtils.validateIndianMobile(
@@ -236,21 +241,22 @@ class _FirebasePhoneLoginScreenState extends State<FirebasePhoneLoginScreen> {
                   },
                 ),
                 if (_otpSent) ...[
-                  const SizedBox(height: 16),
+                  SizedBox(height: 16),
                   TextFormField(
                     controller: _otpController,
                     enabled: !isLoading,
                     keyboardType: TextInputType.number,
                     maxLength: 6,
-                    decoration: const InputDecoration(
-                      labelText: 'OTP',
+                    decoration: InputDecoration(
+                      labelText: appText('OTP'),
                       border: OutlineInputBorder(),
                       counterText: '',
                     ),
                   ),
-                  const SizedBox(height: 8),
+                  SizedBox(height: 8),
                   TextButton(
-                    onPressed: isLoading || _resendCountdown > 0 ? null : _sendOtp,
+                    onPressed:
+                        isLoading || _resendCountdown > 0 ? null : _sendOtp,
                     child: Text(
                       _resendCountdown > 0
                           ? 'Resend OTP in ${_resendCountdown}s'
@@ -259,17 +265,18 @@ class _FirebasePhoneLoginScreenState extends State<FirebasePhoneLoginScreen> {
                   ),
                 ],
                 if (_errorMessage != null) ...[
-                  const SizedBox(height: 12),
+                  SizedBox(height: 12),
                   Text(
                     _errorMessage!,
-                    style: const TextStyle(color: Colors.red),
+                    style: TextStyle(color: Colors.red),
                   ),
                 ],
-                const SizedBox(height: 24),
+                SizedBox(height: 24),
                 ElevatedButton(
-                  onPressed: isLoading ? null : (_otpSent ? _verifyOtp : _sendOtp),
+                  onPressed:
+                      isLoading ? null : (_otpSent ? _verifyOtp : _sendOtp),
                   child: Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    padding: EdgeInsets.symmetric(vertical: 14),
                     child: Text(_otpSent ? 'Verify OTP' : 'Send OTP'),
                   ),
                 ),

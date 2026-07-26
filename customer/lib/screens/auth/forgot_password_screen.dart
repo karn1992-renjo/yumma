@@ -8,6 +8,8 @@ import '../../theme/brand_palette.dart';
 import '../../theme/foodflow_theme.dart';
 import '../../widgets/auth/brand_mark.dart';
 
+import 'package:food_delivery_customer/utils/app_text.dart';
+
 class ForgotPasswordScreen extends StatefulWidget {
   const ForgotPasswordScreen({super.key});
 
@@ -77,12 +79,12 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
         child: Consumer<AuthProvider>(
           builder: (context, auth, _) {
             return Padding(
-              padding: const EdgeInsets.fromLTRB(28, 20, 28, 20),
+              padding: EdgeInsets.fromLTRB(28, 20, 28, 20),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   BrandMark(branding: _branding, size: 30),
-                  const SizedBox(height: 30),
+                  SizedBox(height: 30),
                   Expanded(
                     child: SingleChildScrollView(
                       child: Form(
@@ -90,8 +92,8 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            const Text(
-                              'Forgot\nPassword',
+                            Text(
+                              appText('Forgot\nPassword'),
                               style: TextStyle(
                                 fontSize: 44,
                                 height: 0.98,
@@ -99,29 +101,30 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                                 color: Color(0xFF423E3E),
                               ),
                             ),
-                            const SizedBox(height: 18),
-                            const Text(
-                              'Enter your email address and we will send you a password reset link.',
+                            SizedBox(height: 18),
+                            Text(
+                              appText(
+                                  'Enter your email address and we will send you a password reset link.'),
                               style: TextStyle(
                                 color: Color(0xFF8A817C),
                                 fontSize: 14,
                                 height: 1.55,
                               ),
                             ),
-                            const SizedBox(height: 28),
+                            SizedBox(height: 28),
                             TextFormField(
                               controller: _emailController,
                               keyboardType: TextInputType.emailAddress,
                               decoration: InputDecoration(
-                                labelText: 'Email',
-                                hintText: 'Enter your email address',
+                                labelText: appText('Email'),
+                                hintText: appText('Enter your email address'),
                                 floatingLabelBehavior:
                                     FloatingLabelBehavior.always,
-                                contentPadding: const EdgeInsets.only(
+                                contentPadding: EdgeInsets.only(
                                   top: 4,
                                   bottom: 12,
                                 ),
-                                enabledBorder: const UnderlineInputBorder(
+                                enabledBorder: UnderlineInputBorder(
                                   borderSide: BorderSide(
                                     color: Color(0xFFB3ACA7),
                                   ),
@@ -148,7 +151,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                       ),
                     ),
                   ),
-                  const SizedBox(height: 18),
+                  SizedBox(height: 18),
                   SizedBox(
                     width: double.infinity,
                     child: ElevatedButton(
@@ -156,13 +159,13 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                       style: ElevatedButton.styleFrom(
                         backgroundColor: _palette.primary,
                         foregroundColor: Colors.white,
-                        minimumSize: const Size.fromHeight(54),
+                        minimumSize: Size.fromHeight(54),
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(999),
                         ),
                       ),
                       child: auth.isLoading
-                          ? const SizedBox(
+                          ? SizedBox(
                               width: 18,
                               height: 18,
                               child: CircularProgressIndicator(
@@ -170,15 +173,15 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                                 color: Colors.white,
                               ),
                             )
-                          : const Text('Send reset link'),
+                          : Text(appText('Send reset link')),
                     ),
                   ),
-                  const SizedBox(height: 14),
+                  SizedBox(height: 14),
                   Center(
                     child: TextButton(
                       onPressed: () => Navigator.pop(context),
                       child: Text(
-                        'Back to sign in',
+                        appText('Back to sign in'),
                         style: TextStyle(
                           color: _palette.primary,
                           fontWeight: FontWeight.w700,
