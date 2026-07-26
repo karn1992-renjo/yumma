@@ -134,7 +134,14 @@ class AppServiceProvider extends ServiceProvider
         Config::set('broadcasting.connections.pusher.key', $pusherConfig['key']);
         Config::set('broadcasting.connections.pusher.secret', $pusherConfig['secret']);
         Config::set('broadcasting.connections.pusher.options.cluster', $pusherConfig['cluster']);
-        Config::set('broadcasting.connections.pusher.options.host', $pusherConfig['host'] ?: 'api-' . ($pusherConfig['cluster'] ?: 'mt1') . '.pusher.com');
+        $pusherHost = $pusherConfig['host'] ?: 'api-' . ($pusherConfig['cluster'] ?: 'mt1') . '.pusher.com';
+        $pusherHost = preg_replace('#^https?://#', '', (string) $pusherHost);
+        $pusherHost = explode('/', $pusherHost)[0] ?: 'api-' . ($pusherConfig['cluster'] ?: 'mt1') . '.pusher.com';
+        if (str_starts_with($pusherHost, 'ws-')) {
+            $pusherHost = 'api-' . substr($pusherHost, 3);
+        }
+
+        Config::set('broadcasting.connections.pusher.options.host', $pusherHost);
         Config::set('broadcasting.connections.pusher.options.port', (int) ($pusherConfig['port'] ?: 443));
         Config::set('broadcasting.connections.pusher.options.scheme', $pusherConfig['scheme'] ?: 'https');
         Config::set('broadcasting.connections.pusher.options.encrypted', ($pusherConfig['scheme'] ?: 'https') === 'https');

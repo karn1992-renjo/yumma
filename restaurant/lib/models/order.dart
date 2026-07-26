@@ -1,5 +1,6 @@
 // lib/models/order.dart
 import 'dart:convert';
+import 'dart:math';
 
 import 'package:flutter/material.dart';
 
@@ -29,6 +30,12 @@ class Order {
   final double tax;
   final double discount;
   final double total;
+  final double restaurantEarning;
+  final double platformCommission;
+  final double gstOnCommission;
+  final double paymentGatewayFee;
+  final String restaurantCommissionType;
+  final double restaurantCommissionValue;
   final String status;
   final String paymentMethod;
   final String paymentStatus;
@@ -43,6 +50,12 @@ class Order {
   final double? refundAmount;
   final DateTime createdAt;
   final DateTime? confirmedAt;
+  final int? preparationTimeMinutes;
+  final DateTime? readyByAt;
+  final int? readyCountdownSeconds;
+  final bool isPreparationDelayed;
+  final int preparationDelayMinutes;
+  final int? remainingPreparationMinutes;
   final DateTime? deliveredAt;
   final DateTime? cancelledAt;
   final int? restaurantRating;
@@ -78,6 +91,12 @@ class Order {
     required this.tax,
     required this.discount,
     required this.total,
+    this.restaurantEarning = 0,
+    this.platformCommission = 0,
+    this.gstOnCommission = 0,
+    this.paymentGatewayFee = 0,
+    this.restaurantCommissionType = 'percentage',
+    this.restaurantCommissionValue = 0,
     required this.status,
     required this.paymentMethod,
     required this.paymentStatus,
@@ -92,6 +111,12 @@ class Order {
     this.refundAmount,
     required this.createdAt,
     this.confirmedAt,
+    this.preparationTimeMinutes,
+    this.readyByAt,
+    this.readyCountdownSeconds,
+    this.isPreparationDelayed = false,
+    this.preparationDelayMinutes = 0,
+    this.remainingPreparationMinutes,
     this.deliveredAt,
     this.cancelledAt,
     this.restaurantRating,
@@ -122,8 +147,7 @@ class Order {
 
     return Order(
       id: parseIntValue(source['id']),
-      orderNumber:
-          _firstNonEmptyString([
+      orderNumber: _firstNonEmptyString([
             source['order_number'],
             source['order_no'],
             source['number'],
@@ -139,15 +163,13 @@ class Order {
       branchId: parseNullableInt(source['branch_id'] ?? branch?['id']),
       branch: branch != null ? BranchInfo.fromJson(branch) : null,
       orderType: source['order_type']?.toString() ?? 'delivery',
-      customerName:
-          _firstNonEmptyString([
+      customerName: _firstNonEmptyString([
             source['customer_name'],
             customer?['name'],
             customer?['full_name'],
           ]) ??
           'Guest',
-      customerPhone:
-          _firstNonEmptyString([
+      customerPhone: _firstNonEmptyString([
             source['customer_phone'],
             customer?['phone'],
             customer?['mobile'],
@@ -178,12 +200,29 @@ class Order {
       total: parseDoubleValue(
         source['total'] ?? source['grand_total'] ?? source['amount'],
       ),
+      restaurantEarning: parseDoubleValue(
+        source['restaurant_earning'] ??
+            source['restaurant_payout'] ??
+            source['payout_amount'] ??
+            source['net_amount'],
+      ),
+      platformCommission: parseDoubleValue(
+        source['platform_commission'] ?? source['admin_commission'],
+      ),
+      gstOnCommission: parseDoubleValue(source['gst_on_commission']),
+      paymentGatewayFee: parseDoubleValue(source['payment_gateway_fee']),
+      restaurantCommissionType:
+          source['restaurant_commission_type']?.toString() ?? 'percentage',
+      restaurantCommissionValue: parseDoubleValue(
+        source['restaurant_commission_value'] ??
+            source['commission_value'] ??
+            source['commission_percentage'],
+      ),
       status: _normalizeStatus(
         _firstNonEmptyString([source['status'], source['order_status']]) ??
             'pending',
       ),
-      paymentMethod:
-          _firstNonEmptyString([
+      paymentMethod: _firstNonEmptyString([
             source['payment_method'],
             source['payment_type'],
           ]) ??
@@ -206,6 +245,17 @@ class Order {
       refundAmount: parseNullableDouble(source['refund_amount']),
       createdAt: _parseDate(source['created_at']) ?? DateTime.now(),
       confirmedAt: _parseDate(source['confirmed_at']),
+      preparationTimeMinutes:
+          parseNullableInt(source['preparation_time_minutes']),
+      readyByAt: _parseDate(source['ready_by_at']),
+      readyCountdownSeconds:
+          parseNullableInt(source['ready_countdown_seconds']),
+      isPreparationDelayed: source['is_preparation_delayed'] == true ||
+          source['is_preparation_delayed']?.toString() == '1',
+      preparationDelayMinutes:
+          parseIntValue(source['preparation_delay_minutes'] ?? 0),
+      remainingPreparationMinutes:
+          parseNullableInt(source['remaining_preparation_minutes']),
       deliveredAt: _parseDate(source['delivered_at']),
       cancelledAt: _parseDate(source['cancelled_at']),
       restaurantRating: parseNullableInt(source['restaurant_rating']),
@@ -245,6 +295,34 @@ class Order {
   bool get canRestaurantStartPreparing => isConfirmed;
   bool get canRestaurantMarkReady => isPreparing;
   bool get canRestaurantVerifyTakeawayPickup => isTakeaway && isReadyForPickup;
+  bool get hasActivePreparationTimer =>
+      (isConfirmed || isPreparing) && readyByAt != null;
+
+  Duration get readyTimeRemaining {
+    final target = readyByAt;
+    if (target == null || !(isConfirmed || isPreparing)) {
+      return Duration.zero;
+    }
+    final remaining = target.difference(DateTime.now());
+    return remaining.isNegative ? Duration.zero : remaining;
+  }
+
+  String get readyTimeLabel {
+    if (isReadyForPickup) return 'Ready now';
+    if (isPreparationDelayed) {
+      return 'Delayed ${preparationDelayMinutes <= 0 ? 1 : preparationDelayMinutes} min';
+    }
+    final remaining = readyTimeRemaining;
+    if (remaining.inSeconds <= 0) return 'Due now';
+    final minutes = remaining.inMinutes;
+    final seconds = remaining.inSeconds.remainder(60);
+    if (minutes >= 60) {
+      final hours = minutes ~/ 60;
+      final mins = minutes.remainder(60);
+      return '${hours}h ${mins}m';
+    }
+    return '${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
+  }
 
   bool get isDriverAssignmentPending =>
       driverId != null &&
@@ -403,21 +481,33 @@ class Order {
 class OrderItem {
   final int? menuItemId;
   final String name;
+  final String imageUrl;
+  final List<String> images;
   final int quantity;
   final double unitPrice;
   final double totalPrice;
   final double price;
   final SelectedOrderOption? selectedVariant;
   final List<SelectedOrderOption> selectedAddOns;
+  final bool isPromotionReward;
+  final String? promotionTitle;
+  final int promotionFreeQuantity;
+  final int promotionPaidQuantity;
 
   OrderItem({
     this.menuItemId,
     required this.name,
+    this.imageUrl = '',
+    this.images = const [],
     required this.quantity,
     required this.unitPrice,
     required this.totalPrice,
     this.selectedVariant,
     this.selectedAddOns = const [],
+    this.isPromotionReward = false,
+    this.promotionTitle,
+    this.promotionFreeQuantity = 0,
+    this.promotionPaidQuantity = 0,
     double? price,
   }) : price = price ?? unitPrice;
 
@@ -429,25 +519,61 @@ class OrderItem {
       json['total'] ?? json['total_price'] ?? json['subtotal'] ?? unitPrice,
     );
 
+    final images = _parseImages(json);
+    final selectedVariant = SelectedOrderOption.fromJsonOrNull(
+      json['selected_variant'] ?? json['variant'],
+    );
+    final customFields = selectedVariant?.customFields ?? const {};
+    final specialInstructions = json['special_instructions']?.toString().trim();
+    final tags = json['tags'];
+    final hasPromotionTag = tags is List &&
+        tags.any((tag) => tag?.toString().trim() == 'promotion_reward');
+    final lineType = Order._firstNonEmptyString([
+      json['line_type'],
+      customFields['line_type'],
+    ]);
+    final isPromotionReward = lineType == 'promotion_reward' ||
+        hasPromotionTag ||
+        (specialInstructions?.toLowerCase().contains('promotion reward') ??
+            false);
+    final promotionTitle = Order._firstNonEmptyString([
+      json['promotion_title'],
+      customFields['promotion_title'],
+      isPromotionReward ? specialInstructions : null,
+    ]);
+    final promotionFreeQuantity = parseIntValue(
+      json['promotion_free_quantity'] ??
+          customFields['promotion_free_quantity'] ??
+          0,
+    );
+    final promotionPaidQuantity = parseIntValue(
+      json['promotion_paid_quantity'] ??
+          customFields['promotion_paid_quantity'] ??
+          max(0, parseIntValue(json['quantity'] ?? 1) - promotionFreeQuantity),
+    );
+
     return OrderItem(
       menuItemId: parseNullableInt(json['menu_item_id'] ?? json['id']),
-      name:
-          Order._firstNonEmptyString([
+      name: Order._firstNonEmptyString([
             json['name'],
             json['item_name'],
             json['menu_name'],
             _mapName(json['menu_item']),
           ]) ??
           'Item',
+      imageUrl: images.isNotEmpty ? images.first : '',
+      images: images,
       quantity: parseIntValue(json['quantity'] ?? 1),
       unitPrice: unitPrice,
       totalPrice: totalPrice,
-      selectedVariant: SelectedOrderOption.fromJsonOrNull(
-        json['selected_variant'] ?? json['variant'],
-      ),
+      selectedVariant: selectedVariant,
       selectedAddOns: SelectedOrderOption.listFromJson(
         json['selected_add_ons'] ?? json['add_ons'] ?? json['addons'],
       ),
+      isPromotionReward: isPromotionReward,
+      promotionTitle: promotionTitle,
+      promotionFreeQuantity: promotionFreeQuantity,
+      promotionPaidQuantity: promotionPaidQuantity,
       price: unitPrice,
     );
   }
@@ -456,22 +582,33 @@ class OrderItem {
     return {
       'menu_item_id': menuItemId,
       'name': name,
+      'image_url': imageUrl,
+      'images': images,
       'quantity': quantity,
       'unit_price': unitPrice,
       'total_price': totalPrice,
       'selected_variant': selectedVariant?.toJson(),
-      'selected_add_ons': selectedAddOns
-          .map((option) => option.toJson())
-          .toList(),
+      'selected_add_ons':
+          selectedAddOns.map((option) => option.toJson()).toList(),
+      'line_type': isPromotionReward ? 'promotion_reward' : null,
+      'promotion_title': promotionTitle,
+      'promotion_free_quantity': promotionFreeQuantity,
+      'promotion_paid_quantity': promotionPaidQuantity,
     };
   }
 
+  bool get hasPromotionFreeUnits => promotionFreeQuantity > 0;
+
   bool get hasCustomizations =>
-      selectedVariant != null || selectedAddOns.isNotEmpty;
+      !isPromotionReward &&
+      (selectedAddOns.isNotEmpty ||
+          (selectedVariant != null &&
+              selectedVariant!.name.trim() != 'Promotion info'));
 
   String get customizationSummary {
     final parts = <String>[];
-    if (selectedVariant != null) {
+    if (selectedVariant != null &&
+        selectedVariant!.name.trim() != 'Promotion info') {
       parts.add(selectedVariant!.name);
     }
     parts.addAll(selectedAddOns.map((option) => option.name));
@@ -483,6 +620,54 @@ class OrderItem {
       return value['name']?.toString();
     }
     return null;
+  }
+
+  static List<String> _parseImages(Map<String, dynamic> json) {
+    final images = <String>[];
+    void addImage(dynamic value) {
+      final text = value?.toString().trim();
+      if (text != null && text.isNotEmpty && text.toLowerCase() != 'null') {
+        images.add(text);
+      }
+    }
+
+    addImage(json['image_url']);
+    addImage(json['image']);
+    addImage(json['thumbnail_url']);
+
+    final rawImages = json['images'];
+    if (rawImages is List) {
+      for (final image in rawImages) {
+        addImage(image);
+      }
+    } else if (rawImages is String) {
+      try {
+        final decoded = jsonDecode(rawImages);
+        if (decoded is List) {
+          for (final image in decoded) {
+            addImage(image);
+          }
+        } else {
+          addImage(rawImages);
+        }
+      } catch (_) {
+        addImage(rawImages);
+      }
+    }
+
+    final menuItem = json['menu_item'];
+    if (menuItem is Map) {
+      addImage(menuItem['image_url']);
+      addImage(menuItem['image']);
+      final nestedImages = menuItem['images'];
+      if (nestedImages is List) {
+        for (final image in nestedImages) {
+          addImage(image);
+        }
+      }
+    }
+
+    return images.toSet().toList();
   }
 }
 
@@ -540,10 +725,10 @@ class SelectedOrderOption {
   }
 
   Map<String, dynamic> toJson() => {
-    'name': name,
-    'price': price,
-    'custom_fields': customFields,
-  };
+        'name': name,
+        'price': price,
+        'custom_fields': customFields,
+      };
 
   static Map<String, String> _parseCustomFields(dynamic value) {
     if (value is! Map) return const {};

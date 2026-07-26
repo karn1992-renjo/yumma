@@ -84,6 +84,15 @@ class _ScratchCardsScreenState extends State<ScratchCardsScreen> {
 
   Future<void> _openScratchCard(ScratchCard card) async {
     if (card.isExpired) return;
+    if (card.isRevealLocked) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(card.revealLockedReason ??
+              'Scratch card reward can be claimed after delivery.'),
+        ),
+      );
+      return;
+    }
     final updated = await showScratchCardRevealDialog(context, card: card);
     if (!mounted || updated == null) return;
     setState(() {
@@ -1475,7 +1484,10 @@ class _ScratchCardTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final disabled = card.isExpired;
+    final disabled = card.isExpired || card.isRevealLocked;
+    final statusLabel = card.isRevealLocked
+        ? (card.revealLockedReason ?? 'Available after order delivery')
+        : ScratchRewardText.expiresLabel(card);
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: FoodFlowTheme.surface(radius: 18),
@@ -1501,7 +1513,7 @@ class _ScratchCardTile extends StatelessWidget {
                     const SizedBox(width: 5),
                     Expanded(
                       child: Text(
-                        ScratchRewardText.expiresLabel(card),
+                        statusLabel,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
@@ -1535,7 +1547,11 @@ class _ScratchCardTile extends StatelessWidget {
                   ),
                 ),
                 child: Text(
-                  card.isRevealed ? 'View Reward' : 'Scratch Now',
+                  card.isRevealed
+                      ? 'View Reward'
+                      : (card.isRevealLocked
+                          ? 'After Delivery'
+                          : 'Scratch Now'),
                   style: const TextStyle(
                     fontSize: 12,
                     fontWeight: FontWeight.w900,

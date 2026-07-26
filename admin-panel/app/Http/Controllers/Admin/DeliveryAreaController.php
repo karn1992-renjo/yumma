@@ -67,6 +67,8 @@ class DeliveryAreaController extends Controller
                 'area_type' => 'required|in:circle,polygon',
                 'max_daily_bookings' => 'required|integer|min:0',
                 'is_active' => 'sometimes|boolean',
+                'free_delivery_enabled' => 'sometimes|boolean',
+                'free_delivery_threshold' => 'nullable|required_if:free_delivery_enabled,1|numeric|min:0',
                 'polygon_coordinates' => 'required',
             ]);
             
@@ -85,6 +87,8 @@ class DeliveryAreaController extends Controller
                 'area_type' => 'polygon',
                 'max_daily_bookings' => $validated['max_daily_bookings'],
                 'is_active' => $request->boolean('is_active'),
+                'free_delivery_enabled' => $request->boolean('free_delivery_enabled'),
+                'free_delivery_threshold' => $validated['free_delivery_threshold'] ?? null,
                 'polygon_coordinates' => json_encode($coordinates),
                 'latitude' => $center['lat'],
                 'longitude' => $center['lng'],
@@ -100,6 +104,8 @@ class DeliveryAreaController extends Controller
                 'radius_km' => 'required|numeric|min:0.1|max:200',
                 'max_daily_bookings' => 'required|integer|min:0',
                 'is_active' => 'sometimes|boolean',
+                'free_delivery_enabled' => 'sometimes|boolean',
+                'free_delivery_threshold' => 'nullable|required_if:free_delivery_enabled,1|numeric|min:0',
             ]);
             
             $data = [
@@ -108,6 +114,8 @@ class DeliveryAreaController extends Controller
                 'area_type' => 'circle',
                 'max_daily_bookings' => $validated['max_daily_bookings'],
                 'is_active' => $request->boolean('is_active'),
+                'free_delivery_enabled' => $request->boolean('free_delivery_enabled'),
+                'free_delivery_threshold' => $validated['free_delivery_threshold'] ?? null,
                 'latitude' => $validated['latitude'],
                 'longitude' => $validated['longitude'],
                 'radius_km' => $validated['radius_km'],
@@ -135,6 +143,8 @@ class DeliveryAreaController extends Controller
                 'area_type' => 'required|in:circle,polygon',
                 'max_daily_bookings' => 'required|integer|min:0',
                 'is_active' => 'sometimes|boolean',
+                'free_delivery_enabled' => 'sometimes|boolean',
+                'free_delivery_threshold' => 'nullable|required_if:free_delivery_enabled,1|numeric|min:0',
                 'polygon_coordinates' => 'required',
             ]);
             
@@ -153,6 +163,8 @@ class DeliveryAreaController extends Controller
                 'area_type' => 'polygon',
                 'max_daily_bookings' => $validated['max_daily_bookings'],
                 'is_active' => $request->boolean('is_active'),
+                'free_delivery_enabled' => $request->boolean('free_delivery_enabled'),
+                'free_delivery_threshold' => $validated['free_delivery_threshold'] ?? null,
                 'polygon_coordinates' => json_encode($coordinates),
                 'latitude' => $center['lat'],
                 'longitude' => $center['lng'],
@@ -168,6 +180,8 @@ class DeliveryAreaController extends Controller
                 'radius_km' => 'required|numeric|min:0.1|max:200',
                 'max_daily_bookings' => 'required|integer|min:0',
                 'is_active' => 'sometimes|boolean',
+                'free_delivery_enabled' => 'sometimes|boolean',
+                'free_delivery_threshold' => 'nullable|required_if:free_delivery_enabled,1|numeric|min:0',
             ]);
             
             $data = [
@@ -176,6 +190,8 @@ class DeliveryAreaController extends Controller
                 'area_type' => 'circle',
                 'max_daily_bookings' => $validated['max_daily_bookings'],
                 'is_active' => $request->boolean('is_active'),
+                'free_delivery_enabled' => $request->boolean('free_delivery_enabled'),
+                'free_delivery_threshold' => $validated['free_delivery_threshold'] ?? null,
                 'latitude' => $validated['latitude'],
                 'longitude' => $validated['longitude'],
                 'radius_km' => $validated['radius_km'],

@@ -1,4 +1,4 @@
-package com.adgraph.vendor
+package com.adgraph.yumma_vendor
 
 import android.Manifest
 import android.bluetooth.BluetoothAdapter
@@ -33,11 +33,11 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
 class MainActivity : FlutterActivity() {
-    private val audioChannelName = "com.adgraph.vendor/order_audio"
-    private val alertChannelName = "com.adgraph.vendor/order_alerts"
-    private val configChannelName = "com.adgraph.vendor/app_config"
+    private val audioChannelName = "com.adgraph.yumma_vendor/order_audio"
+    private val alertChannelName = "com.adgraph.yumma_vendor/order_alerts"
+    private val configChannelName = "com.adgraph.yumma_vendor/app_config"
     private val printerDiscoveryChannelName =
-        "com.adgraph.vendor/printer_discovery"
+        "com.adgraph.yumma_vendor/printer_discovery"
     private val bluetoothPermissionRequestCode = 7041
     private var previousRingerMode: Int? = null
     private var previousAudioMode: Int? = null
@@ -104,6 +104,9 @@ class MainActivity : FlutterActivity() {
                 "requestBatteryOptimizationExemption" -> {
                     requestBatteryOptimizationExemption()
                     result.success(true)
+                }
+                "isIgnoringBatteryOptimizations" -> {
+                    result.success(isIgnoringBatteryOptimizations())
                 }
                 "openAppNotificationSettings" -> {
                     openAppNotificationSettings()
@@ -191,10 +194,14 @@ class MainActivity : FlutterActivity() {
         startActivity(intent)
     }
 
-    private fun requestBatteryOptimizationExemption() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return
+    private fun isIgnoringBatteryOptimizations(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return true
         val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
-        if (powerManager.isIgnoringBatteryOptimizations(packageName)) return
+        return powerManager.isIgnoringBatteryOptimizations(packageName)
+    }
+
+    private fun requestBatteryOptimizationExemption() {
+        if (isIgnoringBatteryOptimizations()) return
         val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
             .setData(Uri.parse("package:$packageName"))
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)

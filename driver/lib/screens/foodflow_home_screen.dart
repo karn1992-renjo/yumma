@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import '../widgets/foodflow_restaurant_card.dart';
 
-class FoodFlowHomeScreen extends StatelessWidget {
-  const FoodFlowHomeScreen({super.key});
+class RenjoHomeScreen extends StatelessWidget {
+  const RenjoHomeScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -27,7 +27,7 @@ class FoodFlowHomeScreen extends StatelessWidget {
                             children: const [
                               Text(
                                 'Home',
-                                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+                                style: TextStyle(fontWeight: FontWeight.w800, fontSize: 18),
                               ),
                               Icon(Icons.keyboard_arrow_down),
                             ],
@@ -65,7 +65,7 @@ class FoodFlowHomeScreen extends StatelessWidget {
                 ),
                 child: TextField(
                   decoration: InputDecoration(
-                    hintText: 'Search for restaurant, item or more',
+                    hintText: 'Search for store, item or more',
                     prefixIcon: const Icon(Icons.search, color: Colors.grey),
                     suffixIcon: const Icon(Icons.mic, color: Color(0xFF0E9F6E)),
                     border: InputBorder.none,
@@ -102,7 +102,7 @@ class FoodFlowHomeScreen extends StatelessWidget {
                 padding: EdgeInsets.symmetric(horizontal: 16.0),
                 child: Text(
                   "What's on your mind?",
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
                 ),
               ),
             ),
@@ -144,15 +144,15 @@ class FoodFlowHomeScreen extends StatelessWidget {
               child: Padding(
                 padding: EdgeInsets.symmetric(horizontal: 16.0, vertical: 8),
                 child: Text(
-                  "85 restaurants to explore",
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  "85 stores to explore",
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
                 ),
               ),
             ),
 
             SliverList(
               delegate: SliverChildBuilderDelegate(
-                (context, index) => const FoodFlowRestaurantCard(
+                (context, index) => const RenjoRestaurantCard(
                   name: "The Gourmet Kitchen",
                   cuisine: "North Indian, Chinese",
                   rating: "4.2",

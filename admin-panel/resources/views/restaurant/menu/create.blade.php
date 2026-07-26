@@ -173,6 +173,24 @@
                                 <input type="text" name="name" class="form-control @error('name') is-invalid @enderror" value="{{ old('name') }}" placeholder="e.g., Butter Chicken" required>
                                 @error('name')<div class="invalid-feedback">{{ $message }}</div>@enderror
                             </div>
+                            <div class="col-12">
+                                <label class="form-label fw-semibold">Optional Global Menu Link</label>
+                                <select name="master_menu_item_id" class="form-select @error('master_menu_item_id') is-invalid @enderror">
+                                    <option value="">No global item link</option>
+                                    @foreach($globalMenuItems as $globalItem)
+                                        <option value="{{ $globalItem->id }}" {{ old('master_menu_item_id') == $globalItem->id ? 'selected' : '' }}>
+                                            {{ $globalItem->name }}
+                                            @if($globalItem->subcategory_name)
+                                                - {{ $globalItem->subcategory_name }}
+                                            @elseif($globalItem->category_name)
+                                                - {{ $globalItem->category_name }}
+                                            @endif
+                                            ({{ $globalItem->diet_label }})
+                                        </option>
+                                    @endforeach
+                                </select>
+                                @error('master_menu_item_id')<div class="invalid-feedback">{{ $message }}</div>@enderror
+                            </div>
                             <div class="col-md-6">
                                 <label class="form-label fw-semibold">Global Category</label>
                                 <select name="global_category_id" class="form-select" data-custom-global-category>

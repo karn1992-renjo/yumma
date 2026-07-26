@@ -1,135 +1,173 @@
 @extends('layouts.admin')
+
 @php
-    $currencySymbol = App\Models\AppSetting::getValue('currency_symbol', '?');
+    $currencySymbol = App\Models\AppSetting::sanitizedCurrencySymbol();
+    $currencyDecimals = App\Models\AppSetting::currencyDecimals();
+    $money = fn ($value) => $currencySymbol . number_format((float) $value, $currencyDecimals);
     $schedule = $restaurant->getFullWeekSchedule();
+    $statusChip = $restaurant->isOpenNow() ? ['Open now', 'success', 'store'] : ['Closed now', 'neutral', 'store-slash'];
+    $verificationChip = $restaurant->is_verified ? ['Approved', 'success', 'circle-check'] : ['Pending', 'warning', 'clock'];
+    $statTiles = [
+        ['label' => 'Total Orders', 'value' => number_format($totalOrders), 'icon' => 'receipt', 'tone' => '#8b5cf6'],
+        ['label' => 'Delivered Revenue', 'value' => $money($totalRevenue), 'icon' => 'indian-rupee-sign', 'tone' => '#16a34a'],
+        ['label' => 'Menu Items', 'value' => number_format($totalMenuItems), 'icon' => 'utensils', 'tone' => '#3b82f6'],
+        ['label' => 'Average Rating', 'value' => number_format($averageRating, 1), 'icon' => 'star', 'tone' => '#f59e0b'],
+    ];
 @endphp
 
 @section('title', 'Branch Restaurant Details')
 
 @section('content')
-<div class="page-header d-flex justify-content-between align-items-center flex-wrap gap-3">
-    <div>
-        <h1>{{ $restaurant->name }}</h1>
-        <p>{{ $branch->name }} restaurant details, account, location, timing, and order summary.</p>
-    </div>
-    <div class="d-flex gap-2">
-        @if(($capabilities['restaurants_edit'] ?? false) && ! $restaurant->is_verified)
-            <form action="{{ route('branch.restaurants.approve', $restaurant) }}" method="POST">
-                @csrf
-                <button class="btn btn-success"><i class="fas fa-check me-2"></i> Approve</button>
-            </form>
-        @endif
-        @if($capabilities['restaurants_edit'] ?? false)
-            <a href="{{ route('branch.restaurants.edit', $restaurant) }}" class="btn btn-primary">
-                <i class="fas fa-pen me-2"></i> Edit
+<div class="restaurant-page-shell">
+    <section class="restaurant-page-hero">
+        <div>
+            <h1 class="restaurant-page-title">{{ $restaurant->name }}</h1>
+            <div class="restaurant-page-subtitle">{{ $branch->name }} restaurant profile, location, owner account and order summary.</div>
+            <div class="d-flex flex-wrap gap-2 mt-2">
+                <span class="restaurant-chip {{ $statusChip[1] }}"><i class="fas fa-{{ $statusChip[2] }}"></i>{{ $statusChip[0] }}</span>
+                <span class="restaurant-chip {{ $verificationChip[1] }}"><i class="fas fa-{{ $verificationChip[2] }}"></i>{{ $verificationChip[0] }}</span>
+                <span class="restaurant-chip neutral"><i class="fas fa-truck-fast"></i>{{ ucfirst(str_replace('_', ' ', $restaurant->restaurant_type ?? 'delivery')) }}</span>
+            </div>
+        </div>
+        <div class="restaurant-page-actions">
+            @if(($capabilities['restaurants_edit'] ?? false) && ! $restaurant->is_verified)
+                <form action="{{ route('branch.restaurants.approve', $restaurant) }}" method="POST">
+                    @csrf
+                    <button class="btn btn-success"><i class="fas fa-check me-2"></i>Approve</button>
+                </form>
+            @endif
+            @if($capabilities['restaurants_edit'] ?? false)
+                <a href="{{ route('branch.restaurants.edit', $restaurant) }}" class="btn btn-primary">
+                    <i class="fas fa-pen me-2"></i>Edit
+                </a>
+            @endif
+            <a href="{{ route('branch.restaurants') }}" class="btn btn-light">
+                <i class="fas fa-arrow-left me-2"></i>Back
             </a>
-        @endif
-        <a href="{{ route('branch.restaurants') }}" class="btn btn-light">
-            <i class="fas fa-arrow-left me-2"></i> Back
-        </a>
-    </div>
-</div>
+        </div>
+    </section>
 
-<div class="row g-4">
-    <div class="col-lg-8">
-        <div class="card mb-4">
-            <div class="card-header"><h5 class="mb-0">Restaurant</h5></div>
-            <div class="card-body">
-                <div class="row g-3">
-                    <div class="col-md-6"><strong>Email</strong><div>{{ $restaurant->email }}</div></div>
-                    <div class="col-md-6"><strong>Phone</strong><div>{{ $restaurant->phone }}</div></div>
-                    <div class="col-12"><strong>Address</strong><div>{{ $restaurant->formatted_address }}</div></div>
-                    <div class="col-md-4"><strong>Coordinates</strong><div>{{ $restaurant->latitude }}, {{ $restaurant->longitude }}</div></div>
-                    <div class="col-md-4"><strong>Delivery Radius</strong><div>{{ $restaurant->delivery_radius }} km</div></div>
-                    <div class="col-md-4"><strong>Type</strong><div>{{ ucfirst(str_replace('_', ' ', $restaurant->restaurant_type)) }}</div></div>
-                    <div class="col-md-4"><strong>Delivery Time</strong><div>{{ $restaurant->delivery_time ?? 30 }} minutes</div></div>
-                    <div class="col-md-4"><strong>Order Lead Time</strong><div>{{ $restaurant->order_lead_time ?? 0 }} minutes</div></div>
-                    <div class="col-md-4"><strong>Timezone</strong><div>{{ $restaurant->timezone ?? 'Asia/Kolkata' }}</div></div>
-                    <div class="col-md-4"><strong>Open Status</strong><div><span class="badge bg-{{ $restaurant->isOpenNow() ? 'success' : 'secondary' }}">{{ $restaurant->isOpenNow() ? 'Open now' : 'Closed now' }}</span></div></div>
-                    <div class="col-md-4"><strong>Verified</strong><div><span class="badge bg-{{ $restaurant->is_verified ? 'success' : 'warning' }}">{{ $restaurant->is_verified ? 'Approved' : 'Pending' }}</span></div></div>
-                    <div class="col-md-4"><strong>Pure Veg</strong><div>{{ $restaurant->is_pure_veg ? 'Yes' : 'No' }}</div></div>
-                    <div class="col-12"><strong>Description</strong><div>{{ $restaurant->description ?: 'No description added.' }}</div></div>
+    <section class="restaurant-stat-grid">
+        @foreach($statTiles as $tile)
+            <div class="restaurant-stat-tile" style="--tile-color: {{ $tile['tone'] }};">
+                <div>
+                    <div class="restaurant-stat-label">{{ $tile['label'] }}</div>
+                    <div class="restaurant-stat-value">{{ $tile['value'] }}</div>
                 </div>
+                <div class="restaurant-stat-icon"><i class="fas fa-{{ $tile['icon'] }}"></i></div>
             </div>
+        @endforeach
+    </section>
+
+    <div class="restaurant-show-grid">
+        <div class="restaurant-page-shell">
+            <section class="restaurant-info-panel">
+                <div class="restaurant-info-header">
+                    <div>
+                        <h2>Restaurant Details</h2>
+                        <p>Contact, address, coverage and service configuration.</p>
+                    </div>
+                </div>
+                <div class="restaurant-info-body">
+                    <div class="row g-3">
+                        <div class="col-md-6"><div class="restaurant-line"><span class="restaurant-line-label">Email</span><span class="restaurant-line-value">{{ $restaurant->email }}</span></div></div>
+                        <div class="col-md-6"><div class="restaurant-line"><span class="restaurant-line-label">Phone</span><span class="restaurant-line-value">{{ $restaurant->phone }}</span></div></div>
+                        <div class="col-12"><div class="restaurant-line"><span class="restaurant-line-label">Address</span><span class="restaurant-line-value">{{ $restaurant->formatted_address }}</span></div></div>
+                        <div class="col-md-6"><div class="restaurant-line"><span class="restaurant-line-label">Coordinates</span><span class="restaurant-line-value">{{ $restaurant->latitude }}, {{ $restaurant->longitude }}</span></div></div>
+                        <div class="col-md-6"><div class="restaurant-line"><span class="restaurant-line-label">Delivery Radius</span><span class="restaurant-line-value">{{ $restaurant->delivery_radius }} km</span></div></div>
+                        <div class="col-md-6"><div class="restaurant-line"><span class="restaurant-line-label">Delivery Time</span><span class="restaurant-line-value">{{ $restaurant->delivery_time ?? 30 }} minutes</span></div></div>
+                        <div class="col-md-6"><div class="restaurant-line"><span class="restaurant-line-label">Order Lead Time</span><span class="restaurant-line-value">{{ $restaurant->order_lead_time ?? 0 }} minutes</span></div></div>
+                        <div class="col-md-6"><div class="restaurant-line"><span class="restaurant-line-label">Timezone</span><span class="restaurant-line-value">{{ $restaurant->timezone ?? 'Asia/Kolkata' }}</span></div></div>
+                        <div class="col-md-6"><div class="restaurant-line"><span class="restaurant-line-label">Pure Veg</span><span class="restaurant-line-value">{{ $restaurant->is_pure_veg ? 'Yes' : 'No' }}</span></div></div>
+                        <div class="col-12"><div class="restaurant-line"><span class="restaurant-line-label">Description</span><span class="restaurant-line-value">{{ $restaurant->description ?: 'No description added.' }}</span></div></div>
+                    </div>
+                </div>
+            </section>
+
+            <section class="restaurant-info-panel">
+                <div class="restaurant-info-header"><div><h2>Weekly Timing</h2><p>Open, close and break schedule.</p></div></div>
+                <div class="table-responsive">
+                    <table class="table restaurant-table">
+                        <thead><tr><th>Day</th><th>Status</th><th>Open</th><th>Close</th><th>Break</th></tr></thead>
+                        <tbody>
+                        @foreach($schedule as $day)
+                            <tr>
+                                <td>{{ $day['day_name'] }}</td>
+                                <td>{{ $day['is_open'] ? 'Open' : 'Closed' }}</td>
+                                <td>{{ $day['open_time_formatted'] }}</td>
+                                <td>{{ $day['close_time_formatted'] }}</td>
+                                <td>{{ $day['break_start'] && $day['break_end'] ? $restaurant->formatTime12Hour($day['break_start']) . ' - ' . $restaurant->formatTime12Hour($day['break_end']) : 'No break' }}</td>
+                            </tr>
+                        @endforeach
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <section class="restaurant-info-panel">
+                <div class="restaurant-info-header"><div><h2>Recent Orders</h2><p>Latest orders visible to this branch.</p></div></div>
+                <div class="table-responsive">
+                    <table class="table restaurant-table">
+                        <thead><tr><th>Order</th><th>Status</th><th>Total</th><th>Date</th></tr></thead>
+                        <tbody>
+                        @forelse($restaurant->orders as $order)
+                            <tr>
+                                <td>{{ $order->order_number }}</td>
+                                <td>{{ ucfirst(str_replace('_', ' ', $order->status)) }}</td>
+                                <td>{{ $money($order->total) }}</td>
+                                <td>{{ optional($order->created_at)->format('d M Y, h:i A') }}</td>
+                            </tr>
+                        @empty
+                            <tr><td colspan="4" class="text-center text-muted py-4">No orders found.</td></tr>
+                        @endforelse
+                        </tbody>
+                    </table>
+                </div>
+            </section>
         </div>
 
-        <div class="card mb-4">
-            <div class="card-header"><h5 class="mb-0">Weekly Timing</h5></div>
-            <div class="table-responsive">
-                <table class="table mb-0 align-middle">
-                    <thead><tr><th>Day</th><th>Status</th><th>Open</th><th>Close</th><th>Break</th></tr></thead>
-                    <tbody>
-                    @foreach($schedule as $day)
-                        <tr>
-                            <td>{{ $day['day_name'] }}</td>
-                            <td><span class="badge bg-{{ $day['is_open'] ? 'success' : 'secondary' }}">{{ $day['is_open'] ? 'Open' : 'Closed' }}</span></td>
-                            <td>{{ $day['open_time_formatted'] }}</td>
-                            <td>{{ $day['close_time_formatted'] }}</td>
-                            <td>{{ $day['break_start'] && $day['break_end'] ? $restaurant->formatTime12Hour($day['break_start']) . ' - ' . $restaurant->formatTime12Hour($day['break_end']) : 'No break' }}</td>
-                        </tr>
-                    @endforeach
-                    </tbody>
-                </table>
-            </div>
-        </div>
+        <aside class="restaurant-page-shell">
+            <section class="restaurant-info-panel">
+                <div class="restaurant-info-header"><div><h2>Owner And Account</h2><p>Seller login and settlement account.</p></div></div>
+                <div class="restaurant-info-body">
+                    <div class="restaurant-line"><span class="restaurant-line-label">Owner</span><span class="restaurant-line-value">{{ $restaurant->owner?->name ?? 'N/A' }}</span></div>
+                    <div class="restaurant-line"><span class="restaurant-line-label">Email</span><span class="restaurant-line-value">{{ $restaurant->owner?->email ?? 'N/A' }}</span></div>
+                    <div class="restaurant-line"><span class="restaurant-line-label">Phone</span><span class="restaurant-line-value">{{ $restaurant->owner?->phone ?? 'N/A' }}</span></div>
+                    <div class="restaurant-line"><span class="restaurant-line-label">Account Holder</span><span class="restaurant-line-value">{{ $restaurant->owner?->account_holder_name ?: 'Not set' }}</span></div>
+                    <div class="restaurant-line"><span class="restaurant-line-label">Bank</span><span class="restaurant-line-value">{{ $restaurant->owner?->bank_name ?: 'Not set' }}</span></div>
+                    <div class="restaurant-line"><span class="restaurant-line-label">Account No</span><span class="restaurant-line-value">{{ $restaurant->owner?->account_number ?: 'Not set' }}</span></div>
+                    <div class="restaurant-line"><span class="restaurant-line-label">Routing</span><span class="restaurant-line-value">{{ $restaurant->owner?->routing_code ?: $restaurant->owner?->ifsc_code ?: 'Not set' }}</span></div>
+                    <div class="restaurant-line"><span class="restaurant-line-label">UPI</span><span class="restaurant-line-value">{{ $restaurant->owner?->upi_id ?: 'Not set' }}</span></div>
+                    <div class="restaurant-line"><span class="restaurant-line-label">Gateway</span><span class="restaurant-line-value">{{ $restaurant->owner?->gateway_account_id ?: $restaurant->owner?->stripe_account_id ?: 'Not set' }}</span></div>
+                </div>
+            </section>
 
-        <div class="card">
-            <div class="card-header"><h5 class="mb-0">Recent Orders</h5></div>
-            <div class="table-responsive">
-                <table class="table mb-0 align-middle">
-                    <thead><tr><th>Order</th><th>Status</th><th>Total</th><th>Date</th></tr></thead>
-                    <tbody>
-                    @forelse($restaurant->orders as $order)
-                        <tr>
-                            <td>{{ $order->order_number }}</td>
-                            <td>{{ ucfirst($order->status) }}</td>
-                            <td>{{ $currencySymbol }}{{ number_format($order->total, 2) }}</td>
-                            <td>{{ optional($order->created_at)->format('d M Y, h:i A') }}</td>
-                        </tr>
-                    @empty
-                        <tr><td colspan="4" class="text-center py-4">No orders found.</td></tr>
-                    @endforelse
-                    </tbody>
-                </table>
-            </div>
-        </div>
-    </div>
+            <section class="restaurant-info-panel">
+                <div class="restaurant-info-header"><div><h2>Commercials</h2><p>Fees and commission settings.</p></div></div>
+                <div class="restaurant-info-body">
+                    <div class="restaurant-line"><span class="restaurant-line-label">Min Order</span><span class="restaurant-line-value">{{ $money($restaurant->min_order_amount) }}</span></div>
+                    <div class="restaurant-line"><span class="restaurant-line-label">Delivery Fee</span><span class="restaurant-line-value">{{ $money($restaurant->delivery_fee) }}</span></div>
+                    <div class="restaurant-line"><span class="restaurant-line-label">Dining Charge</span><span class="restaurant-line-value">{{ $money($restaurant->dining_charge ?? 0) }}</span></div>
+                    <div class="restaurant-line"><span class="restaurant-line-label">Commission</span><span class="restaurant-line-value">{{ $restaurant->commission_calculation_type === 'global' ? 'Global' : (($restaurant->commission_rate ?? 0) . ($restaurant->commission_calculation_type === 'percentage' ? '%' : '')) }}</span></div>
+                </div>
+            </section>
 
-    <div class="col-lg-4">
-        <div class="card mb-4">
-            <div class="card-header"><h5 class="mb-0">Summary</h5></div>
-            <div class="card-body">
-                <div class="d-flex justify-content-between mb-2"><span>Total Orders</span><strong>{{ $totalOrders }}</strong></div>
-                <div class="d-flex justify-content-between mb-2"><span>Delivered Revenue</span><strong>{{ $currencySymbol }}{{ number_format($totalRevenue, 2) }}</strong></div>
-                <div class="d-flex justify-content-between mb-2"><span>Menu Items</span><strong>{{ $totalMenuItems }}</strong></div>
-                <div class="d-flex justify-content-between"><span>Average Rating</span><strong>{{ number_format($averageRating, 1) }}</strong></div>
-            </div>
-        </div>
-
-        <div class="card mb-4">
-            <div class="card-header"><h5 class="mb-0">Owner & Account</h5></div>
-            <div class="card-body">
-                <div class="mb-2"><strong>{{ $restaurant->owner?->name ?? 'N/A' }}</strong></div>
-                <div class="text-muted">{{ $restaurant->owner?->email }}</div>
-                <div class="text-muted mb-3">{{ $restaurant->owner?->phone }}</div>
-                <div class="small"><strong>Account Holder:</strong> {{ $restaurant->owner?->account_holder_name ?: 'Not set' }}</div>
-                <div class="small"><strong>Bank:</strong> {{ $restaurant->owner?->bank_name ?: 'Not set' }}</div>
-                <div class="small"><strong>Account No:</strong> {{ $restaurant->owner?->account_number ?: 'Not set' }}</div>
-                <div class="small"><strong>Routing:</strong> {{ $restaurant->owner?->routing_code ?: $restaurant->owner?->ifsc_code ?: 'Not set' }}</div>
-                <div class="small"><strong>UPI:</strong> {{ $restaurant->owner?->upi_id ?: 'Not set' }}</div>
-                <div class="small"><strong>Gateway:</strong> {{ $restaurant->owner?->gateway_account_id ?: $restaurant->owner?->stripe_account_id ?: 'Not set' }}</div>
-            </div>
-        </div>
-
-        <div class="card">
-            <div class="card-header"><h5 class="mb-0">Commercials</h5></div>
-            <div class="card-body">
-                <div class="d-flex justify-content-between mb-2"><span>Min Order</span><strong>{{ $currencySymbol }}{{ number_format($restaurant->min_order_amount, 2) }}</strong></div>
-                <div class="d-flex justify-content-between mb-2"><span>Delivery Fee</span><strong>{{ $currencySymbol }}{{ number_format($restaurant->delivery_fee, 2) }}</strong></div>
-                <div class="d-flex justify-content-between mb-2"><span>Dining Charge</span><strong>{{ $currencySymbol }}{{ number_format($restaurant->dining_charge ?? 0, 2) }}</strong></div>
-                <div class="d-flex justify-content-between"><span>Commission</span><strong>{{ $restaurant->commission_calculation_type === 'global' ? 'Global' : (($restaurant->commission_rate ?? 0) . ($restaurant->commission_calculation_type === 'percentage' ? '%' : '')) }}</strong></div>
-            </div>
-        </div>
+            @if($restaurant->logo_image || $restaurant->banner_image)
+                <section class="restaurant-info-panel">
+                    <div class="restaurant-info-header"><div><h2>Media</h2><p>Logo and banner.</p></div></div>
+                    <div class="restaurant-info-body d-grid gap-3">
+                        @if($restaurant->logo_image)
+                            <img src="{{ Storage::url($restaurant->logo_image) }}" class="restaurant-media-preview" alt="Logo">
+                        @endif
+                        @if($restaurant->banner_image)
+                            <img src="{{ Storage::url($restaurant->banner_image) }}" class="restaurant-media-preview wide" alt="Banner">
+                        @endif
+                    </div>
+                </section>
+            @endif
+        </aside>
     </div>
 </div>
 @endsection
+
+@include('branch._restaurant_map_assets', ['deliveryAreas' => []])

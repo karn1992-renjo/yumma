@@ -8,43 +8,64 @@ use App\Models\Order;
 
 class GigIncentiveService
 {
-    protected $basePayPerHour = 50; // Default base pay per hour
-    protected $orderIncentivePerOrder = 20; // Per order incentive
-    protected $activeTimeIncentivePerHour = 10; // Per active hour
-    
-    public function calculateGigEarnings(DriverGig $gig)
+    public function calculateGigEarnings(DriverGig $gig, ?int $driverId = null)
     {
-        // Get orders completed during this gig
-        $orders = Order::where('driver_id', $gig->driver_id)
+        $driverId ??= $gig->driver_id;
+        if (! $driverId) {
+            return null;
+        }
+
+        $startTime = $gig->start_time;
+        $endTime = $gig->end_time;
+
+        $orders = Order::where('driver_id', $driverId)
             ->where('status', 'delivered')
-            ->whereBetween('created_at', [$gig->start_time, $gig->end_time])
+            ->whereBetween('delivered_at', [$startTime, $endTime])
             ->get();
-            
-        $hoursWorked = $gig->start_time->diffInMinutes($gig->end_time) / 60;
-        $basePay = $hoursWorked * $this->basePayPerHour;
-        $orderIncentive = $orders->count() * $this->orderIncentivePerOrder;
-        $activeTimeIncentive = $hoursWorked * $this->activeTimeIncentivePerHour;
-        
+
+        $activeMinutes = max(0, $startTime->diffInMinutes($endTime, false));
+        $ordersCompleted = $orders->count();
+        $loginRequirementMet = (int) $gig->min_login_minutes <= 0
+            || $activeMinutes >= (int) $gig->min_login_minutes;
+        $orderRequirementMet = (int) $gig->min_orders_required <= 0
+            || $ordersCompleted >= (int) $gig->min_orders_required;
+
+        $basePay = $loginRequirementMet ? (float) $gig->base_pay : 0.0;
+        $orderIncentive = $orderRequirementMet
+            ? $ordersCompleted * (float) $gig->order_incentive
+            : 0.0;
+        $activeTimeIncentive = $loginRequirementMet ? (float) $gig->login_incentive : 0.0;
         $totalEarned = $basePay + $orderIncentive + $activeTimeIncentive;
         
         $incentive = GigIncentive::updateOrCreate(
-            ['driver_gig_id' => $gig->id],
             [
-                'base_pay' => $basePay,
-                'order_incentive' => $orderIncentive,
-                'active_time_incentive' => $activeTimeIncentive,
-                'total_earned' => $totalEarned,
+                'driver_gig_id' => $gig->id,
+                'driver_id' => $driverId,
+            ],
+            [
+                'base_pay' => round($basePay, 2),
+                'order_incentive' => round($orderIncentive, 2),
+                'active_time_incentive' => round($activeTimeIncentive, 2),
+                'total_earned' => round($totalEarned, 2),
                 'orders_completed' => $orders->pluck('id'),
-                'active_minutes' => $hoursWorked * 60
+                'active_minutes' => $activeMinutes
             ]
         );
         
         return $incentive;
     }
     
-    public function applyPenalty(DriverGig $gig, $reason, $amount = 50)
+    public function applyPenalty(DriverGig $gig, $reason, $amount = 50, ?int $driverId = null)
     {
-        $incentive = GigIncentive::firstOrCreate(['driver_gig_id' => $gig->id]);
+        $driverId ??= $gig->driver_id;
+        if (! $driverId) {
+            return null;
+        }
+
+        $incentive = GigIncentive::firstOrCreate([
+            'driver_gig_id' => $gig->id,
+            'driver_id' => $driverId,
+        ]);
         
         $incentive->update([
             'is_penalty_applied' => true,
@@ -58,21 +79,27 @@ class GigIncentiveService
     
     public function checkGigServed(DriverGig $gig)
     {
+        $driverId = $gig->driver_id;
+        if (! $driverId) {
+            return true;
+        }
+
         // Check if driver actually served the gig
-        $ordersCount = Order::where('driver_id', $gig->driver_id)
-            ->whereBetween('created_at', [$gig->start_time, $gig->end_time])
+        $ordersCount = Order::where('driver_id', $driverId)
+            ->where('status', 'delivered')
+            ->whereBetween('delivered_at', [$gig->start_time, $gig->end_time])
             ->count();
             
         if ($ordersCount == 0 && $gig->status === 'booked') {
             // Driver booked but didn't serve any order
-            $this->applyPenalty($gig, 'Gig booked but not served', 100);
+            $this->applyPenalty($gig, 'Gig booked but not served', 100, $driverId);
             $gig->update(['status' => 'cancelled']);
             return false;
         }
         
         if ($gig->status === 'available' && $ordersCount > 0) {
             $gig->update(['status' => 'completed']);
-            $this->calculateGigEarnings($gig);
+            $this->calculateGigEarnings($gig, $driverId);
         }
         
         return true;

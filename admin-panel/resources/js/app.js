@@ -508,8 +508,255 @@ class RealTimeOrderManager {
     }
 }
 
+function initPosTerminalShortcuts() {
+    const actionConfig = {
+        newBill: {
+            key: 'F1',
+            label: 'New Bill',
+            selectors: [
+                '[data-pos-action="new-bill"]',
+                '[data-action="new-bill"]',
+                '[data-shortcut="F1"]',
+                '#newBillBtn',
+                '#new-bill-btn',
+                '.js-new-bill',
+                '.new-bill-btn'
+            ],
+            methods: [
+                ['POS', 'newBill'],
+                ['posTerminal', 'newBill'],
+                ['newBill'],
+                ['createNewBill']
+            ],
+            textMatchers: ['new bill', 'newbill']
+        },
+        holdBill: {
+            key: 'F2',
+            label: 'Hold Bill',
+            selectors: [
+                '[data-pos-action="hold-bill"]',
+                '[data-action="hold-bill"]',
+                '[data-shortcut="F2"]',
+                '#holdBillBtn',
+                '#hold-bill-btn',
+                '.js-hold-bill',
+                '.hold-bill-btn'
+            ],
+            methods: [
+                ['POS', 'holdBill'],
+                ['posTerminal', 'holdBill'],
+                ['holdBill'],
+                ['holdCurrentBill']
+            ],
+            textMatchers: ['hold bill', 'holdbill']
+        },
+        fullscreen: {
+            key: null,
+            label: 'Full Screen',
+            selectors: [
+                '[data-pos-action="toggle-fullscreen"]',
+                '[data-action="toggle-fullscreen"]',
+                '#posFullscreenBtn',
+                '#fullscreenBtn',
+                '#fullScreenBtn',
+                '#toggleFullscreenBtn',
+                '.js-toggle-fullscreen',
+                '.pos-fullscreen-btn',
+                '.fullscreen-btn',
+                '.full-screen-btn',
+                '[aria-label*="Full Screen" i]',
+                '[aria-label*="Fullscreen" i]',
+                '[title*="Full Screen" i]',
+                '[title*="Fullscreen" i]'
+            ],
+            methods: [],
+            textMatchers: ['full screen', 'fullscreen']
+        }
+    };
+
+    const actionElements = 'button, a, [role="button"], input[type="button"], input[type="submit"]';
+
+    function isDisabled(element) {
+        return Boolean(
+            element.disabled ||
+            element.getAttribute('aria-disabled') === 'true' ||
+            element.classList.contains('disabled')
+        );
+    }
+
+    function normalizedText(element) {
+        const value = element.value ||
+            element.textContent ||
+            element.getAttribute('aria-label') ||
+            element.getAttribute('title') ||
+            '';
+        return value.replace(/\s+/g, ' ').trim().toLowerCase();
+    }
+
+    function findActionElement(config) {
+        for (const selector of config.selectors) {
+            const element = document.querySelector(selector);
+            if (element && !isDisabled(element)) {
+                return element;
+            }
+        }
+
+        const candidates = Array.from(document.querySelectorAll(actionElements));
+        return candidates.find((element) => {
+            if (isDisabled(element)) return false;
+            const text = normalizedText(element);
+            return config.textMatchers.some((match) => text.includes(match));
+        }) || null;
+    }
+
+    function getWindowMethod(path) {
+        if (path.length === 1) {
+            return typeof window[path[0]] === 'function' ? window[path[0]].bind(window) : null;
+        }
+
+        const target = window[path[0]];
+        if (!target || typeof target[path[1]] !== 'function') {
+            return null;
+        }
+
+        return target[path[1]].bind(target);
+    }
+
+    function runAction(config) {
+        if (config === actionConfig.fullscreen) {
+            window.togglePosFullscreen();
+            return true;
+        }
+
+        const element = findActionElement(config);
+        if (element) {
+            element.click();
+            return true;
+        }
+
+        for (const path of config.methods) {
+            const method = getWindowMethod(path);
+            if (method) {
+                method();
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    function annotateAction(config) {
+        const element = findActionElement(config);
+        if (!element) return;
+
+        if (config.key) {
+            element.setAttribute('aria-keyshortcuts', config.key);
+        }
+        if (!element.title) {
+            element.title = config.key
+                ? `${config.label} (${config.key})`
+                : config.label;
+        }
+    }
+
+    Object.values(actionConfig).forEach(annotateAction);
+
+    function fullscreenElement() {
+        return document.fullscreenElement ||
+            document.webkitFullscreenElement ||
+            document.mozFullScreenElement ||
+            document.msFullscreenElement ||
+            null;
+    }
+
+    async function requestFullscreen(element) {
+        if (element.requestFullscreen) return element.requestFullscreen();
+        if (element.webkitRequestFullscreen) return element.webkitRequestFullscreen();
+        if (element.mozRequestFullScreen) return element.mozRequestFullScreen();
+        if (element.msRequestFullscreen) return element.msRequestFullscreen();
+        throw new Error('Fullscreen API is not available in this browser.');
+    }
+
+    async function exitFullscreen() {
+        if (document.exitFullscreen) return document.exitFullscreen();
+        if (document.webkitExitFullscreen) return document.webkitExitFullscreen();
+        if (document.mozCancelFullScreen) return document.mozCancelFullScreen();
+        if (document.msExitFullscreen) return document.msExitFullscreen();
+        return null;
+    }
+
+    function fullscreenTarget() {
+        return document.querySelector('[data-pos-fullscreen-target]') ||
+            document.querySelector('#posTerminal') ||
+            document.querySelector('.pos-terminal') ||
+            document.documentElement;
+    }
+
+    function setFullscreenButtonState() {
+        const active = Boolean(fullscreenElement());
+        document.body.classList.toggle('pos-terminal-fullscreen', active);
+
+        const element = findActionElement(actionConfig.fullscreen);
+        if (!element) return;
+
+        element.setAttribute('aria-pressed', active ? 'true' : 'false');
+        element.title = active ? 'Exit Full Screen' : 'Full Screen';
+        element.classList.toggle('is-active', active);
+
+        const icon = element.querySelector('i');
+        if (icon) {
+            icon.classList.toggle('fa-expand', !active);
+            icon.classList.toggle('fa-compress', active);
+        }
+    }
+
+    window.togglePosFullscreen = async function togglePosFullscreen() {
+        try {
+            if (fullscreenElement()) {
+                await exitFullscreen();
+            } else {
+                await requestFullscreen(fullscreenTarget());
+            }
+        } catch (error) {
+            console.warn('Unable to toggle POS fullscreen mode:', error);
+        } finally {
+            setFullscreenButtonState();
+        }
+    };
+
+    const fullscreenButton = findActionElement(actionConfig.fullscreen);
+    if (fullscreenButton) {
+        fullscreenButton.addEventListener('click', (event) => {
+            event.preventDefault();
+            window.togglePosFullscreen();
+        });
+    }
+
+    document.addEventListener('fullscreenchange', setFullscreenButtonState);
+    document.addEventListener('webkitfullscreenchange', setFullscreenButtonState);
+    document.addEventListener('mozfullscreenchange', setFullscreenButtonState);
+    document.addEventListener('MSFullscreenChange', setFullscreenButtonState);
+    setFullscreenButtonState();
+
+    document.addEventListener('keydown', (event) => {
+        if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey) {
+            return;
+        }
+
+        const config = Object.values(actionConfig).find((item) => item.key && item.key === event.key);
+        if (!config) return;
+
+        if (runAction(config)) {
+            event.preventDefault();
+            event.stopPropagation();
+        }
+    });
+}
+
 // Initialize the order manager when DOM is fully loaded
 document.addEventListener('DOMContentLoaded', () => {
+    initPosTerminalShortcuts();
+
     // Only initialize if we're on a restaurant page (has restaurant-id meta)
     const restaurantId = document.querySelector('meta[name="restaurant-id"]')?.content;
     if (restaurantId) {

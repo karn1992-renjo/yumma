@@ -1,545 +1,395 @@
-<div class="sidebar" id="sidebar">
-    @php
-        $appName = App\Models\AppSetting::getValue('app_name', 'FoodFlow');
-        $appLogo = App\Models\AppSetting::getValue('app_logo', null);
-        $headerBrandingType = App\Models\AppSetting::getValue('header_branding_type', 'text');
-        $headerBrandingType = in_array($headerBrandingType, ['text', 'logo', 'logo_text']) ? $headerBrandingType : 'text';
-        $appLogoUrl = $appLogo && str_starts_with($appLogo, 'branding/')
-            ? route('media.branding', ['file' => basename($appLogo)])
-            : ($appLogo ? \Illuminate\Support\Facades\Storage::disk('public')->url($appLogo) : null);
-    @endphp
+@php
+    $appName = App\Models\AppSetting::getValue('app_name', config('app.name', 'FoodFlow'));
+    $appLogo = App\Models\AppSetting::getValue('app_logo');
+    $headerBrandingType = App\Models\AppSetting::getValue('header_branding_type', 'text');
+    $headerBrandingType = in_array($headerBrandingType, ['text', 'logo', 'logo_text'], true) ? $headerBrandingType : 'text';
+    $appLogoUrl = $appLogo && str_starts_with($appLogo, 'branding/')
+        ? route('media.branding', ['file' => basename($appLogo)])
+        : ($appLogo ? \Illuminate\Support\Facades\Storage::disk('public')->url($appLogo) : null);
 
-    <div class="sidebar-logo-section">
+    $isActive = function ($patterns) {
+        foreach ((array) $patterns as $pattern) {
+            if (request()->routeIs($pattern)) {
+                return true;
+            }
+        }
+
+        return false;
+    };
+
+    $pendingOrdersCount = \App\Models\Order::whereIn('status', ['pending', 'confirmed'])->count();
+    $pendingPartnerApplications = \App\Models\PartnerApplication::where('status', 'pending')->count();
+    $pendingRestaurantApprovals = \App\Models\RestaurantLocationChangeRequest::where('status', 'pending')->count();
+    $pendingDiningBookings = \App\Models\DiningBooking::where('status', 'pending')->count();
+    $openTicketsCount = \App\Models\SupportTicket::whereIn('status', ['open', 'in_progress'])->count();
+
+    $badge = fn ($count) => $count > 99 ? '99+' : $count;
+
+    $sections = [
+        [
+            'label' => 'Main',
+            'items' => [
+                ['label' => 'Dashboard', 'icon' => 'chart-line', 'url' => route('admin.dashboard'), 'active' => ['admin.dashboard']],
+            ],
+        ],
+        [
+            'label' => 'Operations',
+            'items' => [
+                [
+                    'label' => 'Branch Management',
+                    'icon' => 'code-branch',
+                    'active' => ['admin.branches*'],
+                    'children' => [
+                        ['label' => 'All Branches', 'url' => route('admin.branches.index'), 'active' => ['admin.branches.index']],
+                        ['label' => 'Create Branch', 'url' => route('admin.branches.create'), 'active' => ['admin.branches.create']],
+                        ['label' => 'Branch Users', 'url' => route('admin.branches.users'), 'active' => ['admin.branches.users']],
+                        ['label' => 'Branch Wallets', 'url' => route('admin.branches.wallets'), 'active' => ['admin.branches.wallets']],
+                        ['label' => 'Settlements', 'url' => route('admin.branches.settlements'), 'active' => ['admin.branches.settlements']],
+                        ['label' => 'Payouts', 'url' => route('admin.branches.payouts'), 'active' => ['admin.branches.payouts']],
+                        ['label' => 'Reports', 'url' => route('admin.branches.reports'), 'active' => ['admin.branches.reports']],
+                        ['label' => 'Territories', 'url' => route('admin.branches.zones'), 'active' => ['admin.branches.zones']],
+                        ['label' => 'Audit Logs', 'url' => route('admin.branches.audit-logs'), 'active' => ['admin.branches.audit-logs']],
+                    ],
+                ],
+                ['label' => 'Restaurants', 'icon' => 'store', 'url' => route('admin.restaurants.index'), 'active' => ['admin.restaurants.*']],
+                ['label' => 'Delivery Areas', 'icon' => 'map-location-dot', 'url' => route('admin.delivery-areas.index'), 'active' => ['admin.delivery-areas.*']],
+                ['label' => 'Orders', 'icon' => 'box', 'url' => route('admin.orders.index'), 'active' => ['admin.orders.*'], 'badge' => $pendingOrdersCount ? $badge($pendingOrdersCount) : null],
+                ['label' => 'POS Dashboard', 'icon' => 'cash-register', 'url' => route('admin.pos.index'), 'active' => ['admin.pos.*']],
+                ['label' => 'Users', 'icon' => 'users', 'url' => route('admin.users.index'), 'active' => ['admin.users.*']],
+                ['label' => 'Drivers', 'icon' => 'truck-fast', 'url' => route('admin.drivers.index'), 'active' => ['admin.drivers.*']],
+                ['label' => 'Fleet Dashboard', 'icon' => 'route', 'url' => route('admin.fleet.dashboard'), 'active' => ['admin.fleet.*']],
+                ['label' => 'Partner Applications', 'icon' => 'handshake', 'url' => route('admin.partner-applications.index'), 'active' => ['admin.partner-applications.*'], 'badge' => $pendingPartnerApplications ? $badge($pendingPartnerApplications) : null],
+            ],
+        ],
+        [
+            'label' => 'Catalog',
+            'items' => [
+                ['label' => 'Banners', 'icon' => 'image', 'url' => route('admin.banners.index'), 'active' => ['admin.banners.*']],
+                ['label' => 'Cuisines', 'icon' => 'egg', 'url' => route('admin.cuisines.index'), 'active' => ['admin.cuisines.*']],
+                ['label' => 'Global Categories', 'icon' => 'layer-group', 'url' => route('admin.global-menu-categories.index'), 'active' => ['admin.global-menu-categories.*']],
+                ['label' => 'Listed Menu', 'icon' => 'utensils', 'url' => route('admin.listed-menu.index'), 'active' => ['admin.listed-menu.*']],
+                ['label' => 'Global Menu Items', 'icon' => 'list-check', 'url' => url('/admin/master-menu-items'), 'active' => ['admin.master-menu-items.index', 'admin.master-menu-items.edit']],
+                ['label' => 'Add Global Item', 'icon' => 'plus-circle', 'url' => url('/admin/master-menu-items/create'), 'active' => ['admin.master-menu-items.create']],
+            ],
+        ],
+        [
+            'label' => 'Finance',
+            'items' => [
+                ['label' => 'Payouts', 'icon' => 'money-bill-wave', 'url' => route('admin.payouts.index'), 'active' => ['admin.payouts.index']],
+                ['label' => 'Restaurant Approvals', 'icon' => 'clipboard-check', 'url' => route('admin.restaurant-approvals.index'), 'active' => ['admin.restaurant-approvals.*'], 'badge' => $pendingRestaurantApprovals ? $badge($pendingRestaurantApprovals) : null],
+                ['label' => 'Wallets', 'icon' => 'wallet', 'url' => route('admin.wallets.index'), 'active' => ['admin.wallets.*']],
+                ['label' => 'Gift Cards', 'icon' => 'gift', 'url' => route('admin.gift-cards.index'), 'active' => ['admin.gift-cards.*']],
+                ['label' => 'Refunds', 'icon' => 'rotate-left', 'url' => route('admin.refunds.index'), 'active' => ['admin.refunds.*']],
+                ['label' => 'Commissions', 'icon' => 'percent', 'url' => route('admin.commissions'), 'active' => ['admin.commissions*']],
+                ['label' => 'Payout History', 'icon' => 'clock-rotate-left', 'url' => route('admin.payouts.history'), 'active' => ['admin.payouts.history*']],
+                ['label' => 'Analytics', 'icon' => 'chart-pie', 'url' => route('admin.analytics'), 'active' => ['admin.analytics', 'admin.reports.*']],
+            ],
+        ],
+        [
+            'label' => 'Engagement',
+            'items' => [
+                [
+                    'label' => 'Promotion Engine',
+                    'icon' => 'tags',
+                    'active' => ['admin.promotion-engine.*'],
+                    'children' => [
+                        ['label' => 'Promotions', 'url' => route('admin.promotion-engine.index'), 'active' => ['admin.promotion-engine.index', 'admin.promotion-engine.create', 'admin.promotion-engine.edit']],
+                        ['label' => 'Coupon Library', 'url' => route('admin.promotion-engine.coupons'), 'active' => ['admin.promotion-engine.coupons']],
+                        ['label' => 'Analytics', 'url' => route('admin.promotion-engine.analytics'), 'active' => ['admin.promotion-engine.analytics']],
+                        ['label' => 'Engine Logs', 'url' => route('admin.promotion-engine.logs'), 'active' => ['admin.promotion-engine.logs']],
+                    ],
+                ],
+                ['label' => 'Legacy Promo Codes', 'icon' => 'ticket-alt', 'url' => route('admin.promos.index'), 'active' => ['admin.promos.*']],
+                ['label' => 'Campaigns', 'icon' => 'bullhorn', 'url' => route('admin.campaigns.index'), 'active' => ['admin.campaigns*']],
+                ['label' => 'Push Notifications', 'icon' => 'paper-plane', 'url' => route('admin.push-notifications.index'), 'active' => ['admin.push-notifications*']],
+                ['label' => 'Dining Bookings', 'icon' => 'utensils', 'url' => route('admin.dining-bookings.index'), 'active' => ['admin.dining-bookings.*'], 'badge' => $pendingDiningBookings ? $badge($pendingDiningBookings) : null],
+                ['label' => 'Celebration Types', 'icon' => 'champagne-glasses', 'url' => route('admin.celebration-types.index'), 'active' => ['admin.celebration-types*']],
+                ['label' => 'Support Tickets', 'icon' => 'headset', 'url' => route('admin.support.index'), 'active' => ['admin.support.*'], 'badge' => $openTicketsCount ? $badge($openTicketsCount) : null],
+            ],
+        ],
+        [
+            'label' => 'Restaurant Controls',
+            'items' => [
+                ['label' => 'Driver Gigs', 'icon' => 'calendar-alt', 'url' => route('admin.gigs.index'), 'active' => ['admin.gigs.*']],
+                ['label' => 'Offline Reasons', 'icon' => 'clock', 'url' => route('admin.offline-reasons.index'), 'active' => ['admin.offline-reasons*']],
+                ['label' => 'Cancellation Limits', 'icon' => 'ban', 'url' => route('admin.cancellation-limits'), 'active' => ['admin.cancellation-limits*']],
+                ['label' => 'Refund Policies', 'icon' => 'hand-holding-dollar', 'url' => route('admin.refund-policies.index'), 'active' => ['admin.refund-policies.*']],
+            ],
+        ],
+        [
+            'label' => 'System',
+            'items' => [
+                [
+                    'label' => 'Settings',
+                    'icon' => 'gear',
+                    'id' => 'settings-menu',
+                    'active' => ['admin.settings.*', 'admin.home-sections.*', 'admin.delivery-charges*', 'admin.taxes*', 'admin.payout-settings.*'],
+                    'children' => [
+                        ['label' => 'General Settings', 'url' => route('admin.settings.index'), 'active' => ['admin.settings.index']],
+                        ['label' => 'Homepage Content', 'url' => route('admin.settings.homepage'), 'active' => ['admin.settings.homepage']],
+                        ['label' => 'Home Sections', 'url' => route('admin.home-sections.index'), 'active' => ['admin.home-sections.*']],
+                        ['label' => 'Privacy & Legal', 'url' => route('admin.settings.privacy'), 'active' => ['admin.settings.privacy']],
+                        ['label' => 'Driver Assignment', 'url' => route('admin.settings.driver_assignment'), 'active' => ['admin.settings.driver_assignment']],
+                        ['label' => 'Communication', 'url' => route('admin.settings.communication'), 'active' => ['admin.settings.communication']],
+                        ['label' => 'Notifications', 'url' => route('admin.settings.notifications'), 'active' => ['admin.settings.notifications']],
+                        ['label' => 'Delivery Charges', 'url' => route('admin.delivery-charges'), 'active' => ['admin.delivery-charges*']],
+                        ['label' => 'Taxes & Charges', 'url' => route('admin.taxes'), 'active' => ['admin.taxes*']],
+                        ['label' => 'Branding', 'url' => route('admin.settings.branding'), 'active' => ['admin.settings.branding']],
+                        ['label' => 'Payments', 'url' => route('admin.settings.payment'), 'active' => ['admin.settings.payment']],
+                        ['label' => 'Payout Gateway', 'url' => route('admin.payout-settings.edit'), 'active' => ['admin.payout-settings.*']],
+                        ['label' => 'Map Settings', 'url' => route('admin.settings.map'), 'active' => ['admin.settings.map']],
+                        ['label' => 'Storage Settings', 'url' => route('admin.settings.index') . '#media-storage-settings', 'active' => [], 'attrs' => 'data-storage-settings-link'],
+                        ['label' => 'Cron Jobs', 'url' => route('admin.settings.cron'), 'active' => ['admin.settings.cron']],
+                    ],
+                ],
+            ],
+        ],
+    ];
+@endphp
+
+<aside class="sidebar admin-sidebar" id="sidebar">
+    <div class="sidebar-logo-section admin-sidebar-brand">
         <div class="sidebar-logo-icon">
-            @if(($headerBrandingType === 'logo' || $headerBrandingType === 'logo_text') && $appLogo)
+            @if(($headerBrandingType === 'logo' || $headerBrandingType === 'logo_text') && $appLogoUrl)
                 <img src="{{ $appLogoUrl }}" alt="{{ $appName }}" class="sidebar-logo-image">
             @else
-                <i class="fas fa-crown"></i>
+                <i class="fas fa-shield-halved"></i>
             @endif
         </div>
         <div class="sidebar-logo-text">
-            <h2>Super<span>Admin</span></h2>
+            <h2>{{ $appName }} <span>Admin</span></h2>
             <small>Control Panel</small>
         </div>
     </div>
-    
-    <div class="sidebar-nav-wrapper">
-        <!-- MAIN SECTION -->
-        <div class="sidebar-section-title">MAIN</div>
-        <ul class="sidebar-nav">
-            <li class="sidebar-nav-item">
-                <a href="{{ route('admin.dashboard') }}" class="sidebar-nav-link {{ request()->routeIs('admin.dashboard') ? 'active' : '' }}">
-                    <i class="fas fa-chart-line"></i>
-                    <span>Dashboard</span>
-                </a>
-            </li>
-        </ul>
-        
-        <!-- MANAGEMENT SECTION -->
-        <div class="sidebar-section-title">MANAGEMENT</div>
-        <ul class="sidebar-nav">
-            <li class="sidebar-nav-item sidebar-parent" id="branch-management-menu">
-                <a href="#" onclick="toggleSettingsSubmenu(event)" class="sidebar-nav-link sidebar-parent-link {{ request()->routeIs('admin.branches*') ? 'active open' : '' }}">
-                    <i class="fas fa-code-branch"></i>
-                    <span>Branch Management</span>
-                    <i class="fas fa-chevron-down sidebar-submenu-toggle"></i>
-                </a>
-                <ul class="sidebar-submenu {{ request()->routeIs('admin.branches*') ? 'open' : '' }}">
-                    <li class="sidebar-nav-item"><a href="{{ route('admin.branches.index') }}" class="sidebar-nav-link {{ request()->routeIs('admin.branches.index') ? 'active' : '' }}"><i class="fas fa-circle" style="font-size: 6px; margin-right: 10px;"></i><span>All Branches</span></a></li>
-                    <li class="sidebar-nav-item"><a href="{{ route('admin.branches.create') }}" class="sidebar-nav-link {{ request()->routeIs('admin.branches.create') ? 'active' : '' }}"><i class="fas fa-circle" style="font-size: 6px; margin-right: 10px;"></i><span>Create Branch</span></a></li>
-                    <li class="sidebar-nav-item"><a href="{{ route('admin.branches.users') }}" class="sidebar-nav-link {{ request()->routeIs('admin.branches.users') ? 'active' : '' }}"><i class="fas fa-circle" style="font-size: 6px; margin-right: 10px;"></i><span>Branch Users</span></a></li>
-                    <li class="sidebar-nav-item"><a href="{{ route('admin.branches.wallets') }}" class="sidebar-nav-link {{ request()->routeIs('admin.branches.wallets') ? 'active' : '' }}"><i class="fas fa-circle" style="font-size: 6px; margin-right: 10px;"></i><span>Branch Wallets</span></a></li>
-                    <li class="sidebar-nav-item"><a href="{{ route('admin.branches.settlements') }}" class="sidebar-nav-link {{ request()->routeIs('admin.branches.settlements') ? 'active' : '' }}"><i class="fas fa-circle" style="font-size: 6px; margin-right: 10px;"></i><span>Branch Settlements</span></a></li>
-                    <li class="sidebar-nav-item"><a href="{{ route('admin.branches.payouts') }}" class="sidebar-nav-link {{ request()->routeIs('admin.branches.payouts') ? 'active' : '' }}"><i class="fas fa-circle" style="font-size: 6px; margin-right: 10px;"></i><span>Branch Payouts</span></a></li>
-                    <li class="sidebar-nav-item"><a href="{{ route('admin.branches.reports') }}" class="sidebar-nav-link {{ request()->routeIs('admin.branches.reports') ? 'active' : '' }}"><i class="fas fa-circle" style="font-size: 6px; margin-right: 10px;"></i><span>Branch Reports</span></a></li>
-                    <li class="sidebar-nav-item"><a href="{{ route('admin.branches.zones') }}" class="sidebar-nav-link {{ request()->routeIs('admin.branches.zones') ? 'active' : '' }}"><i class="fas fa-circle" style="font-size: 6px; margin-right: 10px;"></i><span>Territory Management</span></a></li>
-                    <li class="sidebar-nav-item"><a href="{{ route('admin.branches.audit-logs') }}" class="sidebar-nav-link {{ request()->routeIs('admin.branches.audit-logs') ? 'active' : '' }}"><i class="fas fa-circle" style="font-size: 6px; margin-right: 10px;"></i><span>Audit Logs</span></a></li>
-                </ul>
-            </li>
-            <li class="sidebar-nav-item">
-                <a href="{{ route('admin.restaurants.index') }}" class="sidebar-nav-link {{ request()->routeIs('admin.restaurants.*') ? 'active' : '' }}">
-                    <i class="fas fa-store"></i>
-                    <span>Restaurants</span>
-                </a>
-            </li>
-            <li class="sidebar-nav-item">
-                <a href="{{ route('admin.delivery-areas.index') }}" class="sidebar-nav-link {{ request()->routeIs('admin.delivery-areas.*') ? 'active' : '' }}">
-                    <i class="fas fa-map-marker-alt"></i>
-                    <span>Delivery Areas</span>
-                </a>
-            </li>
-            <li class="sidebar-nav-item">
-                <a href="{{ route('admin.orders.index') }}" class="sidebar-nav-link {{ request()->routeIs('admin.orders.*') ? 'active' : '' }}">
-                    <i class="fas fa-box"></i>
-                    <span>Orders</span>
-                    @php
-                        $pendingOrdersCount = \App\Models\Order::whereIn('status', ['pending', 'confirmed'])->count();
-                    @endphp
-                    @if($pendingOrdersCount > 0)
-                        <span class="sidebar-badge">{{ $pendingOrdersCount > 99 ? '99+' : $pendingOrdersCount }}</span>
-                    @endif
-                </a>
-            </li>
-            <li class="sidebar-nav-item">
-                <a href="{{ route('admin.users.index') }}" class="sidebar-nav-link {{ request()->routeIs('admin.users.*') ? 'active' : '' }}">
-                    <i class="fas fa-users"></i>
-                    <span>Users</span>
-                </a>
-            </li>
-            <li class="sidebar-nav-item">
-                <a href="{{ route('admin.drivers.index') }}" class="sidebar-nav-link {{ request()->routeIs('admin.drivers.*') ? 'active' : '' }}">
-                    <i class="fas fa-truck"></i>
-                    <span>Drivers</span>
-                </a>
-            </li>
-            <li class="sidebar-nav-item">
-                <a href="{{ route('admin.fleet.dashboard') }}" class="sidebar-nav-link {{ request()->routeIs('admin.fleet.*') ? 'active' : '' }}">
-                    <i class="fas fa-route"></i>
-                    <span>Fleet Dashboard</span>
-                </a>
-            </li>
-            <li class="sidebar-nav-item">
-                <a href="{{ route('admin.partner-applications.index') }}" class="sidebar-nav-link {{ request()->routeIs('admin.partner-applications.*') ? 'active' : '' }}">
-                    <i class="fas fa-handshake"></i>
-                    <span>Partner Applications</span>
-                    @php
-                        $pendingPartnerApplications = \App\Models\PartnerApplication::where('status', 'pending')->count();
-                    @endphp
-                    @if($pendingPartnerApplications > 0)
-                        <span class="sidebar-badge">{{ $pendingPartnerApplications > 99 ? '99+' : $pendingPartnerApplications }}</span>
-                    @endif
-                </a>
-            </li>
-            <li class="sidebar-nav-item">
-                <a href="{{ route('admin.gigs.index') }}" class="sidebar-nav-link {{ request()->routeIs('admin.gigs.*') ? 'active' : '' }}">
-                    <i class="fas fa-calendar-alt"></i>
-                    <span>Driver Gigs</span>
-                </a>
-            </li>
-            <li class="sidebar-nav-item">
-                <a href="{{ route('admin.banners.index') }}" class="sidebar-nav-link {{ request()->routeIs('admin.banners.*') ? 'active' : '' }}">
-                    <i class="fas fa-image"></i>
-                    <span>Banners</span>
-                </a>
-            </li>
-        </ul>
 
-        <!-- FOOD MANAGEMENT SECTION -->
-        <div class="sidebar-section-title">FOOD MANAGEMENT</div>
-        <ul class="sidebar-nav">
-            <li class="sidebar-nav-item">
-                <a href="{{ route('admin.cuisines.index') }}" class="sidebar-nav-link {{ request()->routeIs('admin.cuisines.*') ? 'active' : '' }}">
-                    <i class="fas fa-egg"></i>
-                    <span>Cuisines</span>
-                </a>
-            </li>
-            <li class="sidebar-nav-item">
-                <a href="{{ route('admin.global-menu-categories.index') }}" class="sidebar-nav-link {{ request()->routeIs('admin.global-menu-categories.*') ? 'active' : '' }}">
-                    <i class="fas fa-layer-group"></i>
-                    <span>Global Categories</span>
-                </a>
-            </li>
-            <li class="sidebar-nav-item">
-                <a href="{{ url('/admin/master-menu-items') }}" class="sidebar-nav-link {{ request()->routeIs('admin.master-menu-items.index') || request()->routeIs('admin.master-menu-items.edit') ? 'active' : '' }}">
-                    <i class="fas fa-list-check"></i>
-                    <span>Global Menu Items</span>
-                </a>
-            </li>
-            <li class="sidebar-nav-item">
-                <a href="{{ url('/admin/master-menu-items/create') }}" class="sidebar-nav-link {{ request()->routeIs('admin.master-menu-items.create') ? 'active' : '' }}">
-                    <i class="fas fa-plus-circle"></i>
-                    <span>Add Global Item</span>
-                </a>
-            </li>
-        </ul>
-        
-        <!-- FINANCE SECTION -->
-        <div class="sidebar-section-title">FINANCE</div>
-        <ul class="sidebar-nav">
-            <li class="sidebar-nav-item">
-                <a href="{{ route('admin.payouts.index') }}" class="sidebar-nav-link {{ request()->routeIs('admin.payouts.index') ? 'active' : '' }}">
-                    <i class="fas fa-money-bill-wave"></i>
-                    <span>Payouts</span>
-                </a>
-            </li>
-            <li class="sidebar-nav-item">
-                <a href="{{ route('admin.restaurant-approvals.index') }}" class="sidebar-nav-link {{ request()->routeIs('admin.restaurant-approvals.*') ? 'active' : '' }}">
-                    <i class="fas fa-clipboard-check"></i>
-                    <span>Restaurant Approvals</span>
+    <nav class="sidebar-nav-wrapper admin-sidebar-scroll" aria-label="Admin navigation">
+        @foreach($sections as $section)
+            <div class="sidebar-section-title">{{ $section['label'] }}</div>
+            <ul class="sidebar-nav">
+                @foreach($section['items'] as $item)
                     @php
-                        $pendingRestaurantApprovals = \App\Models\RestaurantLocationChangeRequest::where('status', 'pending')->count();
+                        $hasChildren = !empty($item['children']);
+                        $active = $isActive($item['active'] ?? []);
+                        $itemId = $item['id'] ?? \Illuminate\Support\Str::slug($item['label']) . '-menu';
                     @endphp
-                    @if($pendingRestaurantApprovals > 0)
-                        <span class="sidebar-badge">{{ $pendingRestaurantApprovals > 99 ? '99+' : $pendingRestaurantApprovals }}</span>
-                    @endif
-                </a>
-            </li>
-            <li class="sidebar-nav-item">
-                <a href="{{ route('admin.wallets.index') }}" class="sidebar-nav-link {{ request()->routeIs('admin.wallets.*') ? 'active' : '' }}">
-                    <i class="fas fa-wallet"></i>
-                    <span>Wallets</span>
-                </a>
-            </li>
-            <li class="sidebar-nav-item">
-                <a href="{{ route('admin.gift-cards.index') }}" class="sidebar-nav-link {{ request()->routeIs('admin.gift-cards.*') ? 'active' : '' }}">
-                    <i class="fas fa-gift"></i>
-                    <span>Gift Cards</span>
-                </a>
-            </li>
-            <li class="sidebar-nav-item">
-                <a href="{{ route('admin.refunds.index') }}" class="sidebar-nav-link {{ request()->routeIs('admin.refunds.*') ? 'active' : '' }}">
-                    <i class="fas fa-rotate-left"></i>
-                    <span>Refunds</span>
-                </a>
-            </li>
-            <li class="sidebar-nav-item">
-                <a href="{{ route('admin.commissions') }}" class="sidebar-nav-link {{ request()->routeIs('admin.commissions*') ? 'active' : '' }}">
-                    <i class="fas fa-percent"></i>
-                    <span>Commissions</span>
-                </a>
-            </li>
-            <li class="sidebar-nav-item">
-                <a href="{{ route('admin.payouts.history') }}" class="sidebar-nav-link {{ request()->routeIs('admin.payouts.history*') ? 'active' : '' }}">
-                    <i class="fas fa-history"></i>
-                    <span>Payout History</span>
-                </a>
-            </li>
-            <li class="sidebar-nav-item">
-                <a href="{{ route('admin.reports.index') }}" class="sidebar-nav-link {{ request()->routeIs('admin.reports.*') ? 'active' : '' }}">
-                    <i class="fas fa-chart-pie"></i>
-                    <span>Reports</span>
-                </a>
-            </li>
-        </ul>
-        
-        <!-- MARKETING SECTION -->
-        <div class="sidebar-section-title">MARKETING</div>
-        <ul class="sidebar-nav">
-            <li class="sidebar-nav-item">
-                <a href="{{ route('admin.campaigns.index') }}" class="sidebar-nav-link {{ request()->routeIs('admin.campaigns*') ? 'active' : '' }}">
-                    <i class="fas fa-bullhorn"></i>
-                    <span>Campaigns</span>
-                </a>
-            </li>
-            <li class="sidebar-nav-item">
-                <a href="{{ route('admin.push-notifications.index') }}" class="sidebar-nav-link {{ request()->routeIs('admin.push-notifications*') ? 'active' : '' }}">
-                    <i class="fas fa-paper-plane"></i>
-                    <span>Push Notifications</span>
-                </a>
-            </li>
-        </ul>
-        
-        <!-- DINING SECTION -->
-        <div class="sidebar-section-title">DINING</div>
-        <ul class="sidebar-nav">
-            <li class="sidebar-nav-item">
-                <a href="{{ route('admin.dining-bookings.index') }}" class="sidebar-nav-link {{ request()->routeIs('admin.dining-bookings.*') ? 'active' : '' }}">
-                    <i class="fas fa-utensils"></i>
-                    <span>Dining Bookings</span>
-                    @php
-                        $pendingDiningBookings = \App\Models\DiningBooking::where('status', 'pending')->count();
-                    @endphp
-                    @if($pendingDiningBookings > 0)
-                        <span class="sidebar-badge">{{ $pendingDiningBookings > 99 ? '99+' : $pendingDiningBookings }}</span>
-                    @endif
-                </a>
-            </li>
-            <li class="sidebar-nav-item">
-                <a href="{{ route('admin.celebration-types.index') }}" class="sidebar-nav-link {{ request()->routeIs('admin.celebration-types*') ? 'active' : '' }}">
-                    <i class="fas fa-glass-cheers"></i>
-                    <span>Celebration Types</span>
-                </a>
-            </li>
-        </ul>
-        
-        <!-- RESTAURANT MANAGEMENT SECTION -->
-        <div class="sidebar-section-title">RESTAURANT</div>
-        <ul class="sidebar-nav">
-            <li class="sidebar-nav-item">
-                <a href="{{ route('admin.offline-reasons.index') }}" class="sidebar-nav-link {{ request()->routeIs('admin.offline-reasons*') ? 'active' : '' }}">
-                    <i class="fas fa-clock"></i>
-                    <span>Offline Reasons</span>
-                </a>
-            </li>
-            <li class="sidebar-nav-item">
-                <a href="{{ route('admin.cancellation-limits') }}" class="sidebar-nav-link {{ request()->routeIs('admin.cancellation-limits*') ? 'active' : '' }}">
-                    <i class="fas fa-ban"></i>
-                    <span>Cancellation Limits</span>
-                </a>
-            </li>
-        </ul>
-        
-        <!-- REFUND SECTION -->
-        <div class="sidebar-section-title">REFUNDS</div>
-        <ul class="sidebar-nav">
-            <li class="sidebar-nav-item">
-                <a href="{{ route('admin.refund-policies.index') }}" class="sidebar-nav-link {{ request()->routeIs('admin.refund-policies.*') ? 'active' : '' }}">
-                    <i class="fas fa-hand-holding-usd"></i>
-                    <span>Refund Policies</span>
-                </a>
-            </li>
-        </ul>
-        
-        <!-- SUPPORT SECTION -->
-        <div class="sidebar-section-title">SUPPORT</div>
-        <ul class="sidebar-nav">
-            <li class="sidebar-nav-item">
-                <a href="{{ route('admin.support.index') }}" class="sidebar-nav-link {{ request()->routeIs('admin.support.*') ? 'active' : '' }}">
-                    <i class="fas fa-headset"></i>
-                    <span>Support Tickets</span>
-                    @php
-                        $openTicketsCount = \App\Models\SupportTicket::whereIn('status', ['open', 'in_progress'])->count();
-                    @endphp
-                    @if($openTicketsCount > 0)
-                        <span class="sidebar-badge" style="background: #dc3545;">{{ $openTicketsCount > 99 ? '99+' : $openTicketsCount }}</span>
-                    @endif
-                </a>
-            </li>
-        </ul>
-        
-        <!-- SYSTEM SECTION WITH SETTINGS SUBMENU -->
-        <div class="sidebar-section-title">SYSTEM</div>
-        <ul class="sidebar-nav">
-            <li class="sidebar-nav-item sidebar-parent" id="settings-menu">
-                <a href="#" onclick="toggleSettingsSubmenu(event)" class="sidebar-nav-link sidebar-parent-link {{ request()->routeIs('admin.settings.*') || request()->routeIs('admin.home-sections.*') || request()->routeIs('admin.refund-policies.*') ? 'active open' : '' }}">
-                    <i class="fas fa-cog"></i>
-                    <span>Settings</span>
-                    <i class="fas fa-chevron-down sidebar-submenu-toggle"></i>
-                </a>
-                <ul class="sidebar-submenu {{ request()->routeIs('admin.settings.*') || request()->routeIs('admin.home-sections.*') || request()->routeIs('admin.refund-policies.*') || request()->routeIs('admin.delivery-charges*') || request()->routeIs('admin.taxes*') ? 'open' : '' }}">
-                    <li class="sidebar-nav-item">
-                        <a href="{{ route('admin.settings.index') }}" class="sidebar-nav-link {{ request()->routeIs('admin.settings.index') ? 'active' : '' }}">
-                            <i class="fas fa-circle" style="font-size: 6px; margin-right: 10px;"></i>
-                            <span>General Settings</span>
-                        </a>
+
+                    <li class="sidebar-nav-item {{ $hasChildren ? 'sidebar-parent' : '' }}" id="{{ $hasChildren ? $itemId : '' }}">
+                        @if($hasChildren)
+                            <a href="#" onclick="toggleSettingsSubmenu(event)" class="sidebar-nav-link sidebar-parent-link {{ $active ? 'active open' : '' }}">
+                                <i class="fas fa-{{ $item['icon'] }}"></i>
+                                <span>{{ $item['label'] }}</span>
+                                <i class="fas fa-chevron-down sidebar-submenu-toggle"></i>
+                            </a>
+                            <ul class="sidebar-submenu {{ $active ? 'open' : '' }}">
+                                @foreach($item['children'] as $child)
+                                    @php $childActive = $isActive($child['active'] ?? []); @endphp
+                                    <li class="sidebar-nav-item">
+                                        <a href="{{ $child['url'] }}" {!! $child['attrs'] ?? '' !!} class="sidebar-nav-link {{ $childActive ? 'active' : '' }}">
+                                            <i class="fas fa-circle"></i>
+                                            <span>{{ $child['label'] }}</span>
+                                        </a>
+                                    </li>
+                                @endforeach
+                            </ul>
+                        @else
+                            <a href="{{ $item['url'] }}" class="sidebar-nav-link {{ $active ? 'active' : '' }}">
+                                <i class="fas fa-{{ $item['icon'] }}"></i>
+                                <span>{{ $item['label'] }}</span>
+                                @if(!empty($item['badge']))
+                                    <span class="sidebar-badge">{{ $item['badge'] }}</span>
+                                @endif
+                            </a>
+                        @endif
                     </li>
-                    <li class="sidebar-nav-item">
-                        <a href="{{ route('admin.settings.homepage') }}" class="sidebar-nav-link {{ request()->routeIs('admin.settings.homepage') ? 'active' : '' }}">
-                            <i class="fas fa-circle" style="font-size: 6px; margin-right: 10px;"></i>
-                            <span>Homepage Content</span>
-                        </a>
-                    </li>
-                    <li class="sidebar-nav-item">
-                        <a href="{{ route('admin.home-sections.index') }}" class="sidebar-nav-link {{ request()->routeIs('admin.home-sections.*') ? 'active' : '' }}">
-                            <i class="fas fa-circle" style="font-size: 6px; margin-right: 10px;"></i>
-                            <span>Home Sections</span>
-                        </a>
-                    </li>
-                    <li class="sidebar-nav-item">
-                        <a href="{{ route('admin.settings.privacy') }}" class="sidebar-nav-link {{ request()->routeIs('admin.settings.privacy') ? 'active' : '' }}">
-                            <i class="fas fa-circle" style="font-size: 6px; margin-right: 10px;"></i>
-                            <span>Privacy & Legal</span>
-                        </a>
-                    </li>
-                    <li class="sidebar-nav-item">
-                        <a href="{{ route('admin.settings.driver_assignment') }}" class="sidebar-nav-link {{ request()->routeIs('admin.settings.driver_assignment') ? 'active' : '' }}">
-                            <i class="fas fa-circle" style="font-size: 6px; margin-right: 10px;"></i>
-                            <span>Driver Assignment</span>
-                        </a>
-                    </li>
-                    <li class="sidebar-nav-item">
-                        <a href="{{ route('admin.settings.communication') }}" class="sidebar-nav-link {{ request()->routeIs('admin.settings.communication') ? 'active' : '' }}">
-                            <i class="fas fa-circle" style="font-size: 6px; margin-right: 10px;"></i>
-                            <span>Communication</span>
-                        </a>
-                    </li>
-                    <li class="sidebar-nav-item">
-                        <a href="{{ route('admin.settings.notifications') }}" class="sidebar-nav-link {{ request()->routeIs('admin.settings.notifications') ? 'active' : '' }}">
-                            <i class="fas fa-circle" style="font-size: 6px; margin-right: 10px;"></i>
-                            <span>Notification Settings</span>
-                        </a>
-                    </li>
-                    <li class="sidebar-nav-item">
-                        <a href="{{ route('admin.delivery-charges') }}" class="sidebar-nav-link {{ request()->routeIs('admin.delivery-charges*') ? 'active' : '' }}">
-                            <i class="fas fa-circle" style="font-size: 6px; margin-right: 10px;"></i>
-                            <span>Delivery Charges</span>
-                        </a>
-                    </li>
-                    <li class="sidebar-nav-item">
-                        <a href="{{ route('admin.taxes') }}" class="sidebar-nav-link {{ request()->routeIs('admin.taxes*') ? 'active' : '' }}">
-                            <i class="fas fa-circle" style="font-size: 6px; margin-right: 10px;"></i>
-                            <span>Taxes & Charges</span>
-                        </a>
-                    </li>
-                    <li class="sidebar-nav-item">
-                        <a href="{{ route('admin.settings.branding') }}" class="sidebar-nav-link {{ request()->routeIs('admin.settings.branding') ? 'active' : '' }}">
-                            <i class="fas fa-circle" style="font-size: 6px; margin-right: 10px;"></i>
-                            <span>Branding</span>
-                        </a>
-                    </li>
-                    <li class="sidebar-nav-item">
-                        <a href="{{ route('admin.settings.payment') }}" class="sidebar-nav-link {{ request()->routeIs('admin.settings.payment') ? 'active' : '' }}">
-                            <i class="fas fa-circle" style="font-size: 6px; margin-right: 10px;"></i>
-                            <span>Payments</span>
-                        </a>
-                    </li>
-                    <li class="sidebar-nav-item">
-                        <a href="{{ route('admin.payout-settings.edit') }}" class="sidebar-nav-link {{ request()->routeIs('admin.payout-settings.*') ? 'active' : '' }}">
-                            <i class="fas fa-circle" style="font-size: 6px; margin-right: 10px;"></i>
-                            <span>Payout Gateway</span>
-                        </a>
-                    </li>
-                    <li class="sidebar-nav-item">
-                        <a href="{{ route('admin.settings.map') }}" class="sidebar-nav-link {{ request()->routeIs('admin.settings.map') ? 'active' : '' }}">
-                            <i class="fas fa-circle" style="font-size: 6px; margin-right: 10px;"></i>
-                            <span>Map Settings</span>
-                        </a>
-                    </li>
-                    <li class="sidebar-nav-item">
-                        <a href="{{ route('admin.settings.index') }}#media-storage-settings" data-storage-settings-link class="sidebar-nav-link">
-                            <i class="fas fa-circle" style="font-size: 6px; margin-right: 10px;"></i>
-                            <span>Storage Settings</span>
-                        </a>
-                    </li>
-                    <li class="sidebar-nav-item">
-                        <a href="{{ route('admin.settings.cron') }}" class="sidebar-nav-link {{ request()->routeIs('admin.settings.cron') ? 'active' : '' }}">
-                            <i class="fas fa-circle" style="font-size: 6px; margin-right: 10px;"></i>
-                            <span>Cron Jobs</span>
-                        </a>
-                    </li>
-                    <li class="sidebar-nav-item">
-                        <a href="{{ route('admin.refund-policies.index') }}" class="sidebar-nav-link {{ request()->routeIs('admin.refund-policies.*') ? 'active' : '' }}">
-                            <i class="fas fa-circle" style="font-size: 6px; margin-right: 10px;"></i>
-                            <span>Refund Policies</span>
-                        </a>
-                    </li>
-                </ul>
-            </li>
-        </ul>
-    </div>
-</div>
+                @endforeach
+            </ul>
+        @endforeach
+    </nav>
+</aside>
 
 <style>
-    /* Sidebar Submenu Styles */
-    .sidebar-parent {
-        position: relative;
+    .admin-sidebar {
+        background:
+            radial-gradient(circle at 10% 0%, color-mix(in srgb, var(--primary) 24%, transparent), transparent 30%),
+            linear-gradient(180deg, #0b1220 0%, #111827 56%, #172033 100%) !important;
     }
-    
-    .sidebar-parent-link {
-        display: flex !important;
-        align-items: center !important;
-        justify-content: space-between !important;
+
+    .admin-sidebar .admin-sidebar-brand {
+        padding: 18px 18px !important;
+        min-height: var(--topbar-height);
     }
-    
-    .sidebar-submenu-toggle {
-        font-size: 12px;
-        transition: transform 0.3s ease;
-        margin-left: auto;
+
+    .admin-sidebar .sidebar-logo-icon {
+        width: 46px !important;
+        height: 46px !important;
+        border-radius: 16px !important;
     }
-    
-    .sidebar-parent-link.open .sidebar-submenu-toggle {
+
+    .admin-sidebar .sidebar-logo-text {
+        min-width: 0;
+    }
+
+    .admin-sidebar .sidebar-logo-text h2 {
+        max-width: 185px;
+        color: #f8fafc !important;
+        font-size: 18px !important;
+        font-weight: 950 !important;
+        line-height: 1.08 !important;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .admin-sidebar .sidebar-logo-text h2 span {
+        color: var(--primary-light) !important;
+    }
+
+    .admin-sidebar .sidebar-logo-text small {
+        color: #94a3b8 !important;
+        font-size: 10px !important;
+        font-weight: 800 !important;
+    }
+
+    .admin-sidebar .admin-sidebar-scroll {
+        padding: 12px 10px 18px !important;
+        scrollbar-width: thin;
+        scrollbar-color: rgba(148, 163, 184, .45) transparent;
+    }
+
+    .admin-sidebar .admin-sidebar-scroll::-webkit-scrollbar {
+        width: 7px;
+    }
+
+    .admin-sidebar .admin-sidebar-scroll::-webkit-scrollbar-thumb {
+        background: rgba(148, 163, 184, .45);
+        border-radius: 999px;
+    }
+
+    .admin-sidebar .sidebar-section-title {
+        margin-top: 10px !important;
+        padding: 8px 12px 5px !important;
+        color: #94a3b8 !important;
+        font-size: 10px !important;
+        font-weight: 950 !important;
+        letter-spacing: .14em !important;
+    }
+
+    .admin-sidebar .sidebar-nav-item {
+        margin-bottom: 3px !important;
+    }
+
+    .admin-sidebar .sidebar-nav-link {
+        min-height: 40px !important;
+        padding: 9px 12px !important;
+        border-radius: 13px !important;
+        color: rgba(226, 232, 240, .9) !important;
+        font-size: 13px !important;
+        font-weight: 850 !important;
+        gap: 10px !important;
+        white-space: nowrap;
+    }
+
+    .admin-sidebar .sidebar-nav-link span:not(.sidebar-badge) {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .admin-sidebar .sidebar-nav-link i:first-child {
+        width: 22px !important;
+        height: 22px !important;
+        border-radius: 8px !important;
+        font-size: 13px !important;
+    }
+
+    .admin-sidebar .sidebar-nav-link:hover {
+        background: rgba(255, 255, 255, .08) !important;
+        color: #fff !important;
+        transform: translateX(2px);
+    }
+
+    .admin-sidebar .sidebar-nav-link.active {
+        background: linear-gradient(135deg, var(--primary), var(--primary-dark)) !important;
+        color: #fff !important;
+        box-shadow: 0 12px 24px color-mix(in srgb, var(--primary) 22%, transparent) !important;
+    }
+
+    .admin-sidebar .sidebar-parent-link {
+        justify-content: flex-start !important;
+    }
+
+    .admin-sidebar .sidebar-submenu-toggle {
+        margin-left: auto !important;
+        font-size: 10px !important;
+        transition: transform .2s ease;
+    }
+
+    .admin-sidebar .sidebar-parent-link.open .sidebar-submenu-toggle {
         transform: rotate(180deg);
     }
-    
-    .sidebar-submenu {
-        list-style: none;
-        padding-left: 35px !important;
-        margin-top: 5px;
-        margin-bottom: 5px;
+
+    .admin-sidebar .sidebar-submenu {
+        display: block !important;
         max-height: 0;
+        margin: 4px 0 5px 24px !important;
+        padding-left: 8px !important;
         overflow: hidden;
-        transition: max-height 0.3s ease;
+        border-left: 1px solid rgba(255, 255, 255, .13);
+        transition: max-height .25s ease;
     }
-    
-    .sidebar-submenu.open {
-        max-height: 9999px;
-        overflow: visible;
+
+    .admin-sidebar .sidebar-submenu.open {
+        max-height: 900px;
     }
-    
-    .sidebar-submenu .sidebar-nav-link {
-        padding: 8px 12px !important;
-        font-size: 13px;
+
+    .admin-sidebar .sidebar-submenu .sidebar-nav-link {
+        min-height: 34px !important;
+        padding: 7px 10px !important;
+        border-radius: 10px !important;
+        color: rgba(203, 213, 225, .82) !important;
+        font-size: 12px !important;
     }
-    
-    .sidebar-submenu .sidebar-nav-link i {
-        opacity: 0.6;
+
+    .admin-sidebar .sidebar-submenu .sidebar-nav-link i:first-child {
+        width: 10px !important;
+        height: 10px !important;
+        font-size: 5px !important;
+        color: rgba(148, 163, 184, .85) !important;
+        background: transparent !important;
     }
-    
-    .sidebar-submenu .sidebar-nav-link.active {
-        background: linear-gradient(135deg, rgba(255, 107, 53, 0.1), rgba(255, 107, 53, 0.05));
-        color: var(--primary);
-    }
-    
-    /* Support badge styling */
-    .sidebar-nav-link .sidebar-badge {
-        background: #dc3545;
-        color: white;
-        font-size: 10px;
-        padding: 2px 6px;
-        border-radius: 10px;
+
+    .admin-sidebar .sidebar-badge {
         margin-left: auto;
-        min-width: 20px;
+        min-width: 24px;
+        padding: 2px 7px;
+        border-radius: 999px;
+        color: #fff;
+        background: linear-gradient(135deg, #ef4444, #fb7185) !important;
+        font-size: 10px;
+        font-weight: 950;
         text-align: center;
     }
 </style>
 
 <script>
-    function toggleSettingsSubmenu(event) {
-        event.preventDefault();
-        event.stopPropagation();
-        
-        const parentLink = event.currentTarget;
-        const submenu = parentLink.nextElementSibling;
-        
-        // Toggle open class on parent link
-        parentLink.classList.toggle('open');
-        
-        // Toggle open class on submenu
-        if (submenu) {
-            submenu.classList.toggle('open');
-        }
-    }
-    
-    // Keep submenu open if any settings route is active
     document.addEventListener('DOMContentLoaded', function() {
-        const settingsRoutes = [
-            'admin.settings.index',
-            'admin.settings.homepage',
-            'admin.home-sections.index',
-            'admin.home-sections.create',
-            'admin.home-sections.edit',
-            'admin.settings.privacy',
-            'admin.settings.driver_assignment',
-            'admin.settings.communication',
-            'admin.settings.notifications',
-            'admin.settings.branding',
-            'admin.settings.payment',
-            'admin.settings.map',
-            'admin.settings.cron',
-            'admin.payout-settings.edit',
-            'admin.delivery-charges',
-            'admin.taxes',
-            'admin.refund-policies.index'
-        ];
-        const currentRoute = '{{ request()->route()->getName() }}';
-        
-        if (settingsRoutes.includes(currentRoute)) {
-            const settingsMenu = document.getElementById('settings-menu');
-            const parentLink = settingsMenu?.querySelector('.sidebar-parent-link');
-            const submenu = settingsMenu?.querySelector('.sidebar-submenu');
-            if (parentLink && submenu) {
-                parentLink.classList.add('open');
-                submenu.classList.add('open');
-            }
-        }
-
-        const sidebar = document.getElementById('sidebar');
+        const sidebarNav = document.querySelector('.admin-sidebar-scroll');
         const storageLink = document.querySelector('[data-storage-settings-link]');
         const scrollKey = 'adminSidebarScrollTop';
 
-        if (sidebar) {
+        if (sidebarNav) {
             const savedScroll = Number(sessionStorage.getItem(scrollKey));
             if (Number.isFinite(savedScroll)) {
-                sidebar.scrollTop = savedScroll;
+                sidebarNav.scrollTop = savedScroll;
             }
 
-            sidebar.addEventListener('scroll', function() {
-                sessionStorage.setItem(scrollKey, String(sidebar.scrollTop));
+            sidebarNav.addEventListener('scroll', function() {
+                sessionStorage.setItem(scrollKey, String(sidebarNav.scrollTop));
             }, { passive: true });
 
-            sidebar.querySelectorAll('a[href]:not([href="#"])').forEach(function(link) {
+            sidebarNav.querySelectorAll('a[href]:not([href="#"])').forEach(function(link) {
                 link.addEventListener('click', function() {
-                    sessionStorage.setItem(scrollKey, String(sidebar.scrollTop));
+                    sessionStorage.setItem(scrollKey, String(sidebarNav.scrollTop));
                 });
             });
         }
@@ -555,14 +405,5 @@
 
         syncStorageSettingsLink();
         window.addEventListener('hashchange', syncStorageSettingsLink);
-        
-        // Highlight support menu item when on support routes
-        const supportRoute = '{{ request()->routeIs('admin.support.*') ? 'active' : '' }}';
-        if (supportRoute) {
-            const supportLink = document.querySelector('a[href="{{ route("admin.support.index") }}"]');
-            if (supportLink) {
-                supportLink.classList.add('active');
-            }
-        }
     });
 </script>

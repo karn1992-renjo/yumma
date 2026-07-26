@@ -19,7 +19,8 @@ class MenuOption {
   factory MenuOption.fromJson(dynamic value) {
     if (value is Map<String, dynamic>) {
       return MenuOption(
-        name: (value['name'] ?? value['label'] ?? value['title'] ?? '').toString(),
+        name: (value['name'] ?? value['label'] ?? value['title'] ?? '')
+            .toString(),
         price: parseDoubleValue(
           value['price'] ?? value['additional_price'] ?? value['amount'],
         ),
@@ -50,6 +51,7 @@ class MenuOption {
 class MenuItem {
   final int id;
   final int restaurantId;
+  final int? masterMenuItemId;
   final int? categoryId;
   final int? cuisineId;
   final String name;
@@ -74,6 +76,7 @@ class MenuItem {
   MenuItem({
     required this.id,
     required this.restaurantId,
+    this.masterMenuItemId,
     this.categoryId,
     this.cuisineId,
     required this.name,
@@ -102,6 +105,7 @@ class MenuItem {
     return MenuItem(
       id: parseIntValue(json['id']),
       restaurantId: parseIntValue(json['restaurant_id']),
+      masterMenuItemId: parseNullableInt(json['master_menu_item_id']),
       categoryId: parseNullableInt(json['category_id']),
       cuisineId: parseNullableInt(json['cuisine_id']),
       name: json['name'] ?? '',
@@ -110,8 +114,13 @@ class MenuItem {
       discountedPrice: parseNullableDouble(json['discounted_price']),
       images: imageList,
       isVeg: parseBoolValue(json['is_veg'], true),
-      foodType: (json['food_type'] ?? (parseBoolValue(json['is_veg'], true) ? 'veg' : 'non_veg')).toString(),
-      dietLabel: (json['diet_label'] ?? _labelForFoodType(json['food_type']?.toString(), parseBoolValue(json['is_veg'], true))).toString(),
+      foodType: (json['food_type'] ??
+              (parseBoolValue(json['is_veg'], true) ? 'veg' : 'non_veg'))
+          .toString(),
+      dietLabel: (json['diet_label'] ??
+              _labelForFoodType(json['food_type']?.toString(),
+                  parseBoolValue(json['is_veg'], true)))
+          .toString(),
       isAvailable: parseBoolValue(json['is_available'], true),
       preparationTime: parseNullableInt(json['preparation_time']),
       totalOrders: parseIntValue(json['total_orders']),
@@ -130,6 +139,7 @@ class MenuItem {
     return {
       'id': id,
       'restaurant_id': restaurantId,
+      'master_menu_item_id': masterMenuItemId,
       'category_id': categoryId,
       'cuisine_id': cuisineId,
       'name': name,

@@ -15,17 +15,17 @@ return new class extends Migration
 
         AppSetting::updateOrCreate(
             ['key' => 'multiple_order_bonus_two_orders'],
-            ['value' => '10', 'type' => 'number', 'description' => 'Driver bonus for a matched two-order route.']
+            ['value' => '0', 'type' => 'number', 'description' => 'Driver bonus for a matched two-order route.']
         );
 
         AppSetting::updateOrCreate(
             ['key' => 'multiple_order_bonus_three_plus_orders'],
-            ['value' => '20', 'type' => 'number', 'description' => 'Driver bonus for a matched route with three or more orders.']
+            ['value' => '0', 'type' => 'number', 'description' => 'Driver bonus for a matched route with three or more orders.']
         );
 
         AppSetting::updateOrCreate(
             ['key' => 'multiple_order_bonus_extra_order'],
-            ['value' => '5', 'type' => 'number', 'description' => 'Extra driver bonus per matched order after the third order.']
+            ['value' => '0', 'type' => 'number', 'description' => 'Extra driver bonus per matched order after the third order.']
         );
 
         AppSetting::where('key', 'max_active_orders_per_driver')

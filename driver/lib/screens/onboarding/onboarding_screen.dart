@@ -111,7 +111,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                   'Skip',
                   style: GoogleFonts.nunitoSans(
                     fontSize: 16,
-                    fontWeight: FontWeight.w600,
+                    fontWeight: FontWeight.w400,
                     color: Color(0xFF667EEA),
                   ),
                 ),
@@ -202,7 +202,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                                   : 'Next',
                               style: GoogleFonts.nunitoSans(
                                 fontSize: 16,
-                                fontWeight: FontWeight.w600,
+                                fontWeight: FontWeight.w400,
                                 color: Colors.white,
                               ),
                             ),
@@ -298,7 +298,7 @@ class OnboardingPage extends StatelessWidget {
               textAlign: TextAlign.center,
               style: GoogleFonts.nunitoSans(
                 fontSize: 28,
-                fontWeight: FontWeight.bold,
+                fontWeight: FontWeight.w800,
                 color: Colors.black87,
               ),
             ),

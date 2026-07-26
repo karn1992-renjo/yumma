@@ -2,6 +2,7 @@
 import 'package:flutter/material.dart';
 import '../../config/app_config.dart';
 import '../../models/restaurant.dart';
+import '../common/network_image_loader.dart';
 
 class SearchResultCard extends StatelessWidget {
   final dynamic restaurant;
@@ -40,12 +41,12 @@ class SearchResultCard extends StatelessWidget {
 
   String _getOfferText() {
     final data = _toMap();
-    
+
     final offer = data['offer'] ?? data['discount'] ?? data['promotion'];
     if (offer != null && offer.toString().isNotEmpty) {
       return offer.toString();
     }
-    
+
     final discountPercent = data['discount_percent'];
     if (discountPercent != null) {
       final percent = _parseDouble(discountPercent);
@@ -53,18 +54,18 @@ class SearchResultCard extends StatelessWidget {
         return '${percent.toStringAsFixed(0)}% OFF';
       }
     }
-    
+
     return '';
   }
 
   String _getImageUrl() {
     final data = _toMap();
-    
-    final imageUrl = data['image_url'] ?? 
-                     data['banner_url'] ?? 
-                     data['logo_image'] ??
-                     data['image'];
-    
+
+    final imageUrl = data['image_url'] ??
+        data['banner_url'] ??
+        data['logo_image'] ??
+        data['image'];
+
     if (imageUrl != null && imageUrl.toString().isNotEmpty) {
       if (imageUrl.toString().startsWith('http')) {
         return imageUrl;
@@ -113,7 +114,7 @@ class SearchResultCard extends StatelessWidget {
     final deliveryTime = _getDeliveryTime();
     final offerText = _getOfferText();
     final imageUrl = _getImageUrl();
-    
+
     return GestureDetector(
       onTap: onTap,
       child: Container(
@@ -139,26 +140,28 @@ class SearchResultCard extends StatelessWidget {
                 bottomLeft: Radius.circular(12),
               ),
               child: imageUrl.isNotEmpty
-                  ? Image.network(
-                      imageUrl,
+                  ? NetworkImageLoader(
+                      imageUrl: imageUrl,
                       width: 100,
                       height: 100,
                       fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) => Container(
+                      errorWidget: Container(
                         width: 100,
                         height: 100,
                         color: Colors.grey.shade200,
-                        child: const Icon(Icons.restaurant, size: 40, color: Colors.grey),
+                        child: const Icon(Icons.restaurant,
+                            size: 40, color: Colors.grey),
                       ),
                     )
                   : Container(
                       width: 100,
                       height: 100,
                       color: Colors.grey.shade200,
-                      child: const Icon(Icons.restaurant, size: 40, color: Colors.grey),
+                      child: const Icon(Icons.restaurant,
+                          size: 40, color: Colors.grey),
                     ),
             ),
-            
+
             // Restaurant Info
             Expanded(
               child: Padding(
@@ -200,7 +203,8 @@ class SearchResultCard extends StatelessWidget {
                     if (offerText.isNotEmpty) ...[
                       const SizedBox(height: 8),
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 4),
                         decoration: BoxDecoration(
                           color: const Color(0xFFFF6B6B).withOpacity(0.1),
                           borderRadius: BorderRadius.circular(4),

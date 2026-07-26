@@ -22,6 +22,12 @@
         </div>
     @endif
 
+    @php
+        $selectedCuisineIds = collect(old('cuisine_ids', $category->exists ? $category->cuisines->pluck('id')->all() : []))
+            ->map(fn ($id) => (int) $id)
+            ->all();
+    @endphp
+
     <form method="POST" action="{{ $category->exists ? route('admin.global-menu-categories.update', $category) : route('admin.global-menu-categories.store') }}" class="card" enctype="multipart/form-data">
         @csrf
         @if($category->exists)
@@ -41,6 +47,15 @@
                             <option value="{{ $parent->id }}" @selected(old('parent_id', $category->parent_id) == $parent->id)>{{ $parent->name }}</option>
                         @endforeach
                     </select>
+                </div>
+                <div class="col-12">
+                    <label class="form-label fw-semibold">Mapped Cuisines</label>
+                    <select name="cuisine_ids[]" class="form-select" multiple size="8">
+                        @foreach(($cuisines ?? collect()) as $cuisine)
+                            <option value="{{ $cuisine->id }}" @selected(in_array((int) $cuisine->id, $selectedCuisineIds, true))>{{ $cuisine->name }}</option>
+                        @endforeach
+                    </select>
+                    <div class="form-text">Hold Ctrl or Cmd to select every cuisine this category belongs to. Restaurant apps will use this to narrow cuisine choices for mapped global categories.</div>
                 </div>
                 <div class="col-md-3">
                     <label class="form-label fw-semibold">Display Order</label>

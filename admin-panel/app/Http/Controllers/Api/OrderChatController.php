@@ -201,23 +201,6 @@ class OrderChatController extends Controller
         ]);
     }
 
-    public function assistant(Request $request, int $orderId)
-    {
-        [$order, $role] = $this->resolveAuthorizedOrder($request, $orderId);
-
-        $validated = $request->validate([
-            'question' => 'required|string|max:500',
-        ]);
-
-        return response()->json([
-            'success' => true,
-            'data' => [
-                'question' => $validated['question'],
-                'answer' => $this->buildAssistantReply($order, $role, $validated['question']),
-            ],
-        ]);
-    }
-
     private function resolveAuthorizedOrder(Request $request, int $orderId): array
     {
         $user = $request->user();
@@ -357,54 +340,4 @@ class OrderChatController extends Controller
         }
     }
 
-    private function buildAssistantReply(Order $order, string $role, string $question): string
-    {
-        $q = Str::lower($question);
-        $status = Order::getStatuses()[$order->status] ?? Str::headline($order->status);
-        $driverName = trim((string) $order->driver?->name);
-        $restaurantName = trim((string) $order->restaurant?->name);
-
-        if (Str::contains($q, ['status', 'where', 'progress'])) {
-            return "Current order status: {$status}.";
-        }
-
-        if (Str::contains($q, ['eta', 'arrive', 'delivery'])) {
-            return match ($order->status) {
-                'delivered' => 'This order has already been delivered.',
-                'on_the_way', 'picked_up' => 'The order is on the way. You can also open live tracking for the latest driver movement.',
-                'ready_for_pickup' => 'The order is ready and waiting for pickup.',
-                default => 'The order is still being prepared.',
-            };
-        }
-
-        if (Str::contains($q, ['driver', 'rider'])) {
-            if ($driverName !== '') {
-                return "Assigned rider: {$driverName}.";
-            }
-
-            return 'A rider has not been assigned yet.';
-        }
-
-        if (Str::contains($q, ['restaurant', 'seller', 'store'])) {
-            if ($restaurantName !== '') {
-                return "Restaurant partner: {$restaurantName}.";
-            }
-
-            return 'Restaurant details are not available right now.';
-        }
-
-        if (Str::contains($q, ['otp'])) {
-            return $order->delivery_otp
-                ? 'Delivery OTP: ' . $order->delivery_otp . '.'
-                : 'Delivery OTP will appear once the order is close to delivery.';
-        }
-
-        if ($role === 'restaurant' && Str::contains($q, ['customer request', 'instruction'])) {
-            return $order->special_instructions
-                ? 'Customer instructions: ' . $order->special_instructions
-                : 'There are no special customer instructions on this order.';
-        }
-
-        return 'I can help with order status, delivery progress, rider details, restaurant details, live tracking context, and delivery OTP for this order.';
-    }
 }

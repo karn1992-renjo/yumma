@@ -2,7 +2,6 @@ import 'dart:convert';
 
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
@@ -10,6 +9,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../firebase_options.dart';
 import '../models/user.dart';
+import '../utils/currency_utils.dart';
 import 'incoming_order_alert_service.dart';
 import 'navigation_service.dart';
 import 'sound_service.dart';
@@ -17,7 +17,11 @@ import 'sound_service.dart';
 @pragma('vm:entry-point')
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   try {
-    await _ensureFirebaseInitialized();
+    if (Firebase.apps.isEmpty) {
+      await Firebase.initializeApp(
+        options: DefaultFirebaseOptions.currentPlatform,
+      );
+    }
     final data = FirebaseNotificationService.normalizeNotificationData(
       message.data,
     );
@@ -52,7 +56,11 @@ class FirebaseNotificationService {
     if (_isInitialized) return;
 
     try {
-      await _ensureFirebaseInitialized();
+      if (Firebase.apps.isEmpty) {
+        await Firebase.initializeApp(
+          options: DefaultFirebaseOptions.currentPlatform,
+        );
+      }
     } catch (e) {
       debugPrint('Firebase initialization failed: $e');
     }
@@ -149,7 +157,11 @@ class FirebaseNotificationService {
 
   Future<void> registerDeviceToken({User? user}) async {
     try {
-      await _ensureFirebaseInitialized();
+      if (Firebase.apps.isEmpty) {
+        await Firebase.initializeApp(
+          options: DefaultFirebaseOptions.currentPlatform,
+        );
+      }
 
       _deviceToken ??= await _messaging.getToken();
       if (_deviceToken == null || _deviceToken!.isEmpty) {
@@ -181,7 +193,7 @@ class FirebaseNotificationService {
     const androidChannel = AndroidNotificationChannel(
       'default_notification_channel',
       'Default Notifications',
-      description: 'General notifications from Yumma',
+      description: 'General notifications from renjo',
       importance: Importance.high,
     );
 
@@ -265,7 +277,7 @@ class FirebaseNotificationService {
     const channel = AndroidNotificationChannel(
       'incoming_order_channel',
       'Incoming Orders',
-      description: 'Urgent restaurant and driver order alerts',
+      description: 'Urgent store and driver order alerts',
       importance: Importance.max,
       playSound: true,
       audioAttributesUsage: AudioAttributesUsage.alarm,
@@ -276,14 +288,19 @@ class FirebaseNotificationService {
             AndroidFlutterLocalNotificationsPlugin>()
         ?.createNotificationChannel(channel);
 
+    final isDriverOrder = data['role'] == 'driver' ||
+        data['type']?.toString() == 'driver_order_assigned';
+    final driverBody = isDriverOrder ? _driverIncomingBody(data, orderId) : null;
+
     final title = message.notification?.title?.toString() ??
         data['notification_title']?.toString() ??
         (data['role'] == 'driver' ? 'New delivery' : 'New order');
-    final body = message.notification?.body?.toString() ??
+    final body = driverBody ??
+        message.notification?.body?.toString() ??
         data['notification_body']?.toString() ??
         'Order #${data['order_number'] ?? orderId ?? ''} is waiting.';
 
-    final notificationId = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+    final notificationId = _notificationIdForOrder(orderId);
     final payload = jsonEncode(data);
 
     try {
@@ -295,7 +312,7 @@ class FirebaseNotificationService {
           android: AndroidNotificationDetails(
             'incoming_order_channel',
             'Incoming Orders',
-            channelDescription: 'Urgent restaurant and driver order alerts',
+            channelDescription: 'Urgent store and driver order alerts',
             importance: Importance.max,
             priority: Priority.max,
             category: AndroidNotificationCategory.call,
@@ -322,7 +339,7 @@ class FirebaseNotificationService {
           android: AndroidNotificationDetails(
             'incoming_order_channel',
             'Incoming Orders',
-            channelDescription: 'Urgent restaurant and driver order alerts',
+            channelDescription: 'Urgent store and driver order alerts',
             importance: Importance.max,
             priority: Priority.max,
             visibility: NotificationVisibility.public,
@@ -471,13 +488,17 @@ class FirebaseNotificationService {
 
   static bool _isIncomingOrderData(Map<String, dynamic> data) {
     final normalized = _normalizeOrderData(data);
-    final type = normalized['type']?.toString().toLowerCase() ?? '';
-    final role = normalized['role']?.toString().toLowerCase() ?? '';
+    final type = _normalizedSignal(normalized['type']);
+    final event = _normalizedSignal(normalized['event']);
+    final status = _normalizedSignal(normalized['status']);
 
-    return type == 'new_order' ||
+    return type == 'order_cancelled_alert' ||
+        event == 'order_cancelled' ||
+        status == 'cancelled' ||
+        type == 'new_order' ||
         type == 'driver_order_assigned' ||
-        role == 'driver' ||
-        role == 'restaurant';
+        event == 'new_order' ||
+        event == 'driver_order_assigned';
   }
 
   static Map<String, dynamic> normalizeNotificationData(
@@ -492,10 +513,7 @@ class FirebaseNotificationService {
 
   static bool _isStaticOrderData(Map<String, dynamic> data) {
     data = _normalizeOrderData(data);
-    final type = data['type']?.toString() ?? '';
-    return type.contains('order') ||
-        data.containsKey('order_id') ||
-        data.containsKey('order_number');
+    return _isIncomingOrderData(data);
   }
 
   bool _isOrderMessage(RemoteMessage message) {
@@ -532,10 +550,52 @@ class FirebaseNotificationService {
     return data.map((key, value) => MapEntry(key.toString(), value));
   }
 
+  static String _normalizedSignal(dynamic value) {
+    return value?.toString().trim().toLowerCase().replaceAll('-', '_') ?? '';
+  }
+
+  static int _notificationIdForOrder(dynamic orderId) {
+    final parsed = orderId is num
+        ? orderId.toInt()
+        : int.tryParse(orderId?.toString() ?? '');
+    if (parsed != null) return 100000 + parsed.abs() % 900000;
+    return 100000 +
+        (orderId?.toString().hashCode ?? 0).abs().remainder(900000);
+  }
+
+  static String? _driverIncomingBody(Map<String, dynamic> data, int? orderId) {
+    final earning = data['earnings'] ??
+        data['driver_earning'] ??
+        data['driver_earnings'] ??
+        data['estimated_earning'];
+    if (earning == null) return null;
+
+    final incentive = data['incentive'] ?? data['driver_incentive'];
+    final incentiveAmount =
+        incentive is num ? incentive.toDouble() : double.tryParse(incentive?.toString() ?? '');
+    final orderLabel = data['order_number'] ?? orderId ?? '';
+    final body = StringBuffer('Order #$orderLabel - earn ${_money(earning)}');
+    if (incentiveAmount != null && incentiveAmount > 0) {
+      body.write(' + ${_money(incentive)} incentive');
+    }
+    return body.toString();
+  }
+
+  static String _money(dynamic value) {
+    final amount = value is num ? value : num.tryParse(value?.toString() ?? '');
+    if (amount == null) return value?.toString() ?? '';
+    return formatGlobalCurrency(amount);
+  }
+
   static Future<void> persistPendingOrderData(
       Map<dynamic, dynamic> data) async {
     final normalized = _normalizeOrderData(_safeDataMap(data));
     if (!_isStaticOrderData(normalized)) return;
+    if (_normalizedSignal(normalized['status']) == 'cancelled' ||
+        _normalizedSignal(normalized['type']) == 'order_cancelled_alert' ||
+        _normalizedSignal(normalized['event']) == 'order_cancelled') {
+      return;
+    }
 
     final prefs = await SharedPreferences.getInstance();
     final duration = IncomingOrderAlertService.timerDuration(normalized);
@@ -552,19 +612,4 @@ class FirebaseNotificationService {
       IncomingOrderAlertService.roleFor(normalized),
     );
   }
-}
-
-Future<void> _ensureFirebaseInitialized() async {
-  if (Firebase.apps.isNotEmpty) return;
-
-  if (!kIsWeb &&
-      (defaultTargetPlatform == TargetPlatform.iOS ||
-          defaultTargetPlatform == TargetPlatform.android)) {
-    await Firebase.initializeApp();
-    return;
-  }
-
-  await Firebase.initializeApp(
-    options: DefaultFirebaseOptions.currentPlatform,
-  );
 }

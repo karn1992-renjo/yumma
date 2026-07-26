@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Order;
 use App\Models\Restaurant;
 use App\Models\User;
+use App\Rules\UniqueUserContactForRole;
 use Illuminate\Database\QueryException;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Http\Request;
@@ -58,8 +59,8 @@ class UserController extends Controller
     {
         $validated = $request->validate([
             'name' => 'required|string|max:255',
-            'email' => 'required|email|unique:users',
-            'phone' => 'required|string|max:20|unique:users',
+            'email' => ['required', 'email', UniqueUserContactForRole::email($request->input('role'))],
+            'phone' => ['required', 'string', 'max:20', UniqueUserContactForRole::phone($request->input('role'))],
             'password' => 'required|string|min:6|confirmed',
             'role' => 'required|exists:roles,name',
         ]);
@@ -88,8 +89,8 @@ class UserController extends Controller
     {
         $validated = $request->validate([
             'name' => 'required|string|max:255',
-            'email' => 'required|email|unique:users,email,' . $user->id,
-            'phone' => 'required|string|max:20|unique:users,phone,' . $user->id,
+            'email' => ['required', 'email', UniqueUserContactForRole::email($request->input('role'), $user->id)],
+            'phone' => ['required', 'string', 'max:20', UniqueUserContactForRole::phone($request->input('role'), $user->id)],
             'role' => 'required|exists:roles,name',
         ]);
         
@@ -232,20 +233,20 @@ class UserController extends Controller
             $record = array_map(fn ($value) => is_string($value) ? trim($value) : $value, $record);
             $record['role'] = Str::of($record['role'] ?? '')->trim()->lower()->replace(' ', '_')->toString();
 
-            if (!empty($record['email']) && User::where('email', $record['email'])->exists()) {
-                $errors[] = "Row {$rowNumber}: skipped because email already exists.";
+            if (!empty($record['email']) && UniqueUserContactForRole::emailExists($record['email'], $record['role'])) {
+                $errors[] = "Row {$rowNumber}: skipped because email already exists for this role.";
                 continue;
             }
 
-            if (!empty($record['phone']) && User::where('phone', $record['phone'])->exists()) {
-                $errors[] = "Row {$rowNumber}: skipped because phone number already exists.";
+            if (!empty($record['phone']) && UniqueUserContactForRole::phoneExists($record['phone'], $record['role'])) {
+                $errors[] = "Row {$rowNumber}: skipped because phone number already exists for this role.";
                 continue;
             }
 
             $validator = Validator::make($record, [
                 'name' => 'required|string|max:255',
-                'email' => 'required|email|unique:users,email',
-                'phone' => 'required|string|max:20|unique:users,phone',
+                'email' => ['required', 'email', UniqueUserContactForRole::email($record['role'])],
+                'phone' => ['required', 'string', 'max:20', UniqueUserContactForRole::phone($record['role'])],
                 'password' => 'required|string|min:6',
                 'role' => ['required', 'string', Rule::in($allowedRoles)],
                 'active' => 'nullable|string',

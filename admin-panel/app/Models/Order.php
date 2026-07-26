@@ -24,19 +24,29 @@ class Order extends Model
         'items',
         'subtotal',
         'delivery_fee',
+        'original_delivery_fee',
+        'delivery_discount',
+        'delivery_subsidy_source',
+        'admin_delivery_subsidy',
+        'restaurant_delivery_subsidy',
         'platform_fee',
         'tax',
         'discount',
         'total',
         'payment_method',
+        'payment_gateway',
+        'payment_source',
         'delivery_payment_mode',
         'cod_reconciliation_status',
         'payment_status',
         'payment_id',
+        'payment_link_id',
+        'payment_attempts_count',
         'cash_collected_amount',
         'cash_collected_at',
         'cod_deposited_at',
         'online_payment_verified_at',
+        'paid_at',
         'status',
         'customer_address',
         'customer_phone',
@@ -120,6 +130,7 @@ class Order extends Model
         'cash_collected_at' => 'datetime',
         'cod_deposited_at' => 'datetime',
         'online_payment_verified_at' => 'datetime',
+        'paid_at' => 'datetime',
         'delivery_lat' => 'decimal:8',
         'delivery_lng' => 'decimal:8',
         'otp_verified' => 'boolean',
@@ -133,6 +144,11 @@ class Order extends Model
         'service_rating' => 'integer',
         'subtotal' => 'decimal:2',
         'delivery_fee' => 'decimal:2',
+        'original_delivery_fee' => 'decimal:2',
+        'delivery_discount' => 'decimal:2',
+        'admin_delivery_subsidy' => 'decimal:2',
+        'restaurant_delivery_subsidy' => 'decimal:2',
+        'platform_fee' => 'decimal:2',
         'tax' => 'decimal:2',
         'discount' => 'decimal:2',
         'total' => 'decimal:2',
@@ -158,6 +174,7 @@ class Order extends Model
         'return_amount' => 'decimal:2',
         'refund_amount' => 'decimal:2',
         'driver_assignment_attempts' => 'integer',
+        'payment_attempts_count' => 'integer',
         'rejected_driver_ids' => 'array',
         'driver_assigned_at' => 'datetime',
         'driver_accepted_at' => 'datetime'
@@ -253,6 +270,58 @@ class Order extends Model
     {
         return $this->belongsTo(User::class, 'driver_id');
     }
+
+    public function preparationReadyByAt()
+    {
+        if (! $this->confirmed_at) {
+            return null;
+        }
+
+        $minutes = (int) ($this->preparation_time_minutes
+            ?? $this->restaurant?->order_lead_time
+            ?? 20);
+
+        return $this->confirmed_at->copy()->addMinutes(max(0, $minutes));
+    }
+
+    public function remainingPreparationMinutes(): int
+    {
+        if (in_array((string) $this->status, ['ready_for_pickup', 'reached_pickup', 'picked_up', 'on_the_way', 'delivered'], true)) {
+            return 0;
+        }
+
+        $readyBy = $this->preparationReadyByAt();
+        if (! $readyBy) {
+            return (int) ($this->preparation_time_minutes
+                ?? $this->restaurant?->order_lead_time
+                ?? 20);
+        }
+
+        return max(0, (int) ceil(($readyBy->timestamp - now()->timestamp) / 60));
+    }
+
+    public function preparationTimingPayload(): array
+    {
+        $readyBy = $this->preparationReadyByAt();
+        $isActivePrep = in_array((string) $this->status, ['confirmed', 'preparing'], true);
+        $remainingSeconds = $readyBy && $isActivePrep
+            ? max(0, $readyBy->timestamp - now()->timestamp)
+            : null;
+        $delayMinutes = $readyBy && $isActivePrep && ! $this->ready_at && $readyBy->isPast()
+            ? max(1, (int) ceil((now()->timestamp - $readyBy->timestamp) / 60))
+            : 0;
+
+        return [
+            'preparation_time_minutes' => (int) ($this->preparation_time_minutes
+                ?? $this->restaurant?->order_lead_time
+                ?? 20),
+            'ready_by_at' => $readyBy?->toIso8601String(),
+            'ready_countdown_seconds' => $remainingSeconds,
+            'is_preparation_delayed' => $delayMinutes > 0,
+            'preparation_delay_minutes' => $delayMinutes,
+            'remaining_preparation_minutes' => $this->remainingPreparationMinutes(),
+        ];
+    }
     
     public function orderItems(): HasMany
     {
@@ -264,6 +333,17 @@ class Order extends Model
         return $this->hasMany(Transaction::class);
     }
 
+    public function paymentAttempts(): HasMany
+    {
+        return $this->hasMany(PaymentAttempt::class);
+    }
+
+    public function activePaymentAttempt(): HasOne
+    {
+        return $this->hasOne(PaymentAttempt::class)
+            ->whereIn('status', [PaymentAttempt::STATUS_PENDING, PaymentAttempt::STATUS_ACTIVE])
+            ->latestOfMany();
+    }
     public function chatMessages(): HasMany
     {
         return $this->hasMany(OrderChatMessage::class);
@@ -630,14 +710,18 @@ class Order extends Model
 
     public function scopeVisibleToRestaurant($query)
     {
-        return $query->where(function ($builder) {
+        $cashMethods = ['cod', 'cash', 'cash_on_delivery'];
+
+        return $query->where(function ($builder) use ($cashMethods) {
             $builder->where('payment_status', 'success')
-                ->orWhereIn('payment_method', ['cod', 'cash', 'cash_on_delivery'])
-                ->orWhere(function ($legacy) {
+                ->orWhereIn('payment_method', $cashMethods)
+                ->orWhereIn('payment_gateway', $cashMethods)
+                ->orWhereIn('payment_source', $cashMethods)
+                ->orWhere(function ($legacy) use ($cashMethods) {
                     $legacy->where(function ($missingMethod) {
                         $missingMethod->whereNull('payment_method')
                             ->orWhere('payment_method', '');
-                    })->whereIn('delivery_payment_mode', ['cod', 'cash', 'cash_on_delivery']);
+                    })->whereIn('delivery_payment_mode', $cashMethods);
                 });
         });
     }

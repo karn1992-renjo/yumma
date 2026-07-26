@@ -37,6 +37,7 @@ class OrderConfirmationScreen extends StatefulWidget {
   final double total;
   final String? couponCode;
   final DateTime? scheduledTime;
+  final List<ScratchCard> initialScratchCards;
 
   const OrderConfirmationScreen({
     super.key,
@@ -56,6 +57,7 @@ class OrderConfirmationScreen extends StatefulWidget {
     required this.total,
     this.couponCode,
     this.scheduledTime,
+    this.initialScratchCards = const [],
   });
 
   @override
@@ -84,7 +86,19 @@ class _OrderConfirmationScreenState extends State<OrderConfirmationScreen>
       curve: Curves.elasticOut,
     );
     _animationController.forward();
-    _loadScratchCards();
+
+    final initialCards = widget.initialScratchCards
+        .where((card) => card.orderId == null || card.orderId == widget.orderId)
+        .toList(growable: false);
+    if (initialCards.isNotEmpty) {
+      _scratchCards = initialCards;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _showScratchPopupIfNeeded(_scratchCards);
+      });
+      _loadScratchCards(showPopup: false);
+    } else {
+      _loadScratchCards();
+    }
   }
 
   @override
@@ -606,6 +620,7 @@ class _OrderConfirmationScreenState extends State<OrderConfirmationScreen>
   Widget _buildScratchCard() {
     final card = _scratchCards.first;
     final revealed = card.isRevealed;
+    final locked = card.isRevealLocked;
     return Container(
       padding: const EdgeInsets.fromLTRB(14, 14, 14, 12),
       decoration: FoodFlowTheme.surface(radius: 24),
@@ -633,7 +648,10 @@ class _OrderConfirmationScreenState extends State<OrderConfirmationScreen>
                     Text(
                       revealed
                           ? ScratchRewardText.subtitle(card)
-                          : 'Scratch now and win exciting rewards',
+                          : locked
+                              ? (card.revealLockedReason ??
+                                  'Claim this reward after order delivery')
+                              : 'Scratch now and win exciting rewards',
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
@@ -663,7 +681,7 @@ class _OrderConfirmationScreenState extends State<OrderConfirmationScreen>
               Expanded(
                 child: ElevatedButton(
                   onPressed: () async {
-                    if (revealed) {
+                    if (revealed || locked) {
                       Navigator.pushNamed(
                         context,
                         '/scratch-cards',
@@ -691,7 +709,9 @@ class _OrderConfirmationScreenState extends State<OrderConfirmationScreen>
                     ),
                   ),
                   child: Text(
-                    revealed ? 'View Reward' : 'Scratch Now',
+                    revealed
+                        ? 'View Reward'
+                        : (locked ? 'After Delivery' : 'Scratch Now'),
                     style: const TextStyle(
                       fontSize: 13,
                       fontWeight: FontWeight.w900,

@@ -57,9 +57,11 @@ class AppBranding {
     );
   }
 
-  factory AppBranding.fallback() {
+  factory AppBranding.fallback({String? appName}) {
     return AppBranding(
-      appName: AppConfig.appName,
+      appName: appName?.trim().isNotEmpty == true
+          ? appName!.trim()
+          : AppConfig.appName,
       supportEmail: AppConfig.supportEmail,
       supportPhone: AppConfig.supportPhone,
       defaultMobileCountryCode: '+91',
@@ -85,6 +87,7 @@ class AppBranding {
   }
 
   String get displayName => appName.isEmpty ? AppConfig.appName : appName;
+  String get preferredLogoUrl => appFaviconUrl.trim();
   String get resolvedPusherAppKey => pusherAppKey.trim();
   String get resolvedPusherAppCluster {
     final cluster = pusherAppCluster.trim();

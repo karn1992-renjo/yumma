@@ -43,7 +43,7 @@ class DefaultFirebaseOptions {
     messagingSenderId: '596992936599',
     projectId: 'yumma-458b0',
     storageBucket: 'yumma-458b0.firebasestorage.app',
-    iosBundleId: 'com.adgraph.delivery',
+    iosBundleId: 'com.adgraph.yamma_delivery',
     databaseURL: 'https://yumma-458b0-default-rtdb.firebaseio.com',
     authDomain: 'yumma-458b0.firebaseapp.com',
   );

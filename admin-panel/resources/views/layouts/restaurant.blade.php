@@ -111,12 +111,19 @@
             --border: #E2E8F0;
             --sidebar-width: 286px;
             --topbar-height: 78px;
+            --dashboard-ui-scale: 0.81;
         }
 
         * {
             margin: 0;
             padding: 0;
             box-sizing: border-box;
+        }
+
+        html {
+            width: 100%;
+            max-width: 100%;
+            overflow-x: hidden;
         }
 
         body {
@@ -128,6 +135,36 @@
             color: #334155;
             overflow-x: hidden;
             min-height: 100vh;
+            max-width: 100%;
+        }
+
+        body.dashboard-ui-compact {
+            zoom: var(--dashboard-ui-scale);
+            width: calc(100% / var(--dashboard-ui-scale));
+            min-height: calc(100vh / var(--dashboard-ui-scale));
+            max-width: calc(100vw / var(--dashboard-ui-scale));
+        }
+
+        @supports not (zoom: 1) {
+            body.dashboard-ui-compact {
+                transform: scale(var(--dashboard-ui-scale));
+                transform-origin: top left;
+            }
+        }
+
+        @media (max-width: 1024px) {
+            body.dashboard-ui-compact {
+                zoom: 1;
+                width: 100%;
+                max-width: 100%;
+                min-height: 100vh;
+            }
+
+            @supports not (zoom: 1) {
+                body.dashboard-ui-compact {
+                    transform: none;
+                }
+            }
         }
 
         /* ========== TOP HEADER ========== */
@@ -136,6 +173,7 @@
             top: 0;
             left: var(--sidebar-width);
             right: 0;
+            width: calc(100% - var(--sidebar-width));
             height: var(--topbar-height);
             background: #ffffff;
             border-bottom: 1px solid var(--border);
@@ -458,15 +496,15 @@
             top: 0;
             left: 0;
             width: var(--sidebar-width);
-            height: 100vh;
+            height: calc(100vh / var(--dashboard-ui-scale));
+            max-height: calc(100vh / var(--dashboard-ui-scale));
             background: #ffffff;
             border-right: 1px solid var(--border);
             z-index: 1040;
             display: flex;
             flex-direction: column;
             transition: all 0.3s ease;
-            overflow-y: auto;
-            overflow-x: hidden;
+            overflow: hidden;
         }
 
         .sidebar-logo-section {
@@ -476,6 +514,7 @@
             align-items: center;
             gap: 12px;
             min-height: var(--topbar-height);
+            flex: 0 0 auto;
         }
 
         .sidebar-logo-icon {
@@ -511,9 +550,12 @@
         }
 
         .sidebar-nav-wrapper {
-            flex: 1;
+            flex: 1 1 auto;
+            min-height: 0;
             padding: 16px 12px;
             overflow-y: auto;
+            overflow-x: hidden;
+            scrollbar-width: thin;
         }
 
         .sidebar-section-title {
@@ -600,6 +642,7 @@
         .sidebar-footer {
             padding: 16px 20px;
             border-top: 1px solid var(--border);
+            flex: 0 0 auto;
         }
 
         .sidebar-restaurant-card {
@@ -651,10 +694,18 @@
             margin-top: var(--topbar-height);
             min-height: calc(100vh - var(--topbar-height));
             transition: all 0.3s ease;
+            position: relative;
+            z-index: auto;
+            width: calc(100% - var(--sidebar-width));
+            max-width: calc((100vw / var(--dashboard-ui-scale)) - var(--sidebar-width));
+            overflow-x: hidden;
         }
 
         .page-content {
             padding: 28px;
+            max-width: 100%;
+            overflow-x: hidden;
+            min-width: 0;
         }
 
         /* ========== ORDER TOAST NOTIFICATIONS ========== */
@@ -821,6 +872,8 @@
             .sidebar {
                 transform: translateX(-100%);
                 box-shadow: 10px 0 30px rgba(0,0,0,0.15);
+                height: 100vh;
+                max-height: 100vh;
             }
 
             .sidebar.mobile-open {
@@ -829,10 +882,15 @@
 
             .top-header {
                 left: 0;
+                right: 0;
+                width: 100%;
+                max-width: 100%;
             }
 
             .main-content {
                 margin-left: 0;
+                width: 100%;
+                max-width: 100%;
             }
 
             .menu-toggle {
@@ -1015,55 +1073,48 @@
 
         .page-header {
             position: relative;
-            overflow: hidden;
-            border-radius: 28px;
-            padding: 26px;
-            color: #fff;
-            background:
-                radial-gradient(circle at 12% 18%, rgba(255,255,255,.22), transparent 24%),
-                radial-gradient(circle at 88% 12%, rgba(16,185,129,.22), transparent 24%),
-                linear-gradient(135deg, #111827 0%, #14532d 45%, var(--primary) 100%);
-            box-shadow: 0 22px 60px rgba(255, 107, 53, .18);
+            overflow: visible;
+            border-radius: 0;
+            padding: 0;
+            color: inherit;
+            background: transparent;
+            box-shadow: none;
+            margin-bottom: 18px;
         }
 
         .page-header::after {
-            content: "";
-            position: absolute;
-            right: -80px;
-            bottom: -120px;
-            width: 280px;
-            height: 280px;
-            border-radius: 50%;
-            background: rgba(255,255,255,.14);
+            display: none;
         }
 
         .page-header > * {
-            position: relative;
-            z-index: 1;
+            position: static;
+            z-index: auto;
         }
 
         .page-header h1,
         .page-header .display-5 {
-            color: #fff !important;
-            background: none !important;
-            -webkit-text-fill-color: #fff !important;
-            font-size: clamp(28px, 3vw, 40px) !important;
-            line-height: 1.08;
-            font-weight: 900 !important;
-            letter-spacing: -.04em;
-            margin-bottom: 8px;
+            display: none !important;
         }
 
         .page-header p,
         .page-header .text-muted {
-            color: rgba(255,255,255,.78) !important;
+            display: none !important;
         }
 
         .page-header .btn:not(.btn-light) {
-            border-color: rgba(255,255,255,.35);
-            background: rgba(255,255,255,.14);
-            color: #fff;
-            backdrop-filter: blur(12px);
+            backdrop-filter: none;
+        }
+
+        .page-header > .d-flex {
+            justify-content: flex-end !important;
+        }
+
+        .page-header:has(.btn, button, form, .badge) {
+            display: block;
+        }
+
+        .page-header:not(:has(.btn, button, form, .badge)) {
+            display: none;
         }
 
         .stat-card,
@@ -1328,13 +1379,13 @@
         .sidebar-logo-section {
             min-height: var(--topbar-height);
             border-bottom: 1px solid rgba(255, 255, 255, 0.08) !important;
-            padding-inline: 22px !important;
+            padding: 16px 18px !important;
         }
 
         .sidebar-logo-icon {
-            width: 50px !important;
-            height: 50px !important;
-            border-radius: 19px !important;
+            width: 44px !important;
+            height: 44px !important;
+            border-radius: 16px !important;
             background:
                 radial-gradient(circle at 30% 18%, rgba(255, 255, 255, 0.45), transparent 28%),
                 linear-gradient(135deg, var(--primary), var(--primary-dark)) !important;
@@ -1343,7 +1394,7 @@
 
         .sidebar-logo-text h2 {
             color: #F8FAFC !important;
-            font-size: 21px !important;
+            font-size: 19px !important;
         }
 
         .sidebar-logo-text h2 span {
@@ -1356,27 +1407,27 @@
         }
 
         .sidebar-nav-wrapper {
-            padding: 18px 14px 24px !important;
+            padding: 12px 12px 14px !important;
         }
 
         .sidebar-section-title {
-            margin-top: 12px !important;
-            padding: 10px 14px 6px !important;
+            margin-top: 8px !important;
+            padding: 8px 14px 5px !important;
             font-size: 10px !important;
             letter-spacing: 0.16em !important;
         }
 
         .sidebar-nav-item {
-            margin-bottom: 6px !important;
+            margin-bottom: 4px !important;
         }
 
         .sidebar-nav-link {
-            min-height: 46px;
+            min-height: 40px;
             border-radius: 17px !important;
             color: rgba(226, 232, 240, 0.88) !important;
             font-weight: 700 !important;
             letter-spacing: -0.01em;
-            padding: 12px 14px !important;
+            padding: 9px 14px !important;
         }
 
         .sidebar-nav-link i {
@@ -1419,17 +1470,21 @@
 
         .sidebar-footer {
             border-top: 1px solid rgba(255, 255, 255, 0.08) !important;
+            padding: 12px 16px 14px !important;
         }
 
         .sidebar-restaurant-card {
             border: 1px solid rgba(255, 255, 255, 0.1);
-            border-radius: 20px !important;
+            border-radius: 18px !important;
             background: rgba(255, 255, 255, 0.08) !important;
             box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+            padding: 12px !important;
         }
 
         .sidebar-restaurant-avatar {
-            border-radius: 16px !important;
+            width: 38px !important;
+            height: 38px !important;
+            border-radius: 14px !important;
             background:
                 radial-gradient(circle at 30% 20%, rgba(255, 255, 255, 0.42), transparent 28%),
                 linear-gradient(135deg, var(--primary), var(--primary-dark)) !important;
@@ -1469,7 +1524,7 @@
     
     @yield('styles')
 </head>
-<body>
+<body class="dashboard-ui-compact">
     <!-- Sidebar Overlay for Mobile -->
     <div class="sidebar-overlay" id="sidebarOverlay" onclick="closeSidebar()"></div>
     

@@ -9,6 +9,7 @@ import '../../config/app_config.dart';
 import '../../services/api_service.dart';
 import '../../services/location_service.dart';
 import '../../services/websocket_service.dart';
+import '../../widgets/common/network_image_loader.dart';
 
 class RestaurantOrderChatScreen extends StatefulWidget {
   const RestaurantOrderChatScreen({
@@ -86,8 +87,9 @@ class _RestaurantOrderChatScreenState extends State<RestaurantOrderChatScreen> {
         _summary = Map<String, dynamic>.from(
           data['summary'] as Map? ?? const {},
         );
-        _recipientRole =
-            (_participants['driver'] as Map?) == null ? 'customer' : _recipientRole;
+        _recipientRole = (_participants['driver'] as Map?) == null
+            ? 'customer'
+            : _recipientRole;
         _isLoading = false;
       });
       await _markRead();
@@ -505,7 +507,8 @@ class _RestaurantOrderChatScreenState extends State<RestaurantOrderChatScreen> {
                     : ListView.builder(
                         controller: _scrollController,
                         padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                        itemCount: _messages.length + (_otherPartyTyping ? 1 : 0),
+                        itemCount:
+                            _messages.length + (_otherPartyTyping ? 1 : 0),
                         itemBuilder: (context, index) {
                           if (_otherPartyTyping && index == _messages.length) {
                             return Align(
@@ -570,7 +573,8 @@ class _RestaurantOrderChatScreenState extends State<RestaurantOrderChatScreen> {
                         minLines: 1,
                         maxLines: 4,
                         decoration: InputDecoration(
-                          hintText: 'Message ${_participantName(_recipientRole)}',
+                          hintText:
+                              'Message ${_participantName(_recipientRole)}',
                           border: InputBorder.none,
                         ),
                       ),
@@ -638,7 +642,8 @@ class _RestaurantOrderChatScreenState extends State<RestaurantOrderChatScreen> {
           ),
           const SizedBox(height: 6),
           Text(
-            _summary['status_label']?.toString() ?? 'Live delivery coordination',
+            _summary['status_label']?.toString() ??
+                'Live delivery coordination',
             style: const TextStyle(
               color: Colors.white,
               fontWeight: FontWeight.w800,
@@ -648,9 +653,12 @@ class _RestaurantOrderChatScreenState extends State<RestaurantOrderChatScreen> {
           const SizedBox(height: 14),
           Row(
             children: [
-              Expanded(child: _summaryPill('Customer', _participantName('customer'))),
+              Expanded(
+                  child:
+                      _summaryPill('Customer', _participantName('customer'))),
               const SizedBox(width: 10),
-              Expanded(child: _summaryPill('Driver', _participantName('driver'))),
+              Expanded(
+                  child: _summaryPill('Driver', _participantName('driver'))),
             ],
           ),
         ],
@@ -694,8 +702,8 @@ class _RestaurantOrderChatScreenState extends State<RestaurantOrderChatScreen> {
   Widget _messageBubble(Map<String, dynamic> message) {
     final senderRole = message['sender_role']?.toString() ?? '';
     final isMine = senderRole == 'restaurant';
-    final isSystem =
-        senderRole == 'system' || message['message_type']?.toString() == 'system';
+    final isSystem = senderRole == 'system' ||
+        message['message_type']?.toString() == 'system';
     final bubbleColor = isMine ? _primary : Colors.white;
 
     if (isSystem) {
@@ -794,11 +802,17 @@ class _RestaurantOrderChatScreenState extends State<RestaurantOrderChatScreen> {
             onTap: () => _openAttachment(message),
             child: ClipRRect(
               borderRadius: BorderRadius.circular(18),
-              child: Image.network(
-                message['attachment_url'].toString(),
+              child: NetworkImageLoader(
+                imageUrl: message['attachment_url'].toString(),
                 width: 180,
                 height: 180,
                 fit: BoxFit.cover,
+                errorWidget: Container(
+                  width: 180,
+                  height: 180,
+                  color: _line,
+                  child: const Icon(Icons.broken_image_outlined),
+                ),
               ),
             ),
           ),
@@ -818,13 +832,16 @@ class _RestaurantOrderChatScreenState extends State<RestaurantOrderChatScreen> {
     }
 
     if (type == 'location') {
-      final meta = Map<String, dynamic>.from(message['meta'] as Map? ?? const {});
+      final meta =
+          Map<String, dynamic>.from(message['meta'] as Map? ?? const {});
       return InkWell(
         onTap: () => _openSharedLocation(message),
         child: Container(
           padding: const EdgeInsets.all(14),
           decoration: BoxDecoration(
-            color: isMine ? Colors.white.withOpacity(0.14) : const Color(0xFFF3F4F6),
+            color: isMine
+                ? Colors.white.withOpacity(0.14)
+                : const Color(0xFFF3F4F6),
             borderRadius: BorderRadius.circular(18),
           ),
           child: Row(

@@ -14,6 +14,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../providers/order_provider.dart';
 import '../../providers/auth_provider.dart';
 import '../../services/flexible_order_payment_service.dart';
+import '../../services/notification_service.dart';
 import '../../services/websocket_service.dart';
 import '../../services/directions_service.dart';
 import '../../models/order.dart';
@@ -307,6 +308,8 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen>
           _errorMessage = null;
         });
 
+        _syncLiveOrderNotification(order);
+
         if (order.isDelivered) {
           _showCompletionFeedback(order);
         }
@@ -372,9 +375,20 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen>
           order.isPickedUp || order.isOnTheWay || order.isDelivered;
     });
     _syncDriverLocation(order, _driverLocation);
+    _syncLiveOrderNotification(order);
     if (order.isDelivered) {
       _showCompletionFeedback(order);
     }
+  }
+
+  void _syncLiveOrderNotification(Order order) {
+    unawaited(
+      FirebaseNotificationService.showLiveOrderNotificationFromOrder(
+        order,
+        etaText: _estimatedTime,
+        distanceText: _distanceRemaining,
+      ),
+    );
   }
 
   void _showCompletionFeedback(Order order) {

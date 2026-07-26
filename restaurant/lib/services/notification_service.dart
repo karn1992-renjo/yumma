@@ -283,7 +283,7 @@ class FirebaseNotificationService {
         data['notification_body']?.toString() ??
         'Order #${data['order_number'] ?? orderId ?? ''} is waiting.';
 
-    final notificationId = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+    final notificationId = _notificationIdForOrder(orderId);
     final payload = jsonEncode(data);
 
     try {
@@ -471,13 +471,16 @@ class FirebaseNotificationService {
 
   static bool _isIncomingOrderData(Map<String, dynamic> data) {
     final normalized = _normalizeOrderData(data);
-    final type = normalized['type']?.toString().toLowerCase() ?? '';
-    final role = normalized['role']?.toString().toLowerCase() ?? '';
-
-    return type == 'new_order' ||
+    final type = _normalizedSignal(normalized['type']);
+    final event = _normalizedSignal(normalized['event']);
+    final status = _normalizedSignal(normalized['status']);
+    return type == 'order_cancelled_alert' ||
+        event == 'order_cancelled' ||
+        status == 'cancelled' ||
+        type == 'new_order' ||
         type == 'driver_order_assigned' ||
-        role == 'driver' ||
-        role == 'restaurant';
+        event == 'new_order' ||
+        event == 'driver_order_assigned';
   }
 
   static Map<String, dynamic> normalizeNotificationData(
@@ -492,10 +495,7 @@ class FirebaseNotificationService {
 
   static bool _isStaticOrderData(Map<String, dynamic> data) {
     data = _normalizeOrderData(data);
-    final type = data['type']?.toString() ?? '';
-    return type.contains('order') ||
-        data.containsKey('order_id') ||
-        data.containsKey('order_number');
+    return _isIncomingOrderData(data);
   }
 
   bool _isOrderMessage(RemoteMessage message) {
@@ -532,10 +532,28 @@ class FirebaseNotificationService {
     return data.map((key, value) => MapEntry(key.toString(), value));
   }
 
+  static String _normalizedSignal(dynamic value) {
+    return value?.toString().trim().toLowerCase().replaceAll('-', '_') ?? '';
+  }
+
+  static int _notificationIdForOrder(dynamic orderId) {
+    final parsed = orderId is num
+        ? orderId.toInt()
+        : int.tryParse(orderId?.toString() ?? '');
+    if (parsed != null) return 100000 + parsed.abs() % 900000;
+    return 100000 +
+        (orderId?.toString().hashCode ?? 0).abs().remainder(900000);
+  }
+
   static Future<void> persistPendingOrderData(
       Map<dynamic, dynamic> data) async {
     final normalized = _normalizeOrderData(_safeDataMap(data));
     if (!_isStaticOrderData(normalized)) return;
+    if (_normalizedSignal(normalized['status']) == 'cancelled' ||
+        _normalizedSignal(normalized['type']) == 'order_cancelled_alert' ||
+        _normalizedSignal(normalized['event']) == 'order_cancelled') {
+      return;
+    }
 
     final prefs = await SharedPreferences.getInstance();
     final duration = IncomingOrderAlertService.timerDuration(normalized);

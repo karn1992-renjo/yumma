@@ -1,4 +1,4 @@
-# foodflow! Resto
+# Yumma! Resto
 
 This Flutter module is the restaurant app for the foodflow! platform. It uses Firebase for authentication and messaging, and connects to the Laravel backend through API_BASE_URL.
 

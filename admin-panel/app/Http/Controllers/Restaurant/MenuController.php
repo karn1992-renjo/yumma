@@ -82,6 +82,7 @@ class MenuController extends Controller
         
         $validated = $request->validate(array_merge([
             'name' => 'required|string|max:255',
+            'master_menu_item_id' => 'nullable|integer|exists:master_menu_items,id',
             'description' => 'nullable|string',
             'price' => 'required|numeric|min:0',
             'discounted_price' => 'nullable|numeric|min:0',
@@ -110,10 +111,22 @@ class MenuController extends Controller
         if ($restaurant->is_pure_veg && $validated['food_type'] !== 'veg') {
             return back()->withInput()->with('error', 'Pure veg restaurants can only create vegetarian menu items.');
         }
+
+        $master = null;
+        if (! empty($validated['master_menu_item_id'])) {
+            $master = MasterMenuItem::where('is_active', true)->findOrFail((int) $validated['master_menu_item_id']);
+            if ($restaurant->is_pure_veg && $master->food_type !== 'veg') {
+                return back()->withInput()->with('error', 'Pure veg restaurants can only link vegetarian global menu items.');
+            }
+        }
         
         $validated['restaurant_id'] = $restaurant->id;
         $validated['category_id'] = $this->resolveRestaurantCategoryId($restaurant->id, $validated['category_id'] ?? null, $request->input('global_category_id'), $request->input('global_subcategory_id'));
-        $validated['item_source'] = 'custom';
+        $validated['cuisine_id'] = $validated['cuisine_id']
+            ?? ($master?->cuisine_id ? (int) $master->cuisine_id : null)
+            ?? $this->resolveGlobalCategoryCuisineId($request->input('global_category_id'), $request->input('global_subcategory_id'));
+        $validated['master_menu_item_id'] = $master?->id;
+        $validated['item_source'] = $master ? 'global' : 'custom';
         $validated['approval_status'] = 'approved';
         $validated['is_veg'] = $validated['food_type'] === 'veg';
         $validated['is_available'] = $request->has('is_available');
@@ -225,6 +238,7 @@ class MenuController extends Controller
         
         $validated = $request->validate(array_merge([
             'name' => 'required|string|max:255',
+            'master_menu_item_id' => 'nullable|integer|exists:master_menu_items,id',
             'description' => 'nullable|string',
             'price' => 'required|numeric|min:0',
             'discounted_price' => 'nullable|numeric|min:0',
@@ -253,8 +267,18 @@ class MenuController extends Controller
         if ($restaurant->is_pure_veg && $validated['food_type'] !== 'veg') {
             return back()->withInput()->with('error', 'Pure veg restaurants can only create vegetarian menu items.');
         }
+
+        $master = null;
+        if (! empty($validated['master_menu_item_id'])) {
+            $master = MasterMenuItem::where('is_active', true)->findOrFail((int) $validated['master_menu_item_id']);
+            if ($restaurant->is_pure_veg && $master->food_type !== 'veg') {
+                return back()->withInput()->with('error', 'Pure veg restaurants can only link vegetarian global menu items.');
+            }
+        }
         
         $validated['category_id'] = $this->resolveRestaurantCategoryId($restaurant->id, $validated['category_id'] ?? null, $request->input('global_category_id'), $request->input('global_subcategory_id'));
+        $validated['cuisine_id'] = $validated['cuisine_id']
+            ?? $this->resolveGlobalCategoryCuisineId($request->input('global_category_id'), $request->input('global_subcategory_id'));
         $validated['is_veg'] = $validated['food_type'] === 'veg';
         $validated['is_available'] = $request->has('is_available');
         $validated['is_recommended'] = $request->has('is_recommended');
@@ -439,7 +463,10 @@ class MenuController extends Controller
     {
         return GlobalMenuCategory::active()
             ->parents()
-            ->with(['children' => fn ($query) => $query->active()])
+            ->with([
+                'cuisines:id,name',
+                'children' => fn ($query) => $query->active()->with('cuisines:id,name'),
+            ])
             ->orderBy('display_order')
             ->orderBy('name')
             ->get();
@@ -475,6 +502,44 @@ class MenuController extends Controller
         )->id;
     }
 
+
+    private function resolveGlobalCategoryCuisineId(?int $globalCategoryId = null, ?int $globalSubcategoryId = null): ?int
+    {
+        if ($globalSubcategoryId) {
+            $subcategory = GlobalMenuCategory::active()
+                ->where('parent_id', $globalCategoryId)
+                ->with('cuisines:id')
+                ->find($globalSubcategoryId);
+
+            if ($cuisineId = $this->singleMappedCuisineId($subcategory)) {
+                return $cuisineId;
+            }
+        }
+
+        if ($globalCategoryId) {
+            $category = GlobalMenuCategory::active()
+                ->with('cuisines:id')
+                ->find($globalCategoryId);
+
+            return $this->singleMappedCuisineId($category);
+        }
+
+        return null;
+    }
+
+    private function singleMappedCuisineId(?GlobalMenuCategory $category): ?int
+    {
+        if (! $category) {
+            return null;
+        }
+
+        $ids = $category->cuisines->pluck('id')
+            ->map(fn ($id) => (int) $id)
+            ->unique()
+            ->values();
+
+        return $ids->count() === 1 ? $ids->first() : null;
+    }
     private function parseOptionText(?string $text): array
     {
         if (!$text) {

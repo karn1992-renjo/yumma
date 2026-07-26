@@ -736,6 +736,7 @@ class _RestaurantMenuScreenState extends State<RestaurantMenuScreen>
         builder: (_) => _MenuItemFormScreen(
           categories: _categories,
           globalCategories: _globalCategories,
+          globalMenuItems: _globalMenuItems,
           cuisines: _cuisines,
           onSubmit: ({
             required name,
@@ -745,6 +746,7 @@ class _RestaurantMenuScreenState extends State<RestaurantMenuScreen>
             categoryId,
             globalCategoryId,
             globalSubcategoryId,
+            masterMenuItemId,
             cuisineId,
             required foodType,
             required isAvailable,
@@ -764,6 +766,7 @@ class _RestaurantMenuScreenState extends State<RestaurantMenuScreen>
               categoryId: categoryId,
               globalCategoryId: globalCategoryId,
               globalSubcategoryId: globalSubcategoryId,
+              masterMenuItemId: masterMenuItemId,
               cuisineId: cuisineId,
               foodType: foodType,
               isAvailable: isAvailable,
@@ -1111,6 +1114,7 @@ class _RestaurantMenuScreenState extends State<RestaurantMenuScreen>
           item: item,
           categories: _categories,
           globalCategories: _globalCategories,
+          globalMenuItems: _globalMenuItems,
           cuisines: _cuisines,
           onSubmit: ({
             required name,
@@ -1120,6 +1124,7 @@ class _RestaurantMenuScreenState extends State<RestaurantMenuScreen>
             categoryId,
             globalCategoryId,
             globalSubcategoryId,
+            masterMenuItemId,
             cuisineId,
             required foodType,
             required isAvailable,
@@ -1140,6 +1145,7 @@ class _RestaurantMenuScreenState extends State<RestaurantMenuScreen>
               categoryId: categoryId,
               globalCategoryId: globalCategoryId,
               globalSubcategoryId: globalSubcategoryId,
+              masterMenuItemId: masterMenuItemId,
               cuisineId: cuisineId,
               foodType: foodType,
               isAvailable: isAvailable,
@@ -1460,6 +1466,7 @@ class _RestaurantMenuScreenState extends State<RestaurantMenuScreen>
     int? categoryId,
     int? globalCategoryId,
     int? globalSubcategoryId,
+    int? masterMenuItemId,
     int? cuisineId,
     required String foodType,
     bool isAvailable = true,
@@ -1482,6 +1489,7 @@ class _RestaurantMenuScreenState extends State<RestaurantMenuScreen>
         if (globalCategoryId != null) 'global_category_id': globalCategoryId,
         if (globalSubcategoryId != null)
           'global_subcategory_id': globalSubcategoryId,
+        'master_menu_item_id': masterMenuItemId,
         'cuisine_id': cuisineId,
         'food_type': foodType,
         'is_veg': foodType == 'veg',
@@ -1597,6 +1605,7 @@ class _RestaurantMenuScreenState extends State<RestaurantMenuScreen>
     int? categoryId,
     int? globalCategoryId,
     int? globalSubcategoryId,
+    int? masterMenuItemId,
     int? cuisineId,
     required String foodType,
     bool isAvailable = true,
@@ -1618,6 +1627,7 @@ class _RestaurantMenuScreenState extends State<RestaurantMenuScreen>
         if (globalCategoryId != null) 'global_category_id': globalCategoryId,
         if (globalSubcategoryId != null)
           'global_subcategory_id': globalSubcategoryId,
+        'master_menu_item_id': masterMenuItemId,
         'cuisine_id': cuisineId,
         'food_type': foodType,
         'is_veg': foodType == 'veg',
@@ -1632,21 +1642,18 @@ class _RestaurantMenuScreenState extends State<RestaurantMenuScreen>
       };
 
       final response = imagePaths.isEmpty
-          ? await _api.put(
+          ? await _api.post(
               '${ApiConstants.restaurantMenuItems}/$itemId',
               data: payload,
             )
           : await _api.postMultipart(
               '${ApiConstants.restaurantMenuItems}/$itemId',
-              fields: {
-                '_method': 'PUT',
-                ...payload.map(
-                  (key, value) => MapEntry(
-                    key,
-                    value is List ? jsonEncode(value) : value?.toString() ?? '',
-                  ),
+              fields: payload.map(
+                (key, value) => MapEntry(
+                  key,
+                  value is List ? jsonEncode(value) : value?.toString() ?? '',
                 ),
-              },
+              ),
               files: {'image': imagePaths.first},
               fileLists:
                   imagePaths.length > 1 ? {'images[]': imagePaths} : null,
@@ -1932,6 +1939,7 @@ typedef _MenuItemFormSubmit = Future<void> Function({
   int? categoryId,
   int? globalCategoryId,
   int? globalSubcategoryId,
+  int? masterMenuItemId,
   int? cuisineId,
   required String foodType,
   required bool isAvailable,
@@ -1948,6 +1956,7 @@ class _MenuItemFormScreen extends StatefulWidget {
   final MenuItem? item;
   final List<dynamic> categories;
   final List<dynamic> globalCategories;
+  final List<dynamic> globalMenuItems;
   final List<dynamic> cuisines;
   final _MenuItemFormSubmit onSubmit;
 
@@ -1955,6 +1964,7 @@ class _MenuItemFormScreen extends StatefulWidget {
     this.item,
     required this.categories,
     required this.globalCategories,
+    required this.globalMenuItems,
     required this.cuisines,
     required this.onSubmit,
   });
@@ -1964,6 +1974,8 @@ class _MenuItemFormScreen extends StatefulWidget {
 }
 
 class _MenuItemFormScreenState extends State<_MenuItemFormScreen> {
+  static const int _maxImageBytes = 2 * 1024 * 1024;
+
   final _formKey = GlobalKey<FormState>();
   final _nameController = TextEditingController();
   final _descriptionController = TextEditingController();
@@ -1981,6 +1993,7 @@ class _MenuItemFormScreenState extends State<_MenuItemFormScreen> {
   int? _categoryId;
   int? _globalCategoryId;
   int? _globalSubcategoryId;
+  int? _masterMenuItemId;
   int? _cuisineId;
   String _foodType = 'veg';
   bool _isAvailable = true;
@@ -2002,6 +2015,10 @@ class _MenuItemFormScreenState extends State<_MenuItemFormScreen> {
       _categoryId = _containsId(widget.categories, item.categoryId)
           ? item.categoryId
           : null;
+      _masterMenuItemId =
+          _containsId(widget.globalMenuItems, item.masterMenuItemId)
+              ? item.masterMenuItemId
+              : null;
       _cuisineId =
           _containsId(widget.cuisines, item.cuisineId) ? item.cuisineId : null;
       _tags.addAll(item.tags);
@@ -2087,14 +2104,115 @@ class _MenuItemFormScreenState extends State<_MenuItemFormScreen> {
   }
 
   List<dynamic> _globalSubcategories(int? categoryId) {
-    if (categoryId == null) return const [];
+    final category = _globalCategoryById(categoryId);
+    if (category == null) return const [];
+    final subcategories = category['subcategories'];
+    return subcategories is List ? subcategories : const [];
+  }
+
+  Map? _globalCategoryById(int? categoryId) {
+    if (categoryId == null) return null;
     final category = widget.globalCategories.firstWhere(
       (item) => _asInt(item['id']) == categoryId,
       orElse: () => null,
     );
+    return category is Map ? category : null;
+  }
+
+  Map? _globalSubcategoryById(int? categoryId, int? subcategoryId) {
+    if (subcategoryId == null) return null;
+    final subcategory = _globalSubcategories(categoryId).firstWhere(
+      (item) => _asInt(item['id']) == subcategoryId,
+      orElse: () => null,
+    );
+    return subcategory is Map ? subcategory : null;
+  }
+
+  String _globalCategoryName(int? categoryId) {
+    return _globalCategoryById(categoryId)?['name']?.toString() ?? '';
+  }
+
+  String _globalSubcategoryName(int? categoryId, int? subcategoryId) {
+    return _globalSubcategoryById(categoryId, subcategoryId)?['name']
+            ?.toString() ??
+        '';
+  }
+
+  List<dynamic> get _availableGlobalMenuItems {
+    final categoryName = _globalCategoryName(_globalCategoryId);
+    final subcategoryName =
+        _globalSubcategoryName(_globalCategoryId, _globalSubcategoryId);
+    final filtered = widget.globalMenuItems.where((item) {
+      final itemCategory = item['category_name']?.toString() ?? '';
+      final itemSubcategory = item['subcategory_name']?.toString() ?? '';
+      return (categoryName.isEmpty || itemCategory == categoryName) &&
+          (subcategoryName.isEmpty || itemSubcategory == subcategoryName);
+    }).toList();
+
+    if (_masterMenuItemId != null &&
+        !_containsId(filtered, _masterMenuItemId)) {
+      final selected = widget.globalMenuItems
+          .where((item) => _asInt(item['id']) == _masterMenuItemId);
+      if (selected.isNotEmpty) {
+        return [...selected, ...filtered];
+      }
+    }
+
+    return filtered;
+  }
+
+  List<int> _mappedCuisineIds(dynamic category) {
     if (category is! Map) return const [];
-    final subcategories = category['subcategories'];
-    return subcategories is List ? subcategories : const [];
+
+    final rawIds = category['cuisine_ids'];
+    if (rawIds is List) {
+      return rawIds.map(_asInt).whereType<int>().toSet().toList();
+    }
+
+    final cuisines = category['cuisines'];
+    if (cuisines is List) {
+      return cuisines
+          .map((cuisine) => cuisine is Map ? cuisine['id'] : cuisine)
+          .map(_asInt)
+          .whereType<int>()
+          .toSet()
+          .toList();
+    }
+
+    return const [];
+  }
+
+  List<dynamic> get _availableCuisines {
+    final subcategoryIds = _mappedCuisineIds(
+      _globalSubcategoryById(_globalCategoryId, _globalSubcategoryId),
+    );
+    final categoryIds =
+        _mappedCuisineIds(_globalCategoryById(_globalCategoryId));
+    final ids = subcategoryIds.isNotEmpty ? subcategoryIds : categoryIds;
+
+    if (ids.isEmpty) return widget.cuisines;
+
+    final allowed = ids.toSet();
+    return widget.cuisines
+        .where((cuisine) => allowed.contains(_asInt(cuisine['id'])))
+        .toList();
+  }
+
+  void _syncCuisineForGlobalSelection() {
+    final availableIds = _availableCuisines
+        .map((cuisine) => _asInt(cuisine['id']))
+        .whereType<int>()
+        .toSet();
+
+    if (_cuisineId != null && !availableIds.contains(_cuisineId)) {
+      _cuisineId = null;
+    }
+
+    if (_cuisineId == null &&
+        _globalCategoryId != null &&
+        availableIds.length == 1) {
+      _cuisineId = availableIds.first;
+    }
   }
 
   String _asText(dynamic value, [String fallback = '']) {
@@ -2105,9 +2223,21 @@ class _MenuItemFormScreenState extends State<_MenuItemFormScreen> {
   Future<void> _pickImages() async {
     final image = await _picker.pickImage(
       source: ImageSource.gallery,
-      imageQuality: 85,
+      maxWidth: 1600,
+      maxHeight: 1600,
+      imageQuality: 80,
     );
     if (image == null) return;
+
+    final imageSize = await File(image.path).length();
+    if (imageSize > _maxImageBytes) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Menu image must be under 2 MB.')),
+      );
+      return;
+    }
+
     setState(() {
       _newImages
         ..clear()
@@ -2136,6 +2266,7 @@ class _MenuItemFormScreenState extends State<_MenuItemFormScreen> {
         categoryId: _categoryId,
         globalCategoryId: _globalCategoryId,
         globalSubcategoryId: _globalSubcategoryId,
+        masterMenuItemId: _masterMenuItemId,
         cuisineId: _cuisineId,
         foodType: _foodType,
         isAvailable: _isAvailable,
@@ -2155,6 +2286,12 @@ class _MenuItemFormScreenState extends State<_MenuItemFormScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final availableGlobalMenuItems = _availableGlobalMenuItems;
+    final selectedMasterMenuItemId =
+        _containsId(availableGlobalMenuItems, _masterMenuItemId)
+            ? _masterMenuItemId
+            : null;
+
     return Scaffold(
       backgroundColor: const Color(0xFFF9FAFB),
       body: SafeArea(
@@ -2241,6 +2378,8 @@ class _MenuItemFormScreenState extends State<_MenuItemFormScreen> {
                           _globalCategoryId = value;
                           if (value != null) _categoryId = null;
                           _globalSubcategoryId = null;
+                          _masterMenuItemId = null;
+                          _syncCuisineForGlobalSelection();
                         }),
                         validator: (_) =>
                             _categoryId == null && _globalCategoryId == null
@@ -2266,9 +2405,42 @@ class _MenuItemFormScreenState extends State<_MenuItemFormScreen> {
                         ],
                         onChanged: _globalCategoryId == null
                             ? null
-                            : (value) => setState(
-                                  () => _globalSubcategoryId = value,
-                                ),
+                            : (value) => setState(() {
+                                  _globalSubcategoryId = value;
+                                  _masterMenuItemId = null;
+                                  _syncCuisineForGlobalSelection();
+                                }),
+                      ),
+                    ],
+                    if (widget.globalMenuItems.isNotEmpty) ...[
+                      const SizedBox(height: 14),
+                      _label('Optional Global Menu Link'),
+                      _select<int?>(
+                        value: selectedMasterMenuItemId,
+                        hint: 'Select global item',
+                        items: [
+                          const DropdownMenuItem<int?>(
+                            value: null,
+                            child: Text('No global item link'),
+                          ),
+                          ...availableGlobalMenuItems.map((item) {
+                            final name = _asText(item['name']);
+                            final subcategory =
+                                _asText(item['subcategory_name']);
+                            final category = _asText(item['category_name']);
+                            final label = subcategory.isNotEmpty
+                                ? '$name - $subcategory'
+                                : (category.isEmpty
+                                    ? name
+                                    : '$name - $category');
+                            return DropdownMenuItem<int?>(
+                              value: _asInt(item['id']),
+                              child: Text(label),
+                            );
+                          }),
+                        ],
+                        onChanged: (value) =>
+                            setState(() => _masterMenuItemId = value),
                       ),
                     ],
                     const SizedBox(height: 14),
@@ -2385,7 +2557,7 @@ class _MenuItemFormScreenState extends State<_MenuItemFormScreen> {
                       onChanged: (value) =>
                           setState(() => _foodType = value ?? 'veg'),
                     ),
-                    if (widget.cuisines.isNotEmpty) ...[
+                    if (_availableCuisines.isNotEmpty) ...[
                       const SizedBox(height: 14),
                       _label('Cuisine'),
                       _select<int?>(
@@ -2396,7 +2568,7 @@ class _MenuItemFormScreenState extends State<_MenuItemFormScreen> {
                             value: null,
                             child: Text('No cuisine'),
                           ),
-                          ...widget.cuisines.map(
+                          ..._availableCuisines.map(
                             (cuisine) => DropdownMenuItem<int?>(
                               value: _asInt(cuisine['id']),
                               child: Text(_asText(cuisine['name'])),
@@ -2539,7 +2711,7 @@ class _MenuItemFormScreenState extends State<_MenuItemFormScreen> {
                     ),
                     SizedBox(height: 2),
                     Text(
-                      'PNG, JPG up to 5MB',
+                      'PNG, JPG up to 2MB',
                       style: TextStyle(color: Color(0xFF65708A), fontSize: 12),
                     ),
                   ],
@@ -3139,227 +3311,182 @@ class _MenuOperatorCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final statusColor =
         item.isAvailable ? FoodFlowTheme.success : FoodFlowTheme.danger;
+    final metadata = [
+      item.categoryName ?? 'Uncategorized',
+      if (item.cuisineName != null && item.cuisineName!.trim().isNotEmpty)
+        item.cuisineName!,
+      if (item.preparationTime != null) '${item.preparationTime} min',
+    ].join(' • ');
 
-    return GestureDetector(
+    return InkWell(
+      onTap: canManageMenu ? onEdit : null,
       onLongPress: canManageMenu ? () => onSelectionChanged(true) : null,
       child: Container(
-        margin: const EdgeInsets.only(bottom: 14),
-        padding: const EdgeInsets.all(12),
-        constraints: const BoxConstraints(minHeight: 160),
+        margin: const EdgeInsets.only(bottom: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         decoration: BoxDecoration(
           color: Colors.white,
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: BorderRadius.circular(8),
           border: Border.all(
             color: isSelected ? FoodFlowTheme.orange : FoodFlowTheme.line,
             width: isSelected ? 1.6 : 1,
           ),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.055),
-              blurRadius: 18,
-              offset: const Offset(0, 8),
-            ),
-          ],
         ),
-        child: Column(
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                if (selectionMode)
-                  Padding(
-                    padding: const EdgeInsets.only(right: 8, top: 30),
-                    child: Checkbox(
-                      value: isSelected,
-                      activeColor: FoodFlowTheme.orange,
-                      onChanged: (value) => onSelectionChanged(value ?? false),
-                    ),
-                  ),
-                Stack(
-                  children: [
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(12),
-                      child: item.imageUrl.isNotEmpty
-                          ? NetworkImageLoader(
-                              imageUrl: item.imageUrl,
-                              width: 90,
-                              height: 90,
-                              borderRadius: BorderRadius.circular(12),
-                            )
-                          : _fallbackImage(),
-                    ),
-                    Positioned(
-                      left: 6,
-                      bottom: 6,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 7,
-                          vertical: 4,
-                        ),
-                        decoration: BoxDecoration(
-                          color: statusColor,
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Text(
-                          item.isAvailable ? 'Active' : 'Hidden',
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 9,
-                            fontWeight: FontWeight.w900,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
+            if (selectionMode)
+              Padding(
+                padding: const EdgeInsets.only(right: 6),
+                child: Checkbox(
+                  value: isSelected,
+                  activeColor: FoodFlowTheme.orange,
+                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  onChanged: (value) => onSelectionChanged(value ?? false),
                 ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        item.name,
-                        style: const TextStyle(
-                          color: FoodFlowTheme.ink,
-                          fontWeight: FontWeight.w900,
-                          fontSize: 16,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      const SizedBox(height: 3),
-                      Text(
-                        item.categoryName ?? 'Uncategorized',
-                        style: const TextStyle(
-                          color: FoodFlowTheme.muted,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w700,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      const SizedBox(height: 7),
-                      Row(
-                        children: [
-                          if (item.hasDiscount) ...[
-                            Text(
-                              formatCurrency(context, item.price),
-                              style: const TextStyle(
-                                decoration: TextDecoration.lineThrough,
-                                fontSize: 12,
-                                color: FoodFlowTheme.faint,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                            const SizedBox(width: 6),
-                          ],
-                          Text(
-                            formatCurrency(context, item.finalPrice),
-                            style: TextStyle(
-                              color: FoodFlowTheme.orange,
-                              fontWeight: FontWeight.w900,
-                              fontSize: 15,
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 8),
-                      Wrap(
-                        spacing: 6,
-                        runSpacing: 6,
-                        children: [
-                          _TagPill(
-                            label: item.dietLabel,
-                            color: item.isVeg
-                                ? FoodFlowTheme.success
-                                : FoodFlowTheme.danger,
-                          ),
-                          if (item.totalOrders > 0)
-                            _TagPill(
-                              label: '${item.totalOrders} orders',
-                              color: FoodFlowTheme.orangeDark,
-                            ),
-                          if (item.rating != null)
-                            _TagPill(
-                              label: item.rating!.toStringAsFixed(1),
-                              color: FoodFlowTheme.orange,
-                              icon: Icons.star,
-                            ),
-                          if (item.hasDiscount)
-                            _TagPill(
-                              label: 'Featured',
-                              color: FoodFlowTheme.orange,
-                            ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 8),
-                if (canManageMenu)
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      Switch(
-                        value: item.isAvailable,
-                        onChanged: (_) => onToggle(),
-                        activeColor: FoodFlowTheme.orange,
-                      ),
-                      PopupMenuButton<String>(
-                        icon: const Icon(Icons.more_vert),
-                        onSelected: (value) {
-                          if (value == 'edit') onEdit();
-                          if (value == 'duplicate') onDuplicate();
-                          if (value == 'toggle') onToggle();
-                          if (value == 'delete') onDelete();
-                        },
-                        itemBuilder: (context) => [
-                          const PopupMenuItem(
-                            value: 'edit',
-                            child: Text('Edit'),
-                          ),
-                          const PopupMenuItem(
-                            value: 'duplicate',
-                            child: Text('Duplicate'),
-                          ),
-                          PopupMenuItem(
-                            value: 'toggle',
-                            child: Text(item.isAvailable ? 'Hide' : 'Show'),
-                          ),
-                          const PopupMenuItem(
-                            value: 'delete',
-                            child: Text('Delete'),
-                          ),
-                        ],
-                      ),
-                    ],
-                  )
-                else
-                  _AvailabilityPill(isAvailable: item.isAvailable),
-              ],
+              ),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: item.imageUrl.isNotEmpty
+                  ? NetworkImageLoader(
+                      imageUrl: item.imageUrl,
+                      width: 58,
+                      height: 58,
+                      borderRadius: BorderRadius.circular(8),
+                    )
+                  : _fallbackImage(),
             ),
-            if (canManageMenu) ...[
-              const SizedBox(height: 12),
-              Row(
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  _QuickActionButton(
-                    icon: Icons.straighten,
-                    label: 'Variants',
-                    onPressed: onEdit,
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          item.name,
+                          style: const TextStyle(
+                            color: FoodFlowTheme.ink,
+                            fontWeight: FontWeight.w900,
+                            fontSize: 15,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      _StatusDot(color: statusColor),
+                    ],
                   ),
-                  _QuickActionButton(
-                    icon: Icons.add_circle_outline,
-                    label: 'Addons',
-                    onPressed: onEdit,
+                  const SizedBox(height: 3),
+                  Text(
+                    metadata,
+                    style: const TextStyle(
+                      color: FoodFlowTheme.muted,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                   ),
-                  _QuickActionButton(
-                    icon: Icons.schedule,
-                    label: 'Schedule',
-                    onPressed: onEdit,
+                  const SizedBox(height: 6),
+                  Row(
+                    children: [
+                      if (item.hasDiscount) ...[
+                        Text(
+                          formatCurrency(context, item.price),
+                          style: const TextStyle(
+                            decoration: TextDecoration.lineThrough,
+                            fontSize: 12,
+                            color: FoodFlowTheme.faint,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                      ],
+                      Text(
+                        formatCurrency(context, item.finalPrice),
+                        style: TextStyle(
+                          color: FoodFlowTheme.orange,
+                          fontWeight: FontWeight.w900,
+                          fontSize: 14,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      _TagPill(
+                        label: item.dietLabel,
+                        color: item.isVeg
+                            ? FoodFlowTheme.success
+                            : FoodFlowTheme.danger,
+                      ),
+                      if (item.totalOrders > 0) ...[
+                        const SizedBox(width: 6),
+                        Flexible(
+                          child: Text(
+                            '${item.totalOrders} orders',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: FoodFlowTheme.muted,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
                   ),
                 ],
               ),
-            ],
+            ),
+            const SizedBox(width: 8),
+            if (canManageMenu)
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Transform.scale(
+                    scale: 0.82,
+                    child: Switch(
+                      value: item.isAvailable,
+                      onChanged: (_) => onToggle(),
+                      activeColor: FoodFlowTheme.orange,
+                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                  ),
+                  PopupMenuButton<String>(
+                    icon: const Icon(Icons.more_vert),
+                    tooltip: 'Menu item actions',
+                    onSelected: (value) {
+                      if (value == 'edit') onEdit();
+                      if (value == 'duplicate') onDuplicate();
+                      if (value == 'toggle') onToggle();
+                      if (value == 'delete') onDelete();
+                    },
+                    itemBuilder: (context) => [
+                      const PopupMenuItem(
+                        value: 'edit',
+                        child: Text('Edit'),
+                      ),
+                      const PopupMenuItem(
+                        value: 'duplicate',
+                        child: Text('Duplicate'),
+                      ),
+                      PopupMenuItem(
+                        value: 'toggle',
+                        child: Text(item.isAvailable ? 'Hide' : 'Show'),
+                      ),
+                      const PopupMenuItem(
+                        value: 'delete',
+                        child: Text('Delete'),
+                      ),
+                    ],
+                  ),
+                ],
+              )
+            else
+              _AvailabilityPill(isAvailable: item.isAvailable),
           ],
         ),
       ),
@@ -3368,8 +3495,8 @@ class _MenuOperatorCard extends StatelessWidget {
 
   Widget _fallbackImage() {
     return Container(
-      width: 90,
-      height: 90,
+      width: 58,
+      height: 58,
       color: FoodFlowTheme.orange.withOpacity(0.08),
       child: Icon(
         item.isVeg ? Icons.eco : Icons.restaurant,
@@ -3408,6 +3535,27 @@ class _QuickActionButton extends StatelessWidget {
               fontWeight: FontWeight.w900,
             ),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+class _StatusDot extends StatelessWidget {
+  final Color color;
+
+  const _StatusDot({required this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: color == FoodFlowTheme.success ? 'Available' : 'Hidden',
+      child: Container(
+        width: 9,
+        height: 9,
+        decoration: BoxDecoration(
+          color: color,
+          shape: BoxShape.circle,
         ),
       ),
     );

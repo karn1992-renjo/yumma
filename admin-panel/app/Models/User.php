@@ -38,6 +38,10 @@ class User extends Authenticatable
         'phone',
         'password',
         'is_active',
+        'reward_points_balance',
+        'referral_code',
+        'referred_by_user_id',
+        'referral_registered_at',
         'vehicle_type',
         'vehicle_number',
         'license_number',
@@ -124,6 +128,8 @@ class User extends Authenticatable
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
             'social_accounts' => 'array',
+            'reward_points_balance' => 'integer',
+            'referral_registered_at' => 'datetime',
             'mollie_token_expires_at' => 'datetime',
             'payout_provider_meta' => 'array',
         ];
@@ -175,6 +181,21 @@ class User extends Authenticatable
     public function branchMembership()
     {
         return $this->hasOne(BranchUser::class);
+    }
+
+    public function referrer()
+    {
+        return $this->belongsTo(User::class, 'referred_by_user_id');
+    }
+
+    public function referrals()
+    {
+        return $this->hasMany(UserReferral::class, 'referrer_id');
+    }
+
+    public function referralAttribution()
+    {
+        return $this->hasOne(UserReferral::class, 'referred_user_id');
     }
 
     public function activeRestaurant(): ?Restaurant
@@ -231,6 +252,18 @@ class User extends Authenticatable
     public function gigs()
     {
         return $this->hasMany(DriverGig::class, 'driver_id');
+    }
+
+    public function gigBookings()
+    {
+        return $this->hasMany(DriverGigBooking::class, 'driver_id');
+    }
+
+    public function bookedGigs()
+    {
+        return $this->belongsToMany(DriverGig::class, 'driver_gig_bookings', 'driver_id', 'driver_gig_id')
+            ->withPivot(['status', 'booked_at', 'completed_at', 'cancelled_at'])
+            ->withTimestamps();
     }
 
     public function deliveryArea()

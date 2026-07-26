@@ -153,36 +153,57 @@ class PayoutSettlementService
         $netDebited = (float) $transactions->where('type', 'debit')->sum('amount')
             - (float) $transactions->where('type', 'credit')->sum('amount');
 
-        if ($netDebited >= (float) $payout->amount) {
-            $this->releaseLockedFundsIfNeeded($payout);
-            return;
-        }
-
         $payee = $this->payeeForPayout($payout);
         if (!$payee) {
             throw new RuntimeException('Payout recipient wallet could not be resolved.');
         }
 
         $wallet = Wallet::where('user_id', $payee->id)->lockForUpdate()->first();
-        if (!$wallet || $wallet->balance < $payout->amount) {
+        if (!$wallet) {
+            throw new RuntimeException('Payout recipient wallet could not be resolved.');
+        }
+
+        $payoutAmount = (float) $payout->amount;
+        $reservedAmount = min(max(0, $netDebited), $payoutAmount);
+        $remainingAmount = max(0, $payoutAmount - $reservedAmount);
+
+        if ($remainingAmount > 0 && (float) $wallet->balance < $remainingAmount) {
             throw new RuntimeException('Payout completed externally but wallet settlement is not funded.');
         }
 
-        $wallet->decrement('balance', $payout->amount);
-        $wallet->refresh();
+        if ($reservedAmount > 0) {
+            $this->releaseCompletedPayoutLockedFunds($wallet, $payout, $reservedAmount);
+        }
 
-        WalletTransaction::create([
-            'wallet_id' => $wallet->id,
-            'user_id' => $wallet->user_id,
-            'type' => 'debit',
-            'amount' => $payout->amount,
-            'balance_after' => $wallet->balance,
-            'reference_type' => 'payout',
-            'reference_id' => $payout->id,
-            'description' => 'Gateway payout settled',
-            'created_by' => $payout->processed_by,
-            'meta' => ['gateway' => $gateway],
-        ]);
+        if ($remainingAmount > 0) {
+            $wallet->decrement('balance', $remainingAmount);
+            $wallet->refresh();
+
+            WalletTransaction::create([
+                'wallet_id' => $wallet->id,
+                'user_id' => $wallet->user_id,
+                'type' => 'debit',
+                'amount' => $remainingAmount,
+                'balance_after' => $wallet->balance,
+                'reference_type' => 'payout',
+                'reference_id' => $payout->id,
+                'description' => $gateway === 'cash' ? 'Cash payout settled' : 'Gateway payout settled',
+                'created_by' => $payout->processed_by,
+                'meta' => ['gateway' => $gateway, 'source' => 'payout_completion'],
+            ]);
+        }
+    }
+
+    private function releaseCompletedPayoutLockedFunds(Wallet $wallet, Payout $payout, float $reservedAmount): void
+    {
+        $amount = min((float) $wallet->locked_balance, $reservedAmount);
+
+        if ($amount <= 0) {
+            return;
+        }
+
+        $wallet->decrement('locked_balance', $amount);
+        $wallet->refresh();
     }
 
     public function reserveFundsForRetry(Payout $payout): bool

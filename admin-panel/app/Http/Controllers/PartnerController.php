@@ -6,6 +6,7 @@ use App\Models\User;
 use App\Models\Restaurant;
 use App\Models\PartnerApplication;
 use App\Models\DeliveryArea;
+use App\Rules\UniqueUserContactForRole;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Mail;
@@ -43,7 +44,7 @@ class PartnerController extends Controller
                     'partner_type' => 'required|in:restaurant',
                     // Restaurant Basic Info
                     'business_name' => 'required|string|max:255',
-                    'business_email' => 'required|email|unique:restaurants,email|unique:users,email',
+                    'business_email' => ['required', 'email', 'unique:restaurants,email', UniqueUserContactForRole::email('restaurant_owner')],
                     'business_phone' => 'required|string|max:20',
                     'city' => 'required|string',
                     'address' => 'required|string',
@@ -71,8 +72,8 @@ class PartnerController extends Controller
                     'partner_type' => 'required|in:driver',
                     // Personal Info
                     'full_name' => 'required|string|max:255',
-                    'email' => 'required|email|unique:users,email',
-                    'phone' => 'required|string|max:20|unique:users,phone',
+                    'email' => ['required', 'email', UniqueUserContactForRole::email('delivery_partner')],
+                    'phone' => ['required', 'string', 'max:20', UniqueUserContactForRole::phone('delivery_partner')],
                     'city' => 'required|string',
                     'address' => 'required|string',
                     'area_id' => 'required|exists:delivery_areas,id',

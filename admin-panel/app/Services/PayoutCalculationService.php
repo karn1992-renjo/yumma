@@ -23,13 +23,29 @@ class PayoutCalculationService
     
     public function __construct()
     {
-        $this->commissionRate = $this->normalizePercentage(
-            CommissionSetting::getRate(CommissionSetting::RESTAURANT) ?: 15
-        );
-        $this->gstRate = $this->normalizePercentage(AppSetting::getValue('gst_rate', 18));
+        $this->commissionRate = $this->normalizePercentage($this->globalRestaurantCommissionRate());
+        $this->gstRate = $this->normalizePercentage($this->adminCommissionGstRate());
         $this->gatewayFeeRate = $this->normalizePercentage(AppSetting::getValue('gateway_fee_rate', 2));
     }
-    
+
+    protected function globalRestaurantCommissionRate(): float
+    {
+        $setting = CommissionSetting::where('type', CommissionSetting::RESTAURANT)->first();
+
+        if ($setting) {
+            return $setting->is_active ? (float) $setting->rate : 0.0;
+        }
+
+        return 15.0;
+    }
+
+    protected function adminCommissionGstRate(): float
+    {
+        $rate = AppSetting::getValue('gst_rate');
+
+        return is_numeric($rate) ? (float) $rate : 0.0;
+    }
+
     protected function normalizePercentage($value)
     {
         if (!is_numeric($value)) {
@@ -50,8 +66,9 @@ class PayoutCalculationService
         $gatewayFee = $this->isOnlinePayment($order)
             ? $order->total * $this->gatewayFeeRate
             : 0;
+        $restaurantDeliverySubsidy = max(0, (float) ($order->restaurant_delivery_subsidy ?? 0));
         
-        $restaurantEarning = $commissionBase - $platformCommission - $gstOnCommission - $gatewayFee;
+        $restaurantEarning = $commissionBase - $platformCommission - $gstOnCommission - $gatewayFee - $restaurantDeliverySubsidy;
         
         return [
             'subtotal' => round($commissionBase, 2),
@@ -60,6 +77,7 @@ class PayoutCalculationService
             'platform_commission' => round($platformCommission, 2),
             'gst_on_commission' => round($gstOnCommission, 2),
             'payment_gateway_fee' => round($gatewayFee, 2),
+            'restaurant_delivery_subsidy' => round($restaurantDeliverySubsidy, 2),
             'restaurant_earning' => max(0, round($restaurantEarning, 2))
         ];
     }
@@ -69,9 +87,7 @@ class PayoutCalculationService
         $customerDeliveryFee = (float) $order->delivery_fee;
         $chargeableDeliveryFee = $this->chargeableDeliveryFee($order);
         $freeDeliveryContribution = $this->freeDeliveryContribution($order, $chargeableDeliveryFee);
-        $driverEarning = $customerDeliveryFee > 0
-            ? $customerDeliveryFee
-            : $freeDeliveryContribution;
+        $driverEarning = $chargeableDeliveryFee;
         $driverCommission = CommissionSetting::calculate(CommissionSetting::DRIVER, $driverEarning);
         $multipleOrderBonus = $this->calculateMultipleOrderBonus($order);
         $finalEarning = $driverEarning - $driverCommission + $multipleOrderBonus;
@@ -106,6 +122,8 @@ class PayoutCalculationService
                 $gst = (float) $orders->sum('gst_on_commission');
                 $gatewayFee = (float) $orders->sum('payment_gateway_fee');
                 $delivery = (float) $orders->sum('delivery_fee');
+                $adminDeliverySubsidy = (float) $orders->sum('admin_delivery_subsidy');
+                $restaurantDeliverySubsidy = (float) $orders->sum('restaurant_delivery_subsidy');
                 $net = (float) $orders->sum('restaurant_earning');
 
                 return [
@@ -118,6 +136,8 @@ class PayoutCalculationService
                     'gst_on_commission' => round($gst, 2),
                     'payment_gateway_fee' => round($gatewayFee, 2),
                     'delivery_fee' => round($delivery, 2),
+                    'admin_delivery_subsidy' => round($adminDeliverySubsidy, 2),
+                    'restaurant_delivery_subsidy' => round($restaurantDeliverySubsidy, 2),
                     'amount' => round($net, 2),
                     'order_ids' => $orders->pluck('id')->values()->all(),
                     'breakdown' => [
@@ -150,6 +170,7 @@ class PayoutCalculationService
                 $driverCommission = (float) $orders->sum(fn ($order) =>
                     (float) $order->admin_delivery_commission + (float) $order->driver_deduction
                 );
+                $adminDeliverySubsidy = (float) $orders->sum('admin_delivery_subsidy');
                 $batchBonus = (float) $orders->sum('batch_bonus');
                 $net = (float) $orders->sum('driver_earning');
 
@@ -161,6 +182,8 @@ class PayoutCalculationService
                     'gross_amount' => round($gross, 2),
                     'platform_commission' => round($driverCommission, 2),
                     'delivery_fee' => round($gross, 2),
+                    'admin_delivery_subsidy' => round($adminDeliverySubsidy, 2),
+                    'restaurant_delivery_subsidy' => 0,
                     'admin_delivery_commission' => 0,
                     'driver_deduction' => round($driverCommission, 2),
                     'batch_bonus' => round($batchBonus, 2),
@@ -228,8 +251,10 @@ class PayoutCalculationService
             'platform_commission' => $row['platform_commission'] ?? 0,
             'gst_on_commission' => $row['gst_on_commission'] ?? 0,
             'payment_gateway_fee' => $row['payment_gateway_fee'] ?? 0,
-            'delivery_fee' => $row['delivery_fee'] ?? 0,
-            'admin_delivery_commission' => $row['admin_delivery_commission'] ?? 0,
+                'delivery_fee' => $row['delivery_fee'] ?? 0,
+                'admin_delivery_subsidy' => $row['admin_delivery_subsidy'] ?? 0,
+                'restaurant_delivery_subsidy' => $row['restaurant_delivery_subsidy'] ?? 0,
+                'admin_delivery_commission' => $row['admin_delivery_commission'] ?? 0,
             'driver_deduction' => $row['driver_deduction'] ?? 0,
             'batch_bonus' => $row['batch_bonus'] ?? 0,
             'order_ids' => $orderIds,
@@ -283,6 +308,8 @@ class PayoutCalculationService
             $row['gst_on_commission'] = round((float) $orders->sum('gst_on_commission'), 2);
             $row['payment_gateway_fee'] = round((float) $orders->sum('payment_gateway_fee'), 2);
             $row['delivery_fee'] = round((float) $orders->sum('delivery_fee'), 2);
+            $row['admin_delivery_subsidy'] = round((float) $orders->sum('admin_delivery_subsidy'), 2);
+            $row['restaurant_delivery_subsidy'] = round((float) $orders->sum('restaurant_delivery_subsidy'), 2);
             $row['amount'] = round((float) $orders->sum('restaurant_earning'), 2);
         } else {
             $gross = (float) $orders->sum('driver_delivery_base');
@@ -290,10 +317,13 @@ class PayoutCalculationService
                 (float) $order->admin_delivery_commission + (float) $order->driver_deduction
             );
             $batchBonus = (float) $orders->sum('batch_bonus');
+            $adminDeliverySubsidy = (float) $orders->sum('admin_delivery_subsidy');
 
             $row['gross_amount'] = round($gross, 2);
             $row['platform_commission'] = round($driverCommission, 2);
             $row['delivery_fee'] = round($gross, 2);
+            $row['admin_delivery_subsidy'] = round($adminDeliverySubsidy, 2);
+            $row['restaurant_delivery_subsidy'] = 0;
             $row['admin_delivery_commission'] = 0;
             $row['driver_deduction'] = round($driverCommission, 2);
             $row['batch_bonus'] = round($batchBonus, 2);
@@ -333,6 +363,7 @@ class PayoutCalculationService
             $restaurantCommission = (float) $restaurantEarningData['platform_commission'];
             $branchShare = $this->branchCommissionShare($order, $restaurantCommission);
             $adminRestaurantShare = round($restaurantCommission - $branchShare, 2);
+            $adminDeliverySubsidy = max(0, (float) ($order->admin_delivery_subsidy ?? 0));
 
             $order->update([
                 'platform_commission' => $restaurantEarningData['platform_commission'],
@@ -354,7 +385,8 @@ class PayoutCalculationService
                 'admin_commission' => round(
                     $adminRestaurantShare
                     + (float) $driverEarningData['driver_commission']
-                    + (float) ($order->platform_fee ?? 0),
+                    + (float) ($order->platform_fee ?? 0)
+                    - $adminDeliverySubsidy,
                     2
                 ),
                 'payout_processed' => true,
@@ -546,6 +578,10 @@ class PayoutCalculationService
             return 0.0;
         }
 
+        if ((float) ($order->original_delivery_fee ?? 0) > 0) {
+            return (float) $order->original_delivery_fee;
+        }
+
         if ((float) $order->delivery_fee > 0) {
             return (float) $order->delivery_fee;
         }
@@ -569,13 +605,25 @@ class PayoutCalculationService
             return 0.0;
         }
 
+        if ((float) ($order->delivery_discount ?? 0) > 0) {
+            return min($chargeableDeliveryFee, (float) $order->delivery_discount);
+        }
+
         $setting = DeliveryChargeSetting::first();
-        if (!$setting || !$setting->free_delivery_global || ! $setting->isFreeDeliveryEligible($order->delivery_lat, $order->delivery_lng)) {
+        if (!$setting) {
             return 0.0;
         }
 
-        $threshold = $setting->free_delivery_threshold;
+        $threshold = DeliveryChargeSetting::getFreeDeliveryThreshold(
+            $order->restaurant_id,
+            $order->delivery_lat,
+            $order->delivery_lng
+        );
         if ($threshold !== null && (float) $order->subtotal < (float) $threshold) {
+            return 0.0;
+        }
+
+        if ($threshold === null) {
             return 0.0;
         }
 
@@ -596,11 +644,11 @@ class PayoutCalculationService
         }
 
         if ($batchCount === 2) {
-            return (float) AppSetting::getValue('multiple_order_bonus_two_orders', 10);
+            return (float) AppSetting::getValue('multiple_order_bonus_two_orders', 0);
         }
 
-        return (float) AppSetting::getValue('multiple_order_bonus_three_plus_orders', 20)
-            + max(0, $batchCount - 3) * (float) AppSetting::getValue('multiple_order_bonus_extra_order', 5);
+        return (float) AppSetting::getValue('multiple_order_bonus_three_plus_orders', 0)
+            + max(0, $batchCount - 3) * (float) AppSetting::getValue('multiple_order_bonus_extra_order', 0);
     }
 
     protected function distanceKm($lat1, $lon1, $lat2, $lon2): float

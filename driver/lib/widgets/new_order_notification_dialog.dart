@@ -1,14 +1,14 @@
 // lib/widgets/new_order_notification_dialog.dart
+import 'dart:async';
+
 import 'package:flutter/material.dart';
-import 'package:lottie/lottie.dart';
 import '../models/order.dart';
-import '../theme/foodflow_theme.dart';
 import '../utils/currency_utils.dart';
 
 class NewOrderNotificationDialog extends StatefulWidget {
   final Order order;
-  final VoidCallback onAccept;
-  final VoidCallback onReject;
+  final FutureOr<void> Function() onAccept;
+  final FutureOr<void> Function() onReject;
 
   const NewOrderNotificationDialog({
     Key? key,
@@ -25,7 +25,18 @@ class NewOrderNotificationDialog extends StatefulWidget {
 class _NewOrderNotificationDialogState extends State<NewOrderNotificationDialog>
     with SingleTickerProviderStateMixin {
   late AnimationController _animationController;
-  bool _isAnimating = true;
+  bool _isAccepting = false;
+  bool _isRejecting = false;
+
+  bool get _isBusy => _isAccepting || _isRejecting;
+
+  String _driverEarningText(BuildContext context) {
+    final earning = formatCurrency(context, widget.order.driverEarningAmount);
+    if (widget.order.driverIncentiveAmount > 0) {
+      return '$earning + ${formatCurrency(context, widget.order.driverIncentiveAmount)} incentive';
+    }
+    return earning;
+  }
 
   @override
   void initState() {
@@ -75,14 +86,14 @@ class _NewOrderNotificationDialogState extends State<NewOrderNotificationDialog>
             ),
             child: SingleChildScrollView(
               child: Padding(
-                padding: const EdgeInsets.all(24),
+                padding: const EdgeInsets.all(18),
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     // Animated Bell Icon
                     Container(
-                      width: 80,
-                      height: 80,
+                      width: 64,
+                      height: 64,
                       decoration: BoxDecoration(
                         gradient: const LinearGradient(
                           colors: [
@@ -102,32 +113,32 @@ class _NewOrderNotificationDialogState extends State<NewOrderNotificationDialog>
                       child: const Icon(
                         Icons.notifications_active,
                         color: Colors.white,
-                        size: 40,
+                        size: 32,
                       ),
                     ),
-                    const SizedBox(height: 20),
+                    const SizedBox(height: 16),
 
                     // Header
                     const Text(
-                      'New Order Incoming! 🎉',
+                      'New Delivery Request',
                       style: TextStyle(
-                        fontSize: 24,
-                        fontWeight: FontWeight.w900,
+                        fontSize: 20,
+                        fontWeight: FontWeight.w800,
                         color: Color(0xFF1C1C1C),
                       ),
                       textAlign: TextAlign.center,
                     ),
                     const SizedBox(height: 8),
                     Text(
-                      'Earn ${formatCurrency(context, widget.order.deliveryFee)} for this delivery',
+                      'Earn ${_driverEarningText(context)} for this delivery',
                       style: const TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w600,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w800,
                         color: Color(0xFF0E9F6E),
                       ),
                       textAlign: TextAlign.center,
                     ),
-                    const SizedBox(height: 24),
+                    const SizedBox(height: 18),
 
                     // Order Details Card
                     Container(
@@ -138,7 +149,7 @@ class _NewOrderNotificationDialogState extends State<NewOrderNotificationDialog>
                           color: Colors.grey.shade200,
                         ),
                       ),
-                      padding: const EdgeInsets.all(16),
+                      padding: const EdgeInsets.all(14),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
@@ -150,7 +161,7 @@ class _NewOrderNotificationDialogState extends State<NewOrderNotificationDialog>
                                 'Order #${widget.order.orderNumber}',
                                 style: const TextStyle(
                                   fontSize: 16,
-                                  fontWeight: FontWeight.w900,
+                                  fontWeight: FontWeight.w800,
                                   color: Color(0xFF1C1C1C),
                                 ),
                               ),
@@ -167,24 +178,24 @@ class _NewOrderNotificationDialogState extends State<NewOrderNotificationDialog>
                                   'Waiting',
                                   style: TextStyle(
                                     fontSize: 12,
-                                    fontWeight: FontWeight.w700,
+                                    fontWeight: FontWeight.w800,
                                     color: Colors.green,
                                   ),
                                 ),
                               ),
                             ],
                           ),
-                          const SizedBox(height: 14),
+                          const SizedBox(height: 12),
 
                           // Pickup Location
                           _buildDetailRow(
                             icon: Icons.restaurant,
-                            label: widget.order.restaurant?.name ?? 'Restaurant',
+                            label: widget.order.restaurant?.name ?? 'Store',
                             value:
                                 widget.order.restaurant?.address ?? 'Pickup location',
                             iconColor: Colors.red,
                           ),
-                          const SizedBox(height: 12),
+                          const SizedBox(height: 10),
 
                           // Delivery Location
                           _buildDetailRow(
@@ -193,7 +204,7 @@ class _NewOrderNotificationDialogState extends State<NewOrderNotificationDialog>
                             value: widget.order.deliveryAddress,
                             iconColor: Colors.green,
                           ),
-                          const SizedBox(height: 12),
+                          const SizedBox(height: 10),
 
                           // Distance & Items
                           Row(
@@ -216,29 +227,34 @@ class _NewOrderNotificationDialogState extends State<NewOrderNotificationDialog>
                         ],
                       ),
                     ),
-                    const SizedBox(height: 24),
+                    const SizedBox(height: 18),
 
                     // Action Buttons
                     Row(
                       children: [
                         Expanded(
                           child: ElevatedButton.icon(
-                            onPressed: () {
-                              Navigator.pop(context);
-                              widget.onReject();
-                            },
-                            icon: const Icon(Icons.clear, size: 20),
+                            onPressed: _isBusy ? null : _reject,
+                            icon: _isRejecting
+                                ? const SizedBox(
+                                    width: 18,
+                                    height: 18,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                    ),
+                                  )
+                                : const Icon(Icons.clear, size: 18),
                             label: const Text(
-                              'REJECT',
+                              'Reject',
                               style: TextStyle(
-                                fontWeight: FontWeight.w900,
-                                fontSize: 14,
+                                fontWeight: FontWeight.w800,
+                                fontSize: 13,
                               ),
                             ),
                             style: ElevatedButton.styleFrom(
                               backgroundColor: Colors.grey.shade100,
                               foregroundColor: Colors.grey.shade700,
-                              padding: const EdgeInsets.symmetric(vertical: 14),
+                              padding: const EdgeInsets.symmetric(vertical: 13),
                               elevation: 0,
                               shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(12),
@@ -249,22 +265,28 @@ class _NewOrderNotificationDialogState extends State<NewOrderNotificationDialog>
                         const SizedBox(width: 12),
                         Expanded(
                           child: ElevatedButton.icon(
-                            onPressed: () {
-                              Navigator.pop(context);
-                              widget.onAccept();
-                            },
-                            icon: const Icon(Icons.check, size: 20),
+                            onPressed: _isBusy ? null : _accept,
+                            icon: _isAccepting
+                                ? const SizedBox(
+                                    width: 18,
+                                    height: 18,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      color: Colors.white,
+                                    ),
+                                  )
+                                : const Icon(Icons.check, size: 18),
                             label: const Text(
-                              'ACCEPT',
+                              'Accept',
                               style: TextStyle(
-                                fontWeight: FontWeight.w900,
-                                fontSize: 14,
+                                fontWeight: FontWeight.w800,
+                                fontSize: 13,
                               ),
                             ),
                             style: ElevatedButton.styleFrom(
                               backgroundColor: const Color(0xFF0E9F6E),
                               foregroundColor: Colors.white,
-                              padding: const EdgeInsets.symmetric(vertical: 14),
+                              padding: const EdgeInsets.symmetric(vertical: 13),
                               elevation: 2,
                               shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(12),
@@ -274,16 +296,6 @@ class _NewOrderNotificationDialogState extends State<NewOrderNotificationDialog>
                         ),
                       ],
                     ),
-                    const SizedBox(height: 12),
-                    Text(
-                      'Tap to accept or reject this delivery request',
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w500,
-                        color: Colors.grey.shade600,
-                      ),
-                      textAlign: TextAlign.center,
-                    ),
                   ],
                 ),
               ),
@@ -292,6 +304,20 @@ class _NewOrderNotificationDialogState extends State<NewOrderNotificationDialog>
         ),
       ),
     );
+  }
+
+  Future<void> _accept() async {
+    setState(() => _isAccepting = true);
+    await widget.onAccept();
+    if (!mounted) return;
+    Navigator.pop(context);
+  }
+
+  Future<void> _reject() async {
+    setState(() => _isRejecting = true);
+    await widget.onReject();
+    if (!mounted) return;
+    Navigator.pop(context);
   }
 
   Widget _buildDetailRow({
@@ -324,7 +350,7 @@ class _NewOrderNotificationDialogState extends State<NewOrderNotificationDialog>
                 label,
                 style: const TextStyle(
                   fontSize: 12,
-                  fontWeight: FontWeight.w600,
+                  fontWeight: FontWeight.w400,
                   color: Colors.grey,
                 ),
               ),
@@ -333,7 +359,7 @@ class _NewOrderNotificationDialogState extends State<NewOrderNotificationDialog>
                 value,
                 style: const TextStyle(
                   fontSize: 13,
-                  fontWeight: FontWeight.w700,
+                  fontWeight: FontWeight.w800,
                   color: Color(0xFF1C1C1C),
                 ),
                 maxLines: 2,
@@ -365,7 +391,7 @@ class _NewOrderNotificationDialogState extends State<NewOrderNotificationDialog>
               label,
               style: TextStyle(
                 fontSize: 12,
-                fontWeight: FontWeight.w600,
+                fontWeight: FontWeight.w400,
                 color: Colors.grey.shade700,
               ),
               overflow: TextOverflow.ellipsis,

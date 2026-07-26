@@ -488,6 +488,18 @@ class AuthService {
     }
   }
 
+  Future<void> deleteAccount() async {
+    final response = await _api.delete(ApiConstants.deleteAccount);
+
+    if (response['success'] != true) {
+      throw Exception(response['message'] ?? 'Failed to delete account');
+    }
+
+    await clearStoredUser();
+    await _api.clearToken();
+    await ForegroundServiceManager.stopForegroundService();
+  }
+
   Future<bool> isLoggedIn() async {
     final token = await _api.getToken();
     return token != null;

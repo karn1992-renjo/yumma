@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../config/api_constants.dart';
 import '../models/app_branding.dart';
 import 'api_service.dart';
+import 'native_config_service.dart';
 
 class AppBrandingService {
   AppBrandingService._();
@@ -50,6 +51,11 @@ class AppBrandingService {
       // Fall back to cached or default branding below.
     }
 
-    return _memoryCache ?? AppBranding.fallback();
+    if (_memoryCache != null) {
+      return _memoryCache!;
+    }
+
+    final appName = await NativeConfigService.getAppName();
+    return AppBranding.fallback(appName: appName);
   }
 }

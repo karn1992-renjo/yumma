@@ -4,32 +4,41 @@
 @section('header', 'Delivery Radius Settings')
 
 @section('content')
-<div class="page-header">
-    <div class="d-flex justify-content-between align-items-center">
-        <div>
-            <h1>Delivery Radius Settings</h1>
-            <p>Configure the default delivery radius for restaurants and service area lookups.</p>
-        </div>
-        <a href="{{ route('admin.settings.index') }}" class="btn btn-outline-primary">Back to System Settings</a>
-    </div>
-</div>
+@include('admin.settings._style')
 
-<div class="row">
-    <div class="col-lg-6">
-        <div class="table-card">
-            <div class="card-header bg-transparent">
-                <h5 class="mb-0 fw-bold">Default Radius</h5>
+<div class="settings-shell">
+    <div class="settings-hero">
+        <div>
+            <span class="settings-eyebrow"><i class="fas fa-location-arrow"></i> Service Area</span>
+            <h1>Delivery Radius Settings</h1>
+            <p>Configure the default delivery radius for restaurant discovery and service-area lookup behavior.</p>
+        </div>
+        <a href="{{ route('admin.settings.index') }}" class="btn btn-outline-primary">Back to Settings</a>
+    </div>
+
+    @include('admin.settings._tabs')
+
+    <div class="settings-card">
+        <div class="settings-card-header">
+            <div>
+                <h2 class="settings-card-title">Default Radius</h2>
+                <p class="settings-card-subtitle">This legacy blade writes the same radius value as the Map & Location settings page.</p>
             </div>
-            <div class="p-4">
-                <form action="{{ route('admin.settings.update') }}" method="POST">
-                    @csrf
-                    <div class="mb-3">
-                        <label class="form-label fw-semibold">Default Delivery Radius (km)</label>
+        </div>
+        <div class="settings-card-body">
+            <form action="{{ route('admin.settings.update') }}" method="POST">
+                @csrf
+                <input type="hidden" name="redirect_to" value="admin.settings.map">
+                <div class="settings-grid">
+                    <div class="settings-field settings-span-4">
+                        <label class="form-label">Default Delivery Radius (km)</label>
                         <input type="number" name="default_delivery_radius" class="form-control" step="0.5" value="{{ $settings['default_delivery_radius'] ?? 10 }}" min="0">
                     </div>
+                </div>
+                <div class="settings-action-bar">
                     <button type="submit" class="btn btn-primary">Save Radius</button>
-                </form>
-            </div>
+                </div>
+            </form>
         </div>
     </div>
 </div>

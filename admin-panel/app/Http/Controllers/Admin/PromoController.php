@@ -4,8 +4,8 @@ namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Models\PromoCode;
+use App\Services\MediaStorage;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Storage;
 
 class PromoController extends Controller
 {
@@ -44,7 +44,7 @@ class PromoController extends Controller
         ]);
 
         if ($request->hasFile('promo_image')) {
-            $validated['promo_image'] = $request->file('promo_image')->store('promos', 'public');
+            $validated['promo_image'] = MediaStorage::store($request->file('promo_image'), 'promos');
         }
 
         $validated['restaurant_id'] = null;
@@ -87,9 +87,9 @@ class PromoController extends Controller
 
         if ($request->hasFile('promo_image')) {
             if ($promo->promo_image) {
-                Storage::disk('public')->delete($promo->promo_image);
+                MediaStorage::delete($promo->promo_image);
             }
-            $validated['promo_image'] = $request->file('promo_image')->store('promos', 'public');
+            $validated['promo_image'] = MediaStorage::store($request->file('promo_image'), 'promos');
         }
 
         $validated['restaurant_id'] = null;
@@ -107,7 +107,7 @@ class PromoController extends Controller
         abort_if($promo->restaurant_id !== null || $promo->created_by_type !== 'admin', 404);
 
         if ($promo->promo_image) {
-            Storage::disk('public')->delete($promo->promo_image);
+            MediaStorage::delete($promo->promo_image);
         }
 
         $promo->delete();

@@ -32,7 +32,7 @@ class CommissionController extends Controller
             'driver_commission_rate' => 'required|numeric|min:0',
             'restaurant_calculation_type' => ['required', Rule::in(['percentage', 'fixed'])],
             'driver_calculation_type' => ['required', Rule::in(['percentage', 'fixed'])],
-            'gst_on_commission_rate' => 'required|numeric|min:0|max:100',
+            'gst_on_commission_rate' => 'nullable|numeric|min:0|max:100',
             'gateway_fee_rate' => 'required|numeric|min:0|max:100',
         ]);
 
@@ -57,7 +57,7 @@ class CommissionController extends Controller
 
         CommissionSetting::whereIn('type', ['admin', 'delivery_partner'])->delete();
 
-        AppSetting::setValue('gst_rate', $request->gst_on_commission_rate);
+        AppSetting::setValue('gst_rate', $request->input('gst_on_commission_rate'));
         AppSetting::setValue('gateway_fee_rate', $request->gateway_fee_rate);
         
         return redirect()->back()->with('success', 'Commission settings updated successfully!');

@@ -2,6 +2,7 @@
     $gigTitle = old('title', $gig?->title);
     $gigDescription = old('description', $gig?->description);
     $gigAreaId = old('area_id', $gig?->area_id);
+    $gigCapacity = old('capacity', $gig?->capacity ?? 1);
     $gigDate = old('date', $gig?->date?->format('Y-m-d'));
     $gigStart = old('start_time', optional($gig?->start_time)->format('H:i'));
     $gigEnd = old('end_time', optional($gig?->end_time)->format('H:i'));
@@ -36,17 +37,24 @@
         <label class="form-label">Description</label>
         <textarea name="description" class="form-control" rows="3" placeholder="Describe the slot, expected demand, or area notes">{{ $gigDescription }}</textarea>
     </div>
-    <div class="col-md-4">
+    <div class="col-md-3">
         <label class="form-label">Date</label>
         <input type="date" name="date" class="form-control" value="{{ $gigDate }}" required>
     </div>
-    <div class="col-md-4">
+    <div class="col-md-3">
         <label class="form-label">Start Time</label>
         <input type="time" name="start_time" class="form-control" value="{{ $gigStart }}" required>
     </div>
-    <div class="col-md-4">
+    <div class="col-md-3">
         <label class="form-label">End Time</label>
         <input type="time" name="end_time" class="form-control" value="{{ $gigEnd }}" required>
+    </div>
+    <div class="col-md-3">
+        <label class="form-label">Driver Capacity</label>
+        <input type="number" min="1" name="capacity" class="form-control" value="{{ $gigCapacity }}" required>
+        @if($gig)
+            <div class="form-text">{{ $gig->booked_count }} active booking(s)</div>
+        @endif
     </div>
 
     @if($gig)

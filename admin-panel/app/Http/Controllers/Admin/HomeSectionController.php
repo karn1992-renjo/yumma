@@ -10,7 +10,7 @@ use App\Models\Cuisine;
 use App\Models\GlobalMenuCategory;
 use App\Models\HomeSection;
 use App\Models\MasterMenuItem;
-use App\Models\PromoCode;
+use App\Models\Promotion;
 use App\Models\Restaurant;
 use App\Services\HomeSectionService;
 use Illuminate\Http\RedirectResponse;
@@ -53,7 +53,7 @@ class HomeSectionController extends Controller
                 'cuisine_ids' => [],
                 'global_category_ids' => [],
                 'menu_item_ids' => [],
-                'promo_code_ids' => [],
+                'promotion_ids' => [],
                 'popular_only' => false,
                 'background_color' => '#FFFFFF',
                 'background_opacity' => 0.88,
@@ -109,6 +109,31 @@ class HomeSectionController extends Controller
         return redirect()->route('admin.home-sections.index')->with('success', 'Homepage section order updated successfully.');
     }
 
+    public function toggleBuiltIn(string $token): RedirectResponse
+    {
+        $isHidden = $this->homeSectionService->toggleBuiltInVisibility($token);
+
+        return redirect()->route('admin.home-sections.index')
+            ->with('success', $isHidden ? 'Built-in section hidden from homepage.' : 'Built-in section shown on homepage.');
+    }
+
+    public function updateBuiltIn(string $token): RedirectResponse
+    {
+        $payload = request()->validate([
+            'title' => ['required', 'string', 'max:255'],
+            'subtitle' => ['nullable', 'string', 'max:500'],
+        ]);
+
+        $this->homeSectionService->updateBuiltInContent(
+            $token,
+            $payload['title'],
+            $payload['subtitle'] ?? null,
+        );
+
+        return redirect()->route('admin.home-sections.index')
+            ->with('success', 'Built-in section title updated successfully.');
+    }
+
     private function payload(array $validated, ?HomeSection $homeSection = null): array
     {
         $configuration = $homeSection?->configuration ?? [];
@@ -153,7 +178,7 @@ class HomeSectionController extends Controller
                 'cuisine_ids' => array_values(array_map('intval', $validated['cuisine_ids'] ?? [])),
                 'global_category_ids' => array_values(array_map('intval', $validated['global_category_ids'] ?? [])),
                 'menu_item_ids' => array_values(array_map('intval', $validated['menu_item_ids'] ?? [])),
-                'promo_code_ids' => array_values(array_map('intval', $validated['promo_code_ids'] ?? [])),
+                'promotion_ids' => array_values(array_map('intval', $validated['promotion_ids'] ?? [])),
                 'background_color' => $validated['background_color'] ?? '#FFFFFF',
                 'background_opacity' => (float) ($validated['background_opacity'] ?? 0.88),
                 'background_image' => $backgroundImagePath,
@@ -189,9 +214,16 @@ class HomeSectionController extends Controller
 
     private function formData(HomeSection $homeSection): array
     {
+        $types = HomeSection::TYPES;
+        if ($homeSection->section_type !== 'admin_offers') {
+            unset($types['admin_offers']);
+        } else {
+            $types['admin_offers'] = 'Legacy Admin Offers';
+        }
+
         return [
             'homeSection' => $homeSection,
-            'types' => HomeSection::TYPES,
+            'types' => $types,
             'sources' => HomeSection::SOURCES,
             'restaurantScopes' => HomeSection::RESTAURANT_SCOPES,
             'banners' => Banner::query()->orderBy('display_order')->orderByDesc('id')->get(['id', 'title']),
@@ -209,7 +241,10 @@ class HomeSectionController extends Controller
                 ->orderBy('subcategory_name')
                 ->orderBy('name')
                 ->get(['id', 'name', 'category_name', 'subcategory_name', 'is_active']),
-            'promoCodes' => PromoCode::query()->where('is_active', true)->whereNull('restaurant_id')->where('created_by_type', 'admin')->orderBy('code')->get(['id', 'code', 'title']),
+            'promotions' => Promotion::query()
+                ->active()
+                ->orderBy('title')
+                ->get(['id', 'title', 'promotion_type']),
         ];
     }
 }

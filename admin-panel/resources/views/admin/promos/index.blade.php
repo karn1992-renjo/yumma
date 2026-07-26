@@ -26,7 +26,7 @@
             <div class="table-card h-100">
                 <div class="position-relative">
                     @if($promo->promo_image)
-                        <img src="{{ Storage::url($promo->promo_image) }}" class="card-img-top" style="height: 170px; object-fit: cover; border-radius: 16px 16px 0 0;" alt="{{ $promo->title }}">
+                        <img src="{{ \App\Services\MediaStorage::url($promo->promo_image) }}" class="card-img-top" style="height: 170px; object-fit: cover; border-radius: 16px 16px 0 0;" alt="{{ $promo->title }}">
                     @else
                         <div class="d-flex align-items-center justify-content-center bg-light" style="height: 170px; border-radius: 16px 16px 0 0;">
                             <i class="fas fa-tags fa-3x text-muted"></i>

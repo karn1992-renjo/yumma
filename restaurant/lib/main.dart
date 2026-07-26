@@ -12,21 +12,24 @@ import 'firebase_options.dart';
 import 'services/notification_service.dart';
 import 'services/incoming_order_alert_service.dart';
 import 'services/navigation_service.dart';
+import 'services/order_alert_startup_permission_service.dart';
 import 'services/sound_service.dart';
 import 'services/local_cache_service.dart';
 import 'services/app_branding_service.dart';
+import 'services/app_update_service.dart';
 import 'config/app_config.dart';
 import 'models/app_branding.dart';
 import 'theme/foodflow_theme.dart';
+import 'theme/responsive_theme.dart';
 import 'providers/auth_provider.dart';
 import 'providers/cart_provider.dart';
 import 'providers/order_provider.dart';
 import 'providers/restaurant_provider.dart';
 import 'models/order.dart';
-import 'screens/splash_screen.dart';
 import 'screens/auth/login_screen.dart';
 import 'screens/auth/register_screen.dart';
 import 'screens/auth/partner_application_status_screen.dart';
+import 'screens/app_splash_screen.dart';
 import 'screens/onboarding/onboarding_screen.dart';
 
 import 'screens/restaurant/restaurant_dashboard.dart';
@@ -37,28 +40,86 @@ import 'screens/restaurant/restaurant_dining_screen.dart';
 import 'screens/restaurant/profile/index.dart';
 import 'screens/location_required_screen.dart';
 import 'utils/route_observer.dart';
+import 'widgets/common/network_image_loader.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
+  AppImageCache.configureMemoryCache();
 
   configLoading();
+  unawaited(_startApp());
+}
+
+Future<void> _startApp() async {
+  final authProvider = AuthProvider();
+  final cartProvider = CartProvider();
+  var onboardingComplete = false;
+  final startupFuture = _initializeStartup(
+    authProvider,
+    cartProvider,
+    (value) => onboardingComplete = value,
+  );
+
   _logStartupStep('runApp');
 
   runApp(
     MultiProvider(
       providers: [
-        ChangeNotifierProvider(create: (_) => AuthProvider()..loadUser()),
-        ChangeNotifierProvider(create: (_) => CartProvider()..loadCart()),
+        ChangeNotifierProvider.value(value: authProvider),
+        ChangeNotifierProvider.value(value: cartProvider),
         ChangeNotifierProvider(create: (_) => OrderProvider()),
         ChangeNotifierProvider(create: (_) => RestaurantProvider()),
       ],
-      child: const FoodDeliveryApp(),
+      child: FoodDeliveryApp(
+        startupFuture: startupFuture,
+        onboardingComplete: () => onboardingComplete,
+      ),
     ),
   );
 
   WidgetsBinding.instance.addPostFrameCallback((_) {
-    unawaited(_initializeAfterFirstFrame());
+    unawaited(
+      startupFuture.then(
+        (_) => OrderAlertStartupPermissionService.ensureForOrderAlerts(
+          enabled: authProvider.isRestaurantMember,
+        ),
+      ),
+    );
   });
+
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    unawaited(_initializeAfterFirstFrame());
+    unawaited(
+      startupFuture.then(
+        (_) => AppUpdateService.checkForLatestRelease(appKey: 'restaurant'),
+      ),
+    );
+  });
+}
+
+Future<void> _initializeStartup(
+  AuthProvider authProvider,
+  CartProvider cartProvider,
+  ValueChanged<bool> setOnboardingComplete,
+) async {
+  var onboardingComplete = false;
+  await _runStartupStep(
+    'startup preferences',
+    () async {
+      final prefs = await SharedPreferences.getInstance();
+      onboardingComplete = prefs.getBool('onboarding_complete') ?? false;
+    },
+  );
+
+  if (onboardingComplete) {
+    await _runStartupStep('firebase core', _ensureFirebaseInitialized);
+    await _runStartupStep('auth session', authProvider.loadUser);
+    if (authProvider.isAuthenticated && !authProvider.canUseCurrentApp) {
+      await _runStartupStep('logout invalid app role', authProvider.logout);
+    }
+  }
+  unawaited(cartProvider.loadCart());
+  setOnboardingComplete(onboardingComplete);
 }
 
 Future<void> _initializeAfterFirstFrame() async {
@@ -167,7 +228,14 @@ Route<dynamic> _errorRoute(String message) {
 }
 
 class FoodDeliveryApp extends StatefulWidget {
-  const FoodDeliveryApp({super.key});
+  final Future<void> startupFuture;
+  final bool Function() onboardingComplete;
+
+  const FoodDeliveryApp({
+    super.key,
+    required this.startupFuture,
+    required this.onboardingComplete,
+  });
 
   @override
   State<FoodDeliveryApp> createState() => _FoodDeliveryAppState();
@@ -206,6 +274,7 @@ class _FoodDeliveryAppState extends State<FoodDeliveryApp> {
 
   @override
   Widget build(BuildContext context) {
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
     final primary = _colorFromHex(
       _branding?.restaurantPrimaryColorHex,
       AppConfig.primaryColor,
@@ -238,85 +307,10 @@ class _FoodDeliveryAppState extends State<FoodDeliveryApp> {
         materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
         fontFamily: GoogleFonts.nunitoSans().fontFamily,
         useMaterial3: true,
-        textTheme: GoogleFonts.nunitoSansTextTheme().copyWith(
-          displayLarge: TextStyle(
-            color: homeText,
-            fontSize: 30,
-            fontWeight: FontWeight.w800,
-            height: 1.02,
-          ),
-          displayMedium: TextStyle(
-            color: homeText,
-            fontSize: 26,
-            fontWeight: FontWeight.w800,
-            height: 1.06,
-          ),
-          headlineLarge: TextStyle(
-            color: homeText,
-            fontSize: 23,
-            fontWeight: FontWeight.w800,
-            height: 1.08,
-          ),
-          headlineMedium: TextStyle(
-            color: homeText,
-            fontSize: 21,
-            fontWeight: FontWeight.w800,
-            height: 1.1,
-          ),
-          titleLarge: TextStyle(
-            color: homeText,
-            fontSize: 18,
-            fontWeight: FontWeight.w800,
-            height: 1.16,
-          ),
-          titleMedium: TextStyle(
-            color: homeText,
-            fontSize: 16,
-            fontWeight: FontWeight.w700,
-            height: 1.18,
-          ),
-          titleSmall: TextStyle(
-            color: homeText,
-            fontSize: 14,
-            fontWeight: FontWeight.w700,
-            height: 1.18,
-          ),
-          bodyLarge: TextStyle(
-            color: homeMuted,
-            fontSize: 16,
-            fontWeight: FontWeight.w600,
-            height: 1.3,
-          ),
-          bodyMedium: TextStyle(
-            color: homeMuted,
-            fontSize: 14,
-            fontWeight: FontWeight.w500,
-            height: 1.28,
-          ),
-          bodySmall: TextStyle(
-            color: homeMuted,
-            fontSize: 12,
-            fontWeight: FontWeight.w500,
-            height: 1.22,
-          ),
-          labelLarge: TextStyle(
-            color: homeText,
-            fontSize: 15,
-            fontWeight: FontWeight.w700,
-            height: 1.1,
-          ),
-          labelMedium: TextStyle(
-            color: homeMuted,
-            fontSize: 13,
-            fontWeight: FontWeight.w700,
-            height: 1.1,
-          ),
-          labelSmall: TextStyle(
-            color: homeMuted,
-            fontSize: 11,
-            fontWeight: FontWeight.w500,
-            height: 1.1,
-          ),
+        textTheme: AppTypography.material3(
+          base: GoogleFonts.nunitoSansTextTheme(),
+          textColor: homeText,
+          mutedColor: homeMuted,
         ),
         appBarTheme: const AppBarTheme(
           elevation: 0,
@@ -420,23 +414,23 @@ class _FoodDeliveryAppState extends State<FoodDeliveryApp> {
         ),
         inputDecorationTheme: InputDecorationTheme(
           border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(18),
+            borderRadius: BorderRadius.circular(12),
             borderSide: BorderSide.none,
           ),
           enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(18),
+            borderRadius: BorderRadius.circular(12),
             borderSide: const BorderSide(color: homeBorder),
           ),
           focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(18),
+            borderRadius: BorderRadius.circular(12),
             borderSide: BorderSide(color: primary, width: 1.2),
           ),
           errorBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(18),
+            borderRadius: BorderRadius.circular(12),
             borderSide: const BorderSide(color: FoodFlowTheme.danger),
           ),
           focusedErrorBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(18),
+            borderRadius: BorderRadius.circular(12),
             borderSide: const BorderSide(
               color: FoodFlowTheme.danger,
               width: 1.2,
@@ -444,10 +438,7 @@ class _FoodDeliveryAppState extends State<FoodDeliveryApp> {
           ),
           filled: true,
           fillColor: Colors.white,
-          contentPadding: const EdgeInsets.symmetric(
-            horizontal: 18,
-            vertical: 18,
-          ),
+          contentPadding: AppSpacing.input,
           prefixIconColor: primary,
           suffixIconColor: homeMuted,
           labelStyle: const TextStyle(
@@ -465,17 +456,17 @@ class _FoodDeliveryAppState extends State<FoodDeliveryApp> {
             fontWeight: FontWeight.w700,
             fontSize: 16,
           ),
-          isDense: false,
+          isDense: true,
         ),
         elevatedButtonTheme: ElevatedButtonThemeData(
           style: ElevatedButton.styleFrom(
             backgroundColor: primary,
             foregroundColor: Colors.white,
             shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(18),
+              borderRadius: BorderRadius.circular(12),
             ),
-            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
-            minimumSize: const Size(0, 54),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            minimumSize: const Size(0, 46),
             elevation: 0,
             shadowColor: Colors.transparent,
             textStyle: const TextStyle(
@@ -489,11 +480,11 @@ class _FoodDeliveryAppState extends State<FoodDeliveryApp> {
           style: OutlinedButton.styleFrom(
             side: BorderSide(color: primary.withOpacity(0.24)),
             shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(18),
+              borderRadius: BorderRadius.circular(12),
             ),
             foregroundColor: homeText,
-            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 13),
-            minimumSize: const Size(0, 52),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
+            minimumSize: const Size(0, 46),
             textStyle: const TextStyle(
               fontSize: 16,
               fontWeight: FontWeight.w700,
@@ -506,10 +497,10 @@ class _FoodDeliveryAppState extends State<FoodDeliveryApp> {
             backgroundColor: primary,
             foregroundColor: Colors.white,
             shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(18),
+              borderRadius: BorderRadius.circular(12),
             ),
-            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
-            minimumSize: const Size(0, 54),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            minimumSize: const Size(0, 46),
             textStyle: const TextStyle(
               fontSize: 16,
               fontWeight: FontWeight.w800,
@@ -555,11 +546,21 @@ class _FoodDeliveryAppState extends State<FoodDeliveryApp> {
           ),
         ),
       ),
-      home: const SplashScreen(),
+      home: AppSplashScreen(
+        startupFuture: widget.startupFuture,
+        builder: (_) => !widget.onboardingComplete()
+            ? const OnboardingScreen()
+            : authProvider.isAuthenticated && authProvider.canUseCurrentApp
+                ? const RestaurantDashboard()
+                : const LoginScreen(),
+      ),
       navigatorObservers: [routeObserver],
       onGenerateRoute: _generateRoute,
       builder: (context, child) {
-        return EasyLoading.init()(context, child);
+        return ResponsiveMedia.withClampedTextScale(
+          context: context,
+          child: EasyLoading.init()(context, child),
+        );
       },
     );
   }

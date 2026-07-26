@@ -55,67 +55,93 @@
                         </div>
 
                         <div class="mb-3">
-                            <label class="form-label fw-semibold">Free Delivery Threshold ({{ $currencySymbol }})</label>
-                            <input type="number" step="0.01" name="free_delivery_threshold" class="form-control" 
-                                   value="{{ $settings->free_delivery_threshold ?? '' }}" placeholder="Leave empty for no free delivery">
-                            <small class="text-muted">Order amount above which delivery is free</small>
+                            <label class="form-label fw-semibold">Order Acceptance Time (seconds)</label>
+                            <input type="number" name="order_acceptance_timeout_seconds" class="form-control"
+                                   value="{{ old('order_acceptance_timeout_seconds', $settings->order_acceptance_timeout_seconds ?? 180) }}"
+                                   min="30" max="600" required>
+                            <small class="text-muted">Time given to restaurant and driver apps to accept an incoming order. Default is 180 seconds (3 minutes).</small>
                         </div>
-
-                        <div class="mb-3 form-check">
-                            <input type="checkbox" name="free_delivery_global" value="1" class="form-check-input" id="freeDeliveryGlobal"
-                                   {{ ($settings->free_delivery_global ?? false) ? 'checked' : '' }}>
-                            <label class="form-check-label" for="freeDeliveryGlobal">
-                                Enable free delivery using this threshold
-                            </label>
-                        </div>
-
-                        @php
-                            $selectedFreeDeliveryDays = collect(old('free_delivery_days', $settings->free_delivery_days ?? []))->all();
-                            $selectedFreeDeliveryAreas = collect(old('free_delivery_area_ids', $settings->free_delivery_area_ids ?? []))
-                                ->map(fn ($value) => (string) $value)
-                                ->all();
-                            $weekDays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
-                        @endphp
 
                         <div class="mb-3">
-                            <label class="form-label fw-semibold">Free Delivery Days</label>
-                            <div class="d-flex flex-wrap gap-2">
-                                @foreach($weekDays as $day)
-                                    <label class="form-check-label border rounded px-3 py-2 bg-light">
-                                        <input class="form-check-input me-2" type="checkbox" name="free_delivery_days[]" value="{{ $day }}"
-                                               {{ in_array($day, $selectedFreeDeliveryDays, true) ? 'checked' : '' }}>
-                                        {{ $day }}
-                                    </label>
-                                @endforeach
+                            <label class="form-label fw-semibold">Zone-wise Free Delivery</label>
+                            <div class="border rounded-3 overflow-hidden">
+                                <div class="table-responsive">
+                                    <table class="table align-middle mb-0">
+                                        <thead class="table-light">
+                                            <tr>
+                                                <th>Delivery Zone</th>
+                                                <th style="width: 130px;">Free</th>
+                                                <th style="width: 180px;">Free Above ({{ $currencySymbol }})</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            @forelse($deliveryAreas as $area)
+                                                @php
+                                                    $zoneInput = old("zone_free_delivery.{$area->id}", []);
+                                                    $zoneEnabled = array_key_exists('enabled', $zoneInput)
+                                                        ? (bool) $zoneInput['enabled']
+                                                        : (bool) $area->free_delivery_enabled;
+                                                    $zoneThreshold = array_key_exists('threshold', $zoneInput)
+                                                        ? $zoneInput['threshold']
+                                                        : $area->free_delivery_threshold;
+                                                @endphp
+                                                <tr>
+                                                    <td>
+                                                        <div class="fw-semibold">{{ $area->name }}</div>
+                                                        <div class="small text-muted">{{ ucfirst($area->area_type ?? 'circle') }} zone</div>
+                                                    </td>
+                                                    <td>
+                                                        <input type="hidden" name="zone_free_delivery[{{ $area->id }}][enabled]" value="0">
+                                                        <div class="form-check form-switch mb-0">
+                                                            <input class="form-check-input" type="checkbox"
+                                                                   name="zone_free_delivery[{{ $area->id }}][enabled]"
+                                                                   value="1"
+                                                                   id="freeDeliveryZone{{ $area->id }}"
+                                                                   {{ $zoneEnabled ? 'checked' : '' }}>
+                                                        </div>
+                                                    </td>
+                                                    <td>
+                                                        <input type="number"
+                                                               step="0.01"
+                                                               min="0"
+                                                               name="zone_free_delivery[{{ $area->id }}][threshold]"
+                                                               class="form-control form-control-sm"
+                                                               value="{{ $zoneThreshold }}"
+                                                               placeholder="Not set">
+                                                    </td>
+                                                </tr>
+                                            @empty
+                                                <tr>
+                                                    <td colspan="3" class="text-center text-muted py-4">
+                                                        Create delivery zones first to enable zone-wise free delivery.
+                                                    </td>
+                                                </tr>
+                                            @endforelse
+                                        </tbody>
+                                    </table>
+                                </div>
                             </div>
-                            <small class="text-muted">Leave all days unchecked to allow free delivery every day.</small>
-                        </div>
-
-                        <div class="mb-3">
-                            <label class="form-label fw-semibold">Free Delivery Zones</label>
-                            <select name="free_delivery_area_ids[]" class="form-select" multiple size="6">
-                                @foreach($deliveryAreas as $area)
-                                    <option value="{{ $area->id }}" {{ in_array((string) $area->id, $selectedFreeDeliveryAreas, true) ? 'selected' : '' }}>
-                                        {{ $area->name }}
-                                    </option>
-                                @endforeach
-                            </select>
-                            <small class="text-muted">Leave empty to apply globally. Select zones to limit free delivery to matching customer delivery locations.</small>
+                            <small class="text-muted">Free delivery applies only when the customer delivery address falls inside an enabled zone and the order reaches that zone's amount.</small>
                         </div>
 
                         <hr>
 
                         <h6 class="fw-bold mb-3">Cost Sharing (For Free Delivery)</h6>
+                        <p class="text-muted small mb-3">
+                            This split is used for every free delivery source: zone threshold, promotion engine, scratch card coupon, delivery discount, and custom rules. Total must be 100%.
+                        </p>
                         <div class="row">
                             <div class="col-md-6 mb-3">
                                 <label class="form-label">Admin Contribution (%)</label>
                                 <input type="number" step="0.01" name="admin_contribution_percent" class="form-control" 
                                        value="{{ $settings->admin_contribution_percent ?? 50 }}" required>
+                                @error('admin_contribution_percent') <div class="text-danger small mt-1">{{ $message }}</div> @enderror
                             </div>
                             <div class="col-md-6 mb-3">
                                 <label class="form-label">Restaurant Contribution (%)</label>
                                 <input type="number" step="0.01" name="restaurant_contribution_percent" class="form-control" 
                                        value="{{ $settings->restaurant_contribution_percent ?? 50 }}" required>
+                                @error('restaurant_contribution_percent') <div class="text-danger small mt-1">{{ $message }}</div> @enderror
                             </div>
                         </div>
 
@@ -177,15 +203,28 @@
         </div>
         <div class="p-4">
             <div class="row">
-                <div class="col-md-4 mb-3">
+                <div class="col-md-3 mb-3">
                     <label class="form-label">Distance (km)</label>
                     <input type="number" id="calcDistance" class="form-control" value="5" step="0.5">
                 </div>
-                <div class="col-md-4 mb-3">
+                <div class="col-md-3 mb-3">
                     <label class="form-label">Order Amount ({{ $currencySymbol }})</label>
                     <input type="number" id="calcOrderAmount" class="form-control" value="300" step="10">
                 </div>
-                <div class="col-md-4 mb-3">
+                <div class="col-md-3 mb-3">
+                    <label class="form-label">Delivery Zone</label>
+                    <select id="calcDeliveryArea" class="form-select">
+                        <option value="">No zone selected</option>
+                        @foreach($deliveryAreas as $area)
+                            <option value="{{ $area->id }}"
+                                    data-free-enabled="{{ $area->free_delivery_enabled ? '1' : '0' }}"
+                                    data-free-threshold="{{ $area->free_delivery_threshold ?? '' }}">
+                                {{ $area->name }}
+                            </option>
+                        @endforeach
+                    </select>
+                </div>
+                <div class="col-md-3 mb-3">
                     <label class="form-label">Calculated Charges</label>
                     <div class="display-5 fw-bold text-primary" id="calcDeliveryFee">{{ $currencySymbol }}0</div>
                 </div>
@@ -208,18 +247,20 @@
         // Calculator
         const distanceInput = document.getElementById('calcDistance');
         const orderAmountInput = document.getElementById('calcOrderAmount');
+        const deliveryAreaInput = document.getElementById('calcDeliveryArea');
         const deliveryFeeSpan = document.getElementById('calcDeliveryFee');
         
         function calculateDelivery() {
             const distance = parseFloat(distanceInput.value) || 0;
             const orderAmount = parseFloat(orderAmountInput.value) || 0;
-            const freeThreshold = parseFloat('{{ $settings->free_delivery_threshold ?? 0 }}');
-            const isFreeGlobal = {{ $settings->free_delivery_global ?? 'false' ? 'true' : 'false' }};
             const platformFee = parseFloat('{{ $settings->platform_fee ?? 0 }}') || 0;
+            const selectedZone = deliveryAreaInput?.selectedOptions?.[0];
+            const isZoneFree = selectedZone?.dataset?.freeEnabled === '1';
+            const zoneThreshold = parseFloat(selectedZone?.dataset?.freeThreshold || '0');
             
             let fee = 0;
             
-            if (isFreeGlobal && freeThreshold > 0 && orderAmount >= freeThreshold) {
+            if (isZoneFree && zoneThreshold > 0 && orderAmount >= zoneThreshold) {
                 fee = 0;
             } else {
                 const chargeTypeValue = '{{ $settings->charge_type ?? "fixed" }}';
@@ -239,6 +280,7 @@
         
         distanceInput.addEventListener('input', calculateDelivery);
         orderAmountInput.addEventListener('input', calculateDelivery);
+        deliveryAreaInput?.addEventListener('change', calculateDelivery);
         calculateDelivery();
     });
 </script>

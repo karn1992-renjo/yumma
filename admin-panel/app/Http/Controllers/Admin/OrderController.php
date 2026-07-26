@@ -12,6 +12,7 @@ use App\Services\BranchManagementService;
 use App\Services\OrderStatusPushService;
 use App\Services\PayoutCalculationService;
 use App\Services\RefundService;
+use App\Services\ScratchCardService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Barryvdh\DomPDF\Facade\Pdf;
@@ -104,7 +105,7 @@ class OrderController extends Controller
      */
     public function show($id)
     {
-        $order = Order::with(['restaurant', 'branch', 'customer', 'driver', 'orderItems.menuItem', 'transactions'])
+        $order = Order::with(['restaurant', 'branch', 'customer', 'driver', 'orderItems.menuItem', 'transactions', 'paymentAttempts.driver', 'paymentAttempts.creator'])
             ->findOrFail($id);
             
         $timeline = $this->getOrderTimeline($order);
@@ -220,6 +221,14 @@ class OrderController extends Controller
             DB::commit();
 
             if ($oldStatus !== $order->status) {
+                if ($order->status === 'confirmed') {
+                    app(ScratchCardService::class)->issueForRecordedUsage($order, 'restaurant_accepts');
+                }
+
+                if ($order->status === 'delivered') {
+                    app(ScratchCardService::class)->issueForRecordedUsage($order, 'delivery');
+                }
+
                 app(OrderStatusPushService::class)->notifyParticipants(
                     $order->fresh(['customer', 'restaurant'])
                 );
@@ -512,24 +521,20 @@ class OrderController extends Controller
      */
     private function getStatusTimestamp($order, $status, $index, $currentIndex)
     {
-        if ($index < $currentIndex) {
-            return $order->updated_at;
-        }
-        
-        if ($index == $currentIndex) {
-            if ($status === 'delivered' && $order->delivered_at) {
-                return $order->delivered_at;
-            }
-            if ($status === 'reached_pickup' && $order->reached_at) {
-                return $order->reached_at;
-            }
-            if ($status === 'cancelled' && $order->cancelled_at) {
-                return $order->cancelled_at;
-            }
-            return $order->updated_at;
-        }
-        
-        return null;
+        return match ($status) {
+            'pending' => $order->created_at,
+            'confirmed' => $order->confirmed_at,
+            'preparing' => $order->preparing_at ?? $order->confirmed_at,
+            'ready_for_pickup' => $order->ready_at,
+            'reached_pickup' => $order->reached_at,
+            'picked_up', 'on_the_way' => $order->getAttribute('picked_up_at')
+                ?? $order->driver_accepted_at
+                ?? $order->reached_at
+                ?? $order->ready_at,
+            'delivered' => $order->delivered_at,
+            'cancelled' => $order->cancelled_at,
+            default => null,
+        };
     }
     
     /**
@@ -543,6 +548,19 @@ class OrderController extends Controller
         
         $order = Order::findOrFail($id);
         $driver = User::role('delivery_partner')->findOrFail($request->driver_id);
+        $oldDriver = $order->driver;
+
+        if (($order->order_type ?? 'delivery') === 'takeaway') {
+            return redirect()->back()->with('error', 'Takeaway orders do not need a delivery driver.');
+        }
+
+        if (! in_array($order->status, ['confirmed', 'preparing', 'ready_for_pickup'], true)) {
+            return redirect()->back()->with('error', 'Driver can only be assigned or reassigned before pickup starts.');
+        }
+
+        if ($oldDriver && (int) $oldDriver->id === (int) $driver->id) {
+            return redirect()->back()->with('success', "Driver {$driver->name} is already assigned to this order.");
+        }
 
         if ($order->branch_id && $driver->branch_id && (int) $order->branch_id !== (int) $driver->branch_id) {
             return redirect()->back()->with('error', 'Driver belongs to another branch and cannot be assigned to this order.');
@@ -578,14 +596,51 @@ class OrderController extends Controller
             );
         }
         
+        $rejectedDriverIds = $order->rejected_driver_ids ?? [];
+        if (! is_array($rejectedDriverIds)) {
+            $rejectedDriverIds = [];
+        }
+        if ($oldDriver) {
+            $rejectedDriverIds[] = (int) $oldDriver->id;
+        }
+        $rejectedDriverIds = array_values(array_unique(array_filter(
+            $rejectedDriverIds,
+            fn ($driverId) => (int) $driverId !== (int) $driver->id
+        )));
+
         $order->update([
             'driver_id' => $driver->id,
             'driver_assigned_at' => now(),
             'driver_accepted_at' => null,
+            'rejected_driver_ids' => $rejectedDriverIds,
             'route_batch_id' => $autoAssignService->resolveRouteBatchIdForAssignment($driver, $order, $order->id),
         ]);
-        
-        return redirect()->back()->with('success', "Driver {$driver->name} assigned successfully!");
+
+        $freshOrder = $order->fresh(['customer', 'restaurant', 'driver']);
+        $autoAssignService->notifyDriver($driver, $freshOrder);
+        app(OrderStatusPushService::class)->notifyParticipants(
+            $freshOrder,
+            "Delivery partner has been " . ($oldDriver ? 'reassigned' : 'assigned') . " for order #{$freshOrder->order_number}.",
+            ['customer', 'restaurant']
+        );
+
+        activity()
+            ->performedOn($freshOrder)
+            ->causedBy($request->user())
+            ->withProperties([
+                'old_driver_id' => $oldDriver?->id,
+                'old_driver_name' => $oldDriver?->name,
+                'new_driver_id' => $driver->id,
+                'new_driver_name' => $driver->name,
+                'order_number' => $freshOrder->order_number,
+            ])
+            ->log($oldDriver ? 'Order driver reassigned' : 'Order driver assigned');
+
+        $message = $oldDriver
+            ? "Driver reassigned from {$oldDriver->name} to {$driver->name} successfully!"
+            : "Driver {$driver->name} assigned successfully!";
+
+        return redirect()->back()->with('success', $message);
     }
     
     /**

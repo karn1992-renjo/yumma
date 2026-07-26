@@ -12,31 +12,58 @@ class GigController extends Controller
 {
     public function index(Request $request)
     {
-        $availableGigs = DriverGig::with(['driver', 'area'])
+        $validated = $request->validate([
+            'date' => 'nullable|date',
+        ]);
+        $selectedDate = !empty($validated['date'])
+            ? Carbon::parse($validated['date'])->format('Y-m-d')
+            : null;
+
+        $availableGigs = DriverGig::with(['driver', 'area', 'bookings.driver'])
+            ->withCount(['activeBookings as active_bookings_count'])
             ->where('status', 'available')
-            ->whereDate('date', '>=', today())
+            ->when(
+                $selectedDate,
+                fn ($query) => $query->whereDate('date', $selectedDate),
+                fn ($query) => $query->whereDate('date', '>=', today())
+            )
             ->orderBy('date')
             ->orderBy('start_time')
             ->get();
             
-        $bookedGigs = DriverGig::with(['driver', 'area'])
+        $bookedGigs = DriverGig::with(['driver', 'area', 'bookings.driver'])
+            ->withCount(['activeBookings as active_bookings_count'])
             ->where('status', 'booked')
-            ->whereDate('date', '>=', today())
+            ->when(
+                $selectedDate,
+                fn ($query) => $query->whereDate('date', $selectedDate),
+                fn ($query) => $query->whereDate('date', '>=', today())
+            )
             ->orderBy('date')
             ->orderBy('start_time')
             ->get();
             
-        $completedGigs = DriverGig::with(['driver', 'area'])
+        $completedGigs = DriverGig::with(['driver', 'area', 'bookings.driver'])
+            ->withCount(['activeBookings as active_bookings_count'])
             ->where('status', 'completed')
-            ->whereDate('date', '>=', today()->subDays(7))
+            ->when(
+                $selectedDate,
+                fn ($query) => $query->whereDate('date', $selectedDate),
+                fn ($query) => $query->whereDate('date', '>=', today()->subDays(7))
+            )
             ->orderBy('date', 'desc')
             ->orderBy('start_time')
             ->limit(50)
             ->get();
             
-        $cancelledGigs = DriverGig::with(['driver', 'area'])
+        $cancelledGigs = DriverGig::with(['driver', 'area', 'bookings.driver'])
+            ->withCount(['activeBookings as active_bookings_count'])
             ->where('status', 'cancelled')
-            ->whereDate('date', '>=', today()->subDays(7))
+            ->when(
+                $selectedDate,
+                fn ($query) => $query->whereDate('date', $selectedDate),
+                fn ($query) => $query->whereDate('date', '>=', today()->subDays(7))
+            )
             ->orderBy('date', 'desc')
             ->limit(30)
             ->get();
@@ -53,15 +80,17 @@ class GigController extends Controller
             'available_today' => DriverGig::whereDate('date', today())
                 ->where('status', 'available')
                 ->count(),
-            'globally_open' => DriverGig::whereNull('driver_id')
-                ->where('status', 'available')
+            'globally_open' => DriverGig::withCount(['activeBookings as active_bookings_count'])
+                ->whereIn('status', ['available', 'booked'])
                 ->whereDate('date', '>=', today())
+                ->get()
+                ->filter(fn (DriverGig $gig) => $gig->available_seats > 0)
                 ->count(),
         ];
         
         $deliveryAreas = DeliveryArea::where('is_active', true)->orderBy('name')->get();
         
-        return view('admin.gigs.index', compact('availableGigs', 'bookedGigs', 'completedGigs', 'cancelledGigs', 'deliveryAreas', 'stats'));
+        return view('admin.gigs.index', compact('availableGigs', 'bookedGigs', 'completedGigs', 'cancelledGigs', 'deliveryAreas', 'stats', 'selectedDate'));
     }
     
     public function create()
@@ -76,6 +105,7 @@ class GigController extends Controller
             'title' => 'required|string|max:255',
             'description' => 'nullable|string|max:2000',
             'area_id' => 'required|exists:delivery_areas,id',
+            'capacity' => 'required|integer|min:1',
             'date' => 'required|date',
             'start_time' => 'required|date_format:H:i',
             'end_time' => 'required|date_format:H:i|after:start_time',
@@ -113,6 +143,7 @@ class GigController extends Controller
             'description' => $validated['description'] ?? null,
             'driver_id' => null,
             'area_id' => $validated['area_id'],
+            'capacity' => $validated['capacity'],
             'date' => $gigDate,
             'start_time' => $startTime,
             'end_time' => $endTime,
@@ -142,6 +173,7 @@ class GigController extends Controller
             'title' => 'required|string|max:255',
             'description' => 'nullable|string|max:2000',
             'area_id' => 'required|exists:delivery_areas,id',
+            'capacity' => 'required|integer|min:1',
             'date' => 'required|date',
             'start_time' => 'required|date_format:H:i',
             'end_time' => 'required|date_format:H:i|after:start_time',
@@ -163,10 +195,16 @@ class GigController extends Controller
         $startTime = Carbon::createFromFormat('Y-m-d H:i', $gigDate . ' ' . $validated['start_time']);
         $endTime = Carbon::createFromFormat('Y-m-d H:i', $gigDate . ' ' . $validated['end_time']);
 
+        $bookedCount = $gig->activeBookings()->count();
+        if ((int) $validated['capacity'] < $bookedCount) {
+            return redirect()->back()->withInput()->with('error', "Capacity cannot be less than the {$bookedCount} active bookings already on this gig.");
+        }
+
         $gig->update([
             'title' => $validated['title'],
             'description' => $validated['description'] ?? null,
             'area_id' => $validated['area_id'],
+            'capacity' => $validated['capacity'],
             'date' => $gigDate,
             'start_time' => $startTime,
             'end_time' => $endTime,
@@ -179,6 +217,8 @@ class GigController extends Controller
             'max_cancellations_allowed' => $validated['max_cancellations_allowed'] ?? 0,
             'terms_conditions' => $validated['terms_conditions'] ?? null,
         ]);
+
+        $this->syncBookingsForTerminalStatus($gig, $validated['status']);
         
         return redirect()->route('admin.gigs.index')
             ->with('success', 'Gig slot updated successfully.');
@@ -204,6 +244,7 @@ class GigController extends Controller
 
         $oldStatus = $gig->status;
         $gig->update(['status' => $request->status]);
+        $this->syncBookingsForTerminalStatus($gig, $request->status);
         
         if ($request->ajax()) {
             return response()->json([
@@ -238,6 +279,7 @@ class GigController extends Controller
             'title' => 'required|string|max:255',
             'description' => 'nullable|string|max:2000',
             'area_id' => 'required|exists:delivery_areas,id',
+            'capacity' => 'required|integer|min:1',
             'start_date' => 'required|date',
             'end_date' => 'required|date|after_or_equal:start_date',
             'start_time' => 'required|date_format:H:i',
@@ -285,6 +327,7 @@ class GigController extends Controller
                     'description' => $request->description,
                     'driver_id' => null,
                     'area_id' => $request->area_id,
+                    'capacity' => $request->capacity,
                     'date' => $date,
                     'start_time' => $slotStart,
                     'end_time' => $slotEnd,
@@ -309,7 +352,8 @@ class GigController extends Controller
     
     public function getCalendarEvents()
     {
-        $gigs = DriverGig::with(['driver', 'area'])
+        $gigs = DriverGig::with(['driver', 'area', 'bookings.driver'])
+            ->withCount(['activeBookings as active_bookings_count'])
             ->whereIn('status', ['available', 'booked'])
             ->whereDate('date', '>=', today()->subDays(7))
             ->whereDate('date', '<=', today()->addDays(30))
@@ -330,8 +374,15 @@ class GigController extends Controller
                 'start' => $gig->date . 'T' . Carbon::parse($gig->start_time)->format('H:i:s'),
                 'end' => $gig->date . 'T' . Carbon::parse($gig->end_time)->format('H:i:s'),
                 'color' => $statusColor[$gig->status],
-                'driver' => $gig->driver?->name,
-                'status' => $gig->status
+                'driver' => $gig->bookings
+                    ->whereIn('status', ['booked', 'completed'])
+                    ->map(fn ($booking) => $booking->driver?->name)
+                    ->filter()
+                    ->values()
+                    ->join(', '),
+                'status' => $gig->status,
+                'booked_count' => $gig->booked_count,
+                'capacity' => $gig->capacity,
             ];
         }
         
@@ -351,12 +402,30 @@ class GigController extends Controller
 
         $bookedCount = DriverGig::where('area_id', $areaId)
             ->whereDate('date', $gig->date)
-            ->where('status', 'booked')
             ->when($gig->exists, function ($query) use ($gig) {
                 return $query->where('id', '!=', $gig->id);
             })
-            ->count();
+            ->withCount(['activeBookings as active_bookings_count'])
+            ->get()
+            ->sum('booked_count');
 
         return $bookedCount < $area->max_daily_bookings;
+    }
+
+    protected function syncBookingsForTerminalStatus(DriverGig $gig, string $status): void
+    {
+        if (! in_array($status, ['completed', 'cancelled'], true)) {
+            return;
+        }
+
+        $timestampColumn = $status === 'completed' ? 'completed_at' : 'cancelled_at';
+
+        $gig->bookings()
+            ->where('status', 'booked')
+            ->update([
+                'status' => $status,
+                $timestampColumn => now(),
+                'updated_at' => now(),
+            ]);
     }
 }

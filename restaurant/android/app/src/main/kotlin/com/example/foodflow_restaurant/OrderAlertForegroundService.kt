@@ -1,4 +1,4 @@
-package com.adgraph.vendor
+package com.adgraph.yumma_vendor
 
 import android.app.Notification
 import android.app.NotificationChannel

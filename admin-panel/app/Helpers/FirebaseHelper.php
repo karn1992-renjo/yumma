@@ -83,20 +83,18 @@ class FirebaseHelper
                     : 'incoming_order_channel';
             }
 
-            $data = $this->withNotificationData($data, $title, $body);
+            $imageUrl = $this->notificationImageUrl($data);
+            $data = $this->withNotificationData($data, $title, $body, $imageUrl);
             $message = CloudMessage::withTarget('token', $token)
                 ->withData($this->sanitizeData($data))
-                ->withAndroidConfig([
-                    'priority' => 'high',
-                    'notification' => [
-                        'channel_id' => $channelId,
-                        'click_action' => 'FLUTTER_NOTIFICATION_CLICK',
-                        'sound' => $this->soundForChannel($channelId),
-                    ],
-                ]);
+                ->withAndroidConfig($this->androidConfig($channelId, $imageUrl));
 
-            if (! $this->isIncomingOrderPayload($data)) {
-                $message = $message->withNotification(Notification::create($title, $body));
+            if (filled($imageUrl)) {
+                $message = $message->withApnsConfig($this->apnsConfig($imageUrl));
+            }
+
+            if (! $this->isIncomingOrderPayload($data) && ! $this->isDataOnlyPayload($data)) {
+                $message = $message->withNotification(Notification::create($title, $body, $imageUrl));
             }
                 
             $this->messaging->send($message);
@@ -116,18 +114,18 @@ class FirebaseHelper
         }
 
         try {
-            $notification = Notification::create($title, $body);
+            $imageUrl = $this->notificationImageUrl($data);
+            $data = $this->withNotificationData($data, $title, $body, $imageUrl);
+            $notification = Notification::create($title, $body, $imageUrl);
             
             $message = CloudMessage::withTarget('topic', $topic)
                 ->withNotification($notification)
                 ->withData($this->sanitizeData($data))
-                ->withAndroidConfig([
-                    'priority' => 'high',
-                    'notification' => [
-                        'channel_id' => 'incoming_order_channel',
-                        'click_action' => 'FLUTTER_NOTIFICATION_CLICK',
-                    ],
-                ]);
+                ->withAndroidConfig($this->androidConfig('incoming_order_channel', $imageUrl));
+
+            if (filled($imageUrl)) {
+                $message = $message->withApnsConfig($this->apnsConfig($imageUrl));
+            }
                 
             $this->messaging->send($message);
             
@@ -186,21 +184,19 @@ class FirebaseHelper
                 ? 'order_status_channel_custom'
                 : 'default_notification_channel_custom';
         }
-        $data = $this->withNotificationData($data, $title, $body);
+        $imageUrl = $this->notificationImageUrl($data);
+        $data = $this->withNotificationData($data, $title, $body, $imageUrl);
 
         $message = CloudMessage::new()
             ->withData($this->sanitizeData($data))
-            ->withAndroidConfig([
-                'priority' => 'high',
-                'notification' => [
-                    'channel_id' => $channelId,
-                    'click_action' => 'FLUTTER_NOTIFICATION_CLICK',
-                    'sound' => $this->soundForChannel($channelId),
-                ],
-            ]);
+            ->withAndroidConfig($this->androidConfig($channelId, $imageUrl));
 
-        if (! $this->isIncomingOrderPayload($data)) {
-            $message = $message->withNotification(Notification::create($title, $body));
+        if (filled($imageUrl)) {
+            $message = $message->withApnsConfig($this->apnsConfig($imageUrl));
+        }
+
+        if (! $this->isIncomingOrderPayload($data) && ! $this->isDataOnlyPayload($data)) {
+            $message = $message->withNotification(Notification::create($title, $body, $imageUrl));
         }
 
         $success = 0;
@@ -249,12 +245,59 @@ class FirebaseHelper
             ->all();
     }
 
-    private function withNotificationData(array $data, string $title, string $body): array
+    private function withNotificationData(array $data, string $title, string $body, ?string $imageUrl = null): array
     {
-        return array_merge([
+        $payload = array_merge([
             'notification_title' => $title,
             'notification_body' => $body,
         ], $data);
+
+        if (filled($imageUrl)) {
+            $payload['image_url'] = $imageUrl;
+            $payload['image'] = $imageUrl;
+        }
+
+        return $payload;
+    }
+
+    private function notificationImageUrl(array $data): ?string
+    {
+        $imageUrl = trim((string) ($data['image_url'] ?? $data['image'] ?? ''));
+
+        return filter_var($imageUrl, FILTER_VALIDATE_URL) ? $imageUrl : null;
+    }
+
+    private function androidConfig(string $channelId, ?string $imageUrl = null): array
+    {
+        return [
+            'priority' => 'high',
+            'notification' => array_filter([
+                'channel_id' => $channelId,
+                'click_action' => 'FLUTTER_NOTIFICATION_CLICK',
+                'sound' => $this->soundForChannel($channelId),
+                'notification_priority' => 'PRIORITY_MAX',
+                'visibility' => 'PUBLIC',
+                'image' => $imageUrl,
+            ], fn ($value) => filled($value)),
+        ];
+    }
+
+    private function apnsConfig(?string $imageUrl = null): array
+    {
+        if (! filled($imageUrl)) {
+            return [];
+        }
+
+        return [
+            'payload' => [
+                'aps' => [
+                    'mutable-content' => 1,
+                ],
+            ],
+            'fcm_options' => [
+                'image' => $imageUrl,
+            ],
+        ];
     }
 
     private function isIncomingOrderPayload(array $data): bool
@@ -268,6 +311,12 @@ class FirebaseHelper
                 in_array($type, ['new_order', 'driver_order_assigned'], true)
                 || in_array($event, ['new_order', 'driver_order_assigned'], true)
             );
+    }
+
+    private function isDataOnlyPayload(array $data): bool
+    {
+        return filter_var($data['data_only'] ?? false, FILTER_VALIDATE_BOOLEAN)
+            || filter_var($data['suppress_notification'] ?? false, FILTER_VALIDATE_BOOLEAN);
     }
 
     private function soundForChannel(string $channelId): string

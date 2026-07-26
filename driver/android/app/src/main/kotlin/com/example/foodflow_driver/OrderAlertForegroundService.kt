@@ -1,30 +1,37 @@
-package com.adgraph.delivery
+package com.adgraph.yamma_delivery
 
 import android.Manifest
+import android.app.AlarmManager
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
-import android.content.pm.ServiceInfo
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import android.os.SystemClock
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 
 class OrderAlertForegroundService : Service() {
+    private var currentStatus = DEFAULT_STATUS
+    private var currentTrackLocation = false
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val status = intent?.getStringExtra(EXTRA_STATUS) ?: "Online and listening for orders"
+        currentStatus = intent?.getStringExtra(EXTRA_STATUS) ?: currentStatus
         val fullScreen = intent?.getBooleanExtra(EXTRA_FULL_SCREEN, false) ?: false
-        val trackLocation = intent?.getBooleanExtra(EXTRA_TRACK_LOCATION, false) ?: false
+        currentTrackLocation = intent?.getBooleanExtra(EXTRA_TRACK_LOCATION, currentTrackLocation)
+            ?: currentTrackLocation
         ensureChannel()
-        val notification = buildNotification(status, fullScreen)
+        val notification = buildNotification(currentStatus, fullScreen)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            val locationServiceType = if (trackLocation && hasLocationPermission()) {
+            val locationServiceType = if (currentTrackLocation && hasLocationPermission()) {
                 ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
             } else {
                 0
@@ -39,6 +46,26 @@ class OrderAlertForegroundService : Service() {
             startForeground(NOTIFICATION_ID, notification)
         }
         return START_STICKY
+    }
+
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        val restartIntent = Intent(applicationContext, OrderAlertForegroundService::class.java)
+            .putExtra(EXTRA_STATUS, currentStatus)
+            .putExtra(EXTRA_FULL_SCREEN, false)
+            .putExtra(EXTRA_TRACK_LOCATION, currentTrackLocation)
+        val restartPendingIntent = PendingIntent.getService(
+            applicationContext,
+            RESTART_REQUEST_CODE,
+            restartIntent,
+            PendingIntent.FLAG_ONE_SHOT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        alarmManager.set(
+            AlarmManager.ELAPSED_REALTIME_WAKEUP,
+            SystemClock.elapsedRealtime() + 1000L,
+            restartPendingIntent
+        )
+        super.onTaskRemoved(rootIntent)
     }
 
     private fun hasLocationPermission(): Boolean {
@@ -64,10 +91,12 @@ class OrderAlertForegroundService : Service() {
 
         val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(applicationInfo.icon)
-            .setContentTitle("Yumma is online")
+            .setContentTitle("Yumma! Go is active")
             .setContentText(status)
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .setCategory(NotificationCompat.CATEGORY_CALL)
+            .setPriority(if (fullScreen) NotificationCompat.PRIORITY_HIGH else NotificationCompat.PRIORITY_LOW)
+            .setCategory(if (fullScreen) NotificationCompat.CATEGORY_CALL else NotificationCompat.CATEGORY_SERVICE)
+            .setOnlyAlertOnce(true)
+            .setShowWhen(false)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setOngoing(true)
             .setContentIntent(pendingIntent)
@@ -93,9 +122,9 @@ class OrderAlertForegroundService : Service() {
         val channel = NotificationChannel(
             CHANNEL_ID,
             "Online Order Listener",
-            NotificationManager.IMPORTANCE_HIGH
+            NotificationManager.IMPORTANCE_LOW
         ).apply {
-            description = "Keeps restaurant and driver order alerts responsive"
+            description = "Keeps driver order alerts responsive"
             setSound(null, null)
         }
         getSystemService(NotificationManager::class.java)
@@ -103,8 +132,10 @@ class OrderAlertForegroundService : Service() {
     }
 
     companion object {
-        const val CHANNEL_ID = "yumma_order_listener"
+        const val CHANNEL_ID = "swaad_order_listener"
         const val NOTIFICATION_ID = 4101
+        const val RESTART_REQUEST_CODE = 4102
+        const val DEFAULT_STATUS = "Logged in and ready for delivery orders"
         const val EXTRA_STATUS = "status"
         const val EXTRA_FULL_SCREEN = "full_screen"
         const val EXTRA_TRACK_LOCATION = "track_location"

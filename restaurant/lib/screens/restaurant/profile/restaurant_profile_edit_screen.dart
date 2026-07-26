@@ -9,6 +9,7 @@ import '../../../config/api_constants.dart';
 import '../../../config/app_config.dart';
 import '../../../theme/foodflow_theme.dart';
 import '../../../utils/currency_utils.dart';
+import '../../../widgets/common/network_image_loader.dart';
 
 class RestaurantProfileEditScreen extends StatefulWidget {
   const RestaurantProfileEditScreen({Key? key}) : super(key: key);
@@ -298,10 +299,10 @@ class _RestaurantProfileEditScreenState
       return Image.file(File(file.path), fit: fit);
     }
     if (imageUrl != null && imageUrl.isNotEmpty) {
-      return Image.network(
-        imageUrl,
+      return NetworkImageLoader(
+        imageUrl: imageUrl,
         fit: fit,
-        errorBuilder: (_, __, ___) => placeholder,
+        errorWidget: placeholder,
       );
     }
     return placeholder;

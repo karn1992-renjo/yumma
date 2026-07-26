@@ -4,325 +4,393 @@
 
 @section('styles')
 <style>
-    .printer-card {
-        transition: all 0.3s ease;
-        border-radius: 16px;
+    .printer-shell {
+        padding: 1.25rem;
+    }
+
+    .printer-header {
+        background: linear-gradient(135deg, #111827 0%, #4f116e 54%, #f97316 100%);
+        border-radius: 18px;
+        color: #fff;
+        padding: 1.4rem;
+        box-shadow: 0 20px 45px rgba(15, 23, 42, 0.16);
+    }
+
+    .printer-header h1 {
+        font-size: 1.75rem;
+        font-weight: 800;
+        margin: 0;
+    }
+
+    .printer-header p {
+        color: rgba(255, 255, 255, 0.78);
+        margin: .35rem 0 0;
+    }
+
+    .printer-stat {
+        background: #fff;
+        border: 1px solid #e5edf7;
+        border-radius: 14px;
+        box-shadow: 0 15px 35px rgba(15, 23, 42, 0.07);
+        padding: 1rem;
+        min-height: 96px;
+    }
+
+    .printer-stat .icon {
+        width: 44px;
+        height: 44px;
+        border-radius: 12px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1rem;
+    }
+
+    .printer-list-card {
+        background: #fff;
+        border: 1px solid #e5edf7;
+        border-radius: 18px;
+        box-shadow: 0 18px 42px rgba(15, 23, 42, 0.07);
         overflow: hidden;
     }
-    .printer-card:hover {
-        transform: translateY(-5px);
-        box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+
+    .printer-row {
+        display: grid;
+        grid-template-columns: 56px minmax(220px, 1.1fr) minmax(160px, .7fr) minmax(150px, .7fr) auto;
+        gap: 1rem;
+        align-items: center;
+        padding: 1rem 1.1rem;
+        border-bottom: 1px solid #edf2f7;
     }
-    .printer-status-badge {
-        position: absolute;
-        top: 15px;
-        right: 15px;
+
+    .printer-row:last-child {
+        border-bottom: 0;
     }
-    .test-result {
-        position: fixed;
-        bottom: 20px;
-        right: 20px;
-        z-index: 9999;
-        min-width: 300px;
+
+    .printer-avatar {
+        width: 50px;
+        height: 50px;
+        border-radius: 14px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        color: #fff;
+        background: linear-gradient(135deg, #6d28d9, #f97316);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, .25);
     }
-    @keyframes pulse {
-        0% { transform: scale(1); opacity: 1; }
-        50% { transform: scale(1.1); opacity: 0.7; }
-        100% { transform: scale(1); opacity: 1; }
+
+    .printer-name {
+        font-size: .98rem;
+        font-weight: 800;
+        color: #0f172a;
+        margin-bottom: .25rem;
     }
-    .printer-testing {
-        animation: pulse 1s infinite;
+
+    .printer-meta {
+        color: #64748b;
+        font-size: .82rem;
+    }
+
+    .printer-badges {
+        display: flex;
+        flex-wrap: wrap;
+        gap: .4rem;
+        margin-top: .45rem;
+    }
+
+    .soft-badge {
+        border-radius: 999px;
+        font-size: .72rem;
+        font-weight: 800;
+        padding: .3rem .55rem;
+    }
+
+    .soft-badge.success {
+        background: #dcfce7;
+        color: #15803d;
+    }
+
+    .soft-badge.muted {
+        background: #f1f5f9;
+        color: #475569;
+    }
+
+    .soft-badge.warning {
+        background: #fef3c7;
+        color: #a16207;
+    }
+
+    .soft-badge.info {
+        background: #dbeafe;
+        color: #1d4ed8;
+    }
+
+    .printer-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: .45rem;
+        flex-wrap: wrap;
+    }
+
+    .printer-empty {
+        text-align: center;
+        padding: 4rem 1rem;
+    }
+
+    .printer-empty .empty-icon {
+        width: 74px;
+        height: 74px;
+        border-radius: 20px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        color: #6d28d9;
+        background: #f3e8ff;
+        font-size: 1.7rem;
+        margin-bottom: 1rem;
+    }
+
+    .discovery-list {
+        display: grid;
+        gap: .75rem;
+    }
+
+    .discovery-item {
+        background: #fff;
+        border: 1px solid #e2e8f0;
+        border-radius: 12px;
+        padding: .8rem;
+    }
+
+    @media (max-width: 992px) {
+        .printer-row {
+            grid-template-columns: 48px 1fr;
+        }
+
+        .printer-row > .printer-col-wide,
+        .printer-row > .printer-actions {
+            grid-column: 1 / -1;
+        }
+
+        .printer-actions {
+            justify-content: flex-start;
+        }
     }
 </style>
 @endsection
 
 @section('content')
-<div class="container-fluid">
-    <div class="page-header">
+<div class="printer-shell">
+    <div class="printer-header mb-4">
         <div class="d-flex flex-wrap justify-content-between align-items-center gap-3">
             <div>
-                <h1 class="mb-1">Printer Settings</h1>
-                <p class="text-muted mb-0">Manage your thermal printers for KOT and invoice printing</p>
+                <h1>Printer Settings</h1>
+                <p>Manage KOT, invoice, USB, Bluetooth, and network printer configuration.</p>
             </div>
-            <div class="d-flex gap-2">
-                <button type="button" class="btn btn-outline-primary" id="discoverPrintersHeaderBtn">
-                    <i class="fas fa-search me-2"></i> Discover Printers
+            <div class="d-flex flex-wrap gap-2">
+                <button type="button" class="btn btn-light" id="discoverPrintersHeaderBtn">
+                    <i class="fas fa-search me-2"></i>Discover Printers
                 </button>
-                <a href="{{ route('restaurant.printers.create') }}" class="btn btn-primary">
-                    <i class="fas fa-plus me-2"></i> Add Printer
+                <a href="{{ route('restaurant.printers.create') }}" class="btn btn-warning fw-bold">
+                    <i class="fas fa-plus me-2"></i>Add Printer
                 </a>
-            </div>
-        </div>
-    </div>
-
-    <!-- Printer Stats -->
-    <div class="row mb-4">
-        <div class="col-md-3 mb-3">
-            <div class="stat-card">
-                <div class="d-flex align-items-center justify-content-between">
-                    <div>
-                        <h6 class="text-muted mb-1">Total Printers</h6>
-                        <h3 class="mb-0">{{ $printers->count() }}</h3>
-                    </div>
-                    <div class="icon primary">
-                        <i class="fas fa-print"></i>
-                    </div>
-                </div>
-            </div>
-        </div>
-        <div class="col-md-3 mb-3">
-            <div class="stat-card">
-                <div class="d-flex align-items-center justify-content-between">
-                    <div>
-                        <h6 class="text-muted mb-1">Active Printers</h6>
-                        <h3 class="mb-0">{{ $printers->where('is_active', true)->count() }}</h3>
-                    </div>
-                    <div class="icon success">
-                        <i class="fas fa-check-circle"></i>
-                    </div>
-                </div>
-            </div>
-        </div>
-        <div class="col-md-3 mb-3">
-            <div class="stat-card">
-                <div class="d-flex align-items-center justify-content-between">
-                    <div>
-                        <h6 class="text-muted mb-1">Default Printer</h6>
-                        <h3 class="mb-0">{{ $printers->where('is_default', true)->count() }}</h3>
-                    </div>
-                    <div class="icon warning">
-                        <i class="fas fa-star"></i>
-                    </div>
-                </div>
-            </div>
-        </div>
-        <div class="col-md-3 mb-3">
-            <div class="stat-card">
-                <div class="d-flex align-items-center justify-content-between">
-                    <div>
-                        <h6 class="text-muted mb-1">Network Printers</h6>
-                        <h3 class="mb-0">{{ $printers->where('printer_type', 'network')->count() }}</h3>
-                    </div>
-                    <div class="icon info">
-                        <i class="fas fa-wifi"></i>
-                    </div>
-                </div>
             </div>
         </div>
     </div>
 
     @if(session('success'))
         <div class="alert alert-success alert-dismissible fade show" role="alert">
-            <i class="fas fa-check-circle me-2"></i> {{ session('success') }}
+            <i class="fas fa-check-circle me-2"></i>{{ session('success') }}
             <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
         </div>
     @endif
 
     @if(session('error'))
         <div class="alert alert-danger alert-dismissible fade show" role="alert">
-            <i class="fas fa-exclamation-circle me-2"></i> {{ session('error') }}
+            <i class="fas fa-exclamation-circle me-2"></i>{{ session('error') }}
             <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
         </div>
     @endif
 
-    <!-- Printers Grid -->
-    <div class="row">
-        @forelse($printers as $printer)
-        <div class="col-lg-4 col-md-6 mb-4">
-            <div class="stat-card printer-card position-relative">
-                <div class="printer-status-badge">
-                    @if($printer->is_active)
-                        <span class="badge bg-success">Active</span>
-                    @else
-                        <span class="badge bg-secondary">Inactive</span>
-                    @endif
-                    @if($printer->is_default)
-                        <span class="badge bg-warning ms-1">Default</span>
-                    @endif
+    <div class="row g-3 mb-4">
+        <div class="col-sm-6 col-xl-3">
+            <div class="printer-stat d-flex justify-content-between align-items-center">
+                <div>
+                    <div class="text-muted small fw-semibold">Total Printers</div>
+                    <div class="h3 fw-bold mb-0">{{ $printerStats['total'] }}</div>
                 </div>
-                
-                <div class="text-center mb-3">
-                    <div class="printer-icon mb-2">
-                        @if($printer->printer_type == 'network')
-                            <i class="fas fa-network-wired fa-3x text-primary"></i>
-                        @elseif($printer->printer_type == 'bluetooth')
-                            <i class="fas fa-bluetooth fa-3x text-info"></i>
-                        @else
-                            <i class="fas fa-usb fa-3x text-success"></i>
-                        @endif
-                    </div>
-                    <h5 class="mb-1 fw-bold">{{ $printer->printer_name }}</h5>
-                    <p class="text-muted small mb-0">
-                        {{ ucfirst($printer->printer_type) }} Printer | {{ $printer->paper_size }}mm
-                    </p>
-                </div>
-
-                <div class="mb-3">
-                    <div class="bg-light rounded p-3">
-                        @if($printer->printer_type == 'network')
-                            <div class="d-flex justify-content-between mb-2">
-                                <span class="text-muted">IP Address:</span>
-                                <span class="fw-semibold">{{ $printer->ip_address }}:{{ $printer->port }}</span>
-                            </div>
-                        @elseif($printer->printer_type == 'bluetooth')
-                            <div class="d-flex justify-content-between mb-2">
-                                <span class="text-muted">Bluetooth MAC:</span>
-                                <span class="fw-semibold">{{ $printer->bluetooth_mac ?? 'Not set' }}</span>
-                            </div>
-                        @elseif($printer->printer_type == 'usb')
-                            <div class="d-flex justify-content-between mb-2">
-                                <span class="text-muted">USB Path:</span>
-                                <span class="fw-semibold">{{ $printer->usb_path ?? '/dev/usb/lp0' }}</span>
-                            </div>
-                        @endif
-                        <div class="d-flex justify-content-between">
-                            <span class="text-muted">Added:</span>
-                            <span class="small">{{ $printer->created_at->format('d M Y') }}</span>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="d-flex gap-2">
-                    <button class="btn btn-sm btn-outline-info flex-fill test-printer" 
-                            data-id="{{ $printer->id }}"
-                            data-name="{{ $printer->printer_name }}">
-                        <i class="fas fa-microphone me-1"></i> Test
-                    </button>
-                    <button class="btn btn-sm btn-outline-primary flex-fill edit-printer" 
-                            data-id="{{ $printer->id }}">
-                        <i class="fas fa-edit me-1"></i> Edit
-                    </button>
-                    <button class="btn btn-sm btn-outline-danger delete-printer" 
-                            data-id="{{ $printer->id }}"
-                            data-name="{{ $printer->printer_name }}">
-                        <i class="fas fa-trash me-1"></i>
-                    </button>
-                </div>
-
-                @if($printer->is_default)
-                <div class="mt-3 text-center">
-                    <small class="text-primary">
-                        <i class="fas fa-star me-1"></i> Default Printer for KOT & Invoice
-                    </small>
-                </div>
-                @elseif(!$printer->is_default && $printers->where('is_default', true)->count() == 0)
-                <div class="mt-3 text-center">
-                    <button class="btn btn-sm btn-link set-default-printer" data-id="{{ $printer->id }}">
-                        <i class="fas fa-star me-1"></i> Set as Default
-                    </button>
-                </div>
-                @endif
+                <span class="icon bg-primary-subtle text-primary"><i class="fas fa-print"></i></span>
             </div>
         </div>
+        <div class="col-sm-6 col-xl-3">
+            <div class="printer-stat d-flex justify-content-between align-items-center">
+                <div>
+                    <div class="text-muted small fw-semibold">Active Printers</div>
+                    <div class="h3 fw-bold mb-0">{{ $printerStats['active'] }}</div>
+                </div>
+                <span class="icon bg-success-subtle text-success"><i class="fas fa-check"></i></span>
+            </div>
+        </div>
+        <div class="col-sm-6 col-xl-3">
+            <div class="printer-stat d-flex justify-content-between align-items-center">
+                <div>
+                    <div class="text-muted small fw-semibold">Default Printer</div>
+                    <div class="h3 fw-bold mb-0">{{ $printerStats['default'] }}</div>
+                </div>
+                <span class="icon bg-warning-subtle text-warning"><i class="fas fa-star"></i></span>
+            </div>
+        </div>
+        <div class="col-sm-6 col-xl-3">
+            <div class="printer-stat d-flex justify-content-between align-items-center">
+                <div>
+                    <div class="text-muted small fw-semibold">Network Printers</div>
+                    <div class="h3 fw-bold mb-0">{{ $printerStats['network'] }}</div>
+                </div>
+                <span class="icon bg-info-subtle text-info"><i class="fas fa-wifi"></i></span>
+            </div>
+        </div>
+    </div>
+
+    <div class="printer-list-card">
+        @forelse($printerRows as $printer)
+            <div class="printer-row">
+                <div class="printer-avatar">
+                    @if($printer['type'] === 'network')
+                        <i class="fas fa-network-wired"></i>
+                    @elseif($printer['type'] === 'bluetooth')
+                        <i class="fas fa-bluetooth"></i>
+                    @else
+                        <i class="fas fa-usb"></i>
+                    @endif
+                </div>
+
+                <div>
+                    <div class="printer-name">{{ $printer['name'] }}</div>
+                    <div class="printer-meta">
+                        {{ $printer['type_label'] }} printer · {{ $printer['paper_size'] }}mm paper · Added {{ $printer['created_at'] }}
+                    </div>
+                    <div class="printer-badges">
+                        @if($printer['is_active'])
+                            <span class="soft-badge success">Active</span>
+                        @else
+                            <span class="soft-badge muted">Inactive</span>
+                        @endif
+                        @if($printer['is_default'])
+                            <span class="soft-badge warning">Default</span>
+                        @endif
+                        <span class="soft-badge info">{{ $printer['type_label'] }}</span>
+                    </div>
+                </div>
+
+                <div class="printer-col-wide">
+                    <div class="text-muted small fw-semibold">Connection</div>
+                    <div class="fw-bold text-dark">{{ $printer['connection'] }}</div>
+                </div>
+
+                <div>
+                    <div class="text-muted small fw-semibold">Paper Size</div>
+                    <div class="fw-bold text-dark">{{ $printer['paper_size'] }}mm</div>
+                </div>
+
+                <div class="printer-actions">
+                    <button type="button"
+                            class="btn btn-sm btn-outline-info test-printer"
+                            data-test-url="{{ route('restaurant.printers.test', $printer['id']) }}"
+                            data-name="{{ $printer['name'] }}">
+                        <i class="fas fa-vial me-1"></i>Test
+                    </button>
+
+                    @if(!$printer['is_default'])
+                        <form action="{{ route('restaurant.printers.set-default', $printer['id']) }}" method="POST" class="d-inline">
+                            @csrf
+                            <button type="submit" class="btn btn-sm btn-outline-warning">
+                                <i class="fas fa-star me-1"></i>Default
+                            </button>
+                        </form>
+                    @endif
+
+                    <a href="{{ route('restaurant.printers.edit', $printer['id']) }}" class="btn btn-sm btn-outline-primary">
+                        <i class="fas fa-edit me-1"></i>Edit
+                    </a>
+
+                    <button type="button"
+                            class="btn btn-sm btn-outline-danger delete-printer"
+                            data-destroy-url="{{ route('restaurant.printers.destroy', $printer['id']) }}"
+                            data-name="{{ $printer['name'] }}">
+                        <i class="fas fa-trash"></i>
+                    </button>
+                </div>
+            </div>
         @empty
-        <div class="col-12">
-            <div class="table-card text-center py-5">
-                <i class="fas fa-print fa-3x text-muted mb-3 d-block"></i>
-                <h5 class="mb-2">No Printers Configured</h5>
-                <p class="text-muted mb-3">Add a printer to print KOT (Kitchen Order Tickets) and invoices</p>
-                <div class="d-flex gap-3 justify-content-center flex-wrap">
+            <div class="printer-empty">
+                <div class="empty-icon"><i class="fas fa-print"></i></div>
+                <h4 class="fw-bold mb-2">No Printers Configured</h4>
+                <p class="text-muted mb-3">Add a printer to print KOT and invoices from restaurant orders.</p>
+                <div class="d-flex justify-content-center flex-wrap gap-2">
                     <a href="{{ route('restaurant.printers.create') }}" class="btn btn-primary">
-                        <i class="fas fa-plus me-2"></i> Add Manually
+                        <i class="fas fa-plus me-2"></i>Add Manually
                     </a>
                     <button type="button" class="btn btn-outline-primary" id="discoverPrintersEmptyBtn">
-                        <i class="fas fa-search me-2"></i> Auto-Discover Printers
+                        <i class="fas fa-search me-2"></i>Auto-Discover
                     </button>
                 </div>
             </div>
-        </div>
         @endforelse
     </div>
 
-    <!-- Quick Tips -->
-    <div class="table-card mt-4">
-        <div class="card-header">
-            <h5 class="mb-0 fw-bold">Printer Setup Guide</h5>
-        </div>
-        <div class="p-4">
-            <div class="row">
-                <div class="col-md-4 mb-3">
-                    <div class="d-flex align-items-center gap-3">
-                        <i class="fas fa-wifi fa-2x text-primary"></i>
-                        <div>
-                            <h6 class="mb-0">Network Printer (WiFi/Ethernet)</h6>
-                            <small class="text-muted">Connect via IP address (e.g., 192.168.1.100:9100)</small>
-                        </div>
-                    </div>
-                </div>
-                <div class="col-md-4 mb-3">
-                    <div class="d-flex align-items-center gap-3">
-                        <i class="fas fa-bluetooth fa-2x text-info"></i>
-                        <div>
-                            <h6 class="mb-0">Bluetooth Printer</h6>
-                            <small class="text-muted">Pair via Bluetooth and enter MAC address</small>
-                        </div>
-                    </div>
-                </div>
-                <div class="col-md-4 mb-3">
-                    <div class="d-flex align-items-center gap-3">
-                        <i class="fas fa-usb fa-2x text-success"></i>
-                        <div>
-                            <h6 class="mb-0">USB Printer</h6>
-                            <small class="text-muted">Connected directly via USB port</small>
-                        </div>
-                    </div>
-                </div>
+    <div class="row g-3 mt-3">
+        <div class="col-md-4">
+            <div class="printer-stat">
+                <div class="fw-bold mb-1"><i class="fas fa-wifi text-primary me-2"></i>Network Printer</div>
+                <div class="text-muted small">Use the printer IP and port for WiFi or ethernet thermal printers.</div>
             </div>
-            <hr>
-            <div class="row">
-                <div class="col-md-6">
-                    <div class="alert alert-info small mb-0">
-                        <i class="fas fa-lightbulb me-2"></i>
-                        <strong>Tip:</strong> Use the "Discover Printers" button to automatically find printers on your network
-                    </div>
-                </div>
-                <div class="col-md-6">
-                    <div class="alert alert-warning small mb-0">
-                        <i class="fas fa-exclamation-triangle me-2"></i>
-                        <strong>Note:</strong> Make sure your printer is powered on and connected before testing
-                    </div>
-                </div>
+        </div>
+        <div class="col-md-4">
+            <div class="printer-stat">
+                <div class="fw-bold mb-1"><i class="fas fa-bluetooth text-info me-2"></i>Bluetooth Printer</div>
+                <div class="text-muted small">Pair the device first, then save its Bluetooth address.</div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="printer-stat">
+                <div class="fw-bold mb-1"><i class="fas fa-usb text-success me-2"></i>USB Printer</div>
+                <div class="text-muted small">Use the local USB path configured on the restaurant terminal.</div>
             </div>
         </div>
     </div>
 </div>
 
-<!-- Test Print Modal -->
 <div class="modal fade" id="testPrintModal" tabindex="-1">
     <div class="modal-dialog modal-dialog-centered">
         <div class="modal-content border-0 rounded-4">
             <div class="modal-header border-0">
                 <h5 class="modal-title fw-bold">
-                    <i class="fas fa-print me-2 text-primary"></i> Test Printer
+                    <i class="fas fa-print me-2 text-primary"></i>Test Printer
                 </h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
             </div>
             <div class="modal-body">
                 <div id="testPrintResult" class="text-center p-4">
                     <i class="fas fa-spinner fa-spin fa-2x text-primary mb-3"></i>
-                    <p>Sending test print to <strong id="printerName"></strong>...</p>
+                    <p>Preparing test print...</p>
                 </div>
-            </div>
-            <div class="modal-footer border-0">
-                <button type="button" class="btn btn-light" data-bs-dismiss="modal">Close</button>
             </div>
         </div>
     </div>
 </div>
 
-<!-- Delete Printer Modal -->
 <div class="modal fade" id="deletePrinterModal" tabindex="-1">
     <div class="modal-dialog modal-dialog-centered">
         <div class="modal-content border-0 rounded-4">
             <div class="modal-header border-0">
                 <h5 class="modal-title fw-bold text-danger">
-                    <i class="fas fa-exclamation-triangle me-2"></i> Delete Printer
+                    <i class="fas fa-exclamation-triangle me-2"></i>Delete Printer
                 </h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
             </div>
             <div class="modal-body">
-                <p>Are you sure you want to delete printer <strong id="deletePrinterName"></strong>?</p>
-                <p class="text-muted small mb-0">This action cannot be undone.</p>
+                <p class="mb-1">Delete <strong id="deletePrinterName"></strong>?</p>
+                <p class="text-muted small mb-0">This printer will no longer be available for KOT or invoice printing.</p>
             </div>
             <div class="modal-footer border-0">
                 <form id="deletePrinterForm" method="POST">
@@ -336,39 +404,31 @@
     </div>
 </div>
 
-<!-- Discovery Modal -->
-<div class="modal fade" id="discoveryModal" tabindex="-1" data-bs-backdrop="static">
+<div class="modal fade" id="discoveryModal" tabindex="-1">
     <div class="modal-dialog modal-lg modal-dialog-centered">
         <div class="modal-content border-0 rounded-4">
             <div class="modal-header border-0">
                 <h5 class="modal-title fw-bold">
-                    <i class="fas fa-search me-2 text-primary"></i> Discover Printers
+                    <i class="fas fa-search me-2 text-primary"></i>Discover Printers
                 </h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
             </div>
-            <div class="modal-body" style="max-height: 500px; overflow-y: auto;">
-                <div class="discovery-tabs mb-3">
-                    <div class="btn-group w-100" role="group">
-                        <button type="button" class="btn btn-outline-primary discovery-tab active" data-type="all">
-                            <i class="fas fa-globe me-1"></i> All
-                        </button>
-                        <button type="button" class="btn btn-outline-primary discovery-tab" data-type="network">
-                            <i class="fas fa-wifi me-1"></i> Network
-                        </button>
-                        <button type="button" class="btn btn-outline-primary discovery-tab" data-type="bluetooth">
-                            <i class="fas fa-bluetooth me-1"></i> Bluetooth
-                        </button>
-                        <button type="button" class="btn btn-outline-primary discovery-tab" data-type="usb">
-                            <i class="fas fa-usb me-1"></i> USB
-                        </button>
-                    </div>
+            <div class="modal-body">
+                <div class="btn-group w-100 mb-3" role="group">
+                    <button type="button" class="btn btn-outline-primary discovery-tab active" data-type="all">All</button>
+                    <button type="button" class="btn btn-outline-primary discovery-tab" data-type="network">Network</button>
+                    <button type="button" class="btn btn-outline-primary discovery-tab" data-type="bluetooth">Bluetooth</button>
+                    <button type="button" class="btn btn-outline-primary discovery-tab" data-type="usb">USB</button>
                 </div>
-                <div id="discoveryResults" class="p-3 bg-light rounded-3" style="min-height: 300px;">
+                <div id="discoveryResults" class="bg-light rounded-3 p-3" style="min-height: 260px;"
+                     data-discover-url="{{ route('restaurant.printers.discover') }}"
+                     data-pair-url="{{ route('restaurant.printers.pair-bluetooth') }}"
+                     data-create-url="{{ route('restaurant.printers.create') }}">
                     <div class="text-center py-5">
                         <i class="fas fa-search fa-3x text-muted mb-3 d-block"></i>
-                        <p>Click "Start Discovery" to scan for printers</p>
-                        <button class="btn btn-primary" id="startDiscoveryBtn">
-                            <i class="fas fa-play me-2"></i> Start Discovery
+                        <p class="mb-3">Scan for available printers on this restaurant terminal.</p>
+                        <button type="button" class="btn btn-primary" id="startDiscoveryBtn">
+                            <i class="fas fa-play me-2"></i>Start Discovery
                         </button>
                     </div>
                 </div>
@@ -380,437 +440,257 @@
     </div>
 </div>
 
-<!-- Edit Printer Modal -->
-<div class="modal fade" id="editPrinterModal" tabindex="-1">
-    <div class="modal-dialog modal-dialog-centered">
-        <div class="modal-content border-0 rounded-4">
-            <form id="editPrinterForm" method="POST">
-                @csrf
-                @method('PUT')
-                <div class="modal-header border-0">
-                    <h5 class="modal-title fw-bold">
-                        <i class="fas fa-edit me-2 text-primary"></i> Edit Printer
-                    </h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                </div>
-                <div class="modal-body">
-                    <input type="hidden" name="printer_id" id="editPrinterId">
-                    <div class="mb-3">
-                        <label class="form-label fw-semibold">Printer Name</label>
-                        <input type="text" name="printer_name" id="editPrinterName" class="form-control" required>
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label fw-semibold">Paper Size</label>
-                        <select name="paper_size" id="editPaperSize" class="form-select">
-                            <option value="58">58mm (Standard Thermal)</option>
-                            <option value="80">80mm (Large Thermal)</option>
-                        </select>
-                    </div>
-                    <div class="mb-3 form-check">
-                        <input type="checkbox" name="is_active" class="form-check-input" id="editIsActive" value="1">
-                        <label class="form-check-label" for="editIsActive">Active</label>
-                    </div>
-                    <div class="mb-3 form-check">
-                        <input type="checkbox" name="is_default" class="form-check-input" id="editIsDefault" value="1">
-                        <label class="form-check-label" for="editIsDefault">Set as Default Printer</label>
-                    </div>
-                </div>
-                <div class="modal-footer border-0">
-                    <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancel</button>
-                    <button type="submit" class="btn btn-primary">Save Changes</button>
-                </div>
-            </form>
-        </div>
-    </div>
-</div>
-
-<!-- Toast Container -->
 <div id="toastContainer" class="position-fixed bottom-0 end-0 p-3" style="z-index: 1100;"></div>
-
 @endsection
 
 @section('scripts')
 <script>
-    let currentDiscoveryType = 'all';
-    
-    // Test Printer
-    document.querySelectorAll('.test-printer').forEach(btn => {
-        btn.addEventListener('click', async function() {
-            const printerId = this.dataset.id;
-            const printerName = this.dataset.name;
-            const modal = new bootstrap.Modal(document.getElementById('testPrintModal'));
-            const resultDiv = document.getElementById('testPrintResult');
-            const printerNameSpan = document.getElementById('printerName');
-            
-            printerNameSpan.textContent = printerName;
-            modal.show();
-            
-            resultDiv.innerHTML = '<i class="fas fa-spinner fa-spin fa-2x text-primary mb-3"></i><p>Sending test print...</p>';
-            
-            try {
-                const response = await fetch(`/restaurant/printers/${printerId}/test`, {
-                    method: 'POST',
-                    headers: {
-                        'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content,
-                        'Content-Type': 'application/json',
-                        'Accept': 'application/json'
-                    }
+    (function () {
+        var currentDiscoveryType = 'all';
+        var csrfMeta = document.querySelector('meta[name="csrf-token"]');
+        var csrfToken = csrfMeta ? csrfMeta.getAttribute('content') : '';
+
+        function byId(id) {
+            return document.getElementById(id);
+        }
+
+        function escapeHtml(value) {
+            var div = document.createElement('div');
+            div.textContent = value || '';
+            return div.innerHTML;
+        }
+
+        function showToast(message, type) {
+            var container = byId('toastContainer');
+            if (!container) {
+                return;
+            }
+
+            var toast = document.createElement('div');
+            var background = type === 'success' ? 'bg-success' : (type === 'error' ? 'bg-danger' : 'bg-primary');
+            toast.className = 'toast align-items-center text-white ' + background + ' border-0 mb-2';
+            toast.setAttribute('role', 'alert');
+            toast.innerHTML = '<div class="d-flex"><div class="toast-body">' + escapeHtml(message) + '</div><button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button></div>';
+            container.appendChild(toast);
+
+            if (window.bootstrap && bootstrap.Toast) {
+                var bsToast = new bootstrap.Toast(toast, { delay: 3000 });
+                bsToast.show();
+                toast.addEventListener('hidden.bs.toast', function () {
+                    toast.remove();
                 });
-                const data = await response.json();
-                
-                if (data.success) {
-                    resultDiv.innerHTML = `
-                        <i class="fas fa-check-circle fa-3x text-success mb-3"></i>
-                        <p class="text-success fw-bold">Test print successful!</p>
-                        <p class="small text-muted">Check your printer for the test page.</p>
-                    `;
-                    showToast('Test print sent successfully!', 'success');
+            }
+        }
+
+        function openDiscoveryModal() {
+            var modalElement = byId('discoveryModal');
+            if (modalElement && window.bootstrap) {
+                new bootstrap.Modal(modalElement).show();
+            }
+        }
+
+        function setLoadingDiscovery() {
+            var results = byId('discoveryResults');
+            if (results) {
+                results.innerHTML = '<div class="text-center py-5"><i class="fas fa-spinner fa-spin fa-3x text-primary mb-3"></i><p>Scanning for ' + escapeHtml(currentDiscoveryType) + ' printers...</p><small class="text-muted">This may take a few seconds</small></div>';
+            }
+        }
+
+        function renderPrinterGroup(htmlParts, label, icon, type, items) {
+            if (!items || !items.length) {
+                return;
+            }
+
+            htmlParts.push('<div class="fw-bold text-muted small mt-2 mb-2"><i class="' + icon + ' me-2"></i>' + label + '</div>');
+
+            for (var index = 0; index < items.length; index++) {
+                var printer = items[index];
+                var name = printer.name || label + ' Printer';
+                var detail = '';
+                var extraData = '';
+
+                if (type === 'network') {
+                    detail = 'IP: ' + (printer.ip || 'N/A') + ':' + (printer.port || '9100');
+                    extraData = ' data-ip="' + escapeHtml(printer.ip || '') + '" data-port="' + escapeHtml(printer.port || '') + '"';
+                } else if (type === 'bluetooth') {
+                    detail = 'MAC: ' + (printer.mac || 'N/A');
+                    extraData = ' data-mac="' + escapeHtml(printer.mac || '') + '"';
                 } else {
-                    resultDiv.innerHTML = `
-                        <i class="fas fa-times-circle fa-3x text-danger mb-3"></i>
-                        <p class="text-danger fw-bold">Test failed!</p>
-                        <p class="small">${data.message || 'Failed to connect to printer'}</p>
-                    `;
-                    showToast(data.message || 'Failed to connect to printer', 'error');
+                    detail = 'Device: ' + (printer.device_path || printer.port || 'USB001');
+                    extraData = ' data-path="' + escapeHtml(printer.device_path || printer.port || 'USB001') + '"';
                 }
-            } catch (error) {
-                resultDiv.innerHTML = `
-                    <i class="fas fa-times-circle fa-3x text-danger mb-3"></i>
-                    <p class="text-danger fw-bold">Connection Error!</p>
-                    <p class="small">Could not connect to printer. Please check connection.</p>
-                `;
-                showToast('Failed to connect to printer', 'error');
+
+                htmlParts.push('<div class="discovery-item"><div class="d-flex justify-content-between align-items-center gap-2 flex-wrap"><div><div class="fw-bold"><i class="' + icon + ' me-2"></i>' + escapeHtml(name) + '</div><div class="text-muted small">' + escapeHtml(detail) + '</div></div><button type="button" class="btn btn-sm btn-primary use-discovered-printer" data-type="' + type + '" data-name="' + escapeHtml(name) + '"' + extraData + '><i class="fas fa-plus me-1"></i>Use</button></div></div>');
             }
-            
-            setTimeout(() => {
-                modal.hide();
-            }, 3000);
-        });
-    });
-    
-    // Delete Printer
-    document.querySelectorAll('.delete-printer').forEach(btn => {
-        btn.addEventListener('click', function() {
-            const printerId = this.dataset.id;
-            const printerName = this.dataset.name;
-            const modal = new bootstrap.Modal(document.getElementById('deletePrinterModal'));
-            const form = document.getElementById('deletePrinterForm');
-            const nameSpan = document.getElementById('deletePrinterName');
-            
-            nameSpan.textContent = printerName;
-            form.action = `/restaurant/printers/${printerId}`;
-            modal.show();
-        });
-    });
-    
-    // Edit Printer
-    document.querySelectorAll('.edit-printer').forEach(btn => {
-        btn.addEventListener('click', async function() {
-            const printerId = this.dataset.id;
-            
-            try {
-                const response = await fetch(`/restaurant/printers/${printerId}/edit`);
-                const html = await response.text();
-                
-                // Parse printer data from the response or fetch via API
-                const modal = new bootstrap.Modal(document.getElementById('editPrinterModal'));
-                const form = document.getElementById('editPrinterForm');
-                form.action = `/restaurant/printers/${printerId}`;
-                
-                // You would populate the form with printer data here
-                modal.show();
-            } catch (error) {
-                showToast('Failed to load printer details', 'error');
+        }
+
+        function wireDiscoveredPrinterButtons() {
+            var results = byId('discoveryResults');
+            if (!results) {
+                return;
             }
-        });
-    });
-    
-    // Set Default Printer
-    document.querySelectorAll('.set-default-printer').forEach(btn => {
-        btn.addEventListener('click', async function() {
-            const printerId = this.dataset.id;
-            
-            try {
-                const response = await fetch(`/restaurant/printers/${printerId}/set-default`, {
-                    method: 'POST',
-                    headers: {
-                        'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content,
-                        'Content-Type': 'application/json'
-                    }
+
+            var createUrl = results.getAttribute('data-create-url');
+            var buttons = document.querySelectorAll('.use-discovered-printer');
+            for (var index = 0; index < buttons.length; index++) {
+                buttons[index].addEventListener('click', function () {
+                    localStorage.setItem('selected_printer', JSON.stringify({
+                        type: this.getAttribute('data-type'),
+                        name: this.getAttribute('data-name'),
+                        ip: this.getAttribute('data-ip'),
+                        port: this.getAttribute('data-port'),
+                        mac: this.getAttribute('data-mac'),
+                        path: this.getAttribute('data-path')
+                    }));
+                    window.location.href = createUrl + '?from_discovery=1';
                 });
-                const data = await response.json();
-                
-                if (data.success) {
-                    showToast('Default printer updated!', 'success');
-                    location.reload();
-                } else {
-                    showToast(data.message || 'Failed to set default printer', 'error');
-                }
-            } catch (error) {
-                showToast('Failed to set default printer', 'error');
             }
-        });
-    });
-    
-    // Discovery Modal
-    function openDiscoveryModal() {
-        const modal = new bootstrap.Modal(document.getElementById('discoveryModal'));
-        modal.show();
-    }
-    
-    document.getElementById('discoverPrintersHeaderBtn')?.addEventListener('click', openDiscoveryModal);
-    document.getElementById('discoverPrintersEmptyBtn')?.addEventListener('click', openDiscoveryModal);
-    
-    // Discovery Tabs
-    document.querySelectorAll('.discovery-tab').forEach(tab => {
-        tab.addEventListener('click', function() {
-            document.querySelectorAll('.discovery-tab').forEach(t => t.classList.remove('active'));
-            this.classList.add('active');
-            currentDiscoveryType = this.dataset.type;
-            startDiscovery();
-        });
-    });
-    
-    // Start Discovery
-    document.getElementById('startDiscoveryBtn')?.addEventListener('click', startDiscovery);
-    
-    async function startDiscovery() {
-        const resultsDiv = document.getElementById('discoveryResults');
-        resultsDiv.innerHTML = `
-            <div class="text-center py-5">
-                <i class="fas fa-spinner fa-spin fa-3x text-primary mb-3"></i>
-                <p>Scanning for ${currentDiscoveryType} printers...</p>
-                <small class="text-muted">This may take a few seconds</small>
-            </div>
-        `;
-        
-        try {
-            const response = await fetch(`/restaurant/printers/discover?type=${currentDiscoveryType}`, {
+        }
+
+        function renderDiscovery(printers) {
+            var results = byId('discoveryResults');
+            var htmlParts = ['<div class="discovery-list">'];
+
+            renderPrinterGroup(htmlParts, 'Network Printers', 'fas fa-wifi text-primary', 'network', printers.network);
+            renderPrinterGroup(htmlParts, 'Bluetooth Printers', 'fas fa-bluetooth text-info', 'bluetooth', printers.bluetooth);
+            renderPrinterGroup(htmlParts, 'USB Printers', 'fas fa-usb text-success', 'usb', printers.usb);
+
+            if (htmlParts.length === 1) {
+                results.innerHTML = '<div class="text-center py-5"><i class="fas fa-search fa-3x text-muted mb-3"></i><p>No printers found</p><small class="text-muted">Make sure the printer is powered on and connected.</small></div>';
+                return;
+            }
+
+            htmlParts.push('</div>');
+            results.innerHTML = htmlParts.join('');
+            wireDiscoveredPrinterButtons();
+        }
+
+        function startDiscovery() {
+            var results = byId('discoveryResults');
+            if (!results) {
+                return;
+            }
+
+            setLoadingDiscovery();
+
+            fetch(results.getAttribute('data-discover-url') + '?type=' + encodeURIComponent(currentDiscoveryType), {
                 headers: {
-                    'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content,
+                    'X-CSRF-TOKEN': csrfToken,
                     'Accept': 'application/json'
                 }
-            });
-            const data = await response.json();
-            
-            if (data.success) {
-                displayDiscoveredPrinters(data.printers);
-            } else {
-                resultsDiv.innerHTML = `
-                    <div class="text-center py-5 text-danger">
-                        <i class="fas fa-exclamation-triangle fa-3x mb-3"></i>
-                        <p>Failed to discover printers</p>
-                    </div>
-                `;
-            }
-        } catch (error) {
-            resultsDiv.innerHTML = `
-                <div class="text-center py-5 text-danger">
-                    <i class="fas fa-times-circle fa-3x mb-3"></i>
-                    <p>Error scanning for printers</p>
-                    <small>Please check your connection</small>
-                </div>
-            `;
+            })
+                .then(function (response) {
+                    return response.json();
+                })
+                .then(function (data) {
+                    if (data.success) {
+                        renderDiscovery(data.printers || {});
+                    } else {
+                        results.innerHTML = '<div class="text-center py-5 text-danger"><i class="fas fa-exclamation-triangle fa-3x mb-3"></i><p>Failed to discover printers</p></div>';
+                    }
+                })
+                .catch(function () {
+                    results.innerHTML = '<div class="text-center py-5 text-danger"><i class="fas fa-times-circle fa-3x mb-3"></i><p>Error scanning for printers</p></div>';
+                });
         }
-    }
-    
-    function displayDiscoveredPrinters(printers) {
-        const resultsDiv = document.getElementById('discoveryResults');
-        let html = '<div class="list-group">';
-        
-        // Network Printers
-        if (printers.network && printers.network.length > 0) {
-            html += '<div class="list-group-item bg-light fw-bold"><i class="fas fa-wifi me-2"></i>Network Printers (WiFi/Ethernet)</div>';
-            printers.network.forEach(printer => {
-                html += `
-                    <div class="list-group-item">
-                        <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
-                            <div>
-                                <i class="fas fa-print text-primary me-2"></i>
-                                <strong>${escapeHtml(printer.name)}</strong>
-                                <br><small class="text-muted">IP: ${printer.ip}:${printer.port}</small>
-                                ${printer.model ? `<br><small class="text-muted">Model: ${printer.model}</small>` : ''}
-                            </div>
-                            <button class="btn btn-sm btn-primary use-discovered-printer" 
-                                    data-type="network"
-                                    data-name="${escapeHtml(printer.name)}"
-                                    data-ip="${printer.ip || ''}"
-                                    data-port="${printer.port || ''}">
-                                <i class="fas fa-plus me-1"></i> Use This Printer
-                            </button>
-                        </div>
-                    </div>
-                `;
-            });
-        }
-        
-        // Bluetooth Printers
-        if (printers.bluetooth && printers.bluetooth.length > 0) {
-            html += '<div class="list-group-item bg-light fw-bold"><i class="fas fa-bluetooth me-2"></i>Bluetooth Printers</div>';
-            printers.bluetooth.forEach(printer => {
-                html += `
-                    <div class="list-group-item">
-                        <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
-                            <div>
-                                <i class="fas fa-bluetooth text-info me-2"></i>
-                                <strong>${escapeHtml(printer.name)}</strong>
-                                <br><small class="text-muted">MAC: ${printer.mac || 'N/A'}</small>
-                                <br><small class="text-muted">Status: ${printer.status || 'Available'}</small>
-                            </div>
-                            <div class="d-flex gap-2">
-                                ${!printer.paired ? `<button class="btn btn-sm btn-outline-warning pair-bluetooth" data-mac="${printer.mac}"><i class="fas fa-handshake me-1"></i> Pair</button>` : ''}
-                                <button class="btn btn-sm btn-primary use-discovered-printer" 
-                                        data-type="bluetooth"
-                                        data-name="${escapeHtml(printer.name)}"
-                                        data-mac="${printer.mac || ''}">
-                                    <i class="fas fa-plus me-1"></i> Use
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                `;
-            });
-        }
-        
-        // USB Printers
-        if (printers.usb && printers.usb.length > 0) {
-            html += '<div class="list-group-item bg-light fw-bold"><i class="fas fa-usb me-2"></i>USB Printers</div>';
-            printers.usb.forEach(printer => {
-                html += `
-                    <div class="list-group-item">
-                        <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
-                            <div>
-                                <i class="fas fa-usb text-success me-2"></i>
-                                <strong>${escapeHtml(printer.name)}</strong>
-                                <br><small class="text-muted">Device: ${printer.device_path || printer.port || 'USB001'}</small>
-                            </div>
-                            <button class="btn btn-sm btn-primary use-discovered-printer" 
-                                    data-type="usb"
-                                    data-name="${escapeHtml(printer.name)}"
-                                    data-path="${printer.device_path || printer.port || 'USB001'}">
-                                <i class="fas fa-plus me-1"></i> Use
-                            </button>
-                        </div>
-                    </div>
-                `;
-            });
-        }
-        
-        if ((!printers.network || printers.network.length === 0) && 
-            (!printers.bluetooth || printers.bluetooth.length === 0) && 
-            (!printers.usb || printers.usb.length === 0)) {
-            html = `
-                <div class="text-center py-5">
-                    <i class="fas fa-search fa-3x text-muted mb-3"></i>
-                    <p>No printers found</p>
-                    <small class="text-muted">Make sure your printer is powered on and connected</small>
-                </div>
-            `;
-        } else {
-            html += '</div>';
-        }
-        
-        resultsDiv.innerHTML = html;
-        
-        // Add event listeners for "Use" buttons
-        document.querySelectorAll('.use-discovered-printer').forEach(btn => {
-            btn.addEventListener('click', function() {
-                const type = this.dataset.type;
-                const name = this.dataset.name;
-                
-                // Store printer info and redirect to create page with pre-filled data
-                localStorage.setItem('selected_printer', JSON.stringify({
-                    type: type,
-                    name: name,
-                    ip: this.dataset.ip,
-                    port: this.dataset.port,
-                    mac: this.dataset.mac,
-                    path: this.dataset.path
-                }));
-                
-                window.location.href = '{{ route("restaurant.printers.create") }}?from_discovery=1';
-            });
-        });
-        
-        // Pair Bluetooth
-        document.querySelectorAll('.pair-bluetooth').forEach(btn => {
-            btn.addEventListener('click', async function() {
-                const mac = this.dataset.mac;
-                const btn = this;
-                const originalText = btn.innerHTML;
-                
-                btn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i> Pairing...';
-                btn.disabled = true;
-                
-                try {
-                    const response = await fetch('{{ route("restaurant.printers.pair-bluetooth") }}', {
+
+        function wireTests() {
+            var buttons = document.querySelectorAll('.test-printer');
+            for (var index = 0; index < buttons.length; index++) {
+                buttons[index].addEventListener('click', function () {
+                    var modalElement = byId('testPrintModal');
+                    var result = byId('testPrintResult');
+                    var printerName = this.getAttribute('data-name');
+                    var testUrl = this.getAttribute('data-test-url');
+
+                    if (result) {
+                        result.innerHTML = '<i class="fas fa-spinner fa-spin fa-2x text-primary mb-3"></i><p>Sending test print to <strong>' + escapeHtml(printerName) + '</strong>...</p>';
+                    }
+
+                    if (modalElement && window.bootstrap) {
+                        new bootstrap.Modal(modalElement).show();
+                    }
+
+                    fetch(testUrl, {
                         method: 'POST',
                         headers: {
-                            'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content,
-                            'Content-Type': 'application/json'
-                        },
-                        body: JSON.stringify({ mac: mac })
-                    });
-                    const data = await response.json();
-                    
-                    if (data.success) {
-                        btn.innerHTML = '<i class="fas fa-check me-1"></i> Paired!';
-                        btn.classList.remove('btn-outline-warning');
-                        btn.classList.add('btn-success');
-                        showToast('Printer paired successfully!', 'success');
-                        setTimeout(() => startDiscovery(), 2000);
-                    } else {
-                        btn.innerHTML = originalText;
-                        btn.disabled = false;
-                        showToast(data.message || 'Pairing failed', 'error');
-                    }
-                } catch (error) {
-                    btn.innerHTML = originalText;
-                    btn.disabled = false;
-                    showToast('Failed to pair printer', 'error');
-                }
-            });
-        });
-    }
-    
-    function escapeHtml(text) {
-        if (!text) return '';
-        const div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
-    }
-    
-    function showToast(message, type = 'info') {
-        const container = document.getElementById('toastContainer');
-        const toast = document.createElement('div');
-        toast.className = `toast align-items-center text-white bg-${type} border-0 mb-2`;
-        toast.setAttribute('role', 'alert');
-        toast.setAttribute('aria-live', 'assertive');
-        toast.setAttribute('aria-atomic', 'true');
-        toast.innerHTML = `
-            <div class="d-flex">
-                <div class="toast-body">
-                    <i class="fas ${type === 'success' ? 'fa-check-circle' : (type === 'error' ? 'fa-exclamation-circle' : 'fa-info-circle')} me-2"></i>
-                    ${message}
-                </div>
-                <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
-            </div>
-        `;
-        container.appendChild(toast);
-        const bsToast = new bootstrap.Toast(toast, { delay: 3000 });
-        bsToast.show();
-        toast.addEventListener('hidden.bs.toast', () => toast.remove());
-    }
-    
-    // Check if coming from discovery
-    if (window.location.search.includes('from_discovery=1')) {
-        const selectedPrinter = localStorage.getItem('selected_printer');
-        if (selectedPrinter) {
-            const printer = JSON.parse(selectedPrinter);
-            // Pre-fill form fields (will be handled in create page)
-            localStorage.removeItem('selected_printer');
-            showToast(`Selected: ${printer.name}`, 'success');
+                            'X-CSRF-TOKEN': csrfToken,
+                            'Content-Type': 'application/json',
+                            'Accept': 'application/json'
+                        }
+                    })
+                        .then(function (response) {
+                            return response.json();
+                        })
+                        .then(function (data) {
+                            if (data.success) {
+                                result.innerHTML = '<i class="fas fa-check-circle fa-3x text-success mb-3"></i><p class="text-success fw-bold">Test print sent successfully.</p><p class="small text-muted">Check the printer for the test page.</p>';
+                                showToast('Test print sent successfully.', 'success');
+                            } else {
+                                result.innerHTML = '<i class="fas fa-times-circle fa-3x text-danger mb-3"></i><p class="text-danger fw-bold">Test print failed.</p><p class="small">' + escapeHtml(data.message || 'Failed to connect to printer') + '</p>';
+                                showToast(data.message || 'Failed to connect to printer.', 'error');
+                            }
+                        })
+                        .catch(function () {
+                            result.innerHTML = '<i class="fas fa-times-circle fa-3x text-danger mb-3"></i><p class="text-danger fw-bold">Connection error.</p><p class="small">Could not connect to printer.</p>';
+                            showToast('Failed to connect to printer.', 'error');
+                        });
+                });
+            }
         }
-    }
+
+        function wireDeleteModal() {
+            var buttons = document.querySelectorAll('.delete-printer');
+            for (var index = 0; index < buttons.length; index++) {
+                buttons[index].addEventListener('click', function () {
+                    var form = byId('deletePrinterForm');
+                    var name = byId('deletePrinterName');
+                    var modalElement = byId('deletePrinterModal');
+
+                    if (form) {
+                        form.action = this.getAttribute('data-destroy-url');
+                    }
+                    if (name) {
+                        name.textContent = this.getAttribute('data-name') || 'this printer';
+                    }
+                    if (modalElement && window.bootstrap) {
+                        new bootstrap.Modal(modalElement).show();
+                    }
+                });
+            }
+        }
+
+        function wireDiscovery() {
+            var headerButton = byId('discoverPrintersHeaderBtn');
+            var emptyButton = byId('discoverPrintersEmptyBtn');
+            var startButton = byId('startDiscoveryBtn');
+            var tabs = document.querySelectorAll('.discovery-tab');
+
+            if (headerButton) {
+                headerButton.addEventListener('click', openDiscoveryModal);
+            }
+            if (emptyButton) {
+                emptyButton.addEventListener('click', openDiscoveryModal);
+            }
+            if (startButton) {
+                startButton.addEventListener('click', startDiscovery);
+            }
+
+            for (var index = 0; index < tabs.length; index++) {
+                tabs[index].addEventListener('click', function () {
+                    for (var tabIndex = 0; tabIndex < tabs.length; tabIndex++) {
+                        tabs[tabIndex].classList.remove('active');
+                    }
+                    this.classList.add('active');
+                    currentDiscoveryType = this.getAttribute('data-type') || 'all';
+                    startDiscovery();
+                });
+            }
+        }
+
+        wireTests();
+        wireDeleteModal();
+        wireDiscovery();
+    })();
 </script>
 @endsection

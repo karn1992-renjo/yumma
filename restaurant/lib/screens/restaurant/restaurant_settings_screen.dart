@@ -10,6 +10,7 @@ import '../../theme/foodflow_theme.dart';
 import '../../utils/currency_utils.dart';
 import '../../utils/payout_gateway_utils.dart';
 import '../../widgets/restaurant/premium_restaurant_widgets.dart';
+import '../../widgets/common/network_image_loader.dart';
 
 class RestaurantSettingsScreen extends StatefulWidget {
   const RestaurantSettingsScreen({Key? key}) : super(key: key);
@@ -105,8 +106,8 @@ class _RestaurantSettingsScreenState extends State<RestaurantSettingsScreen> {
     _accountNumberController.text = _settings['account_number'] ?? '';
     _ifscController.text = _settings['ifsc_code'] ?? '';
     _upiIdController.text = _settings['upi_id'] ?? '';
-    _stripeAccountController.text = _settings['stripe_account_id'] ??
-        _settings['gateway_account_id'] ?? '';
+    _stripeAccountController.text =
+        _settings['stripe_account_id'] ?? _settings['gateway_account_id'] ?? '';
   }
 
   Future<void> _saveSettings() async {
@@ -178,7 +179,8 @@ class _RestaurantSettingsScreenState extends State<RestaurantSettingsScreen> {
 
     if (lat == null || lng == null || _fssaiLicenseFile?.path == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Enter lat/long and attach FSSAI license')),
+        const SnackBar(
+            content: Text('Enter lat/long and attach FSSAI license')),
       );
       return;
     }
@@ -199,7 +201,8 @@ class _RestaurantSettingsScreenState extends State<RestaurantSettingsScreen> {
         setState(() => _fssaiLicenseFile = null);
         await _loadSettings();
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Location request sent for admin approval')),
+          const SnackBar(
+              content: Text('Location request sent for admin approval')),
         );
       }
     } catch (e) {
@@ -216,13 +219,15 @@ class _RestaurantSettingsScreenState extends State<RestaurantSettingsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final authUser = Provider.of<AuthProvider>(context, listen: false).currentUser;
+    final authUser =
+        Provider.of<AuthProvider>(context, listen: false).currentUser;
     final payoutProfile = resolvePayoutGatewayProfile(
       provider: _settings['payout_gateway_provider']?.toString() ??
           _settings['payment_gateway_provider']?.toString() ??
           authUser?.payoutGatewayProvider ??
           authUser?.paymentGatewayProvider,
-      countryCode: _settings['country_code']?.toString() ?? authUser?.countryCode,
+      countryCode:
+          _settings['country_code']?.toString() ?? authUser?.countryCode,
     );
 
     if (_isLoading) {
@@ -273,16 +278,25 @@ class _RestaurantSettingsScreenState extends State<RestaurantSettingsScreen> {
                     CircleAvatar(
                       radius: 50,
                       backgroundColor: Colors.grey.shade200,
-                      backgroundImage: _settings['logo_image'] != null
-                          ? NetworkImage(_settings['logo_image'])
-                          : null,
-                      child: _settings['logo_image'] == null
-                          ? Icon(
+                      child: _settings['logo_image'] != null
+                          ? ClipOval(
+                              child: NetworkImageLoader(
+                                imageUrl: _settings['logo_image'].toString(),
+                                width: 100,
+                                height: 100,
+                                fit: BoxFit.cover,
+                                errorWidget: Icon(
+                                  Icons.restaurant,
+                                  size: 50,
+                                  color: Colors.grey.shade400,
+                                ),
+                              ),
+                            )
+                          : Icon(
                               Icons.restaurant,
                               size: 50,
                               color: Colors.grey.shade400,
-                            )
-                          : null,
+                            ),
                     ),
                     Positioned(
                       bottom: 0,
@@ -465,8 +479,12 @@ class _RestaurantSettingsScreenState extends State<RestaurantSettingsScreen> {
                           spacing: 8,
                           runSpacing: 8,
                           children: [
-                            Chip(label: Text('Gateway: ${payoutProfile.displayName}')),
-                            Chip(label: Text('Country: ${payoutProfile.countryCode}')),
+                            Chip(
+                                label: Text(
+                                    'Gateway: ${payoutProfile.displayName}')),
+                            Chip(
+                                label: Text(
+                                    'Country: ${payoutProfile.countryCode}')),
                           ],
                         ),
                         const SizedBox(height: 16),
@@ -615,7 +633,9 @@ class _RestaurantSettingsScreenState extends State<RestaurantSettingsScreen> {
                                   labelText: 'Latitude',
                                   border: OutlineInputBorder(),
                                 ),
-                                keyboardType: const TextInputType.numberWithOptions(decimal: true, signed: true),
+                                keyboardType:
+                                    const TextInputType.numberWithOptions(
+                                        decimal: true, signed: true),
                               ),
                             ),
                             const SizedBox(width: 12),
@@ -626,14 +646,19 @@ class _RestaurantSettingsScreenState extends State<RestaurantSettingsScreen> {
                                   labelText: 'Longitude',
                                   border: OutlineInputBorder(),
                                 ),
-                                keyboardType: const TextInputType.numberWithOptions(decimal: true, signed: true),
+                                keyboardType:
+                                    const TextInputType.numberWithOptions(
+                                        decimal: true, signed: true),
                               ),
                             ),
                           ],
                         ),
                         const SizedBox(height: 12),
                         OutlinedButton.icon(
-                          onPressed: _settings['pending_location_request'] != null ? null : _pickFssaiLicense,
+                          onPressed:
+                              _settings['pending_location_request'] != null
+                                  ? null
+                                  : _pickFssaiLicense,
                           icon: const Icon(Icons.attach_file),
                           label: Text(_fssaiLicenseFile == null
                               ? 'Attach FSSAI license'
@@ -643,9 +668,11 @@ class _RestaurantSettingsScreenState extends State<RestaurantSettingsScreen> {
                         SizedBox(
                           width: double.infinity,
                           child: ElevatedButton.icon(
-                            onPressed: _settings['pending_location_request'] != null || _isSaving
-                                ? null
-                                : _submitLocationChangeRequest,
+                            onPressed:
+                                _settings['pending_location_request'] != null ||
+                                        _isSaving
+                                    ? null
+                                    : _submitLocationChangeRequest,
                             icon: const Icon(Icons.approval_outlined),
                             label: const Text('Apply for Location Change'),
                           ),

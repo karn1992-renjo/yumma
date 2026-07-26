@@ -976,6 +976,22 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "2.2.0"
+  package_info_plus:
+    dependency: "direct main"
+    description:
+      name: package_info_plus
+      sha256: "468c26b4254ab01979fa5e4a98cb343ea3631b9acee6f21028997419a80e1a20"
+      url: "https://pub.dev"
+    source: hosted
+    version: "9.0.1"
+  package_info_plus_platform_interface:
+    dependency: transitive
+    description:
+      name: package_info_plus_platform_interface
+      sha256: "202a487f08836a592a6bd4f901ac69b3a8f146af552bbd14407b6b41e1c3f086"
+      url: "https://pub.dev"
+    source: hosted
+    version: "3.2.1"
   path:
     dependency: transitive
     description:
@@ -1064,6 +1080,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "7.0.2"
+  pin_input_text_field:
+    dependency: transitive
+    description:
+      name: pin_input_text_field
+      sha256: f45683032283d30b670ec343781660655e3e1953438b281a0bc6e2d358486236
+      url: "https://pub.dev"
+    source: hosted
+    version: "4.5.2"
   platform:
     dependency: transitive
     description:
@@ -1160,6 +1184,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "2.1.0"
+  sendotp_flutter_sdk:
+    dependency: "direct main"
+    description:
+      name: sendotp_flutter_sdk
+      sha256: "4536dc5132c505c7f854c1f203b146f32f705e95640c476fa3320bf435c0e6ea"
+      url: "https://pub.dev"
+    source: hosted
+    version: "0.0.2"
   shared_preferences:
     dependency: "direct main"
     description:
@@ -1237,6 +1269,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "1.2.1"
+  sms_autofill:
+    dependency: "direct main"
+    description:
+      name: sms_autofill
+      sha256: "5c6c5569a310fce12117eaefab5be6e29cc676b635e43be8b70b1946ec21ae91"
+      url: "https://pub.dev"
+    source: hosted
+    version: "2.5.0"
   source_span:
     dependency: transitive
     description:

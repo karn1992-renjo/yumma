@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:sms_autofill/sms_autofill.dart';
 
 import '../../providers/auth_provider.dart';
 import '../../services/firebase_phone_auth_service.dart';
@@ -15,6 +16,7 @@ class OtpVerificationScreen extends StatefulWidget {
     required this.role,
     this.flow = 'login',
     this.useFirebasePhoneAuth = false,
+    this.otpServiceProvider = '',
     this.initialFirebaseVerificationId,
   });
 
@@ -24,13 +26,15 @@ class OtpVerificationScreen extends StatefulWidget {
   final String role;
   final String flow;
   final bool useFirebasePhoneAuth;
+  final String otpServiceProvider;
   final String? initialFirebaseVerificationId;
 
   @override
   State<OtpVerificationScreen> createState() => _OtpVerificationScreenState();
 }
 
-class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
+class _OtpVerificationScreenState extends State<OtpVerificationScreen>
+    with CodeAutoFill {
   static const _green = Color(0xFF22C55E);
   static const _text = Color(0xFF111827);
   static const _subtext = Color(0xFF6B7280);
@@ -43,18 +47,44 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
   String _otp = '';
   String? _firebaseVerificationId;
   bool _isVerifying = false;
+  bool _autoSubmittedOtp = false;
+
+  int get _otpLength {
+    if (widget.useFirebasePhoneAuth) return 6;
+    return widget.otpServiceProvider.trim().toLowerCase() == 'msg91' ? 4 : 6;
+  }
 
   @override
   void initState() {
     super.initState();
     _firebaseVerificationId = widget.initialFirebaseVerificationId;
     _startTimer();
+    _listenForOtpCode();
   }
 
   @override
   void dispose() {
     _timer?.cancel();
+    cancel();
+    unregisterListener();
     super.dispose();
+  }
+
+  @override
+  void codeUpdated() {
+    final autoFilledOtp = code?.replaceAll(RegExp(r'\D'), '') ?? '';
+    if (autoFilledOtp.isEmpty || !mounted) return;
+
+    setState(() {
+      _otp = autoFilledOtp.length > _otpLength
+          ? autoFilledOtp.substring(0, _otpLength)
+          : autoFilledOtp;
+    });
+
+    if (_otp.length == _otpLength && !_autoSubmittedOtp) {
+      _autoSubmittedOtp = true;
+      _verifyOtp();
+    }
   }
 
   void _startTimer() {
@@ -71,13 +101,16 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
   }
 
   void _appendDigit(String digit) {
-    if (_otp.length >= 6) return;
+    if (_otp.length >= _otpLength) return;
     if (_isVerifying || context.read<AuthProvider>().isLoading) return;
 
     final nextOtp = _otp + digit;
-    setState(() => _otp = nextOtp);
+    setState(() {
+      _autoSubmittedOtp = false;
+      _otp = nextOtp;
+    });
 
-    if (nextOtp.length == 6) {
+    if (nextOtp.length == _otpLength) {
       Future.microtask(_verifyOtp);
     }
   }
@@ -85,14 +118,18 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
   void _removeDigit() {
     if (_otp.isEmpty) return;
     if (_isVerifying || context.read<AuthProvider>().isLoading) return;
-    setState(() => _otp = _otp.substring(0, _otp.length - 1));
+    setState(() {
+      _autoSubmittedOtp = false;
+      _otp = _otp.substring(0, _otp.length - 1);
+    });
   }
 
   Future<void> _verifyOtp() async {
     if (_isVerifying) return;
 
-    if (_otp.length != 6) {
-      _showMessage('Enter the 6-digit OTP sent to your mobile number.',
+    if (_otp.length != _otpLength) {
+      _showMessage(
+          'Enter the $_otpLength-digit OTP sent to your mobile number.',
           isError: true);
       return;
     }
@@ -216,6 +253,7 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
 
         setState(() {
           _firebaseVerificationId = verificationId;
+          _autoSubmittedOtp = false;
           _otp = '';
         });
       } catch (error) {
@@ -243,11 +281,19 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
         return;
       }
 
-      setState(() => _otp = '');
+      setState(() {
+        _autoSubmittedOtp = false;
+        _otp = '';
+      });
     }
 
     _startTimer();
+    _listenForOtpCode();
     _showMessage('A new OTP has been sent.');
+  }
+
+  void _listenForOtpCode() {
+    listenForCode(smsCodeRegexPattern: '\\b\\d{$_otpLength}\\b');
   }
 
   @override
@@ -264,7 +310,8 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
               padding: const EdgeInsets.fromLTRB(24, 10, 24, 18),
               child: ConstrainedBox(
                 constraints: BoxConstraints(
-                  minHeight: (constraints.maxHeight - 36).clamp(0, double.infinity),
+                  minHeight:
+                      (constraints.maxHeight - 36).clamp(0, double.infinity),
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -295,7 +342,7 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
                               ),
                               const SizedBox(height: 10),
                               const Text(
-                                'We have sent a 6-digit OTP to',
+                                'We have sent an OTP to',
                                 style: TextStyle(
                                   fontSize: 16,
                                   fontWeight: FontWeight.w400,
@@ -308,7 +355,7 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
                                 widget.phoneNumber,
                                 style: const TextStyle(
                                   fontSize: 16,
-                                  fontWeight: FontWeight.w700,
+                                  fontWeight: FontWeight.w800,
                                   color: _text,
                                 ),
                               ),
@@ -356,7 +403,7 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
                     const SizedBox(height: 22),
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: List.generate(6, (index) {
+                      children: List.generate(_otpLength, (index) {
                         final isActive = index == _otp.length;
                         final digit = index < _otp.length ? _otp[index] : '';
                         return Container(
@@ -375,7 +422,7 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
                             digit,
                             style: const TextStyle(
                               fontSize: 22,
-                              fontWeight: FontWeight.w700,
+                              fontWeight: FontWeight.w800,
                               color: _text,
                             ),
                           ),
@@ -389,7 +436,7 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
                           text: 'Resend OTP in ',
                           style: const TextStyle(
                             fontSize: 15,
-                            fontWeight: FontWeight.w500,
+                            fontWeight: FontWeight.w400,
                             color: _subtext,
                           ),
                           children: [
@@ -398,7 +445,7 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
                                   '00:${_secondsRemaining.toString().padLeft(2, '0')}',
                               style: const TextStyle(
                                 color: _text,
-                                fontWeight: FontWeight.w700,
+                                fontWeight: FontWeight.w800,
                               ),
                             ),
                           ],
@@ -425,7 +472,7 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
                                   'Your verification code is secure',
                                   style: TextStyle(
                                     fontSize: 17,
-                                    fontWeight: FontWeight.w700,
+                                    fontWeight: FontWeight.w800,
                                     color: _text,
                                   ),
                                 ),
@@ -434,7 +481,7 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
                                   'Never share OTP with anyone',
                                   style: TextStyle(
                                     fontSize: 15,
-                                    fontWeight: FontWeight.w500,
+                                    fontWeight: FontWeight.w400,
                                     color: _subtext,
                                   ),
                                 ),
@@ -474,7 +521,7 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
                                           'Verifying...',
                                           style: TextStyle(
                                             fontSize: 15,
-                                            fontWeight: FontWeight.w600,
+                                            fontWeight: FontWeight.w400,
                                             color: _text,
                                           ),
                                         ),
@@ -585,7 +632,7 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
                   label!,
                   style: const TextStyle(
                     fontSize: 22,
-                    fontWeight: FontWeight.w600,
+                    fontWeight: FontWeight.w400,
                     color: _text,
                   ),
                 ),

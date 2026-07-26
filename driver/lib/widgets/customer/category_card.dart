@@ -2,6 +2,7 @@
 import 'package:flutter/material.dart';
 import '../../config/app_config.dart';
 import '../../theme/foodflow_theme.dart';
+import '../common/network_image_loader.dart';
 
 class CategoryCard extends StatelessWidget {
   final dynamic category;
@@ -61,18 +62,16 @@ class CategoryCard extends StatelessWidget {
               ),
               child: ClipOval(
                 child: imageUrl.isNotEmpty
-                    ? Image.network(
-                        imageUrl,
+                    ? NetworkImageLoader(
+                        imageUrl: imageUrl,
                         width: 76,
                         height: 76,
                         fit: BoxFit.cover,
-                        errorBuilder: (context, error, stackTrace) {
-                          return Container(
-                            color: Colors.grey.shade100,
-                            child: const Icon(Icons.restaurant_menu,
-                                size: 32, color: AppConfig.primaryColor),
-                          );
-                        },
+                        errorWidget: Container(
+                          color: Colors.grey.shade100,
+                          child: const Icon(Icons.restaurant_menu,
+                              size: 32, color: AppConfig.primaryColor),
+                        ),
                       )
                     : Container(
                         color: Colors.grey.shade100,

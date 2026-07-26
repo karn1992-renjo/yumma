@@ -54,6 +54,8 @@ class MediaStorage
             return $path;
         }
 
+        self::configure();
+
         return Storage::disk('public')->url(ltrim($path, '/'));
     }
 

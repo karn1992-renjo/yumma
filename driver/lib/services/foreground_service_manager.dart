@@ -4,23 +4,21 @@ import 'package:flutter/services.dart';
 class ForegroundServiceManager {
   ForegroundServiceManager._();
 
-  static const MethodChannel _channel =
-      MethodChannel('com.adgraph.delivery/order_alerts');
+  static const MethodChannel _channel = MethodChannel(
+    'com.adgraph.yamma_delivery/order_alerts',
+  );
 
   static Future<void> startForegroundService({
-    String status = 'Online and listening for orders',
+    String status = 'Logged in and ready for delivery orders',
     bool fullScreen = false,
     bool trackLocation = false,
   }) async {
     try {
-      await _channel.invokeMethod<void>(
-        'startForegroundService',
-        {
-          'status': status,
-          'fullScreen': fullScreen,
-          'trackLocation': trackLocation,
-        },
-      );
+      await _channel.invokeMethod<void>('startForegroundService', {
+        'status': status,
+        'fullScreen': fullScreen,
+        'trackLocation': trackLocation,
+      });
     } catch (error, stackTrace) {
       debugPrint('Foreground service start failed: $error');
       debugPrintStack(stackTrace: stackTrace);
@@ -33,14 +31,11 @@ class ForegroundServiceManager {
     bool trackLocation = false,
   }) async {
     try {
-      await _channel.invokeMethod<void>(
-        'updateServiceNotification',
-        {
-          'status': status,
-          'fullScreen': fullScreen,
-          'trackLocation': trackLocation,
-        },
-      );
+      await _channel.invokeMethod<void>('updateServiceNotification', {
+        'status': status,
+        'fullScreen': fullScreen,
+        'trackLocation': trackLocation,
+      });
     } catch (error, stackTrace) {
       debugPrint('Foreground service update failed: $error');
       debugPrintStack(stackTrace: stackTrace);
@@ -67,6 +62,7 @@ class ForegroundServiceManager {
 
   static Future<void> handleServiceRestart() async {
     await startForegroundService(
-        status: 'Reconnected and listening for orders');
+      status: 'Logged in and ready for delivery orders',
+    );
   }
 }

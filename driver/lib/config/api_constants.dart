@@ -1,11 +1,9 @@
 // lib/config/api_constants.dart
+import 'app_config.dart';
 
 class ApiConstants {
   // Base URL - Update this with your actual API URL
-  static const String baseUrl = String.fromEnvironment(
-    'API_BASE_URL',
-    defaultValue: 'https://food.unisell.online/api',
-  );
+  static const String baseUrl = AppConfig.apiBaseUrl;
 
   // Auth endpoints
   static const String login = '/login';
@@ -94,6 +92,8 @@ class ApiConstants {
       '$restaurantOrders/$orderId/status';
   static String restaurantOrderReady(int orderId) =>
       '$restaurantOrders/$orderId/ready';
+  static String restaurantExtendPrepTime(int orderId) =>
+      '$restaurantOrders/$orderId/extend-prep-time';
 
   // Dining endpoints
   static const String diningCelebrationTypes = '/dining/celebration-types';
@@ -125,6 +125,10 @@ class ApiConstants {
       '/driver/orders/$orderId/reject';
   static String updateOrderStatus(int orderId) =>
       '/driver/orders/$orderId/status';
+  static String driverPaymentLink(int orderId) =>
+      '/orders/$orderId/driver/payment-link';
+  static String driverCash(int orderId) => '/orders/$orderId/driver/cash';
+  static String orderPaymentStatus(int orderId) => '/orders/$orderId/payment-status';
 
   // Campaign endpoints
   static const String campaigns = '/campaigns';

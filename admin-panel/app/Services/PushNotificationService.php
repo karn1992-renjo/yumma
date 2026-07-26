@@ -47,6 +47,18 @@ class PushNotificationService
             'broadcast_id' => (string) $broadcast->id,
         ]);
 
+        if ($targetApps->count() === 1) {
+            $targetApp = $targetApps->first();
+            $payload['target_app'] = $targetApp;
+
+            if ($targetApp === 'customer') {
+                $payload['data_only'] = '1';
+                if ($this->hasImagePayload($payload)) {
+                    $payload['image_banner'] = '1';
+                }
+            }
+        }
+
         if (filled($broadcast->deep_link)) {
             $payload['deep_link'] = $broadcast->deep_link;
         }
@@ -142,5 +154,10 @@ class PushNotificationService
         }
 
         return null;
+    }
+
+    private function hasImagePayload(array $payload): bool
+    {
+        return filled($payload['image_url'] ?? null) || filled($payload['image'] ?? null);
     }
 }

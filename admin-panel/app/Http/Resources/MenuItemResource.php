@@ -18,13 +18,33 @@ class MenuItemResource extends JsonResource
             ->values()
             ->all();
 
+        $categoryName = $this->category_name
+            ?? $this->category?->name
+            ?? $this->masterMenuItem?->category_name;
+        $subcategoryName = $this->subcategory_name
+            ?? $this->masterMenuItem?->subcategory_name;
+        if (
+            blank($subcategoryName)
+            && is_string($categoryName)
+            && str_contains($categoryName, '/')
+        ) {
+            $parts = array_values(array_filter(
+                array_map('trim', explode('/', $categoryName)),
+                fn ($part) => $part !== ''
+            ));
+            if (count($parts) > 1) {
+                $subcategoryName = end($parts);
+            }
+        }
+
         return [
             'id' => $this->id,
             'restaurant_id' => $this->restaurant_id,
             'master_menu_item_id' => $this->master_menu_item_id,
             'item_source' => $this->item_source ?? 'custom',
             'category_id' => $this->category_id,
-            'category_name' => $this->category_name ?? $this->category?->name,
+            'category_name' => $categoryName,
+            'subcategory_name' => $subcategoryName,
             'cuisine_id' => $this->cuisine_id,
             'cuisine_name' => $this->cuisine_name ?? $this->cuisine?->name,
             'name' => $this->name,

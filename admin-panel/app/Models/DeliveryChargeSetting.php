@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 
 class DeliveryChargeSetting extends Model
 {
@@ -13,6 +14,7 @@ class DeliveryChargeSetting extends Model
         'free_delivery_threshold', 'free_delivery_global',
         'free_delivery_days', 'free_delivery_area_ids',
         'platform_fee',
+        'order_acceptance_timeout_seconds',
         'admin_contribution_percent', 'restaurant_contribution_percent'
     ];
     
@@ -20,6 +22,7 @@ class DeliveryChargeSetting extends Model
         'free_delivery_global' => 'boolean',
         'free_delivery_days' => 'array',
         'free_delivery_area_ids' => 'array',
+        'order_acceptance_timeout_seconds' => 'integer',
     ];
     
     public static function getDeliveryCharge($distance = null)
@@ -31,7 +34,14 @@ class DeliveryChargeSetting extends Model
         }
         
         if ($setting->charge_type === 'per_km' && $distance) {
-            return $setting->base_charge + ($distance * $setting->per_km_charge);
+            $distance = (float) $distance;
+            // Base charge covers the first 1 km; charge per_km only for distance beyond 1 km
+            if ($distance <= 1.0) {
+                return round((float) $setting->base_charge, 2);
+            }
+
+            $additionalKm = max(0, $distance - 1.0);
+            return round((float) $setting->base_charge + ($additionalKm * (float) $setting->per_km_charge), 2);
         }
         
         return $setting->base_charge;
@@ -43,16 +53,60 @@ class DeliveryChargeSetting extends Model
 
         return round((float) ($setting?->platform_fee ?? 0), 2);
     }
+
+    public static function getOrderAcceptanceTimeoutSeconds(): int
+    {
+        $setting = self::safeFirst();
+        $seconds = (int) ($setting?->order_acceptance_timeout_seconds ?? 180);
+
+        return max(30, min(600, $seconds));
+    }
     
     public static function getFreeDeliveryThreshold($restaurantId = null, $deliveryLat = null, $deliveryLng = null)
     {
-        $setting = self::safeFirst();
-        
-        if ($setting && $setting->free_delivery_global && $setting->isFreeDeliveryEligible($deliveryLat, $deliveryLng)) {
-            return $setting->free_delivery_threshold;
+        $zoneThreshold = self::getZoneFreeDeliveryThreshold($deliveryLat, $deliveryLng);
+        if ($zoneThreshold !== null) {
+            return $zoneThreshold;
         }
-        
+
         return null;
+    }
+
+    private static function getZoneFreeDeliveryThreshold($deliveryLat = null, $deliveryLng = null): ?float
+    {
+        if ($deliveryLat === null || $deliveryLng === null || $deliveryLat === '' || $deliveryLng === '') {
+            return null;
+        }
+
+        try {
+            if (! Schema::hasColumn('delivery_areas', 'free_delivery_enabled')
+                || ! Schema::hasColumn('delivery_areas', 'free_delivery_threshold')) {
+                return null;
+            }
+
+            $threshold = DeliveryArea::query()
+                ->active()
+                ->where('free_delivery_enabled', true)
+                ->whereNotNull('free_delivery_threshold')
+                ->get()
+                ->filter(fn (DeliveryArea $area) => $area->containsPoint((float) $deliveryLat, (float) $deliveryLng))
+                ->pluck('free_delivery_threshold')
+                ->filter(fn ($value) => $value !== null && $value !== '')
+                ->map(fn ($value) => (float) $value)
+                ->min();
+
+            if ($threshold === null) {
+                return null;
+            }
+
+            return (float) $threshold;
+        } catch (\Throwable $e) {
+            Log::warning('Zone free delivery lookup failed.', [
+                'error' => $e->getMessage(),
+            ]);
+
+            return null;
+        }
     }
 
     public function isFreeDeliveryEligible($deliveryLat = null, $deliveryLng = null): bool

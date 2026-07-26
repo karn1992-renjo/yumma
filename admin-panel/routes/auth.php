@@ -2,14 +2,14 @@
 
 use App\Http\Controllers\ProfileController;
 use App\Models\AppSetting;
-use App\Models\User;
+use App\Rules\UniqueUserContactForRole;
+use App\Services\SmsService;
 use App\Support\PhoneNumber;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Hash;
-use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Route;
 
@@ -72,7 +72,6 @@ Route::post('login/otp/send', function (Request $request) {
     ]);
 
     $normalizedPhone = PhoneNumber::normalize($validated['phone'], AppSetting::getValue('default_mobile_country_code', '+91'));
-    $phoneCandidates = webLoginPhoneCandidates($normalizedPhone);
 
     $role = match ($validated['role'] ?? 'customer') {
         'restaurant' => 'restaurant_owner',
@@ -81,7 +80,7 @@ Route::post('login/otp/send', function (Request $request) {
         default => 'customer',
     };
 
-    $user = User::whereIn('phone', $phoneCandidates)->first();
+    $user = UniqueUserContactForRole::findByPhoneForRole($normalizedPhone, $role);
     $matchesRole = $user && ($role === 'restaurant_owner'
         ? $user->hasAnyRole(['restaurant_owner', 'restaurant_staff'])
         : $user->hasRole($role));
@@ -91,7 +90,7 @@ Route::post('login/otp/send', function (Request $request) {
     }
 
     $provider = strtolower(trim((string) AppSetting::getValue('otp_service_provider', '')));
-    if (! in_array($provider, ['twilio', 'firebase'], true)) {
+    if (! in_array($provider, ['twilio', 'firebase', 'msg91'], true)) {
         return back()->withErrors([
             'phone' => 'Login OTP provider is not configured in admin settings.',
         ]);
@@ -99,49 +98,25 @@ Route::post('login/otp/send', function (Request $request) {
 
     if ($provider === 'firebase') {
         return back()->withErrors([
-            'phone' => 'Firebase OTP must be completed in the mobile app. Configure Twilio for admin web OTP login.',
-        ]);
-    }
-
-    $sid = AppSetting::getValue('twilio_account_sid');
-    $token = AppSetting::getValue('twilio_auth_token');
-    $from = AppSetting::getValue('twilio_phone_number');
-
-    if (! $sid || ! $token || ! $from) {
-        return back()->withErrors([
-            'phone' => 'Twilio OTP settings are incomplete in admin settings.',
+            'phone' => 'Firebase OTP must be completed in the mobile app. Configure Twilio or MSG91 for admin web OTP login.',
         ]);
     }
 
     $otp = (string) random_int(100000, 999999);
-    $message = str_replace(['{{otp}}', '{otp}'], $otp, AppSetting::getValue('message_template_otp', 'Your OTP code is {{otp}}. It is valid for 10 minutes.'));
 
     try {
-        $response = Http::withBasicAuth($sid, $token)->asForm()->post("https://api.twilio.com/2010-04-01/Accounts/{$sid}/Messages.json", [
-            'From' => $from,
-            'To' => $normalizedPhone,
-            'Body' => $message,
-        ]);
-
-        if (! $response->successful()) {
-            Log::warning('Web OTP Twilio send failed.', [
-                'status' => $response->status(),
-                'body' => $response->body(),
-            ]);
-
-            return back()->withErrors([
-                'phone' => 'Twilio OTP send failed. Please check the configured OTP provider.',
-            ]);
-        }
+        app(SmsService::class)->sendOtp($normalizedPhone, $otp);
     } catch (\Throwable $e) {
-        Log::warning('Web OTP Twilio send failed: ' . $e->getMessage());
+        Log::warning('Web OTP send failed: ' . $e->getMessage());
 
         return back()->withErrors([
-            'phone' => 'Twilio OTP send failed. Please check the configured OTP provider.',
+            'phone' => 'OTP send failed. Please check the configured OTP provider.',
         ]);
     }
 
-    Cache::put('web_login_otp:' . $normalizedPhone . ':' . $role, Hash::make($otp), now()->addMinutes(10));
+    if ($provider !== 'msg91') {
+        Cache::put('web_login_otp:' . $normalizedPhone . ':' . $role, Hash::make($otp), now()->addMinutes(10));
+    }
 
     return back()->with('otp_phone', $validated['phone'])->with('otp_normalized_phone', $normalizedPhone)->with('otp_role', $validated['role'] ?? 'customer')->with('success', 'OTP sent successfully.');
 })->middleware('throttle:5,1')->name('login.otp.send');
@@ -161,14 +136,26 @@ Route::post('login/otp/verify', function (Request $request) {
     };
 
     $normalizedPhone = PhoneNumber::normalize($validated['phone'], AppSetting::getValue('default_mobile_country_code', '+91'));
-    $phoneCandidates = webLoginPhoneCandidates($normalizedPhone);
+    $provider = strtolower(trim((string) AppSetting::getValue('otp_service_provider', '')));
     $key = 'web_login_otp:' . $normalizedPhone . ':' . $role;
-    $hashedOtp = Cache::get($key);
-    if (!$hashedOtp || !Hash::check($validated['otp'], $hashedOtp)) {
+    $verified = false;
+    if ($provider === 'msg91') {
+        try {
+            $verified = app(SmsService::class)->verifyOtp($normalizedPhone, (string) $validated['otp']);
+        } catch (\Throwable $e) {
+            Log::warning('Web MSG91 OTP verify failed: ' . $e->getMessage());
+        }
+    } else {
+        $hashedOtp = Cache::get($key);
+        $verified = $hashedOtp && Hash::check($validated['otp'], $hashedOtp);
+    }
+
+    if (! $verified) {
         return back()->withErrors(['otp' => 'Invalid or expired OTP.'])->with('otp_phone', $validated['phone'])->with('otp_role', $validated['role'] ?? 'customer');
     }
 
-    $user = User::whereIn('phone', $phoneCandidates)->firstOrFail();
+    $user = UniqueUserContactForRole::findByPhoneForRole($normalizedPhone, $role);
+    abort_unless($user, 404);
     $matchesRole = $role === 'restaurant_owner'
         ? $user->hasAnyRole(['restaurant_owner', 'restaurant_staff'])
         : $user->hasRole($role);
@@ -177,7 +164,9 @@ Route::post('login/otp/verify', function (Request $request) {
         return back()->withErrors(['phone' => 'No matching account found for this mobile number and role.']);
     }
 
-    Cache::forget($key);
+    if ($provider !== 'msg91') {
+        Cache::forget($key);
+    }
     Auth::login($user, true);
 
     if ($user->hasAnyRole(['restaurant_owner', 'restaurant_staff'])) {
@@ -194,31 +183,6 @@ Route::post('login/otp/verify', function (Request $request) {
 
     return redirect()->intended(route('dashboard'));
 })->middleware('throttle:5,1')->name('login.otp.verify');
-
-if (! function_exists('webLoginPhoneCandidates')) {
-    function webLoginPhoneCandidates(string $phone): array
-    {
-        $digits = preg_replace('/\D+/', '', $phone) ?? '';
-        $countryDigits = ltrim(PhoneNumber::normalizeCountryCode(AppSetting::getValue('default_mobile_country_code', '+91')), '+');
-        $candidates = [$phone, $digits, '+' . $digits, ltrim($digits, '0')];
-
-        if ($countryDigits !== '') {
-            if (str_starts_with($digits, $countryDigits)) {
-                $localDigits = substr($digits, strlen($countryDigits));
-                if ($localDigits !== false && $localDigits !== '') {
-                    $candidates[] = $localDigits;
-                    $candidates[] = '0' . $localDigits;
-                    $candidates[] = '+' . $countryDigits . $localDigits;
-                }
-            } else {
-                $candidates[] = '+' . $countryDigits . $digits;
-                $candidates[] = $countryDigits . $digits;
-            }
-        }
-
-        return array_values(array_unique(array_filter($candidates)));
-    }
-}
 
 Route::middleware('auth')->group(function () {
     Route::get('/profile', [ProfileController::class, 'edit'])->name('profile.edit');

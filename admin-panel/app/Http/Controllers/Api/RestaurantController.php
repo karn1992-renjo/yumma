@@ -17,9 +17,12 @@ use App\Models\OrderItem;
 use App\Models\PartnerApplication;
 use App\Models\PrinterSetting;
 use App\Models\PromoCode;
+use App\Models\Promotion;
+use App\Models\PromotionCouponCode;
 use App\Models\Review;
 use App\Models\SupportTicket;
 use App\Models\User;
+use App\Rules\UniqueUserContactForRole;
 use App\Models\AppSetting;
 use App\Models\RestaurantStaff;
 use App\Events\NewOrderEvent;
@@ -27,11 +30,16 @@ use App\Events\OrderStatusUpdatedEvent;
 use App\Jobs\AutoMarkOrderPreparingJob;
 use App\Services\AutoAssignDriverService;
 use App\Services\GoogleMapsEtaService;
+use App\Services\MediaStorage;
 use App\Services\OrderStatusPushService;
 use App\Services\PrinterService;
+use App\Services\PromotionEngineService;
 use App\Services\RefundService;
+use App\Services\ScratchCardService;
 use App\Support\GatewayRegistry;
+use App\Support\PromotionTypeRegistry;
 use Illuminate\Http\Request;
+use Illuminate\Validation\Rule;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
@@ -296,8 +304,6 @@ class RestaurantController extends Controller
                 'success' => true,
                 'data' => [
                     'is_open' => (bool)$restaurant->is_open,
-                    'weekly_timings' => $restaurant->weekly_timings,
-                    'timezone' => $restaurant->timezone,
                 ],
                 'message' => $restaurant->is_open ? 'Restaurant is now open' : 'Restaurant is now closed'
             ]);
@@ -489,12 +495,6 @@ class RestaurantController extends Controller
             $request->validate([
                 'name' => 'required|string|max:255',
                 'description' => 'nullable|string',
-                'weekly_timings' => 'nullable|array',
-                'weekly_timings.*.is_open' => 'required_with:weekly_timings|boolean',
-                'weekly_timings.*.open_time' => 'nullable|date_format:H:i',
-                'weekly_timings.*.close_time' => 'nullable|date_format:H:i',
-                'weekly_timings.*.break_start' => 'nullable|date_format:H:i',
-                'weekly_timings.*.break_end' => 'nullable|date_format:H:i',
                 'image' => 'nullable|image|mimes:jpeg,png,jpg,webp|max:2048',
             ]);
 
@@ -697,6 +697,8 @@ class RestaurantController extends Controller
 
             DB::commit();
 
+            $this->issueScratchCardsForOrderEvent($order, 'restaurant_accepts');
+
             broadcast(new OrderStatusUpdatedEvent($order, $restaurant->id));
             app(OrderStatusPushService::class)->notifyParticipants(
                 $order,
@@ -709,18 +711,6 @@ class RestaurantController extends Controller
                 'data' => $this->formatOrderForApi($order)
             ]);
             
-        } catch (\Illuminate\Validation\ValidationException $e) {
-            return response()->json([
-                'success' => false,
-                'message' => collect($e->errors())->flatten()->first() ?: 'Please check the staff details.',
-                'errors' => $e->errors(),
-            ], 422);
-        } catch (\Illuminate\Validation\ValidationException $e) {
-            return response()->json([
-                'success' => false,
-                'message' => collect($e->errors())->flatten()->first() ?: 'Please check the staff details.',
-                'errors' => $e->errors(),
-            ], 422);
         } catch (\Exception $e) {
             if (DB::transactionLevel() > 0) {
                 DB::rollBack();
@@ -887,6 +877,10 @@ class RestaurantController extends Controller
 
             DB::commit();
 
+            if ($order->status === 'confirmed') {
+                $this->issueScratchCardsForOrderEvent($order, 'restaurant_accepts');
+            }
+
             if ($order->status === 'cancelled' && $order->payment_status === 'success') {
                 app(RefundService::class)->processRefund($order, 'Order cancelled by restaurant');
                 $order->refresh();
@@ -1046,6 +1040,8 @@ class RestaurantController extends Controller
 
             DB::commit();
 
+            $this->issueScratchCardsForOrderEvent($order, 'delivery');
+
             broadcast(new OrderStatusUpdatedEvent($order, $restaurant->id));
             app(OrderStatusPushService::class)->notifyParticipants(
                 $order,
@@ -1136,10 +1132,6 @@ class RestaurantController extends Controller
                 'auto_accept_orders' => 'nullable|boolean',
                 'order_lead_time' => 'nullable|integer|min:0',
                 'same_day_delivery' => 'nullable|boolean',
-                'weekly_timings' => 'nullable|array',
-                'weekly_timings.*.is_open' => 'required_with:weekly_timings|boolean',
-                'weekly_timings.*.open_time' => 'nullable|date_format:H:i',
-                'weekly_timings.*.close_time' => 'nullable|date_format:H:i',
             ]);
 
             if (array_key_exists('cuisine', $validated)) {
@@ -1226,8 +1218,8 @@ class RestaurantController extends Controller
 
             $validated = $request->validate([
                 'name' => 'required|string|max:255',
-                'phone' => 'required|string|max:20|unique:users,phone',
-                'email' => 'required|email|max:255|unique:users,email',
+                'phone' => ['required', 'string', 'max:20', UniqueUserContactForRole::phone('restaurant_staff')],
+                'email' => ['required', 'email', 'max:255', UniqueUserContactForRole::email('restaurant_staff')],
                 'role' => 'required|string|max:100',
                 'shift' => 'nullable|string|max:100',
                 'salary' => 'nullable|numeric|min:0',
@@ -1276,12 +1268,6 @@ class RestaurantController extends Controller
                 'message' => 'Staff member account created successfully.'
             ], 201);
             
-        } catch (\Illuminate\Validation\ValidationException $e) {
-            return response()->json([
-                'success' => false,
-                'message' => collect($e->errors())->flatten()->first() ?: 'Please check the staff details.',
-                'errors' => $e->errors(),
-            ], 422);
         } catch (\Exception $e) {
             if (DB::transactionLevel() > 0) {
                 DB::rollBack();
@@ -1313,8 +1299,8 @@ class RestaurantController extends Controller
 
             $validated = $request->validate([
                 'name' => 'nullable|string|max:255',
-                'phone' => 'nullable|string|max:20|unique:users,phone,' . ($staff->user_id ?? 'NULL'),
-                'email' => 'nullable|email|max:255|unique:users,email,' . ($staff->user_id ?? 'NULL'),
+                'phone' => ['nullable', 'string', 'max:20', UniqueUserContactForRole::phone('restaurant_staff', $staff->user_id)],
+                'email' => ['nullable', 'email', 'max:255', UniqueUserContactForRole::email('restaurant_staff', $staff->user_id)],
                 'role' => 'nullable|string|max:100',
                 'shift' => 'nullable|string|max:100',
                 'salary' => 'nullable|numeric|min:0',
@@ -1340,12 +1326,6 @@ class RestaurantController extends Controller
                 'message' => 'Staff member updated successfully.'
             ]);
             
-        } catch (\Illuminate\Validation\ValidationException $e) {
-            return response()->json([
-                'success' => false,
-                'message' => collect($e->errors())->flatten()->first() ?: 'Please check the staff details.',
-                'errors' => $e->errors(),
-            ], 422);
         } catch (\Exception $e) {
             if (DB::transactionLevel() > 0) {
                 DB::rollBack();
@@ -1521,9 +1501,6 @@ class RestaurantController extends Controller
     public function updateSettings(Request $request)
     {
         try {
-            if (is_string($request->input('weekly_timings'))) {
-                $request->merge(['weekly_timings' => json_decode($request->input('weekly_timings'), true)]);
-            }
             $user = auth()->user();
             $restaurant = $this->getAuthenticatedRestaurant($user);
 
@@ -1557,7 +1534,7 @@ class RestaurantController extends Controller
 
             $restaurant->update($request->only([
                 'name', 'email', 'phone', 'address', 'city', 'state', 'pincode',
-                'min_order_amount', 'delivery_time', 'description', 'weekly_timings'
+                'min_order_amount', 'delivery_time', 'description'
             ]));
 
             $user->update($request->only([
@@ -1647,7 +1624,7 @@ class RestaurantController extends Controller
                 'user_id' => $user->id,
                 'ticket_number' => 'SUP-' . now()->format('YmdHis') . '-' . strtoupper(substr((string) $restaurant->id, -4)),
                 'subject' => 'Restaurant location update request',
-                'category' => 'technical_support',
+                'category' => 'location_change',
                 'priority' => 'high',
                 'description' => implode("\n", array_filter([
                     'Restaurant has requested a location update.',
@@ -1700,9 +1677,15 @@ class RestaurantController extends Controller
                 ], 404);
             }
 
-            $promos = PromoCode::where('restaurant_id', $restaurant->id)
-                ->orderBy('created_at', 'desc')
-                ->get();
+            $promos = Promotion::query()
+                ->with('couponCodes')
+                ->where('owner_type', 'restaurant')
+                ->where('restaurant_id', $restaurant->id)
+                ->latest()
+                ->limit(100)
+                ->get()
+                ->map(fn (Promotion $promo) => $this->restaurantPromotionPayload($promo))
+                ->values();
 
             return response()->json([
                 'success' => true,
@@ -1733,35 +1716,146 @@ class RestaurantController extends Controller
                 ], 404);
             }
 
-            $validated = $request->validate([
-                'code' => 'required|string|max:50|unique:promo_codes,code',
-                'description' => 'nullable|string',
-                'discount_type' => 'required|in:percentage,fixed',
-                'discount_value' => 'required|numeric|min:0',
-                'min_order_amount' => 'nullable|numeric|min:0',
-                'max_discount_amount' => 'nullable|numeric|min:0',
-                'usage_limit' => 'nullable|integer|min:1',
-                'start_date' => 'required|date',
-                'end_date' => 'required|date|after:start_date',
-            ]);
+            $this->normalizePromoTargetInput($request);
+            $this->normalizePromoRewardConfigInput($request);
+            $normalizedType = PromotionTypeRegistry::normalize($request->input('promotion_type'));
+            $request->merge(['promotion_type' => $normalizedType !== '' ? $normalizedType : null]);
 
-            $validated['restaurant_id'] = $restaurant->id;
-            $validated['code'] = strtoupper($validated['code']);
-            $validated['used_count'] = 0;
-            $validated['is_active'] = true;
+            $validated = $this->validateRestaurantPromotionRequest($request);
 
-            $promo = PromoCode::create($validated);
+            $promo = DB::transaction(function () use ($request, $restaurant, $validated) {
+                $promotion = Promotion::create(
+                    $this->restaurantPromotionAttributes($request, $restaurant, $validated)
+                );
+                $this->syncRestaurantPromotionCoupon($promotion, $validated);
+
+                return $promotion->fresh('couponCodes');
+            });
 
             return response()->json([
                 'success' => true,
-                'data' => $promo,
-                'message' => 'Promo code created successfully.'
+                'data' => $this->restaurantPromotionPayload($promo),
+                'message' => 'Promotion created successfully.'
             ], 201);
             
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation failed',
+                'errors' => $e->errors(),
+            ], 422);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'An unexpected error occurred while processing the request.',
+            ], 500);
+        }
+    }
+
+    public function promoOptions()
+    {
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'promotion_types' => $this->restaurantPromotionTypes(),
+                'promotion_for' => [
+                    'restaurant' => 'Restaurant',
+                    'categories' => 'Categories',
+                    'items' => 'Items',
+                ],
+            ],
+        ]);
+    }
+
+    /**
+     * Show restaurant promo details
+     */
+    public function showPromo($id)
+    {
+        try {
+            $user = auth()->user();
+            $restaurant = $this->getAuthenticatedRestaurant($user);
+
+            if (!$restaurant) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Restaurant not found.'
+                ], 404);
+            }
+
+            $promo = Promotion::query()
+                ->with('couponCodes')
+                ->where('owner_type', 'restaurant')
+                ->where('restaurant_id', $restaurant->id)
+                ->findOrFail($id);
+
+            return response()->json([
+                'success' => true,
+                'data' => $this->restaurantPromotionPayload($promo),
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'An unexpected error occurred while loading the promo.',
+            ], 500);
+        }
+    }
+
+    /**
+     * Update restaurant promo details
+     */
+    public function updatePromo(Request $request, $id)
+    {
+        try {
+            $user = auth()->user();
+            $restaurant = $this->getAuthenticatedRestaurant($user);
+
+            if (!$restaurant) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Restaurant not found.'
+                ], 404);
+            }
+
+            $promo = Promotion::query()
+                ->with('couponCodes')
+                ->where('owner_type', 'restaurant')
+                ->where('restaurant_id', $restaurant->id)
+                ->findOrFail($id);
+
+            $this->normalizePromoTargetInput($request);
+            $this->normalizePromoRewardConfigInput($request);
+            $normalizedType = PromotionTypeRegistry::normalize($request->input('promotion_type'));
+            $request->merge(['promotion_type' => $normalizedType !== '' ? $normalizedType : null]);
+
+            $validated = $this->validateRestaurantPromotionRequest($request, $promo);
+
+            $promo = DB::transaction(function () use ($request, $restaurant, $validated, $promo) {
+                $attributes = $this->restaurantPromotionAttributes($request, $restaurant, $validated, $promo);
+                if ($request->hasFile('promo_image') && $promo->image_path) {
+                    MediaStorage::delete($promo->image_path);
+                }
+                $promo->update($attributes);
+                $this->syncRestaurantPromotionCoupon($promo->fresh('couponCodes'), $validated);
+
+                return $promo->fresh('couponCodes');
+            });
+
+            return response()->json([
+                'success' => true,
+                'data' => $this->restaurantPromotionPayload($promo),
+                'message' => 'Promotion updated successfully.'
+            ]);
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation failed',
+                'errors' => $e->errors(),
+            ], 422);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'An unexpected error occurred while updating the promo.',
             ], 500);
         }
     }
@@ -1782,14 +1876,19 @@ class RestaurantController extends Controller
                 ], 404);
             }
 
-            $promo = PromoCode::where('restaurant_id', $restaurant->id)->findOrFail($id);
-            $promo->is_active = !$promo->is_active;
+            $promo = Promotion::query()
+                ->where('owner_type', 'restaurant')
+                ->where('restaurant_id', $restaurant->id)
+                ->findOrFail($id);
+            $promo->status = $promo->status === Promotion::STATUS_ACTIVE
+                ? Promotion::STATUS_PAUSED
+                : Promotion::STATUS_ACTIVE;
             $promo->save();
 
             return response()->json([
                 'success' => true,
-                'data' => $promo,
-                'message' => 'Promo status updated successfully.'
+                'data' => $this->restaurantPromotionPayload($promo->fresh('couponCodes')),
+                'message' => 'Promotion status updated successfully.'
             ]);
             
         } catch (\Exception $e) {
@@ -1816,12 +1915,18 @@ class RestaurantController extends Controller
                 ], 404);
             }
 
-            $promo = PromoCode::where('restaurant_id', $restaurant->id)->findOrFail($id);
+            $promo = Promotion::query()
+                ->where('owner_type', 'restaurant')
+                ->where('restaurant_id', $restaurant->id)
+                ->findOrFail($id);
+            if ($promo->image_path) {
+                MediaStorage::delete($promo->image_path);
+            }
             $promo->delete();
 
             return response()->json([
                 'success' => true,
-                'message' => 'Promo deleted successfully.'
+                'message' => 'Promotion deleted successfully.'
             ]);
             
         } catch (\Exception $e) {
@@ -1830,6 +1935,499 @@ class RestaurantController extends Controller
                 'message' => 'An unexpected error occurred while processing the request.',
             ], 500);
         }
+    }
+
+    private function normalizePromoTargetInput(Request $request): void
+    {
+        if (! $request->has('target_ids')) {
+            return;
+        }
+
+        $targetIds = $request->input('target_ids');
+        if (is_string($targetIds)) {
+            $decoded = json_decode($targetIds, true);
+            $targetIds = is_array($decoded)
+                ? $decoded
+                : array_filter(array_map('trim', explode(',', $targetIds)));
+        }
+
+        $request->merge(['target_ids' => is_array($targetIds) ? $targetIds : []]);
+    }
+
+    private function normalizePromoRewardConfigInput(Request $request): void
+    {
+        if (! $request->has('reward_config')) {
+            return;
+        }
+
+        $config = $request->input('reward_config');
+        if (is_string($config)) {
+            $decoded = json_decode($config, true);
+            $config = is_array($decoded) ? $decoded : [];
+        }
+
+        $request->merge(['reward_config' => is_array($config) ? $config : []]);
+    }
+
+    private function validateRestaurantPromotionRequest(Request $request, ?Promotion $promotion = null): array
+    {
+        $applicationMode = $request->input('application_mode', 'coupon') === 'automatic'
+            ? 'automatic'
+            : 'coupon';
+        if ($applicationMode === 'automatic') {
+            $request->merge(['code' => null]);
+        }
+        $coupon = $promotion?->couponCodes()->first();
+        $codeRule = Rule::unique('promotion_coupon_codes', 'code');
+        if ($coupon) {
+            $codeRule->ignore($coupon->id);
+        }
+
+        $validated = $request->validate([
+            'title' => 'nullable|string|max:255',
+            'code' => ['nullable', 'string', 'max:50', $codeRule],
+            'description' => 'nullable|string',
+            'application_mode' => 'nullable|in:coupon,automatic',
+            'promotion_type' => ['nullable', 'string', 'max:80', Rule::in(array_keys($this->restaurantPromotionTypes()))],
+            'reward_type' => 'nullable|string|max:80',
+            'reward_config' => 'nullable|array',
+            'combo_groups' => 'nullable|array',
+            'discount_type' => 'nullable|in:percentage,fixed,flat',
+            'discount_value' => 'nullable|numeric|min:0',
+            'min_order_amount' => 'nullable|numeric|min:0',
+            'max_discount_amount' => 'nullable|numeric|min:0',
+            'usage_limit' => 'nullable|integer|min:1',
+            'per_user_limit' => 'nullable|integer|min:1',
+            'audience_type' => 'nullable|in:all,new_customer,returning_customer',
+            'target_type' => 'nullable|in:restaurant,categories,items',
+            'target_ids' => 'nullable|array',
+            'target_ids.*' => 'integer|min:1',
+            'coupon_type' => 'nullable|in:public,prepaid',
+            'assigned_to' => 'nullable|integer|exists:users,id',
+            'promo_image' => 'nullable|image|mimes:jpeg,png,jpg,gif,webp|max:4096',
+            'start_date' => 'required|date',
+            'end_date' => 'required|date|after:start_date',
+            'is_active' => 'nullable|boolean',
+        ]);
+
+        $validated['application_mode'] = $applicationMode;
+        if ($applicationMode === 'coupon' && trim((string) ($validated['code'] ?? '')) === '') {
+            throw \Illuminate\Validation\ValidationException::withMessages([
+                'code' => 'Coupon code is required for coupon promotions.',
+            ]);
+        }
+
+        if (! empty($validated['code'])) {
+            $validated['code'] = strtoupper(trim((string) $validated['code']));
+        }
+
+        $this->applyPromoShapeDefaults($validated);
+        $validated['audience_type'] = $validated['audience_type'] ?? 'all';
+        $validated['target_type'] = $validated['target_type'] ?? 'restaurant';
+        $validated['coupon_type'] = $validated['coupon_type'] ?? 'public';
+
+        return $validated;
+    }
+
+    private function restaurantPromotionAttributes(Request $request, Restaurant $restaurant, array $validated, ?Promotion $promotion = null): array
+    {
+        $targetIds = $this->sanitizePromoTargetIds(
+            (string) $validated['target_type'],
+            $validated['target_ids'] ?? [],
+            $restaurant->id
+        );
+        $itemIds = $validated['target_type'] === 'items' ? $targetIds : [];
+        $categoryIds = $validated['target_type'] === 'categories' ? $targetIds : [];
+        $rewardConfig = $validated['reward_config'] ?? [];
+        $fallbackPrice = isset($validated['discount_value']) ? (float) $validated['discount_value'] : null;
+        $comboGroups = $this->normalizeRestaurantComboGroups(
+            (array) ($rewardConfig['combo_groups'] ?? $validated['combo_groups'] ?? []),
+            $restaurant->id,
+            $fallbackPrice,
+            $itemIds
+        );
+        if (in_array($validated['promotion_type'], ['combo_deal', 'meal_deal'], true)) {
+            $itemIds = collect($comboGroups)
+                ->flatMap(fn (array $group) => $group['item_ids'] ?? [])
+                ->merge($itemIds)
+                ->map(fn ($id) => (int) $id)
+                ->filter()
+                ->unique()
+                ->values()
+                ->all();
+        }
+
+        $buyQuantity = (int) ($rewardConfig['buy_quantity'] ?? 0);
+        $freeQuantity = (int) ($rewardConfig['free_quantity'] ?? 0);
+        $freeItemId = (int) ($rewardConfig['free_item_id'] ?? $rewardConfig['item_id'] ?? 0);
+        if ($freeItemId > 0 && ! MenuItem::where('restaurant_id', $restaurant->id)->whereKey($freeItemId)->exists()) {
+            $freeItemId = 0;
+        }
+        $rewardType = $validated['reward_type'];
+        $buyRule = $this->restaurantBuyRule($validated['promotion_type'], $rewardType, $buyQuantity);
+        $rewardRule = $this->restaurantRewardRule($validated['promotion_type'], $rewardType, $buyQuantity, $freeQuantity, $itemIds, $freeItemId);
+        $rewards = array_filter(array_merge($rewardConfig, [
+            'type' => $rewardType,
+            'value' => (float) ($validated['discount_value'] ?? 0),
+            'max_discount' => $validated['max_discount_amount'] ?? null,
+            'item_ids' => $itemIds,
+            'category_ids' => $categoryIds,
+            'combo_groups' => $comboGroups,
+            'buy_quantity' => $buyQuantity > 0 ? $buyQuantity : null,
+            'free_quantity' => $freeQuantity > 0 ? $freeQuantity : null,
+            'free_item_id' => $freeItemId > 0 ? $freeItemId : null,
+            'reward_rule' => $rewardRule,
+        ]), fn ($value) => $value !== null && $value !== []);
+
+        $imagePath = $promotion?->image_path;
+        if ($request->hasFile('promo_image')) {
+            $imagePath = MediaStorage::store($request->file('promo_image'), 'promos');
+        }
+
+        $title = trim((string) ($validated['title'] ?? ''));
+        if ($title === '') {
+            $title = trim((string) ($validated['description'] ?? '')) ?: ($validated['code'] ?? 'Restaurant Promotion');
+        }
+
+        return [
+            'owner_type' => 'restaurant',
+            'owner_id' => $restaurant->id,
+            'restaurant_id' => $restaurant->id,
+            'title' => $title,
+            'slug' => $promotion?->slug ?: Str::slug($title ?: 'promotion') . '-' . Str::lower(Str::random(6)),
+            'description' => $validated['description'] ?? null,
+            'promotion_type' => $validated['promotion_type'],
+            'application_mode' => $validated['application_mode'],
+            'status' => ($validated['is_active'] ?? true) ? Promotion::STATUS_ACTIVE : Promotion::STATUS_PAUSED,
+            'priority' => $promotion?->priority ?? 100,
+            'image_path' => $imagePath,
+            'starts_at' => Carbon::parse($validated['start_date']),
+            'ends_at' => Carbon::parse($validated['end_date']),
+            'targets' => [
+                'restaurant_ids' => [$restaurant->id],
+                'item_ids' => $itemIds,
+                'category_ids' => $categoryIds,
+                'audience_type' => $validated['audience_type'],
+            ],
+            'conditions' => [
+                'min_order_amount' => $validated['min_order_amount'] ?? null,
+                'audience_type' => $validated['audience_type'],
+                'first_order_only' => (bool) ($rewardConfig['first_order_only'] ?? false),
+                'new_users_only' => (bool) ($rewardConfig['new_users_only'] ?? false),
+                'buy_rule' => $buyRule,
+            ],
+            'rewards' => $rewards,
+            'visibility' => [
+                'show_usage' => (bool) ($rewardConfig['show_usage'] ?? true),
+            ],
+            'total_usage_limit' => $validated['usage_limit'] ?? null,
+            'per_user_usage_limit' => $validated['per_user_limit'] ?? null,
+        ];
+    }
+
+    private function normalizeRestaurantComboGroups(array $groups, int $restaurantId, ?float $fallbackPrice, array $fallbackItemIds = []): array
+    {
+        if ($groups === [] && count($fallbackItemIds) >= 2) {
+            $groups = [[
+                'name' => 'Combo 1',
+                'item_ids' => $fallbackItemIds,
+                'price' => $fallbackPrice,
+            ]];
+        }
+
+        $allIds = collect($groups)
+            ->flatMap(fn ($group) => is_array($group) ? (array) ($group['item_ids'] ?? []) : [])
+            ->map(fn ($id) => (int) $id)
+            ->filter()
+            ->unique()
+            ->values()
+            ->all();
+
+        $priceByItemId = MenuItem::query()
+            ->where('restaurant_id', $restaurantId)
+            ->whereIn('id', $allIds)
+            ->pluck('price', 'id');
+
+        return collect($groups)
+            ->filter(fn ($group) => is_array($group))
+            ->map(function (array $group, int $index) use ($priceByItemId, $fallbackPrice) {
+                $itemIds = collect($group['item_ids'] ?? [])
+                    ->map(fn ($id) => (int) $id)
+                    ->filter(fn (int $id) => $id > 0 && $priceByItemId->has($id))
+                    ->unique()
+                    ->values()
+                    ->all();
+                if (count($itemIds) < 2) {
+                    return null;
+                }
+
+                $actualPrice = round((float) collect($itemIds)->sum(fn (int $id) => (float) $priceByItemId[$id]), 2);
+                $price = isset($group['price']) && $group['price'] !== ''
+                    ? (float) $group['price']
+                    : $fallbackPrice;
+                if (! $price || $price <= 0) {
+                    return null;
+                }
+
+                return [
+                    'key' => 'combo_' . ($index + 1),
+                    'name' => trim((string) ($group['name'] ?? '')) ?: 'Combo ' . ($index + 1),
+                    'item_ids' => $itemIds,
+                    'actual_price' => $actualPrice,
+                    'price' => round($price, 2),
+                    'discount_percent' => $actualPrice > 0 ? max(0, round((($actualPrice - $price) / $actualPrice) * 100, 2)) : null,
+                ];
+            })
+            ->filter()
+            ->values()
+            ->all();
+    }
+
+    private function restaurantBuyRule(string $promotionType, string $rewardType, int $buyQuantity): array
+    {
+        if (! in_array($promotionType, ['bogo', 'buy_x_get_y', 'buy_2_get_1', 'buy_3_get_1', 'buy_3_get_2', 'free_item'], true)
+            && ! in_array($rewardType, ['bogo', 'buy_x_get_y', 'buy_2_get_1', 'buy_3_get_1', 'buy_3_get_2', 'free_item'], true)) {
+            return [];
+        }
+
+        return ['buy_quantity' => max(1, $buyQuantity ?: match ($promotionType) {
+            'buy_2_get_1' => 2,
+            'buy_3_get_1' => 3,
+            'buy_3_get_2' => 3,
+            default => 1,
+        })];
+    }
+
+    private function restaurantRewardRule(string $promotionType, string $rewardType, int $buyQuantity, int $freeQuantity, array $itemIds, int $freeItemId = 0): array
+    {
+        if (! in_array($promotionType, ['bogo', 'buy_x_get_y', 'buy_2_get_1', 'buy_3_get_1', 'buy_3_get_2', 'free_item'], true)
+            && ! in_array($rewardType, ['bogo', 'buy_x_get_y', 'buy_2_get_1', 'buy_3_get_1', 'buy_3_get_2', 'free_item'], true)) {
+            return [];
+        }
+
+        return [
+            'reward_type' => $freeItemId > 0 ? 'configured_item' : 'same_item',
+            'reward_quantity' => max(1, $freeQuantity ?: 1),
+            'buy_quantity' => max(1, $buyQuantity ?: 1),
+            'auto_add' => true,
+            'manual_selection' => false,
+            'item_ids' => $freeItemId > 0 ? [$freeItemId] : $itemIds,
+        ];
+    }
+
+    private function syncRestaurantPromotionCoupon(Promotion $promotion, array $validated): void
+    {
+        if ($promotion->application_mode !== 'coupon' || empty($validated['code'])) {
+            $promotion->couponCodes()->delete();
+            return;
+        }
+
+        $promotion->couponCodes()
+            ->where('code', '!=', $validated['code'])
+            ->delete();
+
+        PromotionCouponCode::updateOrCreate(
+            ['code' => $validated['code']],
+            [
+                'promotion_id' => $promotion->id,
+                'user_id' => ($validated['coupon_type'] ?? 'public') === 'prepaid'
+                    ? ($validated['assigned_to'] ?? null)
+                    : null,
+                'usage_limit' => $validated['usage_limit'] ?? null,
+                'is_active' => $promotion->status === Promotion::STATUS_ACTIVE,
+                'starts_at' => $promotion->starts_at,
+                'ends_at' => $promotion->ends_at,
+                'metadata' => [
+                    'coupon_type' => $validated['coupon_type'] ?? 'public',
+                ],
+            ]
+        );
+    }
+
+    private function applyPromoShapeDefaults(array &$validated): void
+    {
+        $promotionType = PromotionTypeRegistry::normalize($validated['promotion_type'] ?? null);
+        if (! is_string($promotionType) || ! array_key_exists($promotionType, $this->restaurantPromotionTypes())) {
+            $promotionType = ($validated['discount_type'] ?? null) === 'fixed'
+                ? 'flat_discount'
+                : 'percentage_discount';
+        }
+
+        $meta = $this->restaurantPromotionTypes()[$promotionType];
+        $validated['promotion_type'] = $promotionType;
+        $validated['reward_type'] = $meta['reward_type'];
+        $validated['discount_type'] = $validated['discount_type'] ?? $meta['discount_type'];
+        $validated['target_type'] = $validated['target_type'] ?? ($meta['target_type'] ?? 'restaurant');
+        $validated['discount_value'] = (float) ($validated['discount_value'] ?? 0);
+        $validated['reward_config'] = array_merge($meta['defaults'] ?? [], $validated['reward_config'] ?? []);
+        unset($validated['reward_config']['custom_rule']);
+    }
+
+    private function restaurantPromotionTypes(): array
+    {
+        return PromotionTypeRegistry::restaurantTypes();
+    }
+
+    private function sanitizePromoTargetIds(string $targetType, array $targetIds, ?int $restaurantId = null): array
+    {
+        if ($targetType === 'restaurant') {
+            return [];
+        }
+
+        $ids = collect($targetIds)
+            ->map(fn ($id) => (int) $id)
+            ->filter(fn ($id) => $id > 0)
+            ->unique()
+            ->values();
+
+        if (! $restaurantId) {
+            return $ids->all();
+        }
+
+        if ($targetType === 'categories') {
+            return Category::where('restaurant_id', $restaurantId)
+                ->whereIn('id', $ids)
+                ->pluck('id')
+                ->map(fn ($id) => (int) $id)
+                ->all();
+        }
+
+        return MenuItem::where('restaurant_id', $restaurantId)
+            ->whereIn('id', $ids)
+            ->pluck('id')
+            ->map(fn ($id) => (int) $id)
+            ->all();
+    }
+
+    private function restaurantPromotionPayload(Promotion $promotion): array
+    {
+        $promotion->loadMissing('couponCodes');
+        $coupon = $promotion->couponCodes->first();
+        $reward = $promotion->rewards ?? [];
+        $conditions = $promotion->conditions ?? [];
+        $targets = $promotion->targets ?? [];
+        $types = $this->restaurantPromotionTypes();
+        $promotionType = PromotionTypeRegistry::normalize($promotion->promotion_type);
+        $meta = $types[$promotionType] ?? $types['percentage_discount'];
+        $itemIds = array_values(array_filter(array_map('intval', (array) ($targets['item_ids'] ?? $reward['item_ids'] ?? []))));
+        $categoryIds = array_values(array_filter(array_map('intval', (array) ($targets['category_ids'] ?? $reward['category_ids'] ?? []))));
+        $targetType = $itemIds !== []
+            ? 'items'
+            : ($categoryIds !== [] ? 'categories' : 'restaurant');
+        $targetIds = $targetType === 'items'
+            ? $itemIds
+            : ($targetType === 'categories' ? $categoryIds : []);
+        $imageUrl = $promotion->image_url;
+
+        return [
+            'id' => $promotion->id,
+            'code' => $coupon?->code,
+            'coupon_code' => $coupon?->code,
+            'title' => $promotion->title,
+            'description' => $promotion->description,
+            'promotion_type' => $promotionType,
+            'application_mode' => $promotion->application_mode,
+            'owner_type' => 'restaurant',
+            'restaurant_id' => $promotion->restaurant_id,
+            'discount_type' => $meta['discount_type'] ?? $reward['type'] ?? null,
+            'discount_value' => (float) ($reward['value'] ?? 0),
+            'reward_type' => $reward['type'] ?? ($meta['reward_type'] ?? $promotionType),
+            'reward_config' => $reward,
+            'max_discount_amount' => isset($reward['max_discount']) ? (float) $reward['max_discount'] : null,
+            'min_order_amount' => isset($conditions['min_order_amount']) ? (float) $conditions['min_order_amount'] : null,
+            'min_order_value' => isset($conditions['min_order_amount']) ? (float) $conditions['min_order_amount'] : null,
+            'usage_limit' => $promotion->total_usage_limit,
+            'per_user_limit' => $promotion->per_user_usage_limit,
+            'used_count' => (int) ($coupon?->used_count ?? $promotion->used_count ?? 0),
+            'audience_type' => $conditions['audience_type'] ?? $targets['audience_type'] ?? 'all',
+            'target_type' => $targetType,
+            'target_ids' => $targetIds,
+            'promotion_for' => $targetType,
+            'coupon_type' => data_get($coupon?->metadata, 'coupon_type', $coupon?->user_id ? 'prepaid' : 'public'),
+            'assigned_to' => $coupon?->user_id,
+            'is_active' => $promotion->status === Promotion::STATUS_ACTIVE,
+            'status' => $promotion->status,
+            'start_date' => $promotion->starts_at,
+            'end_date' => $promotion->ends_at,
+            'valid_from' => $promotion->starts_at,
+            'valid_to' => $promotion->ends_at,
+            'promo_image' => $imageUrl,
+            'promo_image_url' => $imageUrl,
+            'image' => $imageUrl,
+            'image_url' => $imageUrl,
+            'conditions' => $conditions,
+            'rewards' => $reward,
+        ];
+    }
+
+    private function restaurantPromoPayload(PromoCode $promo): array
+    {
+        $promo->loadMissing('restaurant:id,name');
+        $promotionType = PromotionTypeRegistry::normalize(
+            $promo->promotion_type ?: (($promo->discount_type ?? 'percentage') === 'percentage' ? 'percentage_discount' : 'flat_discount')
+        );
+        $types = $this->restaurantPromotionTypes();
+        if (! array_key_exists($promotionType, $types)) {
+            $promotionType = (($promo->discount_type ?? 'percentage') === 'fixed' || ($promo->discount_type ?? null) === 'flat')
+                ? 'flat_discount'
+                : 'percentage_discount';
+        }
+        $meta = $types[$promotionType];
+        $rewardType = $meta['reward_type'];
+        $discountType = $meta['discount_type'] ?? $promo->discount_type;
+
+        return [
+            'id' => $promo->id,
+            'legacy_id' => $promo->id,
+            'migrated_from_type' => 'promo_code',
+            'migrated_from_id' => $promo->id,
+            'code' => $promo->code,
+            'coupon_code' => $promo->code,
+            'title' => $promo->title ?: $promo->code,
+            'description' => $promo->description,
+            'promotion_type' => $promotionType,
+            'application_mode' => 'coupon',
+            'owner_type' => 'restaurant',
+            'restaurant_id' => $promo->restaurant_id,
+            'restaurant_name' => $promo->restaurant?->name,
+            'discount_type' => $discountType,
+            'discount_value' => (float) $promo->discount_value,
+            'reward_type' => $rewardType,
+            'reward_config' => $promo->reward_config ?? [],
+            'max_discount_amount' => $promo->max_discount_amount !== null ? (float) $promo->max_discount_amount : null,
+            'min_order_amount' => $promo->min_order_amount !== null ? (float) $promo->min_order_amount : null,
+            'min_order_value' => $promo->min_order_amount !== null ? (float) $promo->min_order_amount : null,
+            'usage_limit' => $promo->usage_limit,
+            'used_count' => (int) $promo->used_count,
+            'audience_type' => $promo->audience_type ?: 'all',
+            'target_type' => $promo->target_type ?: 'restaurant',
+            'target_ids' => $promo->target_ids ?? [],
+            'promotion_for' => $promo->target_type ?: 'restaurant',
+            'coupon_type' => $promo->coupon_type ?: 'public',
+            'assigned_to' => $promo->assigned_to,
+            'is_active' => (bool) $promo->is_active,
+            'status' => $promo->is_active ? 'active' : 'draft',
+            'start_date' => $promo->start_date,
+            'end_date' => $promo->end_date,
+            'valid_from' => $promo->start_date,
+            'valid_to' => $promo->end_date,
+            'promo_image' => $promo->promo_image_url,
+            'promo_image_url' => $promo->promo_image_url,
+            'image' => $promo->promo_image_url,
+            'image_url' => $promo->promo_image_url,
+            'conditions' => [
+                'min_order_amount' => $promo->min_order_amount !== null ? (float) $promo->min_order_amount : null,
+                'audience_type' => $promo->audience_type ?: 'all',
+                'target_type' => $promo->target_type ?: 'restaurant',
+                'target_ids' => $promo->target_ids ?? [],
+            ],
+            'rewards' => [
+                'type' => $rewardType,
+                'value' => (float) $promo->discount_value,
+                'max_discount' => $promo->max_discount_amount !== null ? (float) $promo->max_discount_amount : null,
+                'config' => $promo->reward_config ?? [],
+            ],
+        ];
     }
 
     /**
@@ -2145,6 +2743,12 @@ class RestaurantController extends Controller
             $totalRevenue = round((float) $revenueOrders->sum('total'), 2);
             $totalOrders = (int) $revenueOrders->count();
             $avgOrderValue = $totalOrders > 0 ? $totalRevenue / $totalOrders : 0;
+            $promotionPerformance = $this->buildPromotionPerformance(
+                $restaurant->id,
+                $startDate,
+                $endDate,
+                $revenueOrders
+            );
 
             return response()->json([
                 'success' => true,
@@ -2159,6 +2763,7 @@ class RestaurantController extends Controller
                     'daily_orders' => $dailyData->values(),
                     'top_items' => $topItems,
                     'hourly_data' => $hourlyData,
+                    'promotion_performance' => $promotionPerformance,
                 ]
             ]);
             
@@ -2168,6 +2773,100 @@ class RestaurantController extends Controller
                 'message' => 'An unexpected error occurred while processing the request.',
             ], 500);
         }
+    }
+
+    private function buildPromotionPerformance(int $restaurantId, Carbon $startDate, Carbon $endDate, $orders)
+    {
+        $totalPromotions = 0;
+        $activePromotions = 0;
+        $topPromos = collect();
+
+        if (Schema::hasTable('promo_codes')) {
+            $totalPromotions = PromoCode::where('restaurant_id', $restaurantId)->count();
+            $activePromotions = PromoCode::where('restaurant_id', $restaurantId)
+                ->where('is_active', true)
+                ->where(function ($query) use ($endDate) {
+                    $query->whereNull('start_date')->orWhere('start_date', '<=', $endDate);
+                })
+                ->where(function ($query) use ($startDate) {
+                    $query->whereNull('end_date')->orWhere('end_date', '>=', $startDate);
+                })
+                ->count();
+        }
+
+        $usageCount = 0;
+        $discountGiven = 0.0;
+
+        if (Schema::hasTable('promotion_usage')) {
+            $usageRows = DB::table('promotion_usage')
+                ->leftJoin('promotions', 'promotion_usage.promotion_id', '=', 'promotions.id')
+                ->where('promotion_usage.restaurant_id', $restaurantId)
+                ->whereBetween('promotion_usage.created_at', [$startDate, $endDate])
+                ->groupBy('promotion_usage.promotion_id', 'promotion_usage.coupon_code', 'promotions.title')
+                ->selectRaw('promotion_usage.promotion_id, promotion_usage.coupon_code, promotions.title')
+                ->selectRaw('COUNT(DISTINCT promotion_usage.order_id) as usage_count')
+                ->selectRaw('SUM(promotion_usage.discount_amount) as discount_given')
+                ->orderByDesc('usage_count')
+                ->limit(5)
+                ->get();
+
+            $usageCount = (int) DB::table('promotion_usage')
+                ->where('restaurant_id', $restaurantId)
+                ->whereBetween('created_at', [$startDate, $endDate])
+                ->distinct('order_id')
+                ->count('order_id');
+
+            $discountGiven = round((float) DB::table('promotion_usage')
+                ->where('restaurant_id', $restaurantId)
+                ->whereBetween('created_at', [$startDate, $endDate])
+                ->sum('discount_amount'), 2);
+
+            $legacyNames = Schema::hasTable('promo_codes')
+                ? PromoCode::where('restaurant_id', $restaurantId)
+                    ->get(['code', 'title'])
+                    ->mapWithKeys(fn ($promo) => [strtoupper((string) $promo->code) => $promo->title ?: $promo->code])
+                : collect();
+
+            $topPromos = $usageRows->map(function ($row) use ($legacyNames) {
+                $code = $row->coupon_code ?: 'Auto promotion';
+                $lookup = strtoupper((string) $code);
+
+                return [
+                    'title' => $row->title ?: ($legacyNames[$lookup] ?? $code),
+                    'code' => $row->coupon_code,
+                    'usage_count' => (int) $row->usage_count,
+                    'discount_given' => round((float) $row->discount_given, 2),
+                ];
+            });
+        }
+
+        if ($usageCount === 0) {
+            $discountedOrders = $orders->filter(fn ($order) => (float) ($order->discount ?? 0) > 0);
+            $usageCount = (int) $discountedOrders->count();
+            $discountGiven = round((float) $discountedOrders->sum('discount'), 2);
+        }
+
+        if ($topPromos->isEmpty() && Schema::hasTable('promo_codes')) {
+            $topPromos = PromoCode::where('restaurant_id', $restaurantId)
+                ->orderByDesc('used_count')
+                ->limit(5)
+                ->get()
+                ->map(fn (PromoCode $promo) => [
+                    'title' => $promo->title ?: $promo->code,
+                    'code' => $promo->code,
+                    'usage_count' => (int) ($promo->used_count ?? 0),
+                    'discount_given' => 0.0,
+                ]);
+        }
+
+        return [
+            'total_promotions' => (int) $totalPromotions,
+            'active_promotions' => (int) $activePromotions,
+            'coupon_orders' => (int) $usageCount,
+            'discount_given' => round((float) $discountGiven, 2),
+            'avg_discount' => $usageCount > 0 ? round($discountGiven / $usageCount, 2) : 0,
+            'top_promos' => $topPromos->values(),
+        ];
     }
 
     private function buildTopSellingItems(int $restaurantId, Carbon $startDate, Carbon $endDate)
@@ -2595,8 +3294,6 @@ class RestaurantController extends Controller
                     'page' => 1,
                     'per_page' => $data->count(),
                     'total' => $data->count(),
-                    'restaurant_count' => $data->count(),
-                    'item_count' => $matchedMenuItems->count(),
                     'has_more' => false,
                     'next_page' => null,
                 ],
@@ -2840,6 +3537,22 @@ class RestaurantController extends Controller
             'banner_image' => \App\Services\MediaStorage::url($restaurant->banner_image),
             'cover_image' => \App\Services\MediaStorage::url($restaurant->cover_image),
         ];
+    }
+
+    private function issueScratchCardsForOrderEvent(Order $order, string $event): void
+    {
+        try {
+            app(ScratchCardService::class)->issueForRecordedUsage(
+                $order->fresh(['customer', 'restaurant']),
+                $event
+            );
+        } catch (\Throwable $e) {
+            Log::warning('Scratch card issue failed for restaurant order event.', [
+                'order_id' => $order->id,
+                'event' => $event,
+                'message' => $e->getMessage(),
+            ]);
+        }
     }
 
     /**

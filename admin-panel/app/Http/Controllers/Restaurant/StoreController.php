@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Restaurant;
 
 use App\Http\Controllers\Controller;
+use App\Models\AppSetting;
 use App\Models\Restaurant;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -14,17 +15,54 @@ class StoreController extends Controller
     {
         $restaurants = Auth::user()->restaurants()
             ->withCount([
-                'orders as delivered_orders_count' => fn ($query) => $query->where('status', 'delivered'),
+                'orders as delivered_orders_count' => function ($query) {
+                    $query->where('status', 'delivered');
+                },
             ])
             ->withSum([
-                'orders as delivered_revenue' => fn ($query) => $query->where('status', 'delivered'),
+                'orders as delivered_revenue' => function ($query) {
+                    $query->where('status', 'delivered');
+                },
             ], 'total')
             ->get();
         $currentRestaurant = Auth::user()->current_restaurant_id 
             ? Restaurant::find(Auth::user()->current_restaurant_id)
             : $restaurants->first();
+        $currencySymbol = AppSetting::sanitizedCurrencySymbol();
+        $currencyDecimals = AppSetting::currencyDecimals();
+        $currentRestaurantId = $currentRestaurant ? $currentRestaurant->id : null;
+        $currentStore = [
+            'name' => $currentRestaurant ? $currentRestaurant->name : 'No restaurant selected',
+            'status_label' => $currentRestaurant && $currentRestaurant->is_open ? 'Online' : 'Offline',
+            'status_class' => $currentRestaurant && $currentRestaurant->is_open ? 'bg-success' : 'bg-danger',
+            'has_store' => (bool) $currentRestaurant,
+        ];
+        $storeRows = $restaurants->map(function ($restaurant) use ($currencySymbol, $currencyDecimals, $currentRestaurantId) {
+            $locationParts = collect([$restaurant->city, $restaurant->state])
+                ->filter(function ($value) {
+                    return trim((string) $value) !== '';
+                })
+                ->values();
+
+            return [
+                'id' => $restaurant->id,
+                'name' => $restaurant->name,
+                'location' => $locationParts->isNotEmpty() ? $locationParts->implode(', ') : 'Location not set',
+                'orders' => number_format((int) ($restaurant->delivered_orders_count ?? 0)),
+                'revenue' => $currencySymbol . number_format((float) ($restaurant->delivered_revenue ?? 0), $currencyDecimals),
+                'is_verified' => (bool) $restaurant->is_verified,
+                'is_active' => (int) $restaurant->id === (int) $currentRestaurantId,
+                'is_open' => (bool) $restaurant->is_open,
+            ];
+        })->values();
             
-        return view('restaurant.stores.index', compact('restaurants', 'currentRestaurant'));
+        return view('restaurant.stores.index', compact(
+            'restaurants',
+            'currentRestaurant',
+            'currencySymbol',
+            'currentStore',
+            'storeRows'
+        ));
     }
     
     public function create()

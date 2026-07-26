@@ -1,11 +1,14 @@
 // lib/services/location_service.dart
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
 class LocationService {
+  static const MethodChannel _nativeSettingsChannel =
+      MethodChannel('com.adgraph.yamma_delivery/order_alerts');
   static const String _savedCityKey = 'saved_city';
   static const String _savedLatKey = 'saved_latitude';
   static const String _savedLngKey = 'saved_longitude';
@@ -50,6 +53,18 @@ class LocationService {
     return await Geolocator.openAppSettings();
   }
 
+  Future<bool> openAppLocationSettings() async {
+    try {
+      final opened = await _nativeSettingsChannel.invokeMethod<bool>(
+        'openAppLocationSettings',
+      );
+      return opened ?? false;
+    } catch (e) {
+      debugPrint('Open app location settings failed: $e');
+      return await Geolocator.openAppSettings();
+    }
+  }
+
   Future<bool> openLocationSettings() async {
     return await Geolocator.openLocationSettings();
   }
@@ -63,7 +78,7 @@ class LocationService {
       final response = await http.get(
         Uri.parse('https://nominatim.openstreetmap.org/reverse?lat=$lat&lon=$lng&format=json&accept-language=en'),
         headers: {
-          'User-Agent': 'YummaDriver/1.0 (https://food.unisell.online)',
+          'User-Agent': 'YummaDriver/1.0 (https://yumma.in)',
           'Accept-Language': 'en',
         },
       );
@@ -92,7 +107,7 @@ class LocationService {
       final response = await http.get(
         Uri.parse('https://nominatim.openstreetmap.org/reverse?lat=$lat&lon=$lng&format=json&addressdetails=1&accept-language=en'),
         headers: {
-          'User-Agent': 'YummaDriver/1.0 (https://food.unisell.online)',
+          'User-Agent': 'YummaDriver/1.0 (https://yumma.in)',
           'Accept-Language': 'en',
         },
       );
@@ -141,7 +156,7 @@ class LocationService {
       final response = await http.get(
         Uri.parse('https://nominatim.openstreetmap.org/search?q=${Uri.encodeComponent(address)}&format=json&limit=1'),
         headers: {
-          'User-Agent': 'YummaDriver/1.0 (https://food.unisell.online)',
+          'User-Agent': 'YummaDriver/1.0 (https://yumma.in)',
           'Accept-Language': 'en',
         },
       );

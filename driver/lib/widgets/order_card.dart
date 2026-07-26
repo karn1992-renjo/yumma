@@ -70,7 +70,7 @@ class OrderCard extends StatelessWidget {
                                 '#${order['order_number']}',
                                 style: GoogleFonts.nunitoSans(
                                   fontSize: 16,
-                                  fontWeight: FontWeight.bold,
+                                  fontWeight: FontWeight.w800,
                                 ),
                               ),
                               const SizedBox(width: 8),
@@ -88,7 +88,7 @@ class OrderCard extends StatelessWidget {
                                   style: TextStyle(
                                     fontSize: 10,
                                     color: statusColor,
-                                    fontWeight: FontWeight.w500,
+                                    fontWeight: FontWeight.w400,
                                   ),
                                 ),
                               ),
@@ -294,7 +294,7 @@ class OrderCard extends StatelessWidget {
                     'Order #${order['order_number']}',
                     style: GoogleFonts.nunitoSans(
                       fontSize: 20,
-                      fontWeight: FontWeight.bold,
+                      fontWeight: FontWeight.w800,
                     ),
                   ),
                   Container(
@@ -307,7 +307,7 @@ class OrderCard extends StatelessWidget {
                       _getStatusText(order['status']),
                       style: TextStyle(
                         color: _getStatusColor(order['status']),
-                        fontWeight: FontWeight.w500,
+                        fontWeight: FontWeight.w400,
                       ),
                     ),
                   ),
@@ -358,7 +358,7 @@ class OrderCard extends StatelessWidget {
                 'Order Items',
                 style: GoogleFonts.nunitoSans(
                   fontSize: 18,
-                  fontWeight: FontWeight.bold,
+                  fontWeight: FontWeight.w800,
                 ),
               ),
               const SizedBox(height: 12),
@@ -383,7 +383,7 @@ class OrderCard extends StatelessWidget {
                               child: Text(
                                 '${item['quantity']}',
                                 style: const TextStyle(
-                                  fontWeight: FontWeight.bold,
+                                  fontWeight: FontWeight.w800,
                                   fontSize: 18,
                                 ),
                               ),
@@ -397,7 +397,7 @@ class OrderCard extends StatelessWidget {
                                 Text(
                                   item['name'],
                                   style: const TextStyle(
-                                    fontWeight: FontWeight.w500,
+                                    fontWeight: FontWeight.w400,
                                   ),
                                 ),
                                 if (item['description'] != null)
@@ -413,42 +413,26 @@ class OrderCard extends StatelessWidget {
                               ],
                             ),
                           ),
-                          Text(
-                            formatCurrencyValue(
-                              context,
-                              item['total_price'] ?? item['price'] * item['quantity'],
-                            ),
-                            style: const TextStyle(
-                              fontWeight: FontWeight.bold,
-                              color: Color(0xFF0E9F6E),
-                            ),
-                          ),
                         ],
                       ),
                     );
                   },
                 ),
               ),
-              
-              // Price Summary
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: Colors.grey.shade50,
-                  borderRadius: BorderRadius.circular(12),
+              if ((order['payment_method']?.toString().toLowerCase() ?? '') == 'cod')
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade50,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: _buildPriceRow(
+                    context,
+                    'Amount to collect',
+                    order['total'],
+                    isBold: true,
+                  ),
                 ),
-                child: Column(
-                  children: [
-                    _buildPriceRow(context, 'Subtotal', order['subtotal']),
-                    _buildPriceRow(context, 'Delivery Fee', order['delivery_fee']),
-                    _buildPriceRow(context, 'Tax', order['tax']),
-                    if (order['discount'] > 0)
-                      _buildPriceRow(context, 'Discount', -order['discount']),
-                    const Divider(),
-                    _buildPriceRow(context, 'Total', order['total'], isBold: true),
-                  ],
-                ),
-              ),
             ],
           ),
         ),
@@ -466,14 +450,14 @@ class OrderCard extends StatelessWidget {
           Text(
             label,
             style: TextStyle(
-              fontWeight: isBold ? FontWeight.bold : null,
+              fontWeight: isBold ? FontWeight.w800 : null,
               fontSize: isBold ? 16 : 14,
             ),
           ),
           Text(
             formatCurrencyValue(context, amount),
             style: TextStyle(
-              fontWeight: isBold ? FontWeight.bold : null,
+              fontWeight: isBold ? FontWeight.w800 : null,
               fontSize: isBold ? 18 : 14,
               color: isBold ? const Color(0xFF0E9F6E) : null,
             ),
@@ -487,7 +471,7 @@ class OrderCard extends StatelessWidget {
     switch (status) {
       case 'pending': return Colors.orange;
       case 'confirmed': return Colors.blue;
-      case 'preparing': return Colors.purple;
+      case 'preparing': return const Color(0xFFFF6E00);
       case 'ready_for_pickup': return Colors.teal;
       case 'picked_up': return Colors.indigo;
       case 'on_the_way': return Colors.cyan;

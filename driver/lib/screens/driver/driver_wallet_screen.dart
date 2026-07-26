@@ -47,7 +47,7 @@ class _DriverWalletScreenState extends State<DriverWalletScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(message),
-            backgroundColor: FoodFlowTheme.danger,
+            backgroundColor: foodflow.danger,
           ),
         );
       },
@@ -179,7 +179,7 @@ class _DriverWalletScreenState extends State<DriverWalletScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Withdrawal unavailable: $e'),
-          backgroundColor: FoodFlowTheme.danger,
+          backgroundColor: foodflow.danger,
         ),
       );
     } finally {
@@ -204,7 +204,7 @@ class _DriverWalletScreenState extends State<DriverWalletScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(_normalizeStartupErrorMessage(e.toString())),
-          backgroundColor: FoodFlowTheme.danger,
+          backgroundColor: foodflow.danger,
         ),
       );
     }
@@ -234,7 +234,7 @@ class _DriverWalletScreenState extends State<DriverWalletScreen> {
                 Container(
                   padding: const EdgeInsets.all(20),
                   decoration: BoxDecoration(
-                    color: FoodFlowTheme.crimson,
+                    color: foodflow.crimson,
                     borderRadius: BorderRadius.circular(18),
                   ),
                   child: Column(
@@ -250,7 +250,7 @@ class _DriverWalletScreenState extends State<DriverWalletScreen> {
                         style: const TextStyle(
                           color: Colors.white,
                           fontSize: 32,
-                          fontWeight: FontWeight.w900,
+                          fontWeight: FontWeight.w800,
                         ),
                       ),
                       if (_minimumDriverBalance > 0) ...[
@@ -259,7 +259,7 @@ class _DriverWalletScreenState extends State<DriverWalletScreen> {
                           'Minimum for COD orders: ${formatCurrencyWithDecimals(context, _minimumDriverBalance)}',
                           style: const TextStyle(
                             color: Colors.white70,
-                            fontWeight: FontWeight.w700,
+                            fontWeight: FontWeight.w800,
                           ),
                         ),
                       ],
@@ -287,7 +287,7 @@ class _DriverWalletScreenState extends State<DriverWalletScreen> {
                               ),
                               style: ElevatedButton.styleFrom(
                                 backgroundColor: Colors.white,
-                                foregroundColor: FoodFlowTheme.crimson,
+                                foregroundColor: foodflow.crimson,
                               ),
                             ),
                           ),
@@ -314,7 +314,7 @@ class _DriverWalletScreenState extends State<DriverWalletScreen> {
                               ),
                               style: ElevatedButton.styleFrom(
                                 backgroundColor: Colors.white,
-                                foregroundColor: FoodFlowTheme.crimson,
+                                foregroundColor: foodflow.crimson,
                               ),
                             ),
                           ),
@@ -326,11 +326,11 @@ class _DriverWalletScreenState extends State<DriverWalletScreen> {
                 const SizedBox(height: 18),
                 const Text(
                   'Wallet activity',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
                 ),
                 const SizedBox(height: 10),
                 if (_transactions.isEmpty)
-                  FoodFlowTheme.emptyState(
+                  foodflow.emptyState(
                     icon: Icons.account_balance_wallet_outlined,
                     title: 'No wallet activity yet',
                     subtitle: 'Payout adjustments and credits will show here.',
@@ -372,7 +372,7 @@ class _WalletRechargePage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: FoodFlowTheme.canvas,
+      backgroundColor: foodflow.canvas,
       appBar: AppBar(title: const Text('Recharge wallet')),
       body: SafeArea(
         child: Center(
@@ -431,7 +431,7 @@ class _WalletRechargeSheetState extends State<_WalletRechargeSheet> {
             children: [
               const Text(
                 'Recharge wallet',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
               ),
               const SizedBox(height: 12),
               Wrap(

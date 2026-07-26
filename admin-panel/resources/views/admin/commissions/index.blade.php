@@ -7,7 +7,8 @@
     $currencyDecimals = App\Models\AppSetting::currencyDecimals();
     $restaurantSetting = $settings->where('type', 'restaurant')->first();
     $driverSetting = $settings->where('type', 'driver')->first();
-    $gstOnCommissionRate = (float) App\Models\AppSetting::getValue('gst_rate', 18);
+    $gstOnCommissionRate = App\Models\AppSetting::getValue('gst_rate');
+    $effectiveGstOnCommissionRate = is_numeric($gstOnCommissionRate) ? (float) $gstOnCommissionRate : 0.0;
     $gatewayFeeRate = (float) App\Models\AppSetting::getValue('gateway_fee_rate', 2);
     $commissionLabels = [
         'restaurant' => 'Restaurant Earning Commission',
@@ -21,7 +22,7 @@
         : $base * ((float) ($setting?->rate ?? $fallback) / 100));
     $sampleSubtotal = 500;
     $sampleRestaurantCommission = $commissionAmount($restaurantSetting, $sampleSubtotal, 15);
-    $sampleGst = $sampleRestaurantCommission * ($gstOnCommissionRate / 100);
+    $sampleGst = $sampleRestaurantCommission * ($effectiveGstOnCommissionRate / 100);
     $sampleDeliveryFee = 40;
     $samplePlatformFee = App\Models\DeliveryChargeSetting::getPlatformFee();
     $sampleCustomerTax = App\Models\TaxSetting::calculateTax($sampleSubtotal, $sampleDeliveryFee);
@@ -198,10 +199,10 @@
                     <div class="mb-3">
                         <label class="form-label fw-semibold">GST on Platform Commission (%)</label>
                         <input type="number" step="0.01" name="gst_on_commission_rate"
-                               class="form-control @error('gst_on_commission_rate') is-invalid @enderror" min="0" max="100" required
+                               class="form-control @error('gst_on_commission_rate') is-invalid @enderror" min="0" max="100"
                                value="{{ old('gst_on_commission_rate', $gstOnCommissionRate) }}">
                         @error('gst_on_commission_rate') <div class="invalid-feedback">{{ $message }}</div> @enderror
-                        <small class="text-muted">Applied only to the platform commission charged to the restaurant</small>
+                        <small class="text-muted">Leave blank or set 0 to disable GST on commission</small>
                     </div>
                     <div class="mb-3">
                         <label class="form-label fw-semibold">Online Payment Gateway Fee (%)</label>

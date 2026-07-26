@@ -5,13 +5,17 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\AppSetting;
 use App\Models\PartnerApplication;
+use App\Models\Restaurant;
 use App\Models\User;
+use App\Models\UserReferral;
+use App\Rules\UniqueUserContactForRole;
+use App\Services\SmsService;
 use App\Support\PhoneNumber;
 use App\Support\GatewayRegistry;
-use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Str;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -35,7 +39,7 @@ class AuthController extends Controller
 
         $normalizedPhone = $this->normalizePhone($request->input('phone'));
         $role = $this->normalizeRequestedRole($request->input('role', 'customer'));
-        $user = $this->findUserByPhone($normalizedPhone);
+        $user = $this->findUserByPhone($normalizedPhone, $role);
         $pendingApplication = $role === 'delivery_partner'
             ? PartnerApplication::query()
                 ->where('partner_type', 'driver')
@@ -61,12 +65,18 @@ class AuthController extends Controller
 
     public function register(Request $request)
     {
+        $requestedRole = $this->normalizeRequestedRole($request->input('role', 'customer'));
+        $emailRule = $requestedRole === 'customer'
+            ? ['nullable', 'email', UniqueUserContactForRole::email($requestedRole)]
+            : ['required', 'email', UniqueUserContactForRole::email($requestedRole)];
+
         $validator = Validator::make($request->all(), [
             'name' => 'required|string|max:255',
-            'email' => 'required|email|unique:users',
+            'email' => $emailRule,
             'phone' => 'required|string|max:40',
             'verified_phone_token' => 'required|string|min:20|max:255',
             'role' => 'nullable|in:customer,restaurant,driver,restaurant_owner,restaurant_staff,delivery_partner',
+            'referral_code' => 'nullable|string|max:50',
         ]);
         
         if ($validator->fails()) {
@@ -74,11 +84,11 @@ class AuthController extends Controller
         }
         
         $normalizedPhone = $this->normalizePhone($request->phone);
-        if ($this->findUserByPhone($normalizedPhone)) {
-            return response()->json([
-                'success' => false,
-                'message' => 'An account already exists with this mobile number.'
-            ], 422);
+        if (UniqueUserContactForRole::phoneExists($normalizedPhone, $requestedRole)) {
+            return $this->validationErrorResponse(
+                'phone',
+                'An account already exists with this mobile number for the selected role.'
+            );
         }
         if (! $this->hasValidPhoneVerificationToken($normalizedPhone, $request->verified_phone_token, 'signup')) {
             return response()->json([
@@ -87,35 +97,68 @@ class AuthController extends Controller
             ], 422);
         }
 
+        $referrer = null;
+        $referralCode = $this->normalizeReferralCode($request->input('referral_code'));
+        if ($requestedRole === 'customer' && $referralCode !== '') {
+            $referrer = User::query()->where('referral_code', $referralCode)->first();
+            if (! $referrer) {
+                return $this->validationErrorResponse('referral_code', 'Referral code is invalid.');
+            }
+        }
+
         $generatedPassword = Str::password(16);
+        $email = trim((string) $request->input('email', ''));
+        if ($email === '' && $requestedRole === 'customer') {
+            $phoneDigits = preg_replace('/\D+/', '', $normalizedPhone) ?: Str::random(12);
+            $email = 'customer+' . $phoneDigits . '@placeholder.ahfood.local';
+        }
+
         try {
             $user = User::create([
                 'name' => $request->name,
-                'email' => $request->email,
+                'email' => $email,
                 'phone' => $normalizedPhone,
                 'password' => Hash::make((string) $request->input('password', $generatedPassword)),
                 'is_active' => true,
+                'referral_code' => $this->generateReferralCode(),
+                'referred_by_user_id' => $referrer?->id,
+                'referral_registered_at' => $referrer ? now() : null,
             ]);
-        } catch (UniqueConstraintViolationException $e) {
-            if ($this->findUserByPhone($normalizedPhone)) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'An account already exists with this mobile number.'
-                ], 422);
+        } catch (\Throwable $e) {
+            if ($this->isDuplicateUserConstraint($e, 'phone') || UniqueUserContactForRole::phoneExists($normalizedPhone, $requestedRole)) {
+                return $this->validationErrorResponse(
+                    'phone',
+                    'An account already exists with this mobile number for the selected role.'
+                );
             }
 
-            if (User::where('email', $request->email)->exists()) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'An account already exists with this email address.'
-                ], 422);
+            if ($this->isDuplicateUserConstraint($e, 'email') || UniqueUserContactForRole::emailExists($email, $requestedRole)) {
+                return $this->validationErrorResponse(
+                    'email',
+                    'An account already exists with this email address for the selected role.'
+                );
             }
 
             throw $e;
         }
         
-        $role = $this->normalizeRequestedRole($request->input('role', 'customer'));
+        $role = $requestedRole;
         $user->assignRole($role);
+
+        if ($referrer && $role === 'customer') {
+            UserReferral::firstOrCreate(
+                ['referred_user_id' => $user->id],
+                [
+                    'referrer_id' => $referrer->id,
+                    'referral_code' => $referralCode,
+                    'status' => 'registered',
+                    'metadata' => [
+                        'source' => 'signup',
+                        'registered_at' => now()->toDateTimeString(),
+                    ],
+                ]
+            );
+        }
         
         $this->repairRestaurantStaffRole($user);
         $user->load('roles');
@@ -143,7 +186,8 @@ class AuthController extends Controller
             return response()->json(['errors' => $validator->errors()], 422);
         }
         
-        $user = User::where('email', $request->email)->first();
+        $role = $this->normalizeRequestedRole($request->input('role', 'customer'));
+        $user = UniqueUserContactForRole::findByEmailForRole($request->email, $role);
         
         if (!$user || !Hash::check($request->password, $user->password)) {
             return response()->json([
@@ -161,9 +205,7 @@ class AuthController extends Controller
 
         $this->repairRestaurantStaffRole($user);
 
-        $role = null;
         if ($request->filled('role')) {
-            $role = $this->normalizeRequestedRole($request->input('role'));
             if (! $this->matchesAuthRole($user, $role)) {
                 return response()->json([
                     'success' => false,
@@ -233,7 +275,7 @@ class AuthController extends Controller
         }
 
         if (! $user && $email !== '') {
-            $emailUser = User::where('email', $email)->first();
+            $emailUser = UniqueUserContactForRole::findByEmailForRole($email, $role);
             if ($emailUser && ! $this->socialLoginAutoLinkEnabled()) {
                 return response()->json([
                     'success' => false,
@@ -262,6 +304,15 @@ class AuthController extends Controller
                 ], 403);
             }
 
+            $referrer = null;
+            $referralCode = $this->normalizeReferralCode($request->input('referral_code'));
+            if ($referralCode !== '') {
+                $referrer = User::query()->where('referral_code', $referralCode)->first();
+                if (! $referrer) {
+                    return $this->validationErrorResponse('referral_code', 'Referral code is invalid.');
+                }
+            }
+
             $user = User::create([
                 'name' => $identity['name'] ?: $request->input('display_name') ?: Str::before($email, '@') ?: 'Customer',
                 'email' => $email,
@@ -269,8 +320,27 @@ class AuthController extends Controller
                 'password' => Hash::make(Str::password(32)),
                 'is_active' => true,
                 'email_verified_at' => now(),
+                'referral_code' => $this->generateReferralCode(),
+                'referred_by_user_id' => $referrer?->id,
+                'referral_registered_at' => $referrer ? now() : null,
             ]);
             $user->assignRole('customer');
+
+            if ($referrer) {
+                UserReferral::firstOrCreate(
+                    ['referred_user_id' => $user->id],
+                    [
+                        'referrer_id' => $referrer->id,
+                        'referral_code' => $referralCode,
+                        'status' => 'registered',
+                        'metadata' => [
+                            'source' => 'social_signup',
+                            'provider' => $provider,
+                            'registered_at' => now()->toDateTimeString(),
+                        ],
+                    ]
+                );
+            }
         } else {
             $this->repairRestaurantStaffRole($user);
 
@@ -350,7 +420,7 @@ class AuthController extends Controller
         }
 
         $role = $this->normalizeRequestedRole($request->input('role', 'customer'));
-        $user = $this->findUserByPhone($firebasePhone);
+        $user = $this->findUserByPhone($firebasePhone, $role);
 
         if (! $user) {
             return response()->json([
@@ -437,10 +507,10 @@ class AuthController extends Controller
 
         $flow = (string) $request->input('flow');
         $role = $this->normalizeRequestedRole($request->input('role', 'customer'));
-        $user = $this->findUserByPhone($firebasePhone);
+        $user = $this->findUserByPhone($firebasePhone, $role);
 
         if ($flow === 'signup') {
-            if ($user) {
+            if (UniqueUserContactForRole::phoneExists($firebasePhone, $role)) {
                 return response()->json([
                     'success' => false,
                     'message' => 'An account already exists with this mobile number.',
@@ -511,6 +581,7 @@ class AuthController extends Controller
             'phone' => 'required|string|max:40',
             'flow' => 'nullable|in:login,signup,forgot_password',
             'role' => 'nullable|in:customer,restaurant,driver,restaurant_owner,restaurant_staff,delivery_partner',
+            'app_signature' => 'nullable|string|max:32',
         ]);
 
         if ($validator->fails()) {
@@ -520,9 +591,9 @@ class AuthController extends Controller
         $role = $this->normalizeRequestedRole($request->input('role', 'customer'));
         $flow = (string) $request->input('flow', 'login');
         $normalizedPhone = $this->normalizePhone($request->phone);
-        $user = $this->findUserByPhone($normalizedPhone);
+        $user = $this->findUserByPhone($normalizedPhone, $role);
 
-        if ($flow === 'signup' && $user) {
+        if ($flow === 'signup' && UniqueUserContactForRole::phoneExists($normalizedPhone, $role)) {
             return response()->json([
                 'success' => false,
                 'message' => 'An account already exists with this mobile number.',
@@ -575,11 +646,67 @@ class AuthController extends Controller
             ], 403);
         }
 
+        $smsService = app(SmsService::class);
+        if ($this->resolveOtpProvider() === 'msg91' && $smsService->usesMsg91WidgetOtp()) {
+            try {
+                $smsService->assertMsg91WidgetConfigured();
+            } catch (\Throwable $e) {
+                Log::warning('MSG91 widget OTP preflight failed.', [
+                    'phone' => $normalizedPhone,
+                    'role' => $role,
+                    'flow' => $flow,
+                    'message' => $e->getMessage(),
+                ]);
+
+                return response()->json([
+                    'success' => false,
+                    'message' => $e->getMessage(),
+                ], 502);
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => 'OTP ready to send with MSG91 widget.',
+                'data' => [
+                    'phone' => $normalizedPhone,
+                    'flow' => $flow,
+                    'existing_user' => (bool) $user,
+                    'provider' => 'msg91',
+                    'otp_flow' => 'widget',
+                    'expires_in' => 600,
+                    'msg91_widget' => $smsService->publicMsg91WidgetConfig(),
+                ],
+            ]);
+        }
+
         $otp = (string) random_int(100000, 999999);
-        $provider = $this->sendOtpMessage($normalizedPhone, $otp);
-        $hashedOtp = Hash::make($otp);
-        foreach ($this->otpCacheKeys($normalizedPhone, $role, $flow) as $cacheKey) {
-            Cache::put($cacheKey, $hashedOtp, now()->addMinutes(10));
+
+        try {
+            $provider = $this->sendOtpMessage(
+                $normalizedPhone,
+                $otp,
+                $request->input('app_signature')
+            );
+        } catch (\Throwable $e) {
+            Log::warning('OTP send failed.', [
+                'phone' => $normalizedPhone,
+                'role' => $role,
+                'flow' => $flow,
+                'provider' => $this->resolveOtpProvider(),
+                'message' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], 502);
+        }
+
+        if ($provider !== 'msg91') {
+            $hashedOtp = Hash::make($otp);
+            foreach ($this->otpCacheKeys($normalizedPhone, $role, $flow) as $cacheKey) {
+                Cache::put($cacheKey, $hashedOtp, now()->addMinutes(10));
+            }
         }
 
         return response()->json([
@@ -602,6 +729,8 @@ class AuthController extends Controller
             'otp' => 'required|string|min:4|max:8',
             'flow' => 'nullable|in:login,signup,forgot_password',
             'role' => 'nullable|in:customer,restaurant,driver,restaurant_owner,restaurant_staff,delivery_partner',
+            'msg91_access_token' => 'nullable|string|max:4096',
+            'msg91_req_id' => 'nullable|string|max:255',
         ]);
 
         if ($validator->fails()) {
@@ -611,12 +740,39 @@ class AuthController extends Controller
         $role = $this->normalizeRequestedRole($request->input('role', 'customer'));
         $flow = (string) $request->input('flow', 'login');
         $normalizedPhone = $this->normalizePhone($request->phone);
-        $matchedOtp = $this->resolveOtpHash(
-            $normalizedPhone,
-            $role,
-            $flow,
-            (string) $request->otp
-        );
+        $otpProvider = $this->resolveOtpProvider();
+        $smsService = app(SmsService::class);
+        try {
+            if ($otpProvider === 'msg91' && $smsService->usesMsg91WidgetOtp()) {
+                $smsService->verifyMsg91WidgetAccessToken(
+                    (string) $request->input('msg91_access_token', ''),
+                    $normalizedPhone
+                );
+                $matchedOtp = 'msg91';
+            } elseif ($otpProvider === 'msg91') {
+                $matchedOtp = $smsService->verifyOtp($normalizedPhone, (string) $request->otp) ? 'msg91' : null;
+            } else {
+                $matchedOtp = $this->resolveOtpHash(
+                    $normalizedPhone,
+                    $role,
+                    $flow,
+                    (string) $request->otp
+                );
+            }
+        } catch (\Throwable $e) {
+            Log::warning('OTP verification provider failed.', [
+                'phone' => $normalizedPhone,
+                'role' => $role,
+                'flow' => $flow,
+                'provider' => $otpProvider,
+                'message' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], 502);
+        }
 
         if ($matchedOtp === null) {
             Log::warning('OTP verification failed', [
@@ -630,12 +786,14 @@ class AuthController extends Controller
             ], 422);
         }
 
-        foreach ($this->otpCacheKeys($normalizedPhone, $role, $flow) as $cacheKey) {
-            Cache::forget($cacheKey);
+        if ($otpProvider !== 'msg91') {
+            foreach ($this->otpCacheKeys($normalizedPhone, $role, $flow) as $cacheKey) {
+                Cache::forget($cacheKey);
+            }
         }
 
         if ($flow === 'signup') {
-            if ($this->findUserByPhone($normalizedPhone)) {
+            if (UniqueUserContactForRole::phoneExists($normalizedPhone, $role)) {
                 return response()->json([
                     'success' => false,
                     'message' => 'An account already exists with this mobile number.',
@@ -657,7 +815,7 @@ class AuthController extends Controller
         }
 
         if ($flow === 'forgot_password') {
-            $user = $this->findUserByPhone($normalizedPhone);
+            $user = $this->findUserByPhone($normalizedPhone, $role);
             if (! $user) {
                 return response()->json([
                     'success' => false,
@@ -679,7 +837,7 @@ class AuthController extends Controller
             ]);
         }
 
-        $user = $this->findUserByPhone($normalizedPhone);
+        $user = $this->findUserByPhone($normalizedPhone, $role);
         if (! $user) {
             return response()->json([
                 'success' => false,
@@ -760,6 +918,7 @@ class AuthController extends Controller
             'phone' => 'required|string|max:40',
             'verified_phone_token' => 'required|string|min:20|max:255',
             'password' => 'required|string|min:6|confirmed',
+            'role' => 'nullable|in:customer,restaurant,driver,restaurant_owner,restaurant_staff,delivery_partner',
         ]);
 
         if ($validator->fails()) {
@@ -774,7 +933,8 @@ class AuthController extends Controller
             ], 422);
         }
 
-        $user = $this->findUserByPhone($normalizedPhone);
+        $role = $this->normalizeRequestedRole($request->input('role', 'customer'));
+        $user = $this->findUserByPhone($normalizedPhone, $role);
         if (! $user) {
             return response()->json([
                 'success' => false,
@@ -840,6 +1000,9 @@ class AuthController extends Controller
             'profile_photo_url' => $user->profile_photo_path ? $user->profile_photo_url : ($user->social_avatar_url ?: $user->profile_photo_url),
             'current_restaurant_id' => $user->current_restaurant_id,
             'branch_id' => $user->branch_id,
+            'referral_code' => $user->referral_code,
+            'referred_by_user_id' => $user->referred_by_user_id,
+            'reward_points_balance' => (int) ($user->reward_points_balance ?? 0),
             'branch' => $user->branch ? [
                 'id' => $user->branch->id,
                 'name' => $user->branch->name,
@@ -861,11 +1024,22 @@ class AuthController extends Controller
         $frontendBackgroundImage = AppSetting::getValue('frontend_background_image');
         $primaryColor = AppSetting::getValue('primary_color', '#FF5A1F');
         $secondaryColor = AppSetting::getValue('secondary_color', '#2B2A33');
+        $vendorMode = AppSetting::getValue('vendor_mode', 'multi') === 'single' ? 'single' : 'multi';
+        $singleRestaurant = null;
+        if ($vendorMode === 'single') {
+            $singleRestaurantId = (int) AppSetting::getValue('single_restaurant_id', 0);
+            $singleRestaurant = $singleRestaurantId > 0
+                ? Restaurant::query()->find($singleRestaurantId, ['id', 'name'])
+                : null;
+            if (! $singleRestaurant) {
+                $vendorMode = 'multi';
+            }
+        }
 
         return response()->json([
             'success' => true,
             'data' => [
-                'app_name' => AppSetting::getValue('app_name', config('app.name', 'FoodFlow')),
+                'app_name' => AppSetting::getValue('app_name', config('app.name', 'AH Food')),
                 'app_logo' => $this->resolvePublicAssetUrl($appLogo),
                 'app_icon' => $this->resolvePublicAssetUrl($appIcon),
                 'app_favicon' => $this->resolvePublicAssetUrl($appFavicon),
@@ -882,6 +1056,10 @@ class AuthController extends Controller
                 'customer_order_deeplink_template' => AppSetting::getValue('customer_order_deeplink_template', 'foodflow://orders/{order_id}'),
                 'customer_restaurant_deeplink_template' => AppSetting::getValue('customer_restaurant_deeplink_template', 'foodflow://restaurants/{restaurant_id}'),
                 'customer_wallet_deeplink_template' => AppSetting::getValue('customer_wallet_deeplink_template', 'foodflow://wallet'),
+                'vendor_mode' => $vendorMode,
+                'single_restaurant_id' => $vendorMode === 'single' ? $singleRestaurant?->id : null,
+                'single_restaurant_name' => $vendorMode === 'single' ? $singleRestaurant?->name : null,
+                'app_releases' => $this->appReleaseSettings(),
                 'support_email' => AppSetting::getValue('support_email', AppSetting::getValue('contact_email', 'support@example.com')),
                 'support_phone' => AppSetting::getValue('support_phone', ''),
                 'default_mobile_country_code' => $this->defaultMobileCountryCode(),
@@ -891,11 +1069,35 @@ class AuthController extends Controller
                 'pusher_app_key' => AppSetting::getValue('pusher_app_key', config('broadcasting.connections.pusher.key', '')),
                 'pusher_app_cluster' => AppSetting::getValue('pusher_app_cluster', config('broadcasting.connections.pusher.options.cluster', 'mt1')),
                 'header_branding_type' => AppSetting::getValue('header_branding_type', 'text'),
-                'onboarding_intro_title' => AppSetting::getValue('onboarding_intro_title', AppSetting::getValue('app_name', config('app.name', 'FoodFlow'))),
+                'onboarding_intro_title' => AppSetting::getValue('onboarding_intro_title', AppSetting::getValue('app_name', config('app.name', 'AH Food'))),
                 'onboarding_intro_subtitle' => AppSetting::getValue('onboarding_intro_subtitle', 'Food, groceries and everyday cravings delivered fast.'),
                 'onboarding_slides' => $this->buildOnboardingSlides(),
             ],
         ]);
+    }
+
+    protected function appReleaseSettings(): array
+    {
+        return collect(['customer', 'restaurant', 'driver'])
+            ->mapWithKeys(function (string $app) {
+                $androidUrl = AppSetting::getValue("{$app}_android_update_url", '');
+                if ($app === 'customer' && trim((string) $androidUrl) === '') {
+                    $androidUrl = AppSetting::getValue('customer_play_store_url', '');
+                }
+
+                return [
+                    $app => [
+                        'latest_version' => AppSetting::getValue("{$app}_latest_version", ''),
+                        'latest_build_number' => (int) AppSetting::getValue("{$app}_latest_build_number", 0),
+                        'min_supported_build_number' => (int) AppSetting::getValue("{$app}_min_supported_build_number", 0),
+                        'force_update' => filter_var(AppSetting::getValue("{$app}_force_update", '0'), FILTER_VALIDATE_BOOLEAN),
+                        'android_update_url' => $androidUrl,
+                        'ios_update_url' => AppSetting::getValue("{$app}_ios_update_url", ''),
+                        'release_notes' => AppSetting::getValue("{$app}_release_notes", ''),
+                    ],
+                ];
+            })
+            ->all();
     }
 
     protected function buildOnboardingSlides(): array
@@ -978,7 +1180,7 @@ class AuthController extends Controller
 
         return [
             'currency_code' => strtoupper(AppSetting::getValue('currency_code', 'INR') ?: 'INR'),
-            'currency_symbol' => AppSetting::getValue('currency_symbol', '₹'),
+            'currency_symbol' => AppSetting::sanitizedCurrencySymbol(),
             'currency_decimals' => AppSetting::currencyDecimals(),
             'payment_gateway_provider' => $paymentGateway,
             'payment_gateway_logo' => \App\Services\MediaStorage::url($paymentGatewayLogo),
@@ -1092,56 +1294,15 @@ class AuthController extends Controller
         $user->assignRole('restaurant_staff');
     }
 
-    protected function sendOtpMessage(string $phone, string $otp): string
+    protected function sendOtpMessage(string $phone, string $otp, ?string $appSignature = null): string
     {
-        $provider = $this->resolveOtpProvider();
-        $template = AppSetting::getValue('message_template_otp', 'Your OTP code is {{otp}}. It is valid for 10 minutes.');
-        $message = str_replace(['{{otp}}', '{otp}'], $otp, $template);
-
-        if ($provider === 'twilio') {
-            $sid = AppSetting::getValue('twilio_account_sid');
-            $token = AppSetting::getValue('twilio_auth_token');
-            $from = AppSetting::getValue('twilio_phone_number');
-
-            if (! $sid || ! $token || ! $from) {
-                throw new \RuntimeException('OTP provider is set to Twilio, but Twilio settings are incomplete.');
-            }
-
-            try {
-                $response = Http::withBasicAuth($sid, $token)
-                    ->asForm()
-                    ->post("https://api.twilio.com/2010-04-01/Accounts/{$sid}/Messages.json", [
-                        'From' => $from,
-                        'To' => $phone,
-                        'Body' => $message,
-                    ]);
-
-                if (! $response->successful()) {
-                    Log::warning('Twilio OTP send failed.', [
-                        'status' => $response->status(),
-                        'body' => $response->body(),
-                    ]);
-                    throw new \RuntimeException('Twilio OTP send failed.');
-                }
-
-                return $provider;
-            } catch (\Throwable $e) {
-                Log::warning('Twilio OTP send failed: ' . $e->getMessage());
-                throw new \RuntimeException('Twilio OTP send failed.');
-            }
-        }
-
-        if ($provider === 'firebase') {
-            throw new \RuntimeException('Firebase OTP is not supported for this API login flow. Configure Twilio in admin settings.');
-        }
-
-        throw new \RuntimeException('OTP service provider is not configured in admin settings.');
+        return app(SmsService::class)->sendOtp($phone, $otp, $appSignature);
     }
 
     protected function resolveOtpProvider(): string
     {
         $configured = strtolower(trim((string) AppSetting::getValue('otp_service_provider', '')));
-        if (in_array($configured, ['firebase', 'twilio'], true)) {
+        if (in_array($configured, ['firebase', 'twilio', 'msg91'], true)) {
             return $configured;
         }
 
@@ -1463,8 +1624,12 @@ class AuthController extends Controller
         $user->forceFill($updates)->save();
     }
 
-    protected function findUserByPhone(?string $phone): ?User
+    protected function findUserByPhone(?string $phone, ?string $role = null): ?User
     {
+        if ($role !== null) {
+            return UniqueUserContactForRole::findByPhoneForRole($phone, $role);
+        }
+
         $normalizedPhone = $this->normalizePhone($phone);
         $candidates = $this->phoneLookupCandidates($normalizedPhone);
 
@@ -1476,6 +1641,67 @@ class AuthController extends Controller
         }
 
         return null;
+    }
+
+    protected function validationErrorResponse(string $field, string $message, int $status = 422)
+    {
+        return response()->json([
+            'success' => false,
+            'message' => $message,
+            'errors' => [
+                $field => [$message],
+            ],
+        ], $status);
+    }
+
+    protected function normalizeReferralCode(?string $code): string
+    {
+        return strtoupper(preg_replace('/[^A-Z0-9]/', '', strtoupper(trim((string) $code))) ?? '');
+    }
+
+    protected function generateReferralCode(): string
+    {
+        do {
+            $code = 'SWD' . strtoupper(Str::random(7));
+        } while (User::query()->where('referral_code', $code)->exists());
+
+        return $code;
+    }
+
+    protected function isDuplicateUserConstraint(\Throwable $e, string $field): bool
+    {
+        $needle = match ($field) {
+            'phone' => 'users_phone_unique',
+            'email' => 'users_email_unique',
+            default => '',
+        };
+
+        if ($needle === '') {
+            return false;
+        }
+
+        do {
+            $message = $e->getMessage();
+            $code = (string) $e->getCode();
+
+            if (
+                str_contains($message, 'Duplicate entry')
+                && str_contains($message, $needle)
+            ) {
+                return true;
+            }
+
+            if (
+                in_array($code, ['23000', '23505'], true)
+                && str_contains($message, $needle)
+            ) {
+                return true;
+            }
+
+            $e = $e->getPrevious();
+        } while ($e);
+
+        return false;
     }
 
     protected function phoneLookupCandidates(string $phone): array
@@ -1611,7 +1837,7 @@ class AuthController extends Controller
         
         $validator = Validator::make($request->all(), [
             'name' => 'sometimes|string|max:255',
-            'phone' => 'sometimes|string|max:20|unique:users,phone,' . $user->id,
+            'phone' => ['sometimes', 'string', 'max:20', UniqueUserContactForRole::phone($user->roles()->value('name'), $user->id)],
             'profile_image' => 'nullable|image|mimes:jpeg,jpg,png,webp|max:4096',
         ]);
         
@@ -1662,4 +1888,81 @@ class AuthController extends Controller
             'message' => 'Password changed successfully'
         ]);
     }
+
+    public function deleteAccount(Request $request)
+    {
+        $user = $request->user();
+        $deletedEmail = sprintf('deleted-user-%d-%s@yumma.deleted', $user->id, Str::lower(Str::random(8)));
+
+        DB::transaction(function () use ($user, $deletedEmail) {
+            $user->tokens()->delete();
+            $user->addresses()->delete();
+            $user->favoriteRestaurants()->detach();
+            $user->notifications()->delete();
+
+            if (method_exists($user, 'deleteProfilePhoto')) {
+                $user->deleteProfilePhoto();
+            }
+
+            $user->forceFill([
+                'name' => 'Deleted User',
+                'email' => $deletedEmail,
+                'phone' => null,
+                'password' => Hash::make(Str::random(40)),
+                'is_active' => false,
+                'remember_token' => null,
+                'email_verified_at' => null,
+                'profile_photo_path' => null,
+                'address' => null,
+                'latitude' => null,
+                'longitude' => null,
+                'fcm_token' => null,
+                'customer_fcm_token' => null,
+                'restaurant_fcm_token' => null,
+                'driver_fcm_token' => null,
+                'firebase_uid' => null,
+                'social_provider' => null,
+                'social_provider_id' => null,
+                'social_avatar_url' => null,
+                'social_accounts' => null,
+                'reward_points_balance' => 0,
+                'referral_code' => null,
+                'referred_by_user_id' => null,
+                'referral_registered_at' => null,                'vehicle_type' => null,
+                'vehicle_number' => null,
+                'license_number' => null,
+                'delivery_area_id' => null,
+                'current_restaurant_id' => null,
+                'branch_id' => null,
+                'account_holder_name' => null,
+                'bank_name' => null,
+                'account_number' => null,
+                'ifsc_code' => null,
+                'upi_id' => null,
+                'razorpay_contact_id' => null,
+                'razorpay_fund_account_id' => null,
+                'stripe_account_id' => null,
+                'gateway_account_id' => null,
+                'mollie_organization_id' => null,
+                'mollie_access_token' => null,
+                'mollie_refresh_token' => null,
+                'mollie_token_expires_at' => null,
+                'mercadopago_collector_id' => null,
+                'cashfree_beneficiary_id' => null,
+                'routing_code' => null,
+                'payout_gateway' => null,
+                'payout_country' => null,
+                'payout_provider_meta' => null,
+            ])->save();
+        });
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Your account has been deleted successfully.'
+        ]);
+    }
 }
+
+
+
+

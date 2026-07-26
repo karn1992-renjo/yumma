@@ -21,6 +21,10 @@ return new class extends Migration
             }
         });
 
+        if (!Schema::hasColumn('master_menu_items', 'cuisine_id')) {
+            return;
+        }
+
         $cuisines = Cuisine::query()->get(['id', 'name', 'slug']);
 
         DB::table('master_menu_items')
@@ -42,11 +46,13 @@ return new class extends Migration
                 }
             });
 
-        DB::table('menu_items')
-            ->join('master_menu_items', 'menu_items.master_menu_item_id', '=', 'master_menu_items.id')
-            ->whereNull('menu_items.cuisine_id')
-            ->whereNotNull('master_menu_items.cuisine_id')
-            ->update(['menu_items.cuisine_id' => DB::raw('master_menu_items.cuisine_id')]);
+        if (DB::connection()->getDriverName() !== 'sqlite' && Schema::hasColumn('menu_items', 'cuisine_id')) {
+            DB::table('menu_items')
+                ->join('master_menu_items', 'menu_items.master_menu_item_id', '=', 'master_menu_items.id')
+                ->whereNull('menu_items.cuisine_id')
+                ->whereNotNull('master_menu_items.cuisine_id')
+                ->update(['menu_items.cuisine_id' => DB::raw('master_menu_items.cuisine_id')]);
+        }
     }
 
     public function down(): void

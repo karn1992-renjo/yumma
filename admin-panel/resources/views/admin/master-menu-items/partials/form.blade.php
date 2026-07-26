@@ -7,9 +7,11 @@
         return [
             $category->id => [
                 'name' => $category->name,
+                'cuisine_ids' => $category->cuisines->pluck('id')->map(fn ($id) => (int) $id)->values(),
                 'children' => $category->children->map(fn ($child) => [
                     'id' => $child->id,
                     'name' => $child->name,
+                    'cuisine_ids' => $child->cuisines->pluck('id')->map(fn ($id) => (int) $id)->values(),
                 ])->values(),
             ],
         ];
@@ -59,7 +61,7 @@
         </div>
         <div class="col-md-3">
             <label class="form-label fw-semibold">Cuisine</label>
-            <select name="cuisine_id" class="form-select">
+            <select name="cuisine_id" id="cuisineSelect" class="form-select" data-cuisine-select>
                 <option value="">Auto detect cuisine</option>
                 @foreach(($cuisines ?? collect()) as $cuisine)
                     <option value="{{ $cuisine->id }}" @selected((string) old('cuisine_id', $item->cuisine_id) === (string) $cuisine->id)>
@@ -128,11 +130,37 @@
 document.addEventListener('DOMContentLoaded', function () {
     const categorySelect = document.getElementById('globalCategorySelect');
     const subcategorySelect = document.getElementById('globalSubcategorySelect');
+    const cuisineSelect = document.getElementById('cuisineSelect');
     const categoryNameInput = document.querySelector('input[name="category_name"]');
     const subcategoryNameInput = document.querySelector('input[name="subcategory_name"]');
     const categories = @json($categoryOptions);
     const selectedSubcategoryId = @json((string) $selectedGlobalSubcategoryId);
     const selectedSubcategoryName = @json(old('subcategory_name', $item->subcategory_name));
+
+    function mappedCuisineIds() {
+        const selected = categories[categorySelect.value];
+        const subcategory = (selected?.children || []).find((child) => String(child.id) === String(subcategorySelect.value || ''));
+        return (subcategory?.cuisine_ids?.length ? subcategory.cuisine_ids : selected?.cuisine_ids) || [];
+    }
+
+    function syncCuisineOptions() {
+        if (!cuisineSelect) return;
+
+        const ids = mappedCuisineIds().map(String);
+        const current = cuisineSelect.value;
+        Array.from(cuisineSelect.options).forEach((option) => {
+            option.hidden = option.value !== '' && ids.length > 0 && !ids.includes(String(option.value));
+        });
+
+        if (current && cuisineSelect.selectedOptions[0]?.hidden) {
+            cuisineSelect.value = '';
+        }
+
+        const visibleOptions = Array.from(cuisineSelect.options).filter((option) => option.value && !option.hidden);
+        if (!cuisineSelect.value && visibleOptions.length === 1) {
+            cuisineSelect.value = visibleOptions[0].value;
+        }
+    }
 
     function hydrateSubcategories() {
         const selected = categories[categorySelect.value];
@@ -151,6 +179,8 @@ document.addEventListener('DOMContentLoaded', function () {
                 subcategorySelect.appendChild(option);
             });
         }
+
+        syncCuisineOptions();
     }
 
     categorySelect?.addEventListener('change', function () {
@@ -161,6 +191,7 @@ document.addEventListener('DOMContentLoaded', function () {
     subcategorySelect?.addEventListener('change', function () {
         const option = subcategorySelect.options[subcategorySelect.selectedIndex];
         subcategoryNameInput.value = option?.dataset?.name || '';
+        syncCuisineOptions();
     });
 
     hydrateSubcategories();

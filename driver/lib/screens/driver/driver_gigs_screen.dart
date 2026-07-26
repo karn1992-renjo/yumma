@@ -19,6 +19,7 @@ class _DriverGigsScreenState extends State<DriverGigsScreen> {
   List<dynamic> _availableGigs = [];
   List<dynamic> _myGigs = [];
   bool _isLoading = true;
+  DateTime? _selectedDate;
 
   @override
   void initState() {
@@ -31,17 +32,11 @@ class _DriverGigsScreenState extends State<DriverGigsScreen> {
 
     try {
       final availableResponse =
-          await _api.get(ApiConstants.driverGigs, queryParams: {
-        'status': 'available',
-      });
+          await _api.get(ApiConstants.driverGigs, queryParams: _gigQueryParams('available'));
       final bookedResponse =
-          await _api.get(ApiConstants.driverGigs, queryParams: {
-        'status': 'booked',
-      });
+          await _api.get(ApiConstants.driverGigs, queryParams: _gigQueryParams('booked'));
       final completedResponse =
-          await _api.get(ApiConstants.driverGigs, queryParams: {
-        'status': 'completed',
-      });
+          await _api.get(ApiConstants.driverGigs, queryParams: _gigQueryParams('completed'));
 
       if (availableResponse['success'] == true) {
         if (!mounted) return;
@@ -57,7 +52,7 @@ class _DriverGigsScreenState extends State<DriverGigsScreen> {
           _myGigs = [
             ..._extractGigs(bookedResponse),
             ..._extractGigs(completedResponse),
-          ];
+          ]..sort(_compareGigsByDateTime);
         });
       }
     } catch (e) {
@@ -68,11 +63,87 @@ class _DriverGigsScreenState extends State<DriverGigsScreen> {
     setState(() => _isLoading = false);
   }
 
+  Map<String, dynamic> _gigQueryParams(String status) {
+    return {
+      'status': status,
+      if (_selectedDate != null)
+        'date': DateFormat('yyyy-MM-dd').format(_selectedDate!),
+    };
+  }
+
   List<dynamic> _extractGigs(dynamic response) {
     if (response is Map && response['data'] is List) {
       return List<dynamic>.from(response['data'] as List);
     }
     return [];
+  }
+
+  DateTime? _parseDateTime(dynamic value) {
+    if (value == null) return null;
+    return DateTime.tryParse(value.toString());
+  }
+
+  String _formatGigDate(Map<String, dynamic> gig) {
+    final dateShort = gig['date_short']?.toString().trim();
+    if (dateShort != null && dateShort.isNotEmpty) {
+      return dateShort;
+    }
+
+    final date = _parseDateTime(gig['date']);
+    if (date == null) return '';
+    return DateFormat('d MMM').format(date);
+  }
+
+  String _formatGigTimeRange(Map<String, dynamic> gig) {
+    final apiTimeRange = gig['time_range']?.toString().trim();
+    if (apiTimeRange != null && apiTimeRange.isNotEmpty) {
+      return apiTimeRange;
+    }
+
+    final startTime = _parseDateTime(gig['slot_start_local']) ??
+        _parseDateTime(gig['start_time']);
+    final endTime =
+        _parseDateTime(gig['slot_end_local']) ?? _parseDateTime(gig['end_time']);
+    if (startTime == null || endTime == null) return '';
+    return '${DateFormat('hh:mm a').format(startTime)} - ${DateFormat('hh:mm a').format(endTime)}';
+  }
+
+  String get _dateFilterLabel {
+    if (_selectedDate == null) return 'All upcoming dates';
+    return DateFormat('EEE, d MMM').format(_selectedDate!);
+  }
+
+  Future<void> _selectDate() async {
+    final now = DateTime.now();
+    final selected = await showDatePicker(
+      context: context,
+      initialDate: _selectedDate ?? now,
+      firstDate: now.subtract(const Duration(days: 90)),
+      lastDate: now.add(const Duration(days: 365)),
+    );
+
+    if (selected == null || !mounted) return;
+    setState(() => _selectedDate = selected);
+    await _loadGigs();
+  }
+
+  Future<void> _clearDateFilter() async {
+    if (_selectedDate == null) return;
+    setState(() => _selectedDate = null);
+    await _loadGigs();
+  }
+
+  int _compareGigsByDateTime(dynamic first, dynamic second) {
+    if (first is! Map || second is! Map) return 0;
+    final firstDate = _parseDateTime(first['slot_start_local']) ??
+        _parseDateTime(first['start_time']) ??
+        _parseDateTime(first['date']) ??
+        DateTime.fromMillisecondsSinceEpoch(0);
+    final secondDate = _parseDateTime(second['slot_start_local']) ??
+        _parseDateTime(second['start_time']) ??
+        _parseDateTime(second['date']) ??
+        DateTime.fromMillisecondsSinceEpoch(0);
+    return firstDate.compareTo(secondDate);
   }
 
   Future<void> _bookGig(int gigId) async {
@@ -111,7 +182,7 @@ class _DriverGigsScreenState extends State<DriverGigsScreen> {
     return DefaultTabController(
       length: 2,
       child: Scaffold(
-        backgroundColor: FoodFlowTheme.canvas,
+        backgroundColor: foodflow.canvas,
         appBar: AppBar(
           title: const Text('Delivery Gigs'),
           bottom: const TabBar(
@@ -121,24 +192,76 @@ class _DriverGigsScreenState extends State<DriverGigsScreen> {
             ],
           ),
         ),
-        body: _isLoading
-            ? const Center(child: CircularProgressIndicator())
-            : TabBarView(
-                children: [
-                  _buildAvailableGigsTab(),
-                  _buildMyGigsTab(),
-                ],
+        body: Column(
+          children: [
+            _buildDateFilter(),
+            Expanded(
+              child: _isLoading
+                  ? const Center(child: CircularProgressIndicator())
+                  : TabBarView(
+                      children: [
+                        _buildAvailableGigsTab(),
+                        _buildMyGigsTab(),
+                      ],
+                    ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDateFilter() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+      color: foodflow.canvas,
+      child: Row(
+        children: [
+          Expanded(
+            child: OutlinedButton.icon(
+              onPressed: _selectDate,
+              icon: const Icon(Icons.calendar_today_rounded, size: 18),
+              label: Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  _dateFilterLabel,
+                  overflow: TextOverflow.ellipsis,
+                ),
               ),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: foodflow.ink,
+                backgroundColor: Colors.white,
+                side: BorderSide(color: Colors.grey.shade300),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+              ),
+            ),
+          ),
+          if (_selectedDate != null) ...[
+            const SizedBox(width: 8),
+            IconButton.filledTonal(
+              onPressed: _clearDateFilter,
+              icon: const Icon(Icons.close_rounded),
+              tooltip: 'Clear date',
+            ),
+          ],
+        ],
       ),
     );
   }
 
   Widget _buildAvailableGigsTab() {
     if (_availableGigs.isEmpty) {
-      return FoodFlowTheme.emptyState(
+      return foodflow.emptyState(
         icon: Icons.event_busy,
         title: 'No available gigs',
-        subtitle: 'Open delivery slots will show up here.',
+        subtitle: _selectedDate == null
+            ? 'Open delivery slots will show up here.'
+            : 'No open delivery slots for $_dateFilterLabel.',
       );
     }
 
@@ -147,9 +270,9 @@ class _DriverGigsScreenState extends State<DriverGigsScreen> {
       itemCount: _availableGigs.length,
       itemBuilder: (context, index) {
         final gig = _availableGigs[index];
-        final date = DateTime.parse(gig['date']);
-        final startTime = DateTime.parse(gig['start_time']);
-        final endTime = DateTime.parse(gig['end_time']);
+        final gigMap = Map<String, dynamic>.from(gig as Map);
+        final dateLabel = _formatGigDate(gigMap);
+        final timeLabel = _formatGigTimeRange(gigMap);
         final title = gig['title']?.toString().trim().isNotEmpty == true
             ? gig['title'].toString()
             : 'Open delivery slot';
@@ -158,7 +281,7 @@ class _DriverGigsScreenState extends State<DriverGigsScreen> {
         return Container(
           margin: const EdgeInsets.only(bottom: 12),
           padding: const EdgeInsets.all(16),
-          decoration: FoodFlowTheme.surface(radius: 14),
+          decoration: foodflow.surface(radius: 14),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -167,12 +290,12 @@ class _DriverGigsScreenState extends State<DriverGigsScreen> {
                   Container(
                     padding: const EdgeInsets.all(8),
                     decoration: BoxDecoration(
-                      color: FoodFlowTheme.orange.withOpacity(0.1),
+                      color: foodflow.orange.withOpacity(0.1),
                       borderRadius: BorderRadius.circular(8),
                     ),
                     child: Icon(
                       Icons.delivery_dining,
-                      color: FoodFlowTheme.orange,
+                      color: foodflow.orange,
                       size: 24,
                     ),
                   ),
@@ -184,18 +307,20 @@ class _DriverGigsScreenState extends State<DriverGigsScreen> {
                         Text(
                           title,
                           style: const TextStyle(
-                            color: FoodFlowTheme.ink,
-                            fontWeight: FontWeight.w900,
+                            color: foodflow.ink,
+                            fontWeight: FontWeight.w800,
                             fontSize: 16,
                           ),
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          '${DateFormat('EEEE, d MMM yyyy').format(date)} • ${DateFormat('hh:mm a').format(startTime)} - ${DateFormat('hh:mm a').format(endTime)}',
+                          [dateLabel, timeLabel]
+                              .where((label) => label.isNotEmpty)
+                              .join(' - '),
                           style: const TextStyle(
                             fontSize: 14,
-                            color: FoodFlowTheme.muted,
-                            fontWeight: FontWeight.w600,
+                            color: foodflow.muted,
+                            fontWeight: FontWeight.w400,
                           ),
                         ),
                         if (description.isNotEmpty) ...[
@@ -206,7 +331,7 @@ class _DriverGigsScreenState extends State<DriverGigsScreen> {
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
                               fontSize: 12,
-                              color: FoodFlowTheme.muted,
+                              color: foodflow.muted,
                             ),
                           ),
                         ],
@@ -230,11 +355,11 @@ class _DriverGigsScreenState extends State<DriverGigsScreen> {
                   const Icon(Icons.location_on, size: 16, color: Colors.grey),
                   const SizedBox(width: 4),
                   Text(
-                    gig['area']['name'] ?? 'Delivery Area',
+                    (gig['area']?['name'] ?? 'Delivery Area').toString(),
                     style: const TextStyle(
                       fontSize: 12,
-                      color: FoodFlowTheme.muted,
-                      fontWeight: FontWeight.w600,
+                      color: foodflow.muted,
+                      fontWeight: FontWeight.w400,
                     ),
                   ),
                 ],
@@ -257,6 +382,11 @@ class _DriverGigsScreenState extends State<DriverGigsScreen> {
                     label:
                         'Max ${gig['max_cancellations_allowed'] ?? 0} cancels',
                   ),
+                  _InfoChip(
+                    icon: Icons.groups_2_outlined,
+                    label:
+                        '${gig['available_seats'] ?? 1}/${gig['capacity'] ?? 1} seats left',
+                  ),
                 ],
               ),
               const SizedBox(height: 8),
@@ -275,7 +405,7 @@ class _DriverGigsScreenState extends State<DriverGigsScreen> {
                       'Potential earning: ${_money(gig['estimated_earning'])}',
                       style: const TextStyle(
                         fontSize: 14,
-                        fontWeight: FontWeight.w500,
+                        fontWeight: FontWeight.w400,
                         color: Colors.green,
                       ),
                     ),
@@ -288,7 +418,7 @@ class _DriverGigsScreenState extends State<DriverGigsScreen> {
                   gig['terms_conditions'].toString(),
                   style: const TextStyle(
                     fontSize: 12,
-                    color: FoodFlowTheme.muted,
+                    color: foodflow.muted,
                   ),
                 ),
               ],
@@ -301,10 +431,12 @@ class _DriverGigsScreenState extends State<DriverGigsScreen> {
 
   Widget _buildMyGigsTab() {
     if (_myGigs.isEmpty) {
-      return FoodFlowTheme.emptyState(
+      return foodflow.emptyState(
         icon: Icons.calendar_today,
         title: 'No booked gigs',
-        subtitle: 'Booked and completed slots will appear here.',
+        subtitle: _selectedDate == null
+            ? 'Booked and completed slots will appear here.'
+            : 'No booked or completed slots for $_dateFilterLabel.',
       );
     }
 
@@ -313,9 +445,9 @@ class _DriverGigsScreenState extends State<DriverGigsScreen> {
       itemCount: _myGigs.length,
       itemBuilder: (context, index) {
         final gig = _myGigs[index];
-        final date = DateTime.parse(gig['date']);
-        final startTime = DateTime.parse(gig['start_time']);
-        final endTime = DateTime.parse(gig['end_time']);
+        final gigMap = Map<String, dynamic>.from(gig as Map);
+        final dateLabel = _formatGigDate(gigMap);
+        final timeLabel = _formatGigTimeRange(gigMap);
         final isCompleted = gig['status'] == 'completed';
         final title = gig['title']?.toString().trim().isNotEmpty == true
             ? gig['title'].toString()
@@ -324,7 +456,7 @@ class _DriverGigsScreenState extends State<DriverGigsScreen> {
         return Container(
           margin: const EdgeInsets.only(bottom: 12),
           padding: const EdgeInsets.all(16),
-          decoration: FoodFlowTheme.surface(radius: 14),
+          decoration: foodflow.surface(radius: 14),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -351,18 +483,20 @@ class _DriverGigsScreenState extends State<DriverGigsScreen> {
                         Text(
                           title,
                           style: const TextStyle(
-                            color: FoodFlowTheme.ink,
-                            fontWeight: FontWeight.w900,
+                            color: foodflow.ink,
+                            fontWeight: FontWeight.w800,
                             fontSize: 16,
                           ),
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          '${DateFormat('EEEE, d MMM yyyy').format(date)} • ${DateFormat('hh:mm a').format(startTime)} - ${DateFormat('hh:mm a').format(endTime)}',
+                          [dateLabel, timeLabel]
+                              .where((label) => label.isNotEmpty)
+                              .join(' - '),
                           style: const TextStyle(
                             fontSize: 14,
-                            color: FoodFlowTheme.muted,
-                            fontWeight: FontWeight.w600,
+                            color: foodflow.muted,
+                            fontWeight: FontWeight.w400,
                           ),
                         ),
                       ],
@@ -384,7 +518,7 @@ class _DriverGigsScreenState extends State<DriverGigsScreen> {
                       style: TextStyle(
                         fontSize: 12,
                         color: isCompleted ? Colors.green : Colors.orange,
-                        fontWeight: FontWeight.w500,
+                        fontWeight: FontWeight.w400,
                       ),
                     ),
                   ),
@@ -397,7 +531,7 @@ class _DriverGigsScreenState extends State<DriverGigsScreen> {
                   const SizedBox(width: 4),
                   Expanded(
                     child: Text(
-                      gig['area']['name'] ?? 'Delivery Area',
+                      (gig['area']?['name'] ?? 'Delivery Area').toString(),
                       style: const TextStyle(fontSize: 12, color: Colors.grey),
                     ),
                   ),
@@ -419,7 +553,7 @@ class _DriverGigsScreenState extends State<DriverGigsScreen> {
                       'Earned: ${_money(gig['actual_earning'] ?? gig['estimated_earning'])}',
                       style: const TextStyle(
                         fontSize: 14,
-                        fontWeight: FontWeight.w500,
+                        fontWeight: FontWeight.w400,
                         color: Colors.green,
                       ),
                     ),
@@ -458,7 +592,7 @@ class _InfoChip extends StatelessWidget {
             style: TextStyle(
               fontSize: 11,
               color: Colors.orange.shade700,
-              fontWeight: FontWeight.w600,
+              fontWeight: FontWeight.w400,
             ),
           ),
         ],

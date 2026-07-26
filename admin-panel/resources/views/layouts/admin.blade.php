@@ -69,12 +69,19 @@
             --border: #E2E8F0;
             --sidebar-width: 286px;
             --topbar-height: 78px;
+            --dashboard-ui-scale: 0.81;
         }
 
         * {
             margin: 0;
             padding: 0;
             box-sizing: border-box;
+        }
+
+        html {
+            width: 100%;
+            max-width: 100%;
+            overflow-x: hidden;
         }
 
         body {
@@ -86,6 +93,36 @@
             color: #334155;
             overflow-x: hidden;
             min-height: 100vh;
+            max-width: 100%;
+        }
+
+        body.dashboard-ui-compact {
+            zoom: var(--dashboard-ui-scale);
+            width: calc(100% / var(--dashboard-ui-scale));
+            min-height: calc(100vh / var(--dashboard-ui-scale));
+            max-width: calc(100vw / var(--dashboard-ui-scale));
+        }
+
+        @supports not (zoom: 1) {
+            body.dashboard-ui-compact {
+                transform: scale(var(--dashboard-ui-scale));
+                transform-origin: top left;
+            }
+        }
+
+        @media (max-width: 1024px) {
+            body.dashboard-ui-compact {
+                zoom: 1;
+                width: 100%;
+                max-width: 100%;
+                min-height: 100vh;
+            }
+
+            @supports not (zoom: 1) {
+                body.dashboard-ui-compact {
+                    transform: none;
+                }
+            }
         }
 
         /* ========== TOP HEADER ========== */
@@ -94,6 +131,7 @@
             top: 0;
             left: var(--sidebar-width);
             right: 0;
+            width: calc(100% - var(--sidebar-width));
             height: var(--topbar-height);
             background: #ffffff;
             border-bottom: 1px solid var(--border);
@@ -405,17 +443,15 @@
             top: 0;
             left: 0;
             width: var(--sidebar-width);
-            height: 100vh;
+            height: calc(100vh / var(--dashboard-ui-scale));
+            max-height: calc(100vh / var(--dashboard-ui-scale));
             background: #ffffff;
             border-right: 1px solid var(--border);
             z-index: 1040;
             display: flex;
             flex-direction: column;
             transition: all 0.3s ease;
-            overflow-y: auto;
-            overflow-x: hidden;
-            scrollbar-width: thin;
-            scrollbar-color: rgba(148, 163, 184, 0.35) transparent;
+            overflow: hidden;
         }
 
         .sidebar::-webkit-scrollbar {
@@ -438,6 +474,7 @@
             align-items: center;
             gap: 12px;
             min-height: var(--topbar-height);
+            flex: 0 0 auto;
         }
 
 
@@ -482,9 +519,13 @@
         }
 
         .sidebar-nav-wrapper {
-            flex: 1;
-            padding: 16px 12px 32px;
+            flex: 1 1 auto;
+            min-height: 0;
+            padding: 16px 12px;
             overflow-y: auto;
+            overflow-x: hidden;
+            scrollbar-width: thin;
+            scrollbar-color: rgba(148, 163, 184, 0.35) transparent;
         }
 
         .sidebar-section-title {
@@ -616,11 +657,14 @@
             position: relative;
             z-index: auto;
             width: calc(100% - var(--sidebar-width));
+            max-width: calc((100vw / var(--dashboard-ui-scale)) - var(--sidebar-width));
             overflow-x: hidden;
         }
 
         .page-content {
             padding: 28px;
+            max-width: 100%;
+            overflow-x: hidden;
             min-width: 0;
         }
 
@@ -675,6 +719,8 @@
             .sidebar {
                 transform: translateX(-100%);
                 box-shadow: 10px 0 30px rgba(0,0,0,0.15);
+                height: 100vh;
+                max-height: 100vh;
             }
 
             .sidebar.mobile-open {
@@ -683,11 +729,15 @@
 
             .top-header {
                 left: 0;
+                right: 0;
+                width: 100%;
+                max-width: 100%;
             }
 
             .main-content {
                 margin-left: 0;
                 width: 100%;
+                max-width: 100%;
             }
 
             .menu-toggle {
@@ -1608,7 +1658,7 @@
     
     @yield('styles')
 </head>
-<body>
+<body class="dashboard-ui-compact">
     <!-- Sidebar Overlay for Mobile -->
     <div class="sidebar-overlay" id="sidebarOverlay" onclick="closeSidebar()"></div>
     

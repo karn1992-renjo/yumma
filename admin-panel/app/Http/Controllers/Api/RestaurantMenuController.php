@@ -101,7 +101,7 @@ class RestaurantMenuController extends Controller
             return $response;
         }
 
-        $menuItems = MenuItem::with(['category', 'cuisine'])
+        $menuItems = MenuItem::with(['category', 'cuisine', 'masterMenuItem'])
             ->where('restaurant_id', $restaurant->id)
             ->orderBy('name')
             ->get();
@@ -162,7 +162,10 @@ class RestaurantMenuController extends Controller
 
         $categories = GlobalMenuCategory::active()
             ->parents()
-            ->with(['children' => fn ($query) => $query->active()])
+            ->with([
+                'cuisines:id,name',
+                'children' => fn ($query) => $query->active()->with('cuisines:id,name'),
+            ])
             ->orderBy('display_order')
             ->orderBy('name')
             ->get()
@@ -173,6 +176,11 @@ class RestaurantMenuController extends Controller
                     'description' => $child->description,
                     'image' => $child->image,
                     'image_url' => \App\Services\MediaStorage::url($child->image),
+                    'cuisine_ids' => $child->cuisines->pluck('id')->map(fn ($id) => (int) $id)->values(),
+                    'cuisines' => $child->cuisines->map(fn ($cuisine) => [
+                        'id' => (int) $cuisine->id,
+                        'name' => $cuisine->name,
+                    ])->values(),
                 ])->values();
 
                 return [
@@ -181,6 +189,11 @@ class RestaurantMenuController extends Controller
                     'description' => $category->description,
                     'image' => $category->image,
                     'image_url' => \App\Services\MediaStorage::url($category->image),
+                    'cuisine_ids' => $category->cuisines->pluck('id')->map(fn ($id) => (int) $id)->values(),
+                    'cuisines' => $category->cuisines->map(fn ($cuisine) => [
+                        'id' => (int) $cuisine->id,
+                        'name' => $cuisine->name,
+                    ])->values(),
                     'subcategories' => $children,
                     'children' => $children,
                 ];
@@ -240,6 +253,9 @@ class RestaurantMenuController extends Controller
                 $master->subcategory_name,
                 $master->category_name,
                 $master->name
+            ) ?? $this->resolveGlobalCategoryCuisineId(
+                $row['global_category_id'] ?? null,
+                $row['global_subcategory_id'] ?? null
             );
 
             $menuItem = MenuItem::updateOrCreate(
@@ -267,7 +283,9 @@ class RestaurantMenuController extends Controller
                 ]
             );
 
-            $created[] = new MenuItemResource($menuItem->load(['category', 'cuisine']));
+            $created[] = new MenuItemResource(
+                $menuItem->load(['category', 'cuisine', 'masterMenuItem'])
+            );
         }
 
         if (count($created) === 0) {
@@ -314,6 +332,7 @@ class RestaurantMenuController extends Controller
 
         $request->validate(array_merge([
             'name' => 'required|string|max:255',
+            'master_menu_item_id' => 'nullable|integer|exists:master_menu_items,id',
             'price' => 'required|numeric|min:0',
             'category_id' => 'nullable|integer|exists:categories,id',
             'global_category_id' => 'nullable|integer|exists:global_menu_categories,id',
@@ -340,6 +359,8 @@ class RestaurantMenuController extends Controller
         ], $this->menuCustomizationRules()));
 
         $foodType = $request->food_type ?: ($request->boolean('is_veg', true) ? 'veg' : 'non_veg');
+        $masterMenuItemId = $request->integer('master_menu_item_id') ?: null;
+        $master = $masterMenuItemId ? MasterMenuItem::where('is_active', true)->findOrFail($masterMenuItemId) : null;
         if ($restaurant->is_pure_veg && $foodType !== 'veg') {
             return response()->json([
                 'success' => false,
@@ -347,20 +368,28 @@ class RestaurantMenuController extends Controller
             ], 422);
         }
 
+        if ($restaurant->is_pure_veg && $master && $master->food_type !== 'veg') {
+            return response()->json([
+                'success' => false,
+                'message' => 'Pure veg restaurants can only link vegetarian global menu items.'
+            ], 422);
+        }
+
+        $selectedCuisineId = $request->filled('cuisine_id') ? (int) $request->input('cuisine_id') : null;
+        $cuisineId = $this->resolveCuisineId($selectedCuisineId, $master, $request->input('name'))
+            ?? $this->resolveGlobalCategoryCuisineId($request->global_category_id, $request->global_subcategory_id);
+
         $menuItem = MenuItem::create([
             'restaurant_id' => $restaurant->id,
-            'item_source' => 'custom',
+            'master_menu_item_id' => $master?->id,
+            'item_source' => $master ? 'global' : 'custom',
             'approval_status' => 'approved',
             'category_id' => $this->resolveRestaurantCategoryId($restaurant->id, $request->category_id, $request->global_category_id, $request->global_subcategory_id),
             'name' => $request->name,
             'price' => $request->price,
             'discounted_price' => $request->discounted_price,
             'description' => $request->description,
-            'cuisine_id' => $this->resolveCuisineId(
-                $request->cuisine_id,
-                null,
-                $request->input('name')
-            ),
+            'cuisine_id' => $cuisineId,
             'food_type' => $foodType,
             'is_veg' => $foodType === 'veg',
             'is_available' => $request->filled('is_available') ? $request->is_available : true,
@@ -380,7 +409,9 @@ class RestaurantMenuController extends Controller
 
         return response()->json([
             'success' => true,
-            'data' => new MenuItemResource($menuItem->load(['category', 'cuisine'])),
+            'data' => new MenuItemResource(
+                $menuItem->load(['category', 'cuisine', 'masterMenuItem'])
+            ),
             'message' => 'Menu item created successfully.'
         ], 201);
     }
@@ -414,6 +445,7 @@ class RestaurantMenuController extends Controller
 
         $validated = $request->validate(array_merge([
             'name' => 'sometimes|string|max:255',
+            'master_menu_item_id' => 'nullable|integer|exists:master_menu_items,id',
             'price' => 'sometimes|numeric|min:0',
             'discounted_price' => 'nullable|numeric|min:0',
             'category_id' => 'nullable|integer|exists:categories,id',
@@ -437,6 +469,22 @@ class RestaurantMenuController extends Controller
             'tags' => 'nullable|array',
             'tags.*' => 'nullable|string|max:80',
         ], $this->menuCustomizationRules()));
+
+        $master = null;
+        if (array_key_exists('master_menu_item_id', $validated)) {
+            if (! empty($validated['master_menu_item_id'])) {
+                $master = MasterMenuItem::where('is_active', true)->findOrFail((int) $validated['master_menu_item_id']);
+                if ($restaurant->is_pure_veg && $master->food_type !== 'veg') {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Pure veg restaurants can only link vegetarian global menu items.'
+                    ], 422);
+                }
+            }
+
+            $validated['master_menu_item_id'] = $master?->id;
+            $validated['item_source'] = $master ? 'global' : 'custom';
+        }
 
         if (array_key_exists('food_type', $validated)) {
             if ($restaurant->is_pure_veg && $validated['food_type'] !== 'veg') {
@@ -471,6 +519,10 @@ class RestaurantMenuController extends Controller
             $validated['tags'] = $this->normalizeTags($request->input('tags', []));
         }
 
+        if ($master && empty($validated['cuisine_id'])) {
+            $validated['cuisine_id'] = $this->resolveCuisineId(null, $master, $validated['name'] ?? $menuItem->name);
+        }
+
         if ($request->filled('global_category_id') || array_key_exists('category_id', $validated)) {
             $validated['category_id'] = $this->resolveRestaurantCategoryId(
                 $restaurant->id,
@@ -478,6 +530,13 @@ class RestaurantMenuController extends Controller
                 $request->input('global_category_id'),
                 $request->input('global_subcategory_id')
             );
+
+            if (empty($validated['cuisine_id'])) {
+                $validated['cuisine_id'] = $this->resolveGlobalCategoryCuisineId(
+                    $request->input('global_category_id'),
+                    $request->input('global_subcategory_id')
+                );
+            }
         }
 
         unset($validated['global_category_id'], $validated['global_subcategory_id']);
@@ -486,7 +545,9 @@ class RestaurantMenuController extends Controller
 
         return response()->json([
             'success' => true,
-            'data' => new MenuItemResource($menuItem->fresh(['category', 'cuisine'])),
+            'data' => new MenuItemResource(
+                $menuItem->fresh(['category', 'cuisine', 'masterMenuItem'])
+            ),
             'message' => 'Menu item updated successfully.'
         ]);
     }
@@ -644,6 +705,44 @@ class RestaurantMenuController extends Controller
         return null;
     }
 
+
+    private function resolveGlobalCategoryCuisineId(?int $globalCategoryId = null, ?int $globalSubcategoryId = null): ?int
+    {
+        if ($globalSubcategoryId) {
+            $subcategory = GlobalMenuCategory::active()
+                ->where('parent_id', $globalCategoryId)
+                ->with('cuisines:id')
+                ->find($globalSubcategoryId);
+
+            if ($cuisineId = $this->singleMappedCuisineId($subcategory)) {
+                return $cuisineId;
+            }
+        }
+
+        if ($globalCategoryId) {
+            $category = GlobalMenuCategory::active()
+                ->with('cuisines:id')
+                ->find($globalCategoryId);
+
+            return $this->singleMappedCuisineId($category);
+        }
+
+        return null;
+    }
+
+    private function singleMappedCuisineId(?GlobalMenuCategory $category): ?int
+    {
+        if (! $category) {
+            return null;
+        }
+
+        $ids = $category->cuisines->pluck('id')
+            ->map(fn ($id) => (int) $id)
+            ->unique()
+            ->values();
+
+        return $ids->count() === 1 ? $ids->first() : null;
+    }
     private function resolveRestaurantCategoryId(int $restaurantId, ?int $categoryId = null, ?int $globalCategoryId = null, ?int $globalSubcategoryId = null, ?string $fallbackName = null): ?int
     {
         if ($categoryId) {

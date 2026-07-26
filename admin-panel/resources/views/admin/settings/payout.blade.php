@@ -4,12 +4,18 @@
 @section('header', 'Payout Settings')
 
 @section('content')
-<div class="page-header">
+@include('admin.settings._style')
+
+<div class="settings-shell">
+<div class="settings-hero">
     <div>
+        <span class="settings-eyebrow"><i class="fas fa-money-check-alt"></i> Settlement Gateway</span>
         <h1>Payout Gateway Settings</h1>
         <p>Select one active gateway and configure payout schedule, minimum amount, and credentials.</p>
     </div>
 </div>
+
+@include('admin.settings._tabs')
 
 <div class="table-card">
     <div class="p-4">
@@ -157,9 +163,9 @@
                     <label class="form-label">Marketplace Collector ID</label>
                     <input type="text" name="credentials[mercadopago_marketplace_collector_id]" class="form-control" placeholder="Marketplace collector ID" value="{{ $activeCredentials['mercadopago_marketplace_collector_id'] ?? '' }}">
                 </div>
-                <div class="col-md-4 paystack-fields sslcommerz-fields senangpay-fields bkash-fields mercadopago-fields skrill-fields easypaisa-fields mollie-fields gateway-fields">
+                <div class="col-md-4 cash-fields paystack-fields sslcommerz-fields senangpay-fields bkash-fields mercadopago-fields skrill-fields easypaisa-fields mollie-fields gateway-fields">
                     <label class="form-label">Settlement Notes</label>
-                    <input type="text" name="options[settlement_notes]" class="form-control" placeholder="Optional dashboard or settlement notes" value="{{ optional($activeSettings)->options['settlement_notes'] ?? '' }}">
+                    <input type="text" name="options[settlement_notes]" class="form-control" placeholder="Optional cash handover or settlement notes" value="{{ optional($activeSettings)->options['settlement_notes'] ?? '' }}">
                 </div>
             </div>
 
@@ -220,6 +226,7 @@
             </table>
         </div>
     </div>
+</div>
 </div>
 
 <script>

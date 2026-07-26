@@ -54,7 +54,7 @@ class _DriverPrivacyLegalScreenState extends State<DriverPrivacyLegalScreen> {
       ),
       (
         'Legal Contact',
-        'Contact: ${_content['contact_email']?.toString().trim().isNotEmpty == true ? _content['contact_email'] : 'support@food.unisell.online'}'
+        'Contact: ${_content['contact_email']?.toString().trim().isNotEmpty == true ? _content['contact_email'] : 'support@yumma.in'}'
       ),
     ];
 
@@ -63,7 +63,7 @@ class _DriverPrivacyLegalScreenState extends State<DriverPrivacyLegalScreen> {
       appBar: AppBar(
         title: const Text('Privacy & Legal'),
         backgroundColor: Colors.white,
-        foregroundColor: FoodFlowTheme.ink,
+        foregroundColor: foodflow.ink,
         elevation: 0,
       ),
       body: ListView.separated(
@@ -85,8 +85,8 @@ class _DriverPrivacyLegalScreenState extends State<DriverPrivacyLegalScreen> {
                 Text(
                   section.$1,
                   style: const TextStyle(
-                    color: FoodFlowTheme.ink,
-                    fontWeight: FontWeight.w900,
+                    color: foodflow.ink,
+                    fontWeight: FontWeight.w800,
                     fontSize: 16,
                   ),
                 ),
@@ -94,9 +94,9 @@ class _DriverPrivacyLegalScreenState extends State<DriverPrivacyLegalScreen> {
                 Text(
                   section.$2,
                   style: const TextStyle(
-                    color: FoodFlowTheme.muted,
+                    color: foodflow.muted,
                     height: 1.45,
-                    fontWeight: FontWeight.w600,
+                    fontWeight: FontWeight.w400,
                   ),
                 ),
               ],

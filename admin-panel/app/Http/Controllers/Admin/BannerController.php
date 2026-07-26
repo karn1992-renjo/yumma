@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Models\Banner;
+use App\Models\AppSetting;
 use App\Models\Category;
 use App\Models\MenuItem;
 use App\Models\Restaurant;
@@ -18,7 +19,26 @@ class BannerController extends Controller
     public function index()
     {
         $banners = Banner::with(['redirectCategory', 'redirectRestaurant', 'redirectMenuItem'])->orderBy('display_order')->get();
-        return view('admin.banners.index', compact('banners'));
+        $bannerDurationSeconds = $this->bannerDurationSeconds();
+
+        return view('admin.banners.index', compact('banners', 'bannerDurationSeconds'));
+    }
+
+    public function updateSettings(Request $request)
+    {
+        $validated = $request->validate([
+            'banner_duration_seconds' => 'required|integer|min:2|max:30',
+        ]);
+
+        AppSetting::updateOrCreate(
+            ['key' => 'banner_duration_seconds'],
+            ['value' => (string) $validated['banner_duration_seconds'], 'type' => 'number']
+        );
+
+        cache()->forget('app_settings');
+
+        return redirect()->route('admin.banners.index')
+            ->with('success', 'Banner duration updated successfully.');
     }
     
     public function create()
@@ -214,5 +234,10 @@ class BannerController extends Controller
         }
 
         return $file->store('banners', 'public');
+    }
+
+    private function bannerDurationSeconds(): int
+    {
+        return max(2, min(30, (int) AppSetting::getValue('banner_duration_seconds', 5)));
     }
 }

@@ -108,6 +108,8 @@ class _RestaurantAnalyticsScreenState extends State<RestaurantAnalyticsScreen> {
                 physics: const AlwaysScrollableScrollPhysics(),
                 padding: const EdgeInsets.fromLTRB(16, 14, 16, 28),
                 children: [
+                  _AnalyticsHeader(onRefresh: _loadAnalytics),
+                  const SizedBox(height: 10),
                   _PeriodSelector(
                     selected: _selectedPeriod,
                     onChanged: (value) {
@@ -115,35 +117,41 @@ class _RestaurantAnalyticsScreenState extends State<RestaurantAnalyticsScreen> {
                       _loadAnalytics();
                     },
                   ),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 12),
                   _buildMetricGrid(),
-                  const SizedBox(height: 18),
+                  const SizedBox(height: 14),
+                  _SectionPanel(
+                    title: 'Promotion performance',
+                    subtitle: 'Offer usage and discount impact',
+                    child: _buildPromotionPerformance(),
+                  ),
+                  const SizedBox(height: 12),
                   _SectionPanel(
                     title: 'Revenue trend',
                     subtitle: 'Sales across $_periodLabel',
                     trailing: _money(context, _num('total_revenue')),
                     child: SizedBox(
-                      height: 248,
+                      height: 210,
                       child: _buildRevenueChart(),
                     ),
                   ),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 12),
                   _SectionPanel(
                     title: 'Order volume',
                     subtitle: 'Daily order movement',
                     trailing: '${_int('total_orders')} orders',
                     child: SizedBox(
-                      height: 228,
+                      height: 190,
                       child: _buildOrdersChart(),
                     ),
                   ),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 12),
                   _SectionPanel(
                     title: 'Best sellers',
                     subtitle: 'Items customers picked most',
                     child: _buildTopItemsList(),
                   ),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 12),
                   _SectionPanel(
                     title: 'Peak hours',
                     subtitle: 'When your kitchen is busiest',
@@ -163,7 +171,7 @@ class _RestaurantAnalyticsScreenState extends State<RestaurantAnalyticsScreen> {
       physics: const NeverScrollableScrollPhysics(),
       mainAxisSpacing: 12,
       crossAxisSpacing: 12,
-      childAspectRatio: 1.55,
+      childAspectRatio: 1.82,
       children: [
         _MetricTile(
           title: 'Revenue',
@@ -195,13 +203,88 @@ class _RestaurantAnalyticsScreenState extends State<RestaurantAnalyticsScreen> {
     );
   }
 
+  Widget _buildPromotionPerformance() {
+    final performance = _mapOrEmpty(_data['promotion_performance']);
+    final activePromos = parseIntValue(performance['active_promotions'] ?? 0);
+    final totalPromos = parseIntValue(performance['total_promotions'] ?? 0);
+    final couponOrders = parseIntValue(performance['coupon_orders'] ?? 0);
+    final discountGiven =
+        parseNullableDouble(performance['discount_given']) ?? 0;
+    final avgDiscount = parseNullableDouble(performance['avg_discount']) ?? 0;
+    final topPromos =
+        performance['top_promos'] is List ? performance['top_promos'] as List : [];
+
+    if (totalPromos == 0 && couponOrders == 0 && discountGiven == 0) {
+      return const _EmptyAnalyticsState(
+        icon: Icons.local_offer_outlined,
+        text: 'Promotion results will appear after offers are created',
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        GridView.count(
+          crossAxisCount: 2,
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          mainAxisSpacing: 10,
+          crossAxisSpacing: 10,
+          childAspectRatio: 1.72,
+          children: [
+            _PromoMetricTile(
+              title: 'Active promos',
+              value: '$activePromos',
+              note: '$totalPromos total',
+              icon: Icons.campaign_outlined,
+            ),
+            _PromoMetricTile(
+              title: 'Promo orders',
+              value: '$couponOrders',
+              note: 'redeemed',
+              icon: Icons.receipt_long_outlined,
+            ),
+            _PromoMetricTile(
+              title: 'Discount given',
+              value: _money(context, discountGiven),
+              note: 'customer savings',
+              icon: Icons.savings_outlined,
+            ),
+            _PromoMetricTile(
+              title: 'Avg discount',
+              value: _money(context, avgDiscount),
+              note: 'per promo order',
+              icon: Icons.percent_rounded,
+            ),
+          ],
+        ),
+        if (topPromos.isNotEmpty) ...[
+          const SizedBox(height: 14),
+          ...topPromos.take(5).map((item) {
+            final promo = _map(item);
+            return _PromotionPerformanceRow(
+              title: promo['title']?.toString() ?? 'Promotion',
+              code: promo['code']?.toString() ?? 'Auto promotion',
+              uses: parseIntValue(promo['usage_count'] ?? 0),
+              discount: _money(
+                context,
+                parseNullableDouble(promo['discount_given']) ?? 0,
+              ),
+            );
+          }),
+        ],
+      ],
+    );
+  }
+
   Widget _buildRevenueChart() {
     final dailyData = _list('daily_revenue');
     final spots = <FlSpot>[];
 
     for (var i = 0; i < dailyData.length; i++) {
       final item = _map(dailyData[i]);
-      spots.add(FlSpot(i.toDouble(), parseNullableDouble(item['revenue']) ?? 0));
+      spots
+          .add(FlSpot(i.toDouble(), parseNullableDouble(item['revenue']) ?? 0));
     }
 
     if (spots.isEmpty || spots.every((spot) => spot.y == 0)) {
@@ -231,7 +314,8 @@ class _RestaurantAnalyticsScreenState extends State<RestaurantAnalyticsScreen> {
               interval: _chartInterval(maxY),
               getTitlesWidget: (value, meta) => Text(
                 _compactMoney(context, value),
-                style: const TextStyle(fontSize: 10, color: FoodFlowTheme.muted),
+                style:
+                    const TextStyle(fontSize: 10, color: FoodFlowTheme.muted),
               ),
             ),
           ),
@@ -244,8 +328,10 @@ class _RestaurantAnalyticsScreenState extends State<RestaurantAnalyticsScreen> {
                   _dateTitle(value, dailyData, compact: true),
             ),
           ),
-          rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-          topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+          rightTitles:
+              const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+          topTitles:
+              const AxisTitles(sideTitles: SideTitles(showTitles: false)),
         ),
         borderData: FlBorderData(show: false),
         lineTouchData: LineTouchData(
@@ -253,7 +339,8 @@ class _RestaurantAnalyticsScreenState extends State<RestaurantAnalyticsScreen> {
             getTooltipItems: (spots) => spots.map((spot) {
               return LineTooltipItem(
                 _money(context, spot.y),
-                const TextStyle(color: Colors.white, fontWeight: FontWeight.w800),
+                const TextStyle(
+                    color: Colors.white, fontWeight: FontWeight.w800),
               );
             }).toList(),
           ),
@@ -267,8 +354,7 @@ class _RestaurantAnalyticsScreenState extends State<RestaurantAnalyticsScreen> {
             isStrokeCapRound: true,
             dotData: FlDotData(
               show: dailyData.length <= 12,
-              getDotPainter: (spot, percent, bar, index) =>
-                  FlDotCirclePainter(
+              getDotPainter: (spot, percent, bar, index) => FlDotCirclePainter(
                 radius: 4,
                 color: Colors.white,
                 strokeWidth: 3,
@@ -307,7 +393,8 @@ class _RestaurantAnalyticsScreenState extends State<RestaurantAnalyticsScreen> {
               toY: orders,
               width: dailyData.length > 18 ? 8 : 16,
               color: FoodFlowTheme.orange,
-              borderRadius: const BorderRadius.vertical(top: Radius.circular(5)),
+              borderRadius:
+                  const BorderRadius.vertical(top: Radius.circular(5)),
               backDrawRodData: BackgroundBarChartRodData(
                 show: true,
                 toY: math.max(orders, 1),
@@ -319,7 +406,8 @@ class _RestaurantAnalyticsScreenState extends State<RestaurantAnalyticsScreen> {
       );
     }
 
-    if (groups.isEmpty || groups.every((group) => group.barRods.first.toY == 0)) {
+    if (groups.isEmpty ||
+        groups.every((group) => group.barRods.first.toY == 0)) {
       return const _EmptyAnalyticsState(
         icon: Icons.bar_chart,
         text: 'Order volume will appear here',
@@ -347,7 +435,8 @@ class _RestaurantAnalyticsScreenState extends State<RestaurantAnalyticsScreen> {
               reservedSize: 32,
               getTitlesWidget: (value, meta) => Text(
                 value.toInt().toString(),
-                style: const TextStyle(fontSize: 10, color: FoodFlowTheme.muted),
+                style:
+                    const TextStyle(fontSize: 10, color: FoodFlowTheme.muted),
               ),
             ),
           ),
@@ -360,8 +449,10 @@ class _RestaurantAnalyticsScreenState extends State<RestaurantAnalyticsScreen> {
                   _dateTitle(value, dailyData, compact: true),
             ),
           ),
-          rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-          topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+          rightTitles:
+              const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+          topTitles:
+              const AxisTitles(sideTitles: SideTitles(showTitles: false)),
         ),
       ),
     );
@@ -387,10 +478,12 @@ class _RestaurantAnalyticsScreenState extends State<RestaurantAnalyticsScreen> {
         final item = _map(entry.value);
         final orders = parseNullableDouble(item['total_orders']) ?? 0;
         final revenue = parseNullableDouble(item['revenue']) ?? 0;
-        final progress = maxOrders <= 0 ? 0.0 : (orders / maxOrders).clamp(0.0, 1.0);
+        final progress =
+            maxOrders <= 0 ? 0.0 : (orders / maxOrders).clamp(0.0, 1.0);
 
         return Padding(
-          padding: EdgeInsets.only(bottom: index == topItems.length - 1 ? 0 : 14),
+          padding:
+              EdgeInsets.only(bottom: index == topItems.length - 1 ? 0 : 14),
           child: Row(
             children: [
               Container(
@@ -398,13 +491,17 @@ class _RestaurantAnalyticsScreenState extends State<RestaurantAnalyticsScreen> {
                 height: 34,
                 alignment: Alignment.center,
                 decoration: BoxDecoration(
-                  color: index == 0 ? const Color(0xFFFFF1D6) : Colors.grey.shade100,
+                  color: index == 0
+                      ? const Color(0xFFFFF1D6)
+                      : Colors.grey.shade100,
                   borderRadius: BorderRadius.circular(10),
                 ),
                 child: Text(
                   '${index + 1}',
                   style: TextStyle(
-                    color: index == 0 ? const Color(0xFFFF8A00) : FoodFlowTheme.ink,
+                    color: index == 0
+                        ? const Color(0xFFFF8A00)
+                        : FoodFlowTheme.ink,
                     fontWeight: FontWeight.w900,
                   ),
                 ),
@@ -490,8 +587,9 @@ class _RestaurantAnalyticsScreenState extends State<RestaurantAnalyticsScreen> {
     });
 
     final topHours = activeHours.take(5).toList();
-    final maxOrders =
-        topHours.map((e) => parseNullableDouble(e['orders']) ?? 0).reduce(math.max);
+    final maxOrders = topHours
+        .map((e) => parseNullableDouble(e['orders']) ?? 0)
+        .reduce(math.max);
 
     return Column(
       children: topHours.map((item) {
@@ -579,7 +677,8 @@ class _RestaurantAnalyticsScreenState extends State<RestaurantAnalyticsScreen> {
 
   String _compactMoney(BuildContext context, double value) {
     final symbol = getCurrencySymbol(context);
-    if (value >= 100000) return '$symbol${(value / 100000).toStringAsFixed(1)}L';
+    if (value >= 100000)
+      return '$symbol${(value / 100000).toStringAsFixed(1)}L';
     if (value >= 1000) return '$symbol${(value / 1000).toStringAsFixed(0)}k';
     return '$symbol${value.toInt()}';
   }
@@ -591,10 +690,15 @@ class _RestaurantAnalyticsScreenState extends State<RestaurantAnalyticsScreen> {
 
   int _int(String key) => parseIntValue(_data[key] ?? 0);
 
-  List<dynamic> _list(String key) => _data[key] is List ? _data[key] as List : [];
+  List<dynamic> _list(String key) =>
+      _data[key] is List ? _data[key] as List : [];
 
-  Map<String, dynamic> _map(dynamic value) =>
-      value is Map<String, dynamic> ? value : Map<String, dynamic>.from(value as Map);
+  Map<String, dynamic> _mapOrEmpty(dynamic value) =>
+      value is Map ? Map<String, dynamic>.from(value) : <String, dynamic>{};
+
+  Map<String, dynamic> _map(dynamic value) => value is Map<String, dynamic>
+      ? value
+      : Map<String, dynamic>.from(value as Map);
 
   String get _periodLabel {
     switch (_selectedPeriod) {
@@ -605,6 +709,164 @@ class _RestaurantAnalyticsScreenState extends State<RestaurantAnalyticsScreen> {
       default:
         return 'last 7 days';
     }
+  }
+}
+
+class _PromoMetricTile extends StatelessWidget {
+  const _PromoMetricTile({
+    required this.title,
+    required this.value,
+    required this.note,
+    required this.icon,
+  });
+
+  final String title;
+  final String value;
+  final String note;
+  final IconData icon;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: FoodFlowTheme.orange.withOpacity(0.06),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: FoodFlowTheme.orange.withOpacity(0.14)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 34,
+            height: 34,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(11),
+            ),
+            child: Icon(icon, color: FoodFlowTheme.orange, size: 19),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: FoodFlowTheme.muted,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    value,
+                    style: const TextStyle(
+                      color: FoodFlowTheme.ink,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  note,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: FoodFlowTheme.muted,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PromotionPerformanceRow extends StatelessWidget {
+  const _PromotionPerformanceRow({
+    required this.title,
+    required this.code,
+    required this.uses,
+    required this.discount,
+  });
+
+  final String title;
+  final String code;
+  final int uses;
+  final String discount;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Row(
+        children: [
+          Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(
+              color: FoodFlowTheme.orange.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Icon(
+              Icons.local_offer_outlined,
+              color: FoodFlowTheme.orange,
+              size: 19,
+            ),
+          ),
+          const SizedBox(width: 11),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: FoodFlowTheme.ink,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  '$code · $uses uses',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: FoodFlowTheme.muted,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 10),
+          Text(
+            discount,
+            style: const TextStyle(
+              color: Color(0xFF0F9D58),
+              fontSize: 12,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
 
@@ -638,7 +900,7 @@ class _PeriodSelector extends StatelessWidget {
               onTap: () => onChanged(period.$1),
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 160),
-                padding: const EdgeInsets.symmetric(vertical: 11),
+                padding: const EdgeInsets.symmetric(vertical: 9),
                 decoration: BoxDecoration(
                   color: isSelected ? FoodFlowTheme.orange : Colors.transparent,
                   borderRadius: BorderRadius.circular(10),
@@ -649,13 +911,88 @@ class _PeriodSelector extends StatelessWidget {
                   style: TextStyle(
                     color: isSelected ? Colors.white : FoodFlowTheme.muted,
                     fontWeight: FontWeight.w900,
-                    fontSize: 13,
+                    fontSize: 12,
                   ),
                 ),
               ),
             ),
           );
         }).toList(),
+      ),
+    );
+  }
+}
+
+class _AnalyticsHeader extends StatelessWidget {
+  const _AnalyticsHeader({required this.onRefresh});
+
+  final VoidCallback onRefresh;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: FoodFlowTheme.line),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.035),
+            blurRadius: 14,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              color: FoodFlowTheme.orange.withOpacity(0.12),
+              borderRadius: BorderRadius.circular(13),
+            ),
+            child: Icon(
+              Icons.analytics_rounded,
+              color: FoodFlowTheme.orange,
+              size: 22,
+            ),
+          ),
+          const SizedBox(width: 11),
+          const Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Performance',
+                  style: TextStyle(
+                    color: FoodFlowTheme.ink,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                SizedBox(height: 2),
+                Text(
+                  'Revenue, orders, and busy-hour signals',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: FoodFlowTheme.muted,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            onPressed: onRefresh,
+            icon: const Icon(Icons.refresh_rounded),
+            color: FoodFlowTheme.orange,
+            visualDensity: VisualDensity.compact,
+          ),
+        ],
       ),
     );
   }
@@ -680,7 +1017,7 @@ class _MetricTile extends StatelessWidget {
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(14),
         border: Border.all(color: const Color(0xFFE9E9EB)),
         boxShadow: [
           BoxShadow(
@@ -693,13 +1030,13 @@ class _MetricTile extends StatelessWidget {
       child: Row(
         children: [
           Container(
-            width: 42,
-            height: 42,
+            width: 38,
+            height: 38,
             decoration: BoxDecoration(
               color: color.withOpacity(0.11),
-              borderRadius: BorderRadius.circular(13),
+              borderRadius: BorderRadius.circular(12),
             ),
-            child: Icon(icon, color: color, size: 22),
+            child: Icon(icon, color: color, size: 20),
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -725,7 +1062,7 @@ class _MetricTile extends StatelessWidget {
                     value,
                     style: const TextStyle(
                       color: FoodFlowTheme.ink,
-                      fontSize: 19,
+                      fontSize: 17,
                       fontWeight: FontWeight.w900,
                     ),
                   ),
@@ -756,10 +1093,10 @@ class _SectionPanel extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(14),
         border: Border.all(color: const Color(0xFFE9E9EB)),
       ),
       child: Column(
@@ -775,7 +1112,7 @@ class _SectionPanel extends StatelessWidget {
                       title,
                       style: const TextStyle(
                         color: FoodFlowTheme.ink,
-                        fontSize: 18,
+                        fontSize: 15,
                         fontWeight: FontWeight.w900,
                       ),
                     ),
@@ -801,7 +1138,7 @@ class _SectionPanel extends StatelessWidget {
                 ),
             ],
           ),
-          const SizedBox(height: 18),
+          const SizedBox(height: 14),
           child,
         ],
       ),

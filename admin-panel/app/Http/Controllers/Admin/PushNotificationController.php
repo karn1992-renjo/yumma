@@ -7,6 +7,7 @@ use App\Http\Controllers\Controller;
 use App\Models\AppSetting;
 use App\Models\PushBroadcast;
 use App\Models\User;
+use App\Services\MediaStorage;
 use App\Services\PushNotificationService;
 use App\Support\PhoneNumber;
 use Illuminate\Http\Request;
@@ -47,6 +48,7 @@ class PushNotificationController extends Controller
             'audience_roles.*' => 'in:customer,restaurant_owner,restaurant_staff,delivery_partner',
             'deep_link' => 'nullable|string|max:2048',
             'image_url' => 'nullable|url|max:2048',
+            'image' => 'nullable|image|mimes:jpeg,jpg,png,webp|max:4096',
             'data_key' => 'nullable|array',
             'data_key.*' => 'nullable|string|max:100',
             'data_value' => 'nullable|array',
@@ -57,6 +59,13 @@ class PushNotificationController extends Controller
             return back()
                 ->withErrors(['audience_roles' => 'Select at least one role for role-wise targeting.'])
                 ->withInput();
+        }
+
+        $imageUrl = $validated['image_url'] ?? null;
+        if ($request->hasFile('image')) {
+            $imageUrl = MediaStorage::url(
+                MediaStorage::store($request->file('image'), 'push-notifications')
+            );
         }
 
         $broadcast = PushBroadcast::create([
@@ -72,7 +81,10 @@ class PushNotificationController extends Controller
                     $request->input('data_key', []),
                     $request->input('data_value', [])
                 ),
-                ['image_url' => $validated['image_url'] ?? null]
+                [
+                    'image_url' => $imageUrl,
+                    'image' => $imageUrl,
+                ]
             ), fn ($value) => filled($value)),
             'status' => 'processing',
             'sent_by' => auth()->id(),
@@ -94,6 +106,7 @@ class PushNotificationController extends Controller
             'body' => 'required|string|max:500',
             'deep_link' => 'nullable|string|max:2048',
             'image_url' => 'nullable|url|max:2048',
+            'image' => 'nullable|image|mimes:jpeg,jpg,png,webp|max:4096',
         ]);
 
         $user = $this->findTestRecipient(
@@ -117,7 +130,15 @@ class PushNotificationController extends Controller
                 ->with('error', 'The selected user does not have an FCM token yet. Open the app on that device and log in first.');
         }
 
+        $imageUrl = $validated['image_url'] ?? null;
+        if ($request->hasFile('image')) {
+            $imageUrl = MediaStorage::url(
+                MediaStorage::store($request->file('image'), 'push-notifications')
+            );
+        }
+
         $firebase = new FirebaseHelper();
+        $customerImagePush = $validated['target_app'] === 'customer' && filled($imageUrl);
         $sent = $firebase->sendToDevice(
             $token,
             $validated['title'],
@@ -128,7 +149,10 @@ class PushNotificationController extends Controller
                 'target_app' => $validated['target_app'],
                 'target_user_id' => (string) $user->id,
                 'deep_link' => $validated['deep_link'] ?? null,
-                'image_url' => $validated['image_url'] ?? null,
+                'image_url' => $imageUrl,
+                'image' => $imageUrl,
+                'data_only' => $customerImagePush ? '1' : null,
+                'image_banner' => $customerImagePush ? '1' : null,
             ], fn ($value) => filled($value))
         );
 

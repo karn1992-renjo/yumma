@@ -27,7 +27,7 @@ class HomeScreenAlt extends StatelessWidget {
                             children: const [
                               Text(
                                 'Home',
-                                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+                                style: TextStyle(fontWeight: FontWeight.w800, fontSize: 18),
                               ),
                               Icon(Icons.keyboard_arrow_down),
                             ],
@@ -65,7 +65,7 @@ class HomeScreenAlt extends StatelessWidget {
                 ),
                 child: TextField(
                   decoration: InputDecoration(
-                    hintText: 'Search for restaurant, item or more',
+                    hintText: 'Search for store, item or more',
                     prefixIcon: const Icon(Icons.search, color: Colors.grey),
                     suffixIcon: const Icon(Icons.mic, color: Color(0xFFFC8019)),
                     border: InputBorder.none,
@@ -102,7 +102,7 @@ class HomeScreenAlt extends StatelessWidget {
                 padding: EdgeInsets.symmetric(horizontal: 16.0),
                 child: Text(
                   "What's on your mind?",
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
                 ),
               ),
             ),
@@ -144,8 +144,8 @@ class HomeScreenAlt extends StatelessWidget {
               child: Padding(
                 padding: EdgeInsets.symmetric(horizontal: 16.0, vertical: 8),
                 child: Text(
-                  "85 restaurants to explore",
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  "85 stores to explore",
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
                 ),
               ),
             ),

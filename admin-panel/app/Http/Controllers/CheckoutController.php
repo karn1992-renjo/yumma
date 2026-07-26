@@ -1444,10 +1444,11 @@ class CheckoutController extends Controller
         $title = 'New order received';
         $body = "Order #{$order->order_number} has been placed for your restaurant.";
         $items = is_array($order->items) ? $order->items : json_decode((string) $order->items, true);
+        $acceptanceTimeout = DeliveryChargeSetting::getOrderAcceptanceTimeoutSeconds();
         $payload = [
             'type' => 'NEW_ORDER',
             'role' => 'restaurant',
-            'timer_duration' => '30',
+            'timer_duration' => (string) $acceptanceTimeout,
             'order_id' => (string) $order->id,
             'order_number' => (string) $order->order_number,
             'restaurant_id' => (string) $order->restaurant_id,

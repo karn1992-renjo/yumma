@@ -362,7 +362,7 @@
                     <th>Status</th>
                     <th>Transaction ID</th>
                     <th>Processed At</th>
-                    <th width="120">Actions</th>
+                    <th width="150">Actions</th>
                 </tr>
             </thead>
             <tbody>
@@ -463,6 +463,14 @@
                                         title="{{ $activeGatewaySupportsAutomation ? 'Process Payout' : 'Manual settlement only' }}"
                                         @disabled(!$activeGatewaySupportsAutomation)>
                                     <i class="fas fa-rupee-sign"></i>
+                                </button>
+                            @endif
+                            @if(in_array($payout->status, ['pending', 'processing', 'queued', 'failed']) || ($payout->status === 'completed' && strtolower((string) $payout->gateway) === 'cash'))
+                                <button type="button"
+                                        class="btn btn-sm btn-modern-warning rounded-3 me-1"
+                                        onclick="markCashPaid({{ $payout->id }})"
+                                        title="{{ $payout->status === 'completed' ? 'Sync Cash Wallet' : 'Mark as Cash Paid' }}">
+                                    <i class="fas fa-money-bill-wave"></i>
                                 </button>
                             @endif
                             <button type="button" 
@@ -707,6 +715,42 @@
                 setTimeout(() => location.reload(), 1500);
             } else {
                 showToast(data.message || 'Failed to process payout', 'error');
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            showToast('Network error occurred', 'error');
+        });
+    }
+
+    function markCashPaid(payoutId) {
+        if (!confirm('Mark or sync this payout as paid in cash? This will settle the wallet without calling any gateway.')) {
+            return;
+        }
+
+        const transactionReference = prompt('Cash receipt/reference number (optional):', '');
+        if (transactionReference === null) {
+            return;
+        }
+
+        const csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
+
+        fetch(`/admin/payouts/${payoutId}/cash-paid`, {
+            method: 'POST',
+            headers: {
+                'X-CSRF-TOKEN': csrfToken,
+                'Content-Type': 'application/json',
+                'Accept': 'application/json'
+            },
+            body: JSON.stringify({ transaction_reference: transactionReference })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showToast(data.message || 'Payout marked as cash paid!', 'success');
+                setTimeout(() => location.reload(), 1500);
+            } else {
+                showToast(data.message || 'Failed to mark payout as cash paid', 'error');
             }
         })
         .catch(error => {

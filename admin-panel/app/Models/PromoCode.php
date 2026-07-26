@@ -13,7 +13,9 @@ class PromoCode extends Model
         'restaurant_id', 'code', 'title', 'description', 'promo_image', 'created_by_type',
         'discount_type', 'discount_value',
         'min_order_amount', 'max_discount_amount', 'usage_limit', 'used_count',
-        'audience_type', 'coupon_type', 'assigned_to', 'start_date', 'end_date', 'is_active'
+        'audience_type', 'target_type', 'target_ids', 'coupon_type', 'assigned_to',
+        'promotion_type', 'reward_type', 'reward_config',
+        'start_date', 'end_date', 'is_active'
     ];
     
     protected $casts = [
@@ -23,6 +25,8 @@ class PromoCode extends Model
         'discount_value' => 'decimal:2',
         'min_order_amount' => 'decimal:2',
         'max_discount_amount' => 'decimal:2',
+        'target_ids' => 'array',
+        'reward_config' => 'array',
     ];
     
     public function restaurant(): BelongsTo

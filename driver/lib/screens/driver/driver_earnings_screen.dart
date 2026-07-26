@@ -50,11 +50,8 @@ class _DriverEarningsScreenState extends State<DriverEarningsScreen>
         final summary = response['data']['summary'] ?? {};
         final transactions = response['data']['transactions'] ?? [];
         
-        // Calculate multiple order bonus in payout
-        final enhanced = _calculateMultipleOrderBonus(summary, transactions);
-        
         setState(() {
-          _earnings = enhanced;
+          _earnings = Map<String, dynamic>.from(summary);
           _transactions = transactions;
         });
       }
@@ -65,61 +62,20 @@ class _DriverEarningsScreenState extends State<DriverEarningsScreen>
     setState(() => _isLoading = false);
   }
 
-  // Calculate bonus for multiple orders in single route
-  Map<String, dynamic> _calculateMultipleOrderBonus(
-    Map<String, dynamic> summary,
-    List<dynamic> transactions,
-  ) {
-    // Make a copy to avoid modifying original
-    final enhanced = Map<String, dynamic>.from(summary);
-    
-    double bonusAmount = 0.0;
-    int multipleOrderDeliveries = 0;
-    
-    // Count multiple order deliveries (would come from transaction grouping)
-    // This assumes the backend sends route_id or similar
-    Map<String?, int> routeDeliveries = {};
-    for (var transaction in transactions) {
-      if (transaction is Map<String, dynamic>) {
-        final routeId = transaction['route_id'];
-        routeDeliveries[routeId] = (routeDeliveries[routeId] ?? 0) + 1;
-      }
-    }
-    
-    // Calculate bonus: ₹10 for 2 orders, ₹20 for 3+ orders in same route
-    routeDeliveries.forEach((routeId, count) {
-      if (count >= 2) {
-        multipleOrderDeliveries += count;
-        if (count == 2) {
-          bonusAmount += 10; // ₹10 bonus for 2 orders
-        } else {
-          bonusAmount += (20 + (count - 3) * 5); // ₹20 + ₹5 per additional order
-        }
-      }
-    });
-    
-    enhanced['multiple_order_bonus'] = bonusAmount;
-    enhanced['multiple_order_deliveries'] = multipleOrderDeliveries;
-    enhanced['total_earnings'] = 
-        ((enhanced['total_earnings'] ?? 0) as num).toDouble() + bonusAmount;
-    
-    return enhanced;
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: FoodFlowTheme.canvas,
+      backgroundColor: foodflow.canvas,
       appBar: AppBar(
         title: const Text('Earnings'),
         backgroundColor: Colors.white,
-        foregroundColor: FoodFlowTheme.ink,
+        foregroundColor: foodflow.ink,
         elevation: 0,
         bottom: TabBar(
           controller: _tabController,
-          labelColor: FoodFlowTheme.crimson,
-          unselectedLabelColor: FoodFlowTheme.muted,
-          indicatorColor: FoodFlowTheme.crimson,
+          labelColor: foodflow.crimson,
+          unselectedLabelColor: foodflow.muted,
+          indicatorColor: foodflow.crimson,
           tabs: const [
             Tab(text: 'Overview'),
             Tab(text: 'Transactions'),
@@ -152,7 +108,7 @@ class _DriverEarningsScreenState extends State<DriverEarningsScreen>
             decoration: BoxDecoration(
               color: Colors.white,
               borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: FoodFlowTheme.line),
+              border: Border.all(color: foodflow.line),
               boxShadow: [
                 BoxShadow(
                   color: Colors.black.withOpacity(0.04),
@@ -167,18 +123,18 @@ class _DriverEarningsScreenState extends State<DriverEarningsScreen>
                 const Text(
                   'Today\'s Earnings',
                   style: TextStyle(
-                    color: FoodFlowTheme.ink,
+                    color: foodflow.ink,
                     fontSize: 14,
-                    fontWeight: FontWeight.w900,
+                    fontWeight: FontWeight.w800,
                   ),
                 ),
                 const SizedBox(height: 8),
                 Text(
                   formatCurrencyValue(context, _earnings['total_earnings']),
                   style: const TextStyle(
-                    color: FoodFlowTheme.success,
+                    color: foodflow.success,
                     fontSize: 32,
-                    fontWeight: FontWeight.w900,
+                    fontWeight: FontWeight.w800,
                   ),
                 ),
                 const SizedBox(height: 8),
@@ -187,7 +143,7 @@ class _DriverEarningsScreenState extends State<DriverEarningsScreen>
                     Icon(
                       Icons.calendar_today,
                       size: 14,
-                      color: FoodFlowTheme.muted,
+                      color: foodflow.muted,
                     ),
                     const SizedBox(width: 4),
                     Text(
@@ -195,9 +151,9 @@ class _DriverEarningsScreenState extends State<DriverEarningsScreen>
                           ? 'Last 7 days'
                           : 'Last 30 days',
                       style: const TextStyle(
-                        color: FoodFlowTheme.muted,
+                        color: foodflow.muted,
                         fontSize: 12,
-                        fontWeight: FontWeight.w600,
+                        fontWeight: FontWeight.w400,
                       ),
                     ),
                   ],
@@ -256,7 +212,7 @@ class _DriverEarningsScreenState extends State<DriverEarningsScreen>
                   'Withdrawn',
                   formatCurrencyValue(context, _earnings['withdrawn_amount']),
                   Icons.account_balance_wallet,
-                  Colors.purple,
+                  const Color(0xFFFF6E00),
                 ),
               ),
             ],
@@ -301,7 +257,7 @@ class _DriverEarningsScreenState extends State<DriverEarningsScreen>
                           'Multiple Order Bonus',
                           style: TextStyle(
                             fontSize: 12,
-                            fontWeight: FontWeight.w600,
+                            fontWeight: FontWeight.w400,
                             color: Colors.grey,
                           ),
                         ),
@@ -310,7 +266,7 @@ class _DriverEarningsScreenState extends State<DriverEarningsScreen>
                           formatCurrencyValue(context, _earnings['multiple_order_bonus']),
                           style: const TextStyle(
                             fontSize: 18,
-                            fontWeight: FontWeight.w900,
+                            fontWeight: FontWeight.w800,
                             color: Color(0xFFFFB300),
                           ),
                         ),
@@ -321,7 +277,7 @@ class _DriverEarningsScreenState extends State<DriverEarningsScreen>
                     '${_earnings['multiple_order_deliveries'] ?? 0} routes',
                     style: const TextStyle(
                       fontSize: 12,
-                      fontWeight: FontWeight.w600,
+                      fontWeight: FontWeight.w400,
                       color: Colors.grey,
                     ),
                   ),
@@ -336,7 +292,7 @@ class _DriverEarningsScreenState extends State<DriverEarningsScreen>
             'Earnings Overview',
             style: TextStyle(
               fontSize: 18,
-              fontWeight: FontWeight.bold,
+              fontWeight: FontWeight.w800,
             ),
           ),
           const SizedBox(height: 16),
@@ -361,7 +317,7 @@ class _DriverEarningsScreenState extends State<DriverEarningsScreen>
                 Expanded(
                   child: Text(
                     'Payouts are processed automatically by admin payment gateway. Manual withdrawal is disabled.',
-                    style: TextStyle(fontWeight: FontWeight.w700),
+                    style: TextStyle(fontWeight: FontWeight.w800),
                   ),
                 ),
               ],
@@ -382,11 +338,11 @@ class _DriverEarningsScreenState extends State<DriverEarningsScreen>
           _loadEarnings();
         },
         style: OutlinedButton.styleFrom(
-          backgroundColor: isSelected ? FoodFlowTheme.crimson : Colors.white,
+          backgroundColor: isSelected ? foodflow.crimson : Colors.white,
           side: BorderSide(
-            color: isSelected ? FoodFlowTheme.crimson : FoodFlowTheme.line,
+            color: isSelected ? foodflow.crimson : foodflow.line,
           ),
-          foregroundColor: isSelected ? Colors.white : FoodFlowTheme.ink,
+          foregroundColor: isSelected ? Colors.white : foodflow.ink,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(8),
           ),
@@ -400,7 +356,7 @@ class _DriverEarningsScreenState extends State<DriverEarningsScreen>
       String title, String value, IconData icon, Color color) {
     return Container(
       padding: const EdgeInsets.all(16),
-      decoration: FoodFlowTheme.surface(radius: 14),
+      decoration: foodflow.surface(radius: 14),
       child: Row(
         children: [
           Container(
@@ -420,16 +376,16 @@ class _DriverEarningsScreenState extends State<DriverEarningsScreen>
                   title,
                   style: TextStyle(
                     fontSize: 12,
-                    color: FoodFlowTheme.muted,
-                    fontWeight: FontWeight.w600,
+                    color: foodflow.muted,
+                    fontWeight: FontWeight.w400,
                   ),
                 ),
                 Text(
                   value,
                   style: const TextStyle(
                     fontSize: 18,
-                    color: FoodFlowTheme.ink,
-                    fontWeight: FontWeight.w900,
+                    color: foodflow.ink,
+                    fontWeight: FontWeight.w800,
                   ),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
@@ -492,12 +448,12 @@ class _DriverEarningsScreenState extends State<DriverEarningsScreen>
                   (entry.value['amount'] ?? 0).toDouble());
             }).toList(),
             isCurved: true,
-            color: FoodFlowTheme.orange,
+            color: foodflow.orange,
             barWidth: 3,
             dotData: const FlDotData(show: true),
             belowBarData: BarAreaData(
               show: true,
-              color: FoodFlowTheme.orange.withOpacity(0.1),
+              color: foodflow.orange.withOpacity(0.1),
             ),
           ),
         ],
@@ -511,7 +467,7 @@ class _DriverEarningsScreenState extends State<DriverEarningsScreen>
     }
 
     if (_transactions.isEmpty) {
-      return FoodFlowTheme.emptyState(
+      return foodflow.emptyState(
         icon: Icons.history,
         title: 'No transactions yet',
         subtitle: 'Earnings credits and withdrawals will appear here.',
@@ -527,7 +483,7 @@ class _DriverEarningsScreenState extends State<DriverEarningsScreen>
 
         return Container(
           margin: const EdgeInsets.only(bottom: 12),
-          decoration: FoodFlowTheme.surface(radius: 14),
+          decoration: foodflow.surface(radius: 14),
           child: ListTile(
             leading: CircleAvatar(
               backgroundColor:
@@ -547,7 +503,7 @@ class _DriverEarningsScreenState extends State<DriverEarningsScreen>
             trailing: Text(
               '${isCredit ? '+' : '-'} ${formatCurrencyValue(context, transaction['amount'])}',
               style: TextStyle(
-                fontWeight: FontWeight.w900,
+                fontWeight: FontWeight.w800,
                 color: isCredit ? Colors.green : Colors.red,
               ),
             ),

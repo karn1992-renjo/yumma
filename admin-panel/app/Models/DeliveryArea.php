@@ -23,6 +23,8 @@ class DeliveryArea extends Model
         'polygon_coordinates',
         'max_daily_bookings',
         'is_active',
+        'free_delivery_enabled',
+        'free_delivery_threshold',
     ];
     
     protected $casts = [
@@ -31,6 +33,8 @@ class DeliveryArea extends Model
         'longitude' => 'float',
         'radius_km' => 'float',
         'max_daily_bookings' => 'integer',
+        'free_delivery_enabled' => 'boolean',
+        'free_delivery_threshold' => 'float',
         'created_at' => 'datetime',
         'updated_at' => 'datetime',
         'deleted_at' => 'datetime',
@@ -40,6 +44,7 @@ class DeliveryArea extends Model
         'area_type' => 'circle',
         'max_daily_bookings' => 0,
         'is_active' => true,
+        'free_delivery_enabled' => false,
     ];
     
     public function setIsActiveAttribute($value)

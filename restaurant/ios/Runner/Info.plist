@@ -7,7 +7,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>foodflow! Resto</string>
+	<string>Yumma! Resto</string>
 	<key>CFBundleExecutable</key>
 	<string>foodflowResto</string>
 	<key>CFBundleIdentifier</key>

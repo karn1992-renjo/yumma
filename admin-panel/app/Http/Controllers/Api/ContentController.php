@@ -3,18 +3,25 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Models\AppSetting;
 use App\Models\Banner;
 use App\Models\Cuisine;
-use App\Models\PromoCode;
 use App\Services\HomeSectionService;
 use App\Services\MediaStorage;
+use App\Services\PromotionEngineService;
 use Illuminate\Http\Request;
 
 class ContentController extends Controller
 {
+    private function bannerDurationSeconds(): int
+    {
+        return max(2, min(30, (int) AppSetting::getValue('banner_duration_seconds', 5)));
+    }
+
     public function homeSections(Request $request, HomeSectionService $homeSectionService)
     {
         try {
+            $bannerDurationSeconds = $this->bannerDurationSeconds();
             $latitude = $request->filled('lat') ? (float) $request->input('lat') : null;
             $longitude = $request->filled('lng') ? (float) $request->input('lng') : null;
             $radius = $request->filled('radius') ? (float) $request->input('radius') : 15.0;
@@ -24,7 +31,7 @@ class ContentController extends Controller
 
             $sections = $homeSectionService
                 ->publicSections($latitude, $longitude, $radius, $deliveryZoneOnly)
-                ->map(function (array $section) {
+                ->map(function (array $section) use ($bannerDurationSeconds) {
                 return [
                     'token' => $section['token'],
                     'type' => $section['type'],
@@ -33,7 +40,7 @@ class ContentController extends Controller
                     'style' => $section['style'] ?? null,
                     'client_feed' => (bool) ($section['client_feed'] ?? false),
                     'strict_items' => (bool) ($section['strict_items'] ?? false),
-                    'items' => collect($section['items'] ?? [])->map(function ($item) use ($section) {
+                    'items' => collect($section['items'] ?? [])->map(function ($item) use ($section, $bannerDurationSeconds) {
                         return match ($section['type']) {
                             'banner_carousel' => [
                                 'id' => $item->id,
@@ -46,6 +53,8 @@ class ContentController extends Controller
                                 'link' => $item->link,
                                 'layout_mode' => $item->layout_mode ?? 'text_image',
                                 'image_ratio' => (int) ($item->image_ratio ?? 46),
+                                'duration_seconds' => $bannerDurationSeconds,
+                                'banner_duration_seconds' => $bannerDurationSeconds,
                                 'redirect_type' => $item->redirect_type,
                                 'redirect_category_id' => $item->redirect_category_id,
                                 'redirect_restaurant_id' => $item->redirect_restaurant_id,
@@ -58,6 +67,10 @@ class ContentController extends Controller
                     })->values()->all(),
                 ];
             })->values();
+
+            if ($priceFilter = $this->menuPriceFilterConfigSection()) {
+                $sections->push($priceFilter);
+            }
 
             return response()->json([
                 'success' => true,
@@ -77,6 +90,7 @@ class ContentController extends Controller
     public function banners()
     {
         try {
+            $bannerDurationSeconds = $this->bannerDurationSeconds();
             $banners = Banner::where('is_active', true)
                 ->where('banner_type', 'home')
                 ->where(function ($q) {
@@ -89,7 +103,7 @@ class ContentController extends Controller
                 })
                 ->orderBy('display_order')
                 ->get()
-                ->map(function ($banner) {
+                ->map(function ($banner) use ($bannerDurationSeconds) {
                     return [
                         'id' => $banner->id,
                         'title' => $banner->title,
@@ -102,6 +116,8 @@ class ContentController extends Controller
                         'banner_type' => $banner->banner_type ?? 'home',
                         'layout_mode' => $banner->layout_mode ?? 'text_image',
                         'image_ratio' => (int) ($banner->image_ratio ?? 46),
+                        'duration_seconds' => $bannerDurationSeconds,
+                        'banner_duration_seconds' => $bannerDurationSeconds,
                         'redirect_type' => $banner->redirect_type,
                         'redirect_category_id' => $banner->redirect_category_id,
                         'redirect_restaurant_id' => $banner->redirect_restaurant_id,
@@ -112,6 +128,7 @@ class ContentController extends Controller
 
             return response()->json([
                 'success' => true,
+                'banner_duration_seconds' => $bannerDurationSeconds,
                 'data' => $banners,
             ]);
         } catch (\Exception $e) {
@@ -127,6 +144,7 @@ class ContentController extends Controller
     public function bannersByType($type)
     {
         try {
+            $bannerDurationSeconds = $this->bannerDurationSeconds();
             $banners = Banner::where('banner_type', $type)
                 ->where('is_active', true)
                 ->where(function ($q) {
@@ -139,7 +157,7 @@ class ContentController extends Controller
                 })
                 ->orderBy('display_order')
                 ->get()
-                ->map(function ($banner) {
+                ->map(function ($banner) use ($bannerDurationSeconds) {
                     return [
                         'id' => $banner->id,
                         'title' => $banner->title,
@@ -152,6 +170,8 @@ class ContentController extends Controller
                         'banner_type' => $banner->banner_type,
                         'layout_mode' => $banner->layout_mode ?? 'text_image',
                         'image_ratio' => (int) ($banner->image_ratio ?? 46),
+                        'duration_seconds' => $bannerDurationSeconds,
+                        'banner_duration_seconds' => $bannerDurationSeconds,
                         'redirect_type' => $banner->redirect_type,
                         'redirect_category_id' => $banner->redirect_category_id,
                         'redirect_restaurant_id' => $banner->redirect_restaurant_id,
@@ -162,6 +182,7 @@ class ContentController extends Controller
 
             return response()->json([
                 'success' => true,
+                'banner_duration_seconds' => $bannerDurationSeconds,
                 'data' => $banners,
             ]);
         } catch (\Exception $e) {
@@ -228,6 +249,8 @@ class ContentController extends Controller
 
                     return [
                         'id' => $cuisine->id,
+                        'type' => 'cuisine',
+                        'cuisine_id' => $cuisine->id,
                         'name' => $cuisine->name,
                         'slug' => $cuisine->slug,
                         'description' => $cuisine->description,
@@ -254,9 +277,28 @@ class ContentController extends Controller
     private function categoryPayload($item): array
     {
         $image = $this->resolveImageUrl($item->image ?? null);
+        $isCuisine = $item instanceof Cuisine;
+        $mappedCuisines = (! $isCuisine && method_exists($item, 'cuisines'))
+            ? $item->cuisines
+            : collect();
 
         return [
             'id' => $item->id,
+            'type' => $isCuisine ? 'cuisine' : 'category',
+            'cuisine_id' => $isCuisine ? $item->id : null,
+            'cuisine_ids' => $isCuisine
+                ? [(int) $item->id]
+                : $mappedCuisines->pluck('id')->map(fn ($id) => (int) $id)->values(),
+            'cuisines' => $isCuisine
+                ? [[
+                    'id' => (int) $item->id,
+                    'name' => $item->name,
+                ]]
+                : $mappedCuisines->map(fn ($cuisine) => [
+                    'id' => (int) $cuisine->id,
+                    'name' => $cuisine->name,
+                ])->values(),
+            'category_id' => $isCuisine ? null : $item->id,
             'name' => $item->name,
             'slug' => $item->slug ?? null,
             'description' => $item->description ?? null,
@@ -277,46 +319,60 @@ class ContentController extends Controller
             : MediaStorage::url($image);
     }
 
-    public function activeOffers()
+    private function menuPriceFilterConfigSection(): ?array
+    {
+        $minPrice = AppSetting::getValue('home_menu_price_filter_min_price', '');
+        $maxPrice = AppSetting::getValue('home_menu_price_filter_max_price', '250');
+        if (blank($minPrice) && blank($maxPrice)) {
+            return null;
+        }
+        $label = trim((string) AppSetting::getValue('home_menu_price_filter_label', 'Filter'));
+        $title = trim((string) AppSetting::getValue('home_menu_price_filter_title', 'Items in your budget'));
+        $subtitle = trim((string) AppSetting::getValue('home_menu_price_filter_subtitle', 'Menu items matched from restaurants near you'));
+
+        return [
+            'token' => 'menu_price_filter_config',
+            'type' => 'menu_price_filter_config',
+            'title' => $label !== '' ? $label : 'Filter',
+            'subtitle' => $subtitle !== '' ? $subtitle : null,
+            'style' => 'nav_action',
+            'client_feed' => false,
+            'strict_items' => true,
+            'items' => [[
+                'id' => 'menu_price_filter',
+                'title' => $label !== '' ? $label : 'Filter',
+                'label' => $label !== '' ? $label : 'Filter',
+                'screen_title' => $title !== '' ? $title : ($label !== '' ? $label : 'Filter'),
+                'screen_subtitle' => $subtitle !== '' ? $subtitle : null,
+                'min_price' => filled($minPrice) ? (float) $minPrice : null,
+                'max_price' => filled($maxPrice) ? (float) $maxPrice : null,
+            ]],
+        ];
+    }
+
+    public function activeOffers(Request $request, PromotionEngineService $promotionEngine)
     {
         try {
-            $offers = PromoCode::where('is_active', true)
-                ->whereNull('restaurant_id')
-                ->where('created_by_type', 'admin')
-                ->where(function ($q) {
-                    $q->whereNull('start_date')
-                      ->orWhere('start_date', '<=', now());
-                })
-                ->where(function ($q) {
-                    $q->whereNull('end_date')
-                      ->orWhere('end_date', '>=', now());
-                })
-                ->orderBy('discount_value', 'desc')
-                ->orderBy('created_at', 'desc')
-                ->limit(10)
-                ->get()
-                ->map(function ($promo) {
-                    return [
-                        'id' => $promo->id,
-                        'code' => $promo->code,
-                        'title' => $promo->title ?: $promo->code,
-                        'subtitle' => $promo->description ?? 'Special offer',
-                        'description' => $promo->description ?? 'Special offer',
-                        'image' => $promo->promo_image_url,
-                        'promo_image' => $promo->promo_image_url,
-                        'discount_type' => $promo->discount_type ?? 'percentage',
-                        'discount_value' => $promo->discount_value ?? 0,
-                        'min_order_value' => $promo->min_order_amount,
-                        'max_discount' => $promo->max_discount_amount,
-                        'usage_limit' => $promo->usage_limit,
-                        'valid_from' => $promo->start_date,
-                        'valid_to' => $promo->end_date,
-                    ];
-                });
+            try {
+                $engineOffers = $promotionEngine->activeOfferPayloads([
+                    'limit' => 10,
+                    'user_id' => $request->user()?->id,
+                    'platform' => 'customer_app',
+                ]);
+            } catch (\Throwable $exception) {
+                \Log::warning('Promotion engine active offers failed: ' . $exception->getMessage());
+                $engineOffers = collect();
+            }
+
+            $combined = $engineOffers
+                ->where(fn ($offer) => ($offer['source_type'] ?? 'promotion') === 'promotion')
+                ->unique(fn ($offer) => $offer['display_id'] ?? (($offer['source_type'] ?? 'promotion') . ':' . ($offer['id'] ?? '0')))
+                ->take(10)
+                ->values();
 
             return response()->json([
                 'success' => true,
-                'data' => $offers,
+                'data' => $combined,
             ]);
         } catch (\Exception $e) {
             \Log::error('Active offers fetch error: ' . $e->getMessage());

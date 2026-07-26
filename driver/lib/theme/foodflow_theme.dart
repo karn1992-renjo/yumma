@@ -1,6 +1,73 @@
 import 'package:flutter/material.dart';
 
 class FoodFlowTheme {
+  static const Color fallbackOrange = foodflow.fallbackOrange;
+  static const Color fallbackOrangeDark = foodflow.fallbackOrangeDark;
+  static Color get orange => foodflow.orange;
+  static Color get primaryColor => foodflow.primaryColor;
+  static Color get orangeDark => foodflow.orangeDark;
+  static const Color crimson = foodflow.crimson;
+  static const Color ink = foodflow.ink;
+  static const Color inkSoft = foodflow.inkSoft;
+  static const Color muted = foodflow.muted;
+  static const Color faint = foodflow.faint;
+  static const Color line = foodflow.line;
+  static const Color canvas = foodflow.canvas;
+  static const Color warmCanvas = foodflow.warmCanvas;
+  static const Color success = foodflow.success;
+  static const Color danger = foodflow.danger;
+
+  static void applyBrandColors({
+    Color? primary,
+    Color? secondary,
+  }) {
+    foodflow.applyBrandColors(primary: primary, secondary: secondary);
+  }
+
+  static LinearGradient get brandGradient => foodflow.brandGradient;
+
+  static BoxDecoration surface({
+    double radius = 16,
+    Color color = Colors.white,
+  }) {
+    return foodflow.surface(radius: radius, color: color);
+  }
+
+  static BoxDecoration softSurface({double radius = 14}) {
+    return foodflow.softSurface(radius: radius);
+  }
+
+  static BoxDecoration orangeBand({double radius = 18}) {
+    return foodflow.orangeBand(radius: radius);
+  }
+
+  static Widget vegDot(bool isVeg, {double size = 16}) {
+    return foodflow.vegDot(isVeg, size: size);
+  }
+
+  static Widget ratingBadge(double rating, {bool compact = false}) {
+    return foodflow.ratingBadge(rating, compact: compact);
+  }
+
+  static Widget emptyState({
+    required IconData icon,
+    required String title,
+    String? subtitle,
+  }) {
+    return foodflow.emptyState(
+      icon: icon,
+      title: title,
+      subtitle: subtitle,
+    );
+  }
+
+  static Widget sectionTitle(String title, {String? trailing}) {
+    return foodflow.sectionTitle(title, trailing: trailing);
+  }
+}
+
+// ignore: camel_case_types
+class foodflow {
   static const Color fallbackOrange = Color(0xFF0E9F6E);
   static const Color fallbackOrangeDark = Color(0xFFE46D0A);
   static Color orange = fallbackOrange;
@@ -110,7 +177,7 @@ class FoodFlowTheme {
             style: TextStyle(
               color: Colors.white,
               fontSize: compact ? 11 : 12,
-              fontWeight: FontWeight.w900,
+              fontWeight: FontWeight.w800,
             ),
           ),
           const SizedBox(width: 3),
@@ -147,7 +214,7 @@ class FoodFlowTheme {
               style: const TextStyle(
                 color: ink,
                 fontSize: 18,
-                fontWeight: FontWeight.w900,
+                fontWeight: FontWeight.w800,
               ),
             ),
             if (subtitle != null) ...[
@@ -158,7 +225,7 @@ class FoodFlowTheme {
                 style: const TextStyle(
                   color: muted,
                   fontSize: 13,
-                  fontWeight: FontWeight.w600,
+                  fontWeight: FontWeight.w400,
                 ),
               ),
             ],
@@ -179,7 +246,7 @@ class FoodFlowTheme {
               style: const TextStyle(
                 color: ink,
                 fontSize: 18,
-                fontWeight: FontWeight.w900,
+                fontWeight: FontWeight.w800,
               ),
             ),
           ),
@@ -189,7 +256,7 @@ class FoodFlowTheme {
               style: const TextStyle(
                 color: muted,
                 fontSize: 12,
-                fontWeight: FontWeight.w700,
+                fontWeight: FontWeight.w800,
               ),
             ),
         ],

@@ -50,11 +50,8 @@ class _DriverEarningsScreenState extends State<DriverEarningsScreen>
         final summary = response['data']['summary'] ?? {};
         final transactions = response['data']['transactions'] ?? [];
         
-        // Calculate multiple order bonus in payout
-        final enhanced = _calculateMultipleOrderBonus(summary, transactions);
-        
         setState(() {
-          _earnings = enhanced;
+          _earnings = Map<String, dynamic>.from(summary);
           _transactions = transactions;
         });
       }
@@ -63,47 +60,6 @@ class _DriverEarningsScreenState extends State<DriverEarningsScreen>
     }
 
     setState(() => _isLoading = false);
-  }
-
-  // Calculate bonus for multiple orders in single route
-  Map<String, dynamic> _calculateMultipleOrderBonus(
-    Map<String, dynamic> summary,
-    List<dynamic> transactions,
-  ) {
-    // Make a copy to avoid modifying original
-    final enhanced = Map<String, dynamic>.from(summary);
-    
-    double bonusAmount = 0.0;
-    int multipleOrderDeliveries = 0;
-    
-    // Count multiple order deliveries (would come from transaction grouping)
-    // This assumes the backend sends route_id or similar
-    Map<String?, int> routeDeliveries = {};
-    for (var transaction in transactions) {
-      if (transaction is Map<String, dynamic>) {
-        final routeId = transaction['route_id'];
-        routeDeliveries[routeId] = (routeDeliveries[routeId] ?? 0) + 1;
-      }
-    }
-    
-    // Calculate bonus: ₹10 for 2 orders, ₹20 for 3+ orders in same route
-    routeDeliveries.forEach((routeId, count) {
-      if (count >= 2) {
-        multipleOrderDeliveries += count;
-        if (count == 2) {
-          bonusAmount += 10; // ₹10 bonus for 2 orders
-        } else {
-          bonusAmount += (20 + (count - 3) * 5); // ₹20 + ₹5 per additional order
-        }
-      }
-    });
-    
-    enhanced['multiple_order_bonus'] = bonusAmount;
-    enhanced['multiple_order_deliveries'] = multipleOrderDeliveries;
-    enhanced['total_earnings'] = 
-        ((enhanced['total_earnings'] ?? 0) as num).toDouble() + bonusAmount;
-    
-    return enhanced;
   }
 
   @override

@@ -94,6 +94,7 @@ class ProfileScreen extends StatefulWidget {
 class _ProfileScreenState extends State<ProfileScreen> {
   bool _isLoading = false;
   bool _isLoggingOut = false;
+  bool _isDeletingAccount = false;
   String _appVersionLabel = '';
   double _walletBalance = 0;
   int _savedAddressCount = 0;
@@ -357,6 +358,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           onTap: () => Navigator.pushNamed(context, '/offers'),
                         ),
                         _ProfileMenuTile(
+                          icon: LucideIcons.gift,
+                          title: 'Scratch Cards',
+                          subtitle: 'View and scratch your reward coupons',
+                          iconColor: const Color(0xFFFF6A00),
+                          iconBackground: const Color(0xFFFFF2E8),
+                          onTap: () =>
+                              Navigator.pushNamed(context, '/scratch-cards'),
+                        ),
+                        _ProfileMenuTile(
                           icon: LucideIcons.history,
                           title: 'Order History',
                           subtitle: _countLabel(
@@ -404,6 +414,19 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           iconBackground: const Color(0xFFFFEEEE),
                           titleColor: FoodFlowTheme.danger,
                           onTap: _isLoggingOut ? null : _showLogoutDialog,
+                        ),
+                        _ProfileMenuTile(
+                          icon: _isDeletingAccount
+                              ? LucideIcons.loader
+                              : LucideIcons.trash_2,
+                          title: 'Delete Account',
+                          subtitle: 'Permanently remove your account access',
+                          iconColor: FoodFlowTheme.danger,
+                          iconBackground: const Color(0xFFFFEEEE),
+                          titleColor: FoodFlowTheme.danger,
+                          onTap: _isDeletingAccount
+                              ? null
+                              : _showDeleteAccountDialog,
                         ),
                       ],
                     ),
@@ -511,6 +534,107 @@ class _ProfileScreenState extends State<ProfileScreen> {
           ),
         );
       },
+    );
+  }
+
+  void _showDeleteAccountDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext dialogContext) {
+        return Dialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(22),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: const BoxDecoration(
+                    color: Color(0xFFFFEEEE),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(
+                    LucideIcons.trash_2,
+                    size: 34,
+                    color: FoodFlowTheme.danger,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                const Text(
+                  'Delete Account',
+                  style: TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w800,
+                    color: FoodFlowTheme.ink,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                const Text(
+                  'This permanently removes your login, profile, saved addresses, favourites and notifications. Order and payment records may be retained where required for tax, fraud prevention, support or legal reasons.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 11,
+                    height: 1.35,
+                    color: FoodFlowTheme.muted,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                const SizedBox(height: 24),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: () => Navigator.pop(dialogContext),
+                        child: const Text('Cancel'),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: ElevatedButton(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: FoodFlowTheme.danger,
+                          foregroundColor: Colors.white,
+                        ),
+                        onPressed: () async {
+                          Navigator.pop(dialogContext);
+                          await _deleteAccount();
+                        },
+                        child: const Text('Delete'),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _deleteAccount() async {
+    if (!mounted) return;
+    setState(() => _isDeletingAccount = true);
+
+    final authProvider = context.read<AuthProvider>();
+    final success = await authProvider.deleteAccount();
+
+    if (!mounted) return;
+    setState(() => _isDeletingAccount = false);
+
+    if (success) {
+      Navigator.pushNamedAndRemoveUntil(context, '/login', (route) => false);
+      return;
+    }
+
+    final message = authProvider.error?.replaceFirst('Exception: ', '') ??
+        'Unable to delete account. Please try again.';
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
     );
   }
 }

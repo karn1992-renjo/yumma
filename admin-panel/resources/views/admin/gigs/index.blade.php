@@ -70,6 +70,10 @@
                     <input type="text" name="description" class="form-control" placeholder="High-demand peak slot">
                 </div>
                 <div class="col-md-3">
+                    <label class="form-label">Driver Capacity</label>
+                    <input type="number" min="1" name="capacity" class="form-control" value="1" required>
+                </div>
+                <div class="col-md-3">
                     <label class="form-label">Start Date</label>
                     <input type="date" name="start_date" class="form-control" required>
                 </div>
@@ -118,8 +122,20 @@
 </div>
 
 <div class="table-card">
-    <div class="card-header">
-        <h5 class="mb-0">All Gig Slots</h5>
+    <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-3">
+        <div>
+            <h5 class="mb-0">All Gig Slots</h5>
+            @if(!empty($selectedDate))
+                <div class="small text-muted">Showing slots for {{ \Carbon\Carbon::parse($selectedDate)->format('d M Y') }}</div>
+            @endif
+        </div>
+        <form method="GET" action="{{ route('admin.gigs.index') }}" class="d-flex align-items-center gap-2">
+            <input type="date" name="date" class="form-control form-control-sm" value="{{ $selectedDate ?? '' }}">
+            <button type="submit" class="btn btn-sm btn-outline-primary">Filter</button>
+            @if(!empty($selectedDate))
+                <a href="{{ route('admin.gigs.index') }}" class="btn btn-sm btn-light border">Clear</a>
+            @endif
+        </form>
     </div>
     <div class="table-responsive">
         <table class="table table-hover align-middle mb-0">
@@ -128,7 +144,7 @@
                     <th>Slot</th>
                     <th>Area</th>
                     <th>Date & Time</th>
-                    <th>Driver</th>
+                    <th>Capacity</th>
                     <th>Conditions</th>
                     <th>Estimated Earning</th>
                     <th>Status</th>
@@ -155,10 +171,22 @@
                             </td>
                             <td>{{ $gig->area?->name ?? 'No area' }}</td>
                             <td>
-                                <div>{{ $gig->date?->format('d M Y') }}</div>
+                                <div title="{{ $gig->date?->format('d M Y') }}">{{ $gig->date_short ?? $gig->date?->format('d M') }}</div>
                                 <div class="small text-muted">{{ optional($gig->start_time)->format('h:i A') }} - {{ optional($gig->end_time)->format('h:i A') }}</div>
                             </td>
-                            <td>{{ $gig->driver?->name ?? 'Open for booking' }}</td>
+                            <td>
+                                <div class="fw-semibold">{{ $gig->booked_count }} / {{ $gig->capacity }} booked</div>
+                                <div class="small text-muted">
+                                    @php
+                                        $driverNames = $gig->bookings
+                                            ->whereIn('status', ['booked', 'completed'])
+                                            ->map(fn ($booking) => $booking->driver?->name)
+                                            ->filter()
+                                            ->values();
+                                    @endphp
+                                    {{ $driverNames->isNotEmpty() ? $driverNames->join(', ') : 'Open for booking' }}
+                                </div>
+                            </td>
                             <td>
                                 <div class="small text-muted">Min login: {{ $gig->min_login_minutes }} mins</div>
                                 <div class="small text-muted">Min orders: {{ $gig->min_orders_required }}</div>

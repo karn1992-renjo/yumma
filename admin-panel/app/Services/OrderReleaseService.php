@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Events\NewOrderEvent;
 use App\Helpers\FirebaseHelper;
+use App\Models\DeliveryChargeSetting;
 use App\Models\Order;
 use App\Models\RestaurantStaff;
 use App\Notifications\AppDatabaseNotification;
@@ -33,8 +34,23 @@ class OrderReleaseService
             return false;
         }
 
-        broadcast(new NewOrderEvent($order, $order->restaurant_id));
-        $this->notifyRestaurant($order);
+        try {
+            broadcast(new NewOrderEvent($order, $order->restaurant_id));
+        } catch (\Throwable $e) {
+            Log::warning('New order broadcast failed.', [
+                'order_id' => $order->id,
+                'message' => $e->getMessage(),
+            ]);
+        }
+
+        try {
+            $this->notifyRestaurant($order);
+        } catch (\Throwable $e) {
+            Log::warning('Restaurant new order notification failed.', [
+                'order_id' => $order->id,
+                'message' => $e->getMessage(),
+            ]);
+        }
 
         try {
             $this->printerService->autoPrintNewOrder($order);
@@ -55,11 +71,12 @@ class OrderReleaseService
         $title = 'New order received';
         $body = "Order #{$order->order_number} is ready for restaurant confirmation.";
         $items = is_array($order->items) ? $order->items : json_decode((string) $order->items, true);
+        $acceptanceTimeout = DeliveryChargeSetting::getOrderAcceptanceTimeoutSeconds();
         $payload = [
             'type' => 'NEW_ORDER',
             'event' => 'new_order',
             'role' => 'restaurant',
-            'timer_duration' => '30',
+            'timer_duration' => (string) $acceptanceTimeout,
             'order_id' => (string) $order->id,
             'order_number' => (string) $order->order_number,
             'restaurant_id' => (string) $order->restaurant_id,
@@ -68,6 +85,12 @@ class OrderReleaseService
             'customer_name' => (string) ($order->customer_name ?? $order->customer?->name ?? 'Guest'),
             'customer_phone' => (string) ($order->customer_phone ?? ''),
             'delivery_address' => (string) ($order->delivery_address ?? ''),
+            'pickup_lat' => (string) ($restaurant->latitude ?? ''),
+            'pickup_lng' => (string) ($restaurant->longitude ?? ''),
+            'restaurant_lat' => (string) ($restaurant->latitude ?? ''),
+            'restaurant_lng' => (string) ($restaurant->longitude ?? ''),
+            'delivery_lat' => (string) ($order->delivery_lat ?? ''),
+            'delivery_lng' => (string) ($order->delivery_lng ?? ''),
             'amount' => (string) $order->total,
             'total' => (string) $order->total,
             'payment_status' => (string) $order->payment_status,
@@ -76,6 +99,10 @@ class OrderReleaseService
             'items' => json_encode($items ?? []),
             'metadata' => json_encode([
                 'pickup' => $restaurant->address,
+                'pickup_lat' => $restaurant->latitude !== null ? (float) $restaurant->latitude : null,
+                'pickup_lng' => $restaurant->longitude !== null ? (float) $restaurant->longitude : null,
+                'delivery_lat' => $order->delivery_lat !== null ? (float) $order->delivery_lat : null,
+                'delivery_lng' => $order->delivery_lng !== null ? (float) $order->delivery_lng : null,
                 'items' => $items ?? [],
                 'amount' => (float) $order->total,
             ]),

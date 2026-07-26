@@ -15,6 +15,7 @@ use App\Models\DeliveryArea;
 use App\Models\Order;
 use App\Models\Restaurant;
 use App\Models\User;
+use App\Rules\UniqueUserContactForRole;
 use App\Services\BranchManagementService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -145,12 +146,6 @@ class BranchController extends Controller
 
     public function destroy(Request $request, Branch $branch)
     {
-        $blocking = array_filter($this->branches->canDeactivate($branch));
-
-        if ($blocking) {
-            return back()->with('error', 'Branch cannot be deleted while active orders, settlements, refunds, or tickets are pending.');
-        }
-
         DB::transaction(function () use ($branch, $request) {
             $old = $branch->toArray();
 
@@ -166,6 +161,45 @@ class BranchController extends Controller
                 DB::table('branch_transfer_history')
                     ->where('from_branch_id', $branch->id)
                     ->update(['from_branch_id' => null]);
+            }
+
+            if (Schema::hasTable('branch_transfer_history')) {
+                DB::table('branch_transfer_history')
+                    ->where('to_branch_id', $branch->id)
+                    ->delete();
+            }
+
+            foreach ([
+                'branch_ticket_messages' => 'branch_ticket_id',
+                'branch_wallet_transactions' => 'branch_id',
+                'branch_notifications' => 'branch_id',
+                'branch_commission_rules' => 'branch_id',
+                'branch_drivers' => 'branch_id',
+                'branch_restaurants' => 'branch_id',
+                'branch_zones' => 'branch_id',
+                'branch_payouts' => 'branch_id',
+                'branch_settlements' => 'branch_id',
+                'branch_wallets' => 'branch_id',
+                'branch_users' => 'branch_id',
+                'branch_tickets' => 'branch_id',
+            ] as $table => $column) {
+                if (! Schema::hasTable($table)) {
+                    continue;
+                }
+
+                if ($table === 'branch_ticket_messages') {
+                    $ticketIds = DB::table('branch_tickets')
+                        ->where('branch_id', $branch->id)
+                        ->pluck('id');
+
+                    if ($ticketIds->isNotEmpty()) {
+                        DB::table($table)->whereIn($column, $ticketIds)->delete();
+                    }
+
+                    continue;
+                }
+
+                DB::table($table)->where($column, $branch->id)->delete();
             }
 
             $this->branches->audit(null, $request->user(), 'branch.deleted', $branch, $old, ['deleted_from_database' => true]);
@@ -194,8 +228,8 @@ class BranchController extends Controller
         $data = $request->validate([
             'branch_id' => ['required', 'exists:branches,id'],
             'name' => ['required', 'string', 'max:255'],
-            'email' => ['required', 'email', 'max:255', 'unique:users,email'],
-            'phone' => ['required', 'string', 'max:30', 'unique:users,phone'],
+            'email' => ['required', 'email', 'max:255', UniqueUserContactForRole::email($request->input('role'))],
+            'phone' => ['required', 'string', 'max:30', UniqueUserContactForRole::phone($request->input('role'))],
             'password' => ['nullable', 'string', 'min:8'],
             'role' => ['required', Rule::in([BranchManagementService::OWNER_ROLE, BranchManagementService::MANAGER_ROLE, BranchManagementService::STAFF_ROLE])],
             'permissions' => ['nullable', 'array'],

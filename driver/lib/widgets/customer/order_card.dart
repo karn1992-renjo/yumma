@@ -31,7 +31,7 @@ class OrderCard extends StatelessWidget {
                   Text(
                     'Order #${order.orderNumber}',
                     style: const TextStyle(
-                      fontWeight: FontWeight.bold,
+                      fontWeight: FontWeight.w800,
                       fontSize: 16,
                     ),
                   ),
@@ -49,7 +49,7 @@ class OrderCard extends StatelessWidget {
                       style: TextStyle(
                         color: order.statusColor,
                         fontSize: 12,
-                        fontWeight: FontWeight.w500,
+                        fontWeight: FontWeight.w400,
                       ),
                     ),
                   ),

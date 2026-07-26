@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Controllers\Restaurant\Concerns\ResolvesRestaurantContext;
 use App\Models\RestaurantStaff;
 use App\Models\User;
+use App\Rules\UniqueUserContactForRole;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
@@ -172,8 +173,8 @@ class StaffController extends Controller
 
         return $request->validate([
             'name' => ['required', 'string', 'max:255'],
-            'phone' => ['required', 'string', 'max:20', 'unique:users,phone,' . ($userId ?? 'NULL')],
-            'email' => ['required', 'email', 'max:255', 'unique:users,email,' . ($userId ?? 'NULL')],
+            'phone' => ['required', 'string', 'max:20', UniqueUserContactForRole::phone('restaurant_staff', $userId)],
+            'email' => ['required', 'email', 'max:255', UniqueUserContactForRole::email('restaurant_staff', $userId)],
             'role' => ['required', 'string', 'max:100'],
             'shift' => ['nullable', 'string', 'max:100'],
             'salary' => ['nullable', 'numeric', 'min:0'],

@@ -5,6 +5,15 @@
 @section('title', 'Edit Promo Code')
 
 @section('content')
+@php
+    $currentPromotionType = \App\Support\PromotionTypeRegistry::normalize(old('promotion_type', $promo->promotion_type ?: ($promo->discount_type === 'fixed' ? 'flat_discount' : 'percentage_discount')));
+    if (! isset($promotionTypes[$currentPromotionType])) {
+        $currentPromotionType = $promo->discount_type === 'fixed' ? 'flat_discount' : 'percentage_discount';
+    }
+    $rewardConfig = old('reward_config', $promo->reward_config ?? []);
+    $currentTargetType = old('target_type', $promo->target_type ?: 'restaurant');
+    $selectedTargetIds = old('target_ids', $promo->target_ids ?? []);
+@endphp
 <div class="page-header">
     <div class="d-flex justify-content-between align-items-center">
         <div>
@@ -20,7 +29,7 @@
 <div class="row justify-content-center">
     <div class="col-lg-8">
         <div class="stat-card">
-            <form action="{{ route('restaurant.promos.update', $promo->id) }}" method="POST">
+            <form action="{{ route('restaurant.promos.update', $promo->id) }}" method="POST" enctype="multipart/form-data">
                 @csrf
                 @method('PUT')
                 
@@ -44,28 +53,53 @@
                             @enderror
                         </div>
                     </div>
-                    
-                    <div class="col-md-6">
+
+                    <div class="col-12">
                         <div class="mb-3">
-                            <label class="form-label">Discount Type *</label>
-                            <select name="discount_type" class="form-control @error('discount_type') is-invalid @enderror" 
-                                    onchange="toggleDiscountFields(this.value)" required>
-                                <option value="percentage" {{ old('discount_type', $promo->discount_type) === 'percentage' ? 'selected' : '' }}>
-                                    Percentage (%)
-                                </option>
-                                <option value="fixed" {{ old('discount_type', $promo->discount_type) === 'fixed' ? 'selected' : '' }}>
-                                    Fixed Amount ({{ $currencySymbol }})
-                                </option>
-                            </select>
-                            @error('discount_type')
+                            <label class="form-label">Promotion Image</label>
+                            @if($promo->promo_image_url)
+                                <div class="mb-2">
+                                    <img src="{{ $promo->promo_image_url }}" height="96" class="rounded object-fit-cover" alt="{{ $promo->title ?: $promo->code }}">
+                                </div>
+                            @endif
+                            <input type="file" name="promo_image" class="form-control @error('promo_image') is-invalid @enderror" accept="image/*">
+                            <div class="form-text">Upload a new image only if you want to replace the current one.</div>
+                            @error('promo_image')
                                 <div class="invalid-feedback">{{ $message }}</div>
                             @enderror
+                        </div>
+                    </div>
+
+                    <div class="col-12">
+                        <div class="border-top pt-3 mt-2">
+                            <h5 class="mb-1">Reward Details</h5>
+                            <p class="text-muted mb-0">Choose the promotion shape and customer reward.</p>
                         </div>
                     </div>
                     
                     <div class="col-md-6">
                         <div class="mb-3">
-                            <label class="form-label">Discount Value *</label>
+                            <label class="form-label">Promotion Shape *</label>
+                            <select name="promotion_type" class="form-control @error('promotion_type') is-invalid @enderror"
+                                    onchange="syncPromotionShape(this.value)" required>
+                                @foreach($promotionTypes as $type => $meta)
+                                    <option value="{{ $type }}" {{ $currentPromotionType === $type ? 'selected' : '' }}>
+                                        {{ $meta['label'] }}
+                                    </option>
+                                @endforeach
+                            </select>
+                            <input type="hidden" name="discount_type" value="{{ old('discount_type', $promo->discount_type) }}">
+                            <input type="hidden" name="reward_type" value="{{ old('reward_type', $promo->reward_type ?: ($promo->discount_type === 'fixed' ? 'flat' : 'percentage')) }}">
+                            @error('promotion_type')
+                                <div class="invalid-feedback">{{ $message }}</div>
+                            @enderror
+                            <div class="form-text" id="promotion-help"></div>
+                        </div>
+                    </div>
+                    
+                    <div class="col-md-6" id="reward-value-field">
+                        <div class="mb-3">
+                            <label class="form-label" id="reward-value-label">Reward Value *</label>
                             <div class="input-group">
                                 <span class="input-group-text" id="discount-symbol">
                                     {{ $promo->discount_type === 'percentage' ? '%' : $currencySymbol }}
@@ -73,7 +107,7 @@
                                 <input type="number" name="discount_value" 
                                        class="form-control @error('discount_value') is-invalid @enderror" 
                                        value="{{ old('discount_value', $promo->discount_value) }}" 
-                                       step="0.01" min="0" required>
+                                       step="0.01" min="0">
                             </div>
                             @error('discount_value')
                                 <div class="invalid-feedback">{{ $message }}</div>
@@ -93,7 +127,7 @@
                             @enderror
                         </div>
                     </div>
-                    
+
                     <div class="col-md-6" id="max-discount-field" 
                          style="display: {{ $promo->discount_type === 'percentage' ? 'block' : 'none' }};">
                         <div class="mb-3">
@@ -107,6 +141,21 @@
                             @enderror
                         </div>
                     </div>
+
+                    <div class="col-md-6" id="buy-free-field" style="display: none;">
+                        <div class="row g-2">
+                            <div class="col-6">
+                                <label class="form-label">Buy Quantity</label>
+                                <input type="number" name="reward_config[buy_quantity]" class="form-control" min="1" value="{{ data_get($rewardConfig, 'buy_quantity', 1) }}">
+                            </div>
+                            <div class="col-6">
+                                <label class="form-label">Free Quantity</label>
+                                <input type="number" name="reward_config[free_quantity]" class="form-control" min="1" value="{{ data_get($rewardConfig, 'free_quantity', 1) }}">
+                            </div>
+                        </div>
+                    </div>
+
+                    @include('restaurant.promos.partials.target-picker')
                     
                     <div class="col-md-6">
                         <div class="mb-3">
@@ -187,17 +236,83 @@
 
 @section('scripts')
 <script>
-    function toggleDiscountFields(type) {
-        const maxDiscountField = document.getElementById('max-discount-field');
-        const symbol = document.getElementById('discount-symbol');
-        
-        if (type === 'percentage') {
-            maxDiscountField.style.display = 'block';
-            symbol.textContent = '%';
-        } else {
-            maxDiscountField.style.display = 'none';
-            symbol.textContent = window.currencySymbol;
+    const promotionTypes = @json($promotionTypes);
+    const currencySymbol = @json($currencySymbol);
+    const shapeHelp = {
+        percentage_discount: 'Percentage off eligible order value.',
+        flat_discount: 'Fixed amount off eligible orders.',
+        fixed_price: 'Set eligible cart to a fixed payable price.',
+        item_discount: 'Discount selected menu items.',
+        category_discount: 'Discount selected menu categories.',
+        combo_deal: 'Bundle selected items into a deal.',
+        meal_deal: 'Meal deal pricing for selected content.',
+        bogo: 'Buy one, get one reward.',
+        buy_x_get_y: 'Configure buy and free quantities.',
+        buy_2_get_1: 'Buy two eligible items, get one.',
+        buy_3_get_2: 'Buy three eligible items, get two.',
+        free_item: 'Attach a free item reward.',
+    };
+
+    function syncPromotionShape(type, fromUser = true) {
+        const meta = promotionTypes[type] || promotionTypes.percentage_discount;
+        const rewardType = meta.reward_type || 'percentage';
+        document.querySelector('input[name="discount_type"]').value = meta.discount_type || 'percentage';
+        document.querySelector('input[name="reward_type"]').value = rewardType;
+        document.getElementById('promotion-help').textContent = shapeHelp[type] || 'Promotion fields update based on selected type.';
+        toggleRewardFields(rewardType, !!(meta.defaults && meta.defaults.no_value_required));
+        if (fromUser && meta.target_type) {
+            const targetSelect = document.getElementById('promo-target-type');
+            targetSelect.value = meta.target_type;
+            syncTargetPicker(meta.target_type);
         }
     }
+
+    function syncTargetPicker(type) {
+        const picker = document.getElementById('target-picker');
+        const help = document.getElementById('target-help');
+        const lists = document.querySelectorAll('[data-target-list]');
+        const inputs = document.querySelectorAll('[data-target-input]');
+        picker.style.display = type === 'restaurant' ? 'none' : 'block';
+        help.textContent = type === 'categories'
+            ? 'Select the categories this promotion applies to.'
+            : type === 'items'
+                ? 'Select the menu items this promotion applies to.'
+                : 'This promotion applies to the entire restaurant.';
+        lists.forEach((list) => list.style.display = list.dataset.targetList === type ? 'flex' : 'none');
+        inputs.forEach((input) => {
+            input.disabled = input.dataset.targetInput !== type;
+            if (input.disabled) input.checked = false;
+        });
+    }
+
+    function toggleRewardFields(rewardType, noValueRequired) {
+        const rewardValueField = document.getElementById('reward-value-field');
+        const maxDiscountField = document.getElementById('max-discount-field');
+        const buyFreeField = document.getElementById('buy-free-field');
+        const symbol = document.getElementById('discount-symbol');
+        const valueLabel = document.getElementById('reward-value-label');
+        const valueInput = document.querySelector('input[name="discount_value"]');
+        const moneyRewards = ['flat', 'fixed_price', 'combo_deal', 'meal_deal'];
+        const maxRewards = ['percentage', 'item_discount', 'category_discount'];
+        const buyFreeRewards = ['bogo', 'buy_x_get_y', 'buy_2_get_1', 'buy_3_get_2'];
+
+        rewardValueField.style.display = noValueRequired ? 'none' : 'block';
+        valueInput.required = !noValueRequired;
+        maxDiscountField.style.display = maxRewards.includes(rewardType) ? 'block' : 'none';
+        buyFreeField.style.display = buyFreeRewards.includes(rewardType) ? 'block' : 'none';
+        symbol.textContent = moneyRewards.includes(rewardType) ? currencySymbol : '%';
+        valueLabel.textContent = rewardType === 'fixed_price'
+            ? 'Fixed Price *'
+            : rewardType === 'combo_deal'
+                ? 'Combo Deal Amount *'
+                : rewardType === 'meal_deal'
+                    ? 'Meal Deal Amount *'
+            : moneyRewards.includes(rewardType)
+                ? 'Reward Amount *'
+                : 'Reward Percentage *';
+    }
+
+    syncPromotionShape(document.querySelector('select[name="promotion_type"]').value || 'percentage_discount', false);
+    syncTargetPicker(document.getElementById('promo-target-type').value || 'restaurant');
 </script>
 @endsection

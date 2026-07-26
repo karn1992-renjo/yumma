@@ -27,6 +27,7 @@ class ApiConstants {
       '/translations/$languageCode';
   static const String menuData = '/menu-data';
   static const String updateProfile = '/user/profile';
+  static const String deleteAccount = '/user/account';
   static const String registerFcmToken = '/user/fcm-token';
   static const String notifications = '/notifications';
   static const String markNotificationsRead = '/notifications/read';

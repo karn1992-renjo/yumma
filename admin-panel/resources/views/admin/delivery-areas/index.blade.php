@@ -40,6 +40,7 @@
                         <th>Type</th>
                         <th>Details</th>
                         <th>Daily Limit</th>
+                        <th>Free Delivery</th>
                         <th>Status</th>
                         <th>Actions</th>
                     </tr>
@@ -87,6 +88,15 @@
                             </small>
                         </td>
                         <td>
+                            @if($area->free_delivery_enabled && $area->free_delivery_threshold !== null)
+                                <span class="badge bg-success">
+                                    Free above {{ App\Models\AppSetting::getValue('currency_symbol', '?') }}{{ number_format($area->free_delivery_threshold, App\Models\AppSetting::currencyDecimals()) }}
+                                </span>
+                            @else
+                                <span class="badge bg-light text-muted border">Not set</span>
+                            @endif
+                        </td>
+                        <td>
                             @if($area->is_active)
                                 <span class="badge bg-success">
                                     <i class="fas fa-check-circle me-1"></i> Active
@@ -116,7 +126,7 @@
                     </tr>
                     @empty
                     <tr>
-                        <td colspan="6" class="text-center text-muted py-5">
+                        <td colspan="7" class="text-center text-muted py-5">
                             <i class="fas fa-map-marked-alt fa-3x mb-3 d-block"></i>
                             No delivery areas found. Click "Create Area" to get started.
                         </td>

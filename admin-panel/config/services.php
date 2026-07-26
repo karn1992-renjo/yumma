@@ -61,4 +61,12 @@ return [
         'project_id' => env('FIREBASE_CLIENT_PROJECT_ID', 'yumma-458b0'),
     ],
 
+    'appsflyer' => [
+        'onelink_id' => env('APPSFLYER_ONELINK_ID', 'HZOC'),
+        'onelink_domain' => env('APPSFLYER_ONELINK_DOMAIN', 'yumma.onelink.me'),
+        'onelink_path' => env('APPSFLYER_ONELINK_PATH', 'HZOC/2f2m39o2'),
+        'onelink_api_token' => env('APPSFLYER_ONELINK_API_TOKEN'),
+        'short_link_ttl' => env('APPSFLYER_ONELINK_SHORT_LINK_TTL', '30d'),
+    ],
+
 ];

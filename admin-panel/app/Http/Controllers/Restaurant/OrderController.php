@@ -11,6 +11,7 @@ use App\Models\User;
 use App\Services\AutoAssignDriverService;
 use App\Services\OrderStatusPushService;
 use App\Services\RefundService;
+use App\Services\ScratchCardService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
@@ -184,6 +185,9 @@ class OrderController extends Controller
 
             if ($request->status === 'confirmed') {
                 $order->confirmed_at = now();
+                if (! $order->preparation_time_minutes) {
+                    $order->preparation_time_minutes = (int) ($restaurant->order_lead_time ?? 20);
+                }
             }
 
             if ($request->status === 'preparing') {
@@ -205,6 +209,10 @@ class OrderController extends Controller
             $this->clearOrderCache($restaurant->id);
             
             DB::commit();
+
+            if ($request->status === 'confirmed') {
+                app(ScratchCardService::class)->issueForRecordedUsage($order, 'restaurant_accepts');
+            }
 
             app(OrderStatusPushService::class)->notifyParticipants(
                 $order->fresh(['customer', 'restaurant', 'driver'])
@@ -307,6 +315,9 @@ class OrderController extends Controller
             
             $order->status = 'confirmed';
             $order->confirmed_at = now();
+            if (! $order->preparation_time_minutes) {
+                $order->preparation_time_minutes = (int) ($restaurant->order_lead_time ?? 20);
+            }
             $order->save();
 
             if (!$order->driver_id) {
@@ -317,6 +328,8 @@ class OrderController extends Controller
             AutoMarkOrderPreparingJob::dispatch($order->id)->delay(now()->addMinutes(2));
             
             DB::commit();
+
+            app(ScratchCardService::class)->issueForRecordedUsage($order, 'restaurant_accepts');
 
             app(OrderStatusPushService::class)->notifyParticipants(
                 $order->fresh(['customer', 'restaurant', 'driver']),
@@ -785,7 +798,16 @@ class OrderController extends Controller
             
             if ($order) {
                 $order->status = $request->status;
+                if ($request->status === 'confirmed') {
+                    $order->confirmed_at = now();
+                    if (! $order->preparation_time_minutes) {
+                        $order->preparation_time_minutes = (int) ($restaurant->order_lead_time ?? 20);
+                    }
+                }
                 $order->save();
+                if ($request->status === 'confirmed') {
+                    app(ScratchCardService::class)->issueForRecordedUsage($order, 'restaurant_accepts');
+                }
                 $count++;
             }
         }

@@ -839,19 +839,41 @@ class Restaurant extends Model
      */
     public function scopeNearby($query, float $latitude, float $longitude, float $radius = 10)
     {
-        $haversine = "(6371 * acos(cos(radians($latitude)) 
-            * cos(radians(latitude)) 
-            * cos(radians(longitude) - radians($longitude)) 
-            + sin(radians($latitude)) 
-            * sin(radians(latitude))))";
-        
-        return $query->select('*')
-            ->selectRaw("{$haversine} AS distance")
-            ->whereNotNull('latitude')
-            ->whereNotNull('longitude')
-            ->whereRaw("{$haversine} <= ?", [$radius])
-            ->whereRaw("{$haversine} <= COALESCE(NULLIF(delivery_radius, 0), ?)", [$radius])
+        $table = $query->getModel()->getTable();
+        $radius = max(0.1, $radius);
+        $latitudeDelta = $radius / 111.045;
+        $longitudeDelta = $radius / (111.045 * max(0.01, cos(deg2rad($latitude))));
+        $cosine = "(cos(radians(?))
+            * cos(radians({$table}.latitude))
+            * cos(radians({$table}.longitude) - radians(?))
+            + sin(radians(?))
+            * sin(radians({$table}.latitude)))";
+        $haversine = "(6371 * acos(case when {$cosine} > 1 then 1 when {$cosine} < -1 then -1 else {$cosine} end))";
+
+        if ($query->getQuery()->columns === null) {
+            $query->select("{$table}.*");
+        }
+
+        return $query
+            ->selectRaw("{$haversine} AS distance", $this->nearbyBindings($latitude, $longitude))
+            ->whereNotNull("{$table}.latitude")
+            ->whereNotNull("{$table}.longitude")
+            ->whereBetween("{$table}.latitude", [$latitude - $latitudeDelta, $latitude + $latitudeDelta])
+            ->whereBetween("{$table}.longitude", [$longitude - $longitudeDelta, $longitude + $longitudeDelta])
+            ->whereRaw("{$haversine} <= ?", [...$this->nearbyBindings($latitude, $longitude), $radius])
+            ->whereRaw("{$haversine} <= COALESCE(NULLIF({$table}.delivery_radius, 0), ?)", [...$this->nearbyBindings($latitude, $longitude), $radius])
             ->orderBy('distance');
+    }
+
+    private function nearbyBindings(float $latitude, float $longitude): array
+    {
+        $singleExpressionBindings = [$latitude, $longitude, $latitude];
+
+        return [
+            ...$singleExpressionBindings,
+            ...$singleExpressionBindings,
+            ...$singleExpressionBindings,
+        ];
     }
     
     // ==================== Statistics Methods ====================

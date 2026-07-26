@@ -2,9 +2,8 @@
 
 namespace App\Http\Requests;
 
-use App\Models\User;
+use App\Rules\UniqueUserContactForRole;
 use Illuminate\Foundation\Http\FormRequest;
-use Illuminate\Validation\Rule;
 
 class ProfileUpdateRequest extends FormRequest
 {
@@ -17,8 +16,8 @@ class ProfileUpdateRequest extends FormRequest
     {
         return [
             'name' => ['required', 'string', 'max:255'],
-            'email' => ['required', 'string', 'lowercase', 'email', 'max:255', Rule::unique(User::class)->ignore($this->user()->id)],
-            'phone' => ['required', 'string', 'max:20', Rule::unique(User::class)->ignore($this->user()->id)],
+            'email' => ['required', 'string', 'lowercase', 'email', 'max:255', UniqueUserContactForRole::email($this->user()->roles()->value('name'), $this->user()->id)],
+            'phone' => ['required', 'string', 'max:20', UniqueUserContactForRole::phone($this->user()->roles()->value('name'), $this->user()->id)],
             'profile_image' => ['nullable', 'image', 'mimes:jpeg,png,jpg', 'max:2048'],
         ];
     }

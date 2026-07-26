@@ -13,12 +13,14 @@ import '../../services/location_service.dart';
 import '../../services/api_service.dart';
 import '../../services/foreground_service_manager.dart';
 import '../../services/incoming_order_alert_service.dart';
+import '../../services/order_alert_permission_manager.dart';
 import '../../services/sound_service.dart';
 import '../../services/websocket_service.dart';
 import '../../config/api_constants.dart';
 import '../../theme/foodflow_theme.dart';
 import '../../utils/currency_utils.dart';
 import '../../widgets/common/network_error_screen.dart';
+import 'background_location_disclosure_screen.dart';
 import 'driver_orders_screen.dart';
 import 'driver_gigs_screen.dart';
 import 'driver_earnings_screen.dart';
@@ -41,6 +43,8 @@ class _DriverDashboardState extends State<DriverDashboard>
   Timer? _orderPollingTimer;
   Timer? _onlineDurationTimer;
   bool _isPollingOrders = false;
+  bool _hasCheckedDefaultLocationPermission = false;
+  bool _isCheckingLocationPermission = false;
   final Set<int> _knownAssignedOrderIds = {};
   final LocationService _locationService = LocationService();
   final ApiService _api = ApiService();
@@ -63,6 +67,7 @@ class _DriverDashboardState extends State<DriverDashboard>
     _loadDriverLocation();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _initWebSocket();
+      _ensureDefaultAppLocationPermission();
     });
   }
 
@@ -215,6 +220,11 @@ class _DriverDashboardState extends State<DriverDashboard>
               : null;
         });
         if (_isOnline) {
+          if (!await _ensureOnlineLocationPermission()) {
+            _stopOnlineDurationTimer();
+            return;
+          }
+
           await ForegroundServiceManager.startForegroundService(
             status: 'Online and sharing live location',
             trackLocation: true,
@@ -264,6 +274,10 @@ class _DriverDashboardState extends State<DriverDashboard>
         ),
       );
       _openGigsSheet();
+      return;
+    }
+
+    if (!_isOnline && !await _ensureBatteryOptimizationDisabled()) {
       return;
     }
 
@@ -342,47 +356,169 @@ class _DriverDashboardState extends State<DriverDashboard>
     return message;
   }
 
+  Future<bool> _ensureBatteryOptimizationDisabled() async {
+    final disabled =
+        await OrderAlertPermissionManager.isBatteryOptimizationDisabled();
+    if (disabled) return true;
+
+    if (!mounted) return false;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text(
+          'Allow unrestricted battery usage before going online.',
+        ),
+      ),
+    );
+    await OrderAlertPermissionManager.requestBatteryOptimizationExemption();
+    return false;
+  }
+
   Future<bool> _ensureOnlineLocationPermission() async {
     if (!await _locationService.isLocationServiceEnabled()) {
-      _showLocationPermissionSnackBar(
+      _showLocationPermissionMessage(
         'Turn on location services before going online.',
-        _locationService.openLocationSettings,
       );
+      await _locationService.openLocationSettings();
       return false;
     }
 
     var permission = await _locationService.checkLocationPermission();
     if (permission == LocationPermission.denied) {
+      if (!await _ensureBackgroundLocationDisclosureAccepted(
+        forceDisclosure: true,
+      )) {
+        _showLocationPermissionMessage(
+          'Background location consent is required before going online.',
+        );
+        return false;
+      }
       await _locationService.requestLocationPermission();
       permission = await _locationService.checkLocationPermission();
+    }
+
+    if (!await _ensureBackgroundLocationDisclosureAccepted()) {
+      _showLocationPermissionMessage(
+        'Background location consent is required before going online.',
+      );
+      return false;
     }
 
     if (permission == LocationPermission.always) {
       return true;
     }
 
-    final message = permission == LocationPermission.whileInUse
-        ? 'Allow location all the time so orders and live tracking keep working in background.'
-        : 'Allow location permission before going online.';
+    if (permission == LocationPermission.whileInUse) {
+      _showLocationPermissionMessage(
+        'Choose "Allow all the time" in location permission settings.',
+      );
+      await _locationService.openAppLocationSettings();
+      return false;
+    }
 
-    _showLocationPermissionSnackBar(message, _locationService.openAppSettings);
+    _showLocationPermissionSnackBar(
+      'Allow location permission before going online.',
+      _locationService.openAppLocationSettings,
+    );
     return false;
+  }
+
+  Future<void> _ensureDefaultAppLocationPermission() async {
+    if (_hasCheckedDefaultLocationPermission || _isCheckingLocationPermission) {
+      return;
+    }
+    _hasCheckedDefaultLocationPermission = true;
+    _isCheckingLocationPermission = true;
+
+    try {
+      if (!await _locationService.isLocationServiceEnabled()) {
+        _showLocationPermissionMessage(
+          'Turn on location services for delivery tracking.',
+        );
+        await _locationService.openLocationSettings();
+        return;
+      }
+
+      var permission = await _locationService.checkLocationPermission();
+      if (permission == LocationPermission.denied) {
+        final accepted = await _ensureBackgroundLocationDisclosureAccepted(
+          forceDisclosure: true,
+        );
+        if (!accepted) {
+          _showLocationPermissionMessage(
+            'Location consent is required for delivery tracking.',
+          );
+          return;
+        }
+
+        await _locationService.requestLocationPermission();
+        permission = await _locationService.checkLocationPermission();
+      } else if (permission != LocationPermission.always) {
+        final accepted = await _ensureBackgroundLocationDisclosureAccepted();
+        if (!accepted) {
+          _showLocationPermissionMessage(
+            'Location consent is required for delivery tracking.',
+          );
+          return;
+        }
+      }
+
+      if (permission == LocationPermission.always) {
+        await _loadDriverLocation();
+        return;
+      }
+
+      if (permission == LocationPermission.whileInUse) {
+        _showLocationPermissionMessage(
+          'Choose "Allow all the time" in location permission settings.',
+        );
+        await _locationService.openAppLocationSettings();
+        return;
+      }
+
+      _showLocationPermissionSnackBar(
+        'Allow location permission for delivery tracking.',
+        _locationService.openAppLocationSettings,
+      );
+    } finally {
+      _isCheckingLocationPermission = false;
+    }
+  }
+
+  Future<bool> _ensureBackgroundLocationDisclosureAccepted({
+    bool forceDisclosure = false,
+  }) async {
+    if (!mounted) return false;
+    return BackgroundLocationDisclosureScreen.ensureAccepted(
+      context,
+      forceDisclosure: forceDisclosure,
+    );
   }
 
   void _showLocationPermissionSnackBar(
     String message,
-    Future<bool> Function() action,
-  ) {
+    Future<bool> Function() action, {
+    String actionLabel = 'Settings',
+  }) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(message),
         action: SnackBarAction(
-          label: 'Settings',
+          label: actionLabel,
           textColor: Colors.white,
           onPressed: () => action(),
         ),
-        backgroundColor: FoodFlowTheme.crimson,
+        backgroundColor: foodflow.crimson,
+      ),
+    );
+  }
+
+  void _showLocationPermissionMessage(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: foodflow.crimson,
       ),
     );
   }
@@ -424,18 +560,16 @@ class _DriverDashboardState extends State<DriverDashboard>
         return;
       }
 
-      final position = await _locationService.getCurrentLocation();
+      final position = await _locationService.getCurrentLocation(
+        requestPermission: false,
+      );
       if (position != null && mounted) {
         final location = LatLng(position.latitude, position.longitude);
         setState(() {
           _driverLocation = location;
           _isLocatingDriver = false;
         });
-        _dashboardMapController?.animateCamera(
-          CameraUpdate.newCameraPosition(
-            CameraPosition(target: location, zoom: 16),
-          ),
-        );
+        _moveDashboardMap(location);
         await _api.post(
           ApiConstants.driverLocation,
           data: {'lat': position.latitude, 'lng': position.longitude},
@@ -459,10 +593,12 @@ class _DriverDashboardState extends State<DriverDashboard>
 
   @override
   Widget build(BuildContext context) {
+    final topPadding = MediaQuery.of(context).padding.top;
+
     return Scaffold(
-      backgroundColor: FoodFlowTheme.canvas,
+      backgroundColor: foodflow.canvas,
       appBar: PreferredSize(
-        preferredSize: const Size.fromHeight(72),
+        preferredSize: Size.fromHeight(topPadding + 72),
         child: _buildAppBar(),
       ),
       body: _isLoading
@@ -470,7 +606,7 @@ class _DriverDashboardState extends State<DriverDashboard>
           : _loadError != null && _stats.isEmpty
               ? NetworkErrorView(message: _loadError, onRetry: _loadStats)
               : _buildCurrentBody(),
-      bottomNavigationBar: _buildBottomNavBar(),
+      bottomNavigationBar: SafeArea(top: false, child: _buildBottomNavBar()),
     );
   }
 
@@ -482,6 +618,8 @@ class _DriverDashboardState extends State<DriverDashboard>
         return const DriverEarningsScreen();
       case 3:
         return const DriverWalletScreen();
+      case 4:
+        return const DriverProfileScreen();
       default:
         return _buildDashboard();
     }
@@ -489,7 +627,9 @@ class _DriverDashboardState extends State<DriverDashboard>
 
   Future<void> _loadDriverLocation() async {
     try {
-      final position = await _locationService.getCurrentLocation();
+      final position = await _locationService.getCurrentLocation(
+        requestPermission: false,
+      );
       if (!mounted) return;
       if (position == null) {
         setState(() => _isLocatingDriver = false);
@@ -501,11 +641,7 @@ class _DriverDashboardState extends State<DriverDashboard>
         _driverLocation = location;
         _isLocatingDriver = false;
       });
-      _dashboardMapController?.animateCamera(
-        CameraUpdate.newCameraPosition(
-          CameraPosition(target: location, zoom: 16),
-        ),
-      );
+      _moveDashboardMap(location);
     } catch (e) {
       debugPrint('Load driver location error: $e');
       if (mounted) setState(() => _isLocatingDriver = false);
@@ -558,14 +694,14 @@ class _DriverDashboardState extends State<DriverDashboard>
       ),
       child: Column(
         children: [
-          const SizedBox(height: 8),
+          const SizedBox(height: 7),
           Row(
             children: [
               Container(
-                width: 48,
-                height: 48,
+                width: 46,
+                height: 46,
                 decoration: BoxDecoration(
-                  color: FoodFlowTheme.crimson,
+                  color: foodflow.crimson,
                   borderRadius: BorderRadius.circular(14),
                 ),
                 alignment: Alignment.center,
@@ -575,7 +711,7 @@ class _DriverDashboardState extends State<DriverDashboard>
                       : 'Z',
                   style: GoogleFonts.nunitoSans(
                     fontSize: 20,
-                    fontWeight: FontWeight.w900,
+                    fontWeight: FontWeight.w800,
                     color: Colors.white,
                   ),
                 ),
@@ -591,8 +727,8 @@ class _DriverDashboardState extends State<DriverDashboard>
                       overflow: TextOverflow.ellipsis,
                       style: GoogleFonts.nunitoSans(
                         fontSize: 17,
-                        fontWeight: FontWeight.w900,
-                        color: FoodFlowTheme.ink,
+                        fontWeight: FontWeight.w800,
+                        color: foodflow.ink,
                       ),
                     ),
                     Text(
@@ -601,9 +737,12 @@ class _DriverDashboardState extends State<DriverDashboard>
                           : _isOnline
                               ? 'You are receiving orders'
                               : 'You are offline',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                       style: GoogleFonts.nunitoSans(
                         fontSize: 12,
-                        color: FoodFlowTheme.muted,
+                        height: 1.1,
+                        color: foodflow.muted,
                       ),
                     ),
                     if (branchLabel != null)
@@ -613,8 +752,8 @@ class _DriverDashboardState extends State<DriverDashboard>
                         overflow: TextOverflow.ellipsis,
                         style: GoogleFonts.nunitoSans(
                           fontSize: 11,
-                          fontWeight: FontWeight.w700,
-                          color: FoodFlowTheme.crimson,
+                          fontWeight: FontWeight.w800,
+                          color: foodflow.crimson,
                         ),
                       ),
                   ],
@@ -624,14 +763,14 @@ class _DriverDashboardState extends State<DriverDashboard>
                 const SizedBox(width: 8),
                 Container(
                   padding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 7,
+                    horizontal: 9,
+                    vertical: 5,
                   ),
                   decoration: BoxDecoration(
-                    color: FoodFlowTheme.success.withOpacity(0.12),
+                    color: foodflow.success.withOpacity(0.12),
                     borderRadius: BorderRadius.circular(10),
                     border: Border.all(
-                      color: FoodFlowTheme.success.withOpacity(0.24),
+                      color: foodflow.success.withOpacity(0.24),
                     ),
                   ),
                   child: Column(
@@ -642,8 +781,9 @@ class _DriverDashboardState extends State<DriverDashboard>
                         _onlineDurationText,
                         style: GoogleFonts.nunitoSans(
                           fontSize: 11,
-                          fontWeight: FontWeight.w900,
-                          color: FoodFlowTheme.success,
+                          height: 1.0,
+                          fontWeight: FontWeight.w800,
+                          color: foodflow.success,
                         ),
                       ),
                       if (_onlineStartedAtText.isNotEmpty)
@@ -651,8 +791,9 @@ class _DriverDashboardState extends State<DriverDashboard>
                           _onlineStartedAtText,
                           style: GoogleFonts.nunitoSans(
                             fontSize: 9,
-                            fontWeight: FontWeight.w700,
-                            color: FoodFlowTheme.muted,
+                            height: 1.0,
+                            fontWeight: FontWeight.w800,
+                            color: foodflow.muted,
                           ),
                         ),
                     ],
@@ -660,43 +801,22 @@ class _DriverDashboardState extends State<DriverDashboard>
                 ),
               ],
               const SizedBox(width: 8),
-              PopupMenuButton<String>(
-                tooltip: 'Menu',
-                icon: const Icon(Icons.menu, color: FoodFlowTheme.ink),
-                onSelected: (value) {
-                  if (value == 'profile') {
-                    Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                            builder: (_) => const DriverProfileScreen()));
-                  }
-                },
-                itemBuilder: (_) => const [
-                  PopupMenuItem(
-                      value: 'profile',
-                      child: ListTile(
-                          leading: Icon(Icons.person_outline),
-                          title: Text('Profile'),
-                          contentPadding: EdgeInsets.zero)),
-                ],
-              ),
               GestureDetector(
                 onTap: _toggleOnlineStatus,
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 180),
-                  width: 58,
-                  height: 34,
+                  width: 56,
+                  height: 32,
                   padding: const EdgeInsets.all(4),
                   decoration: BoxDecoration(
-                    color:
-                        _isOnline ? FoodFlowTheme.success : FoodFlowTheme.line,
+                    color: _isOnline ? foodflow.success : foodflow.line,
                     borderRadius: BorderRadius.circular(18),
                   ),
                   alignment:
                       _isOnline ? Alignment.centerRight : Alignment.centerLeft,
                   child: Container(
-                    width: 26,
-                    height: 26,
+                    width: 24,
+                    height: 24,
                     decoration: const BoxDecoration(
                       color: Colors.white,
                       shape: BoxShape.circle,
@@ -707,7 +827,7 @@ class _DriverDashboardState extends State<DriverDashboard>
             ],
           ),
           const SizedBox(height: 8),
-          Container(height: 1, color: FoodFlowTheme.line),
+          Container(height: 1, color: foodflow.line),
           const SizedBox(height: 4),
         ],
       ),
@@ -739,7 +859,7 @@ class _DriverDashboardState extends State<DriverDashboard>
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: GoogleFonts.nunitoSans(
-                  fontWeight: FontWeight.bold,
+                  fontWeight: FontWeight.w800,
                   fontSize: 13,
                   height: 1.0,
                   color: color,
@@ -774,7 +894,7 @@ class _DriverDashboardState extends State<DriverDashboard>
             Container(
               width: double.infinity,
               height: 430,
-              decoration: FoodFlowTheme.surface(radius: 10),
+              decoration: foodflow.surface(radius: 10),
               clipBehavior: Clip.antiAlias,
               child: Stack(
                 children: [
@@ -800,7 +920,7 @@ class _DriverDashboardState extends State<DriverDashboard>
                         ),
                         child: const Icon(
                           Icons.my_location,
-                          color: FoodFlowTheme.crimson,
+                          color: foodflow.crimson,
                           size: 20,
                         ),
                       ),
@@ -836,8 +956,8 @@ class _DriverDashboardState extends State<DriverDashboard>
                                       : 'You are offline',
                                   style: GoogleFonts.nunitoSans(
                                     fontSize: 16,
-                                    fontWeight: FontWeight.w900,
-                                    color: FoodFlowTheme.ink,
+                                    fontWeight: FontWeight.w800,
+                                    color: foodflow.ink,
                                   ),
                                 ),
                                 const SizedBox(height: 3),
@@ -849,7 +969,7 @@ class _DriverDashboardState extends State<DriverDashboard>
                                           : 'Go online to start receiving orders',
                                   style: GoogleFonts.nunitoSans(
                                     fontSize: 12,
-                                    color: FoodFlowTheme.muted,
+                                    color: foodflow.muted,
                                   ),
                                 ),
                               ],
@@ -861,8 +981,8 @@ class _DriverDashboardState extends State<DriverDashboard>
                                 : _toggleOnlineStatus,
                             style: ElevatedButton.styleFrom(
                               backgroundColor: _activeGig == null
-                                  ? FoodFlowTheme.crimson
-                                  : FoodFlowTheme.crimson,
+                                  ? foodflow.crimson
+                                  : foodflow.crimson,
                               foregroundColor: Colors.white,
                               elevation: 0,
                               shape: RoundedRectangleBorder(
@@ -891,14 +1011,14 @@ class _DriverDashboardState extends State<DriverDashboard>
                   'Today',
                   formatCurrencyValue(context, _stats['today_earnings']),
                   Icons.payments_outlined,
-                  FoodFlowTheme.success,
+                  foodflow.success,
                 ),
                 const SizedBox(width: 10),
                 _buildQuickStat(
                   'Orders',
                   '${_stats['today_deliveries'] ?? 0}',
                   Icons.shopping_bag_outlined,
-                  FoodFlowTheme.crimson,
+                  foodflow.crimson,
                 ),
                 const SizedBox(width: 10),
                 _buildQuickStat(
@@ -917,8 +1037,8 @@ class _DriverDashboardState extends State<DriverDashboard>
                   'Running Orders',
                   style: GoogleFonts.nunitoSans(
                     fontSize: 18,
-                    fontWeight: FontWeight.w900,
-                    color: FoodFlowTheme.ink,
+                    fontWeight: FontWeight.w800,
+                    color: foodflow.ink,
                   ),
                 ),
                 TextButton(
@@ -935,14 +1055,14 @@ class _DriverDashboardState extends State<DriverDashboard>
               'Earnings Summary',
               style: GoogleFonts.nunitoSans(
                 fontSize: 18,
-                fontWeight: FontWeight.w900,
-                color: FoodFlowTheme.ink,
+                fontWeight: FontWeight.w800,
+                color: foodflow.ink,
               ),
             ),
             const SizedBox(height: 12),
             Container(
               padding: const EdgeInsets.all(16),
-              decoration: FoodFlowTheme.surface(radius: 14),
+              decoration: foodflow.surface(radius: 14),
               child: Row(
                 children: [
                   Expanded(
@@ -960,7 +1080,7 @@ class _DriverDashboardState extends State<DriverDashboard>
                           formatCurrencyValue(context, _stats['week_earnings']),
                           style: GoogleFonts.nunitoSans(
                             fontSize: 20,
-                            fontWeight: FontWeight.bold,
+                            fontWeight: FontWeight.w800,
                             color: Colors.green,
                           ),
                         ),
@@ -986,7 +1106,7 @@ class _DriverDashboardState extends State<DriverDashboard>
                           ),
                           style: GoogleFonts.nunitoSans(
                             fontSize: 20,
-                            fontWeight: FontWeight.bold,
+                            fontWeight: FontWeight.w800,
                             color: Colors.green,
                           ),
                         ),
@@ -1006,8 +1126,8 @@ class _DriverDashboardState extends State<DriverDashboard>
                   'Recent Deliveries',
                   style: GoogleFonts.nunitoSans(
                     fontSize: 18,
-                    fontWeight: FontWeight.w900,
-                    color: FoodFlowTheme.ink,
+                    fontWeight: FontWeight.w800,
+                    color: foodflow.ink,
                   ),
                 ),
                 TextButton(
@@ -1095,7 +1215,7 @@ class _DriverDashboardState extends State<DriverDashboard>
                     Text(
                       'Order #${delivery['order_number']}',
                       style:
-                          GoogleFonts.nunitoSans(fontWeight: FontWeight.bold),
+                          GoogleFonts.nunitoSans(fontWeight: FontWeight.w800),
                     ),
                     Text(
                       '${delivery['customer_name']} • ${delivery['delivery_address']?.split(',')[0]}',
@@ -1118,7 +1238,7 @@ class _DriverDashboardState extends State<DriverDashboard>
                       delivery['delivery_fee'] ?? 50,
                     ),
                     style: GoogleFonts.nunitoSans(
-                      fontWeight: FontWeight.bold,
+                      fontWeight: FontWeight.w800,
                       color: Colors.green,
                     ),
                   ),
@@ -1177,7 +1297,7 @@ class _DriverDashboardState extends State<DriverDashboard>
             color: Colors.white.withOpacity(0.72),
             alignment: Alignment.center,
             child: const CircularProgressIndicator(
-              color: FoodFlowTheme.crimson,
+              color: foodflow.crimson,
             ),
           ),
         if (!_isLocatingDriver && _driverLocation == null)
@@ -1190,7 +1310,7 @@ class _DriverDashboardState extends State<DriverDashboard>
               children: [
                 const Icon(
                   Icons.location_off_outlined,
-                  color: FoodFlowTheme.crimson,
+                  color: foodflow.crimson,
                   size: 34,
                 ),
                 const SizedBox(height: 10),
@@ -1198,8 +1318,8 @@ class _DriverDashboardState extends State<DriverDashboard>
                   'Enable location to show your live map',
                   textAlign: TextAlign.center,
                   style: TextStyle(
-                    color: FoodFlowTheme.ink,
-                    fontWeight: FontWeight.w900,
+                    color: foodflow.ink,
+                    fontWeight: FontWeight.w800,
                   ),
                 ),
                 const SizedBox(height: 10),
@@ -1263,11 +1383,28 @@ class _DriverDashboardState extends State<DriverDashboard>
   @override
   void didChangeMetrics() {
     if (_driverLocation != null) {
-      _dashboardMapController?.moveCamera(
-        CameraUpdate.newCameraPosition(
-          CameraPosition(target: _driverLocation!, zoom: 16),
-        ),
+      _moveDashboardMap(_driverLocation!, animate: false);
+    }
+  }
+
+  Future<void> _moveDashboardMap(
+    LatLng location, {
+    bool animate = true,
+  }) async {
+    final controller = _dashboardMapController;
+    if (!mounted || _currentIndex != 0 || controller == null) return;
+
+    try {
+      final update = CameraUpdate.newCameraPosition(
+        CameraPosition(target: location, zoom: 16),
       );
+      if (animate) {
+        await controller.animateCamera(update);
+      } else {
+        await controller.moveCamera(update);
+      }
+    } catch (_) {
+      _dashboardMapController = null;
     }
   }
 
@@ -1277,7 +1414,7 @@ class _DriverDashboardState extends State<DriverDashboard>
     if (runningOrders.isEmpty) {
       return Container(
         padding: const EdgeInsets.all(22),
-        decoration: FoodFlowTheme.surface(radius: 14),
+        decoration: foodflow.surface(radius: 14),
         child: Row(
           children: [
             Icon(
@@ -1290,8 +1427,8 @@ class _DriverDashboardState extends State<DriverDashboard>
               child: Text(
                 'No running orders right now',
                 style: GoogleFonts.nunitoSans(
-                  color: FoodFlowTheme.muted,
-                  fontWeight: FontWeight.w700,
+                  color: foodflow.muted,
+                  fontWeight: FontWeight.w800,
                 ),
               ),
             ),
@@ -1310,20 +1447,20 @@ class _DriverDashboardState extends State<DriverDashboard>
         return Container(
           margin: const EdgeInsets.only(bottom: 12),
           padding: const EdgeInsets.all(14),
-          decoration: FoodFlowTheme.surface(radius: 14),
+          decoration: foodflow.surface(radius: 14),
           child: ListTile(
             contentPadding: EdgeInsets.zero,
             leading: Icon(
               accepted ? Icons.route : Icons.notifications_active,
-              color: accepted ? Colors.green : FoodFlowTheme.orange,
+              color: accepted ? Colors.green : foodflow.orange,
             ),
             title: Text(
               'Order #${order['order_number'] ?? ''}',
-              style: GoogleFonts.nunitoSans(fontWeight: FontWeight.w900),
+              style: GoogleFonts.nunitoSans(fontWeight: FontWeight.w800),
             ),
             subtitle: Text(
               accepted ? 'Running delivery' : 'Waiting for your response',
-              style: const TextStyle(color: FoodFlowTheme.muted),
+              style: const TextStyle(color: foodflow.muted),
             ),
             trailing: const Icon(Icons.chevron_right),
             onTap: () {
@@ -1339,10 +1476,15 @@ class _DriverDashboardState extends State<DriverDashboard>
   Widget _buildBottomNavBar() {
     return BottomNavigationBar(
       currentIndex: _currentIndex,
-      onTap: (index) => setState(() => _currentIndex = index),
+      onTap: (index) {
+        if (index != 0) {
+          _dashboardMapController = null;
+        }
+        setState(() => _currentIndex = index);
+      },
       type: BottomNavigationBarType.fixed,
-      selectedItemColor: FoodFlowTheme.crimson,
-      unselectedItemColor: FoodFlowTheme.muted,
+      selectedItemColor: foodflow.crimson,
+      unselectedItemColor: foodflow.muted,
       selectedLabelStyle: GoogleFonts.nunitoSans(fontSize: 12),
       unselectedLabelStyle: GoogleFonts.nunitoSans(fontSize: 12),
       items: const [
@@ -1365,6 +1507,11 @@ class _DriverDashboardState extends State<DriverDashboard>
           icon: Icon(Icons.wallet_outlined),
           activeIcon: Icon(Icons.wallet),
           label: 'Wallet',
+        ),
+        BottomNavigationBarItem(
+          icon: Icon(Icons.person_outline),
+          activeIcon: Icon(Icons.person),
+          label: 'Profile',
         ),
       ],
     );

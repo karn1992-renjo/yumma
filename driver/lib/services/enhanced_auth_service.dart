@@ -17,9 +17,13 @@ class EnhancedAuthService {
   Future<void> sendPhoneOtp({
     required String phoneNumber,
     String? role,
+    String? countryCode,
   }) async {
     try {
-      final normalizedPhone = _normalizePhoneNumber(phoneNumber);
+      final normalizedPhone = _normalizePhoneNumber(
+        phoneNumber,
+        defaultMobileCountryCode: countryCode,
+      );
       final response = await _api.post(ApiConstants.sendLoginOtp, data: {
         'phone': normalizedPhone,
         if (role != null && role.isNotEmpty) 'role': role,
@@ -38,9 +42,13 @@ class EnhancedAuthService {
     required String phoneNumber,
     required String otp,
     String? role,
+    String? countryCode,
   }) async {
     try {
-      final normalizedPhone = _normalizePhoneNumber(phoneNumber);
+      final normalizedPhone = _normalizePhoneNumber(
+        phoneNumber,
+        defaultMobileCountryCode: countryCode,
+      );
       final response = await _api.post(ApiConstants.verifyLoginOtp, data: {
         'phone': normalizedPhone,
         'otp': otp,
@@ -72,9 +80,13 @@ class EnhancedAuthService {
   Future<void> resendOtp({
     required String phoneNumber,
     String? role,
+    String? countryCode,
   }) async {
     try {
-      final normalizedPhone = _normalizePhoneNumber(phoneNumber);
+      final normalizedPhone = _normalizePhoneNumber(
+        phoneNumber,
+        defaultMobileCountryCode: countryCode,
+      );
       final response = await _api.post(ApiConstants.sendLoginOtp, data: {
         'phone': normalizedPhone,
         if (role != null && role.isNotEmpty) 'role': role,
@@ -109,41 +121,31 @@ class EnhancedAuthService {
     }
   }
 
-  /// Normalize phone number to +91XXXXXXXXXX format (India)
-  String _normalizePhoneNumber(String phone) {
-    // Remove all non-digit characters
-    String cleaned = phone.replaceAll(RegExp(r'\D'), '');
-    
-    // If already starts with 91, return with +91
-    if (cleaned.startsWith('91')) {
-      if (cleaned.length == 12) {
-        return '+$cleaned';
-      }
+  /// Normalize phone number to international format using the configured country code.
+  String _normalizePhoneNumber(String phone, {String? defaultMobileCountryCode}) {
+    final raw = phone.trim();
+    final digits = raw.replaceAll(RegExp(r'\D'), '');
+    if (digits.isEmpty) return '';
+
+    final countryCode = User.normalizeMobileCountryCode(
+      defaultMobileCountryCode ?? User.defaultMobileCountryCodeFallback,
+    );
+    final countryDigits = countryCode.replaceAll(RegExp(r'\D'), '');
+
+    if (raw.startsWith('+')) return '+$digits';
+    if (countryDigits.isNotEmpty && digits.startsWith(countryDigits)) {
+      return '+$digits';
     }
-    
-    // If it's just 10 digits, add +91 prefix
-    if (cleaned.length == 10) {
-      return '+91$cleaned';
-    }
-    
-    // If it already has +91 or +91 format, ensure it's correct
-    if (phone.contains('+91')) {
-      return phone.replaceAll(RegExp(r'\D'), '').length == 12 
-        ? '+${phone.replaceAll(RegExp(r"\D"), "")}'
-        : phone;
-    }
-    
-    return '+91$cleaned';
+
+    return '$countryCode$digits';
   }
 
-  /// Format phone number for display (e.g., +91 98765 43210)
-  String formatPhoneForDisplay(String phone) {
-    final normalized = _normalizePhoneNumber(phone);
-    if (normalized.length == 13) {
-      // +91XXXXXXXXXX format
-      return '${normalized.substring(0, 3)} ${normalized.substring(3, 8)} ${normalized.substring(8)}';
-    }
-    return normalized;
+  /// Format phone number for display using the configured country code.
+  String formatPhoneForDisplay(String phone, {String? countryCode}) {
+    return _normalizePhoneNumber(
+      phone,
+      defaultMobileCountryCode: countryCode,
+    );
   }
 
   /// Legacy methods (kept for backward compatibility)
@@ -155,11 +157,15 @@ class EnhancedAuthService {
     required String password,
     required String passwordConfirmation,
     String? role,
+    String? countryCode,
   }) async {
     final data = {
       'name': name,
       'email': email,
-      'phone': _normalizePhoneNumber(phone),
+      'phone': _normalizePhoneNumber(
+        phone,
+        defaultMobileCountryCode: countryCode,
+      ),
       'password': password,
       'password_confirmation': passwordConfirmation,
       if (role != null && role.isNotEmpty) 'role': role,

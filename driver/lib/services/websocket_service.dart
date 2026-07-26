@@ -183,8 +183,11 @@ class WebSocketService {
 
   bool _isNewOrderEvent(String eventName, Map<String, dynamic> data) {
     final type = data['type']?.toString().toLowerCase() ?? '';
+    final payloadEvent = data['event']?.toString().toLowerCase() ?? '';
     return eventName == 'new-order' ||
         eventName.endsWith(r'neworderevent') ||
+        payloadEvent == 'new_order' ||
+        payloadEvent == 'new-order' ||
         type == 'new_order' ||
         type == 'new-order' ||
         (data.containsKey('order_number') && data['status'] == 'pending');
@@ -198,13 +201,13 @@ class WebSocketService {
   }
 
   bool _isDriverOrderAssignedEvent(String eventName, Map<String, dynamic> data) {
-    final type = data['type']?.toString().toLowerCase() ?? '';
+    final type = data['type']?.toString().toLowerCase().replaceAll('-', '_') ?? '';
+    final payloadEvent =
+        data['event']?.toString().toLowerCase().replaceAll('-', '_') ?? '';
     return eventName == 'driver-order-assigned' ||
         eventName.endsWith(r'driverorderassignedevent') ||
-        type == 'driver_order_assigned' ||
-        type == 'driver-order-assigned' ||
-        (data.containsKey('restaurant_name') &&
-            data.containsKey('delivery_address'));
+        payloadEvent == 'driver_order_assigned' ||
+        type == 'driver_order_assigned';
   }
 
   bool _isOrderChatEvent(String eventName, Map<String, dynamic> data) {

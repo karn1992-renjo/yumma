@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../config/api_constants.dart';
@@ -11,6 +12,7 @@ import 'app_order_overlay_service.dart';
 import 'foreground_service_manager.dart';
 import 'navigation_service.dart';
 import 'order_alert_permission_manager.dart';
+import 'sound_service.dart';
 
 enum IncomingOrderSource { fcmForeground, notificationTap, websocket, restored }
 
@@ -26,6 +28,7 @@ class IncomingOrderAlertService with WidgetsBindingObserver {
 
   final Set<String> _handledOrderKeys = <String>{};
   final Map<String, Future<void>> _activeLocks = <String, Future<void>>{};
+  Timer? _alarmFallbackTimer;
   AppLifecycleState _state = AppLifecycleState.resumed;
   bool _initialized = false;
 
@@ -112,6 +115,9 @@ class IncomingOrderAlertService with WidgetsBindingObserver {
     required IncomingOrderSource source,
   }) async {
     final normalized = normalizeOrderData(data);
+    if (isCancellationAlert(normalized)) {
+      return _handleCancellationAlert(normalized);
+    }
     if (!isIncomingOrder(normalized)) return false;
 
     final orderId = parseOrderId(normalized['order_id'] ?? normalized['id']);
@@ -127,6 +133,7 @@ class IncomingOrderAlertService with WidgetsBindingObserver {
     }
 
     final duration = timerDuration(normalized);
+    _startIncomingOrderAlarm(duration);
     await persistIncomingOrder(normalized, durationSeconds: duration);
     await ForegroundServiceManager.startForegroundService(
       status: 'Incoming order #${normalized['order_number'] ?? orderId}',
@@ -134,8 +141,8 @@ class IncomingOrderAlertService with WidgetsBindingObserver {
     final overlayPermissionGranted =
         await OrderAlertPermissionManager.checkOverlayPermission();
 
-    final canUseFlutterUi = _hasFlutterUiContext() &&
-        _state == AppLifecycleState.resumed;
+    final canUseFlutterUi =
+        _hasFlutterUiContext() && _state == AppLifecycleState.resumed;
 
     if (!canUseFlutterUi) {
       if (source == IncomingOrderSource.restored && overlayPermissionGranted) {
@@ -154,6 +161,7 @@ class IncomingOrderAlertService with WidgetsBindingObserver {
           fullScreen: true,
         );
         await ForegroundServiceManager.bringAppToFront();
+        return _retryShowRestoredOverlay(normalized, duration);
       }
       return false;
     }
@@ -163,6 +171,7 @@ class IncomingOrderAlertService with WidgetsBindingObserver {
       durationSeconds: duration,
     ).whenComplete(() {
       _activeLocks.remove(key);
+      _stopIncomingOrderAlarm();
       unawaited(clearPendingOrder(orderId));
     });
 
@@ -257,7 +266,9 @@ class IncomingOrderAlertService with WidgetsBindingObserver {
       durationSeconds: durationSeconds,
     ).whenComplete(() {
       _activeLocks.remove(key);
-      unawaited(clearPendingOrder(parseOrderId(normalized['order_id'] ?? normalized['id'])));
+      _stopIncomingOrderAlarm();
+      unawaited(clearPendingOrder(
+          parseOrderId(normalized['order_id'] ?? normalized['id'])));
     });
 
     _activeLocks[key] = future;
@@ -293,6 +304,33 @@ class IncomingOrderAlertService with WidgetsBindingObserver {
         onTimeout: (id) => autoRejectOnTimeout(id, role: role),
       );
     }
+  }
+
+  Future<bool> _handleCancellationAlert(Map<String, dynamic> data) async {
+    final normalized = normalizeOrderData(data);
+    final orderId = parseOrderId(normalized['order_id'] ?? normalized['id']);
+    if (orderId == null) return false;
+
+    final role = roleFor(normalized);
+    final key = 'cancel:$role:$orderId';
+    final isDuplicate = !_handledOrderKeys.add(key);
+    if (isDuplicate || _activeLocks.containsKey(key)) {
+      return false;
+    }
+
+    final duration = timerDuration(normalized).clamp(10, 120);
+    _startIncomingOrderAlarm(duration);
+    final future = AppOrderOverlayService.showOrderCancelled(
+      orderFromData(normalized),
+      role: role,
+      durationSeconds: duration,
+    ).whenComplete(() {
+      _activeLocks.remove(key);
+      _stopIncomingOrderAlarm();
+    });
+    _activeLocks[key] = future;
+    await future;
+    return true;
   }
 
   Future<bool> acceptOrder(
@@ -390,10 +428,31 @@ class IncomingOrderAlertService with WidgetsBindingObserver {
   }
 
   Future<void> clearPendingOrder(int? orderId) async {
+    _stopIncomingOrderAlarm();
+    if (orderId != null) {
+      await FlutterLocalNotificationsPlugin().cancel(
+        id: notificationIdForOrder(orderId),
+      );
+    }
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_pendingOrderKey);
     await prefs.remove(_pendingExpiryKey);
     await prefs.remove(_pendingRoleKey);
+  }
+
+  void _startIncomingOrderAlarm(int durationSeconds) {
+    SoundService.startIncomingOrderAlarm();
+    _alarmFallbackTimer?.cancel();
+    _alarmFallbackTimer = Timer(
+      Duration(seconds: durationSeconds),
+      _stopIncomingOrderAlarm,
+    );
+  }
+
+  void _stopIncomingOrderAlarm() {
+    _alarmFallbackTimer?.cancel();
+    _alarmFallbackTimer = null;
+    unawaited(SoundService.stopIncomingOrderAlarm());
   }
 
   static Map<String, dynamic> normalizeOrderData(Map<dynamic, dynamic> data) {
@@ -423,11 +482,48 @@ class IncomingOrderAlertService with WidgetsBindingObserver {
   }
 
   static bool isIncomingOrder(Map<String, dynamic> data) {
-    final type = data['type']?.toString().toLowerCase().replaceAll('-', '_');
+    data = normalizeOrderData(data);
+    final type = _normalizedSignal(data['type']);
+    final event = _normalizedSignal(data['event']);
+    final status = _normalizedSignal(data['status']);
+
+    if (_isTerminalOrProgressStatus(status) || isCancellationAlert(data)) {
+      return false;
+    }
+
     return type == 'new_order' ||
         type == 'driver_order_assigned' ||
-        data.containsKey('order_id') ||
-        data.containsKey('order_number');
+        event == 'new_order' ||
+        event == 'driver_order_assigned';
+  }
+
+  static bool isCancellationAlert(Map<String, dynamic> data) {
+    data = normalizeOrderData(data);
+    final type = _normalizedSignal(data['type']);
+    final event = _normalizedSignal(data['event']);
+    final status = _normalizedSignal(data['status']);
+    return type == 'order_cancelled_alert' ||
+        event == 'order_cancelled' ||
+        status == 'cancelled';
+  }
+
+  static String _normalizedSignal(dynamic value) {
+    return value?.toString().trim().toLowerCase().replaceAll('-', '_') ?? '';
+  }
+
+  static bool _isTerminalOrProgressStatus(String status) {
+    return {
+      'confirmed',
+      'preparing',
+      'ready_for_pickup',
+      'reached_pickup',
+      'picked_up',
+      'on_the_way',
+      'delivered',
+      'cancelled',
+      'refunded',
+      'failed',
+    }.contains(status);
   }
 
   static String roleFor(Map<String, dynamic> data) {
@@ -441,7 +537,7 @@ class IncomingOrderAlertService with WidgetsBindingObserver {
     final raw = data['timer_duration'] ?? data['timer_seconds'] ?? data['ttl'];
     final parsed =
         raw is num ? raw.toInt() : int.tryParse(raw?.toString() ?? '');
-    return (parsed ?? 30).clamp(10, 120);
+    return (parsed ?? 180).clamp(30, 600);
   }
 
   static int? parseOrderId(dynamic value) {
@@ -451,14 +547,41 @@ class IncomingOrderAlertService with WidgetsBindingObserver {
     return null;
   }
 
+  static int notificationIdForOrder(dynamic orderId) {
+    final parsed = orderId is num
+        ? orderId.toInt()
+        : int.tryParse(orderId?.toString() ?? '');
+    if (parsed != null) return 100000 + parsed.abs() % 900000;
+    return 100000 +
+        (orderId?.toString().hashCode ?? 0).abs().remainder(900000);
+  }
+
   static Map<String, dynamic> orderFromData(Map<String, dynamic> data) {
     data = normalizeOrderData(data);
     return {
       'id': data['order_id'] ?? data['id'],
       'order_number': data['order_number'],
       'restaurant_name': data['restaurant_name'],
+      'status': data['status'],
+      'cancellation_reason': data['cancellation_reason'],
       'pickup_address': data['pickup_address'] ?? data['restaurant_address'],
+      'pickup_lat': data['pickup_lat'] ??
+          data['restaurant_lat'] ??
+          data['restaurant_latitude'] ??
+          data['latitude'],
+      'pickup_lng': data['pickup_lng'] ??
+          data['restaurant_lng'] ??
+          data['restaurant_longitude'] ??
+          data['longitude'],
+      'restaurant_lat': data['restaurant_lat'] ?? data['restaurant_latitude'],
+      'restaurant_lng': data['restaurant_lng'] ?? data['restaurant_longitude'],
       'delivery_address': data['delivery_address'],
+      'delivery_lat': data['delivery_lat'] ??
+          data['customer_lat'] ??
+          data['customer_latitude'],
+      'delivery_lng': data['delivery_lng'] ??
+          data['customer_lng'] ??
+          data['customer_longitude'],
       'customer_name': data['customer_name'],
       'distance': data['distance'] ?? data['distance_km'],
       'earnings': data['earnings'] ?? data['driver_earning'],

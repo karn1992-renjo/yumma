@@ -68,6 +68,7 @@
 @include('partials.public-blade-polish')
 </head>
 <body>
+    @php($mobileCountryCode = App\Models\AppSetting::getValue('default_mobile_country_code', '+91'))
     <div class="partner-container">
         <div class="partner-card">
             <div class="partner-header">
@@ -127,7 +128,7 @@
                             </div>
                             <div class="col-md-6">
                                 <label class="form-label required">Phone Number</label>
-                                <input type="tel" class="form-control" name="business_phone" required placeholder="+91 XXXXXXXXXX">
+                                <input type="tel" class="form-control" name="business_phone" required placeholder="{{ $mobileCountryCode }} XXXXXXXXXX">
                             </div>
                             <div class="col-md-6">
                                 <label class="form-label required">City</label>
@@ -191,7 +192,7 @@
                             </div>
                             <div class="col-md-6">
                                 <label class="form-label required">Contact Phone</label>
-                                <input type="tel" class="form-control" name="contact_phone" required placeholder="+91 XXXXXXXXXX">
+                                <input type="tel" class="form-control" name="contact_phone" required placeholder="{{ $mobileCountryCode }} XXXXXXXXXX">
                             </div>
                             <div class="col-md-6">
                                 <label class="form-label required">Create Password</label>
@@ -278,7 +279,7 @@
                             </div>
                             <div class="col-md-6">
                                 <label class="form-label required">Phone Number</label>
-                                <input type="tel" class="form-control" name="phone" required placeholder="+91 XXXXXXXXXX">
+                                <input type="tel" class="form-control" name="phone" required placeholder="{{ $mobileCountryCode }} XXXXXXXXXX">
                             </div>
                             <div class="col-md-6">
                                 <label class="form-label required">City</label>

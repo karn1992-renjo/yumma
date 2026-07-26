@@ -4,7 +4,7 @@ class OrderAlertPermissionManager {
   OrderAlertPermissionManager._();
 
   static const MethodChannel _channel =
-      MethodChannel('com.adgraph.delivery/order_alerts');
+      MethodChannel('com.adgraph.yamma_delivery/order_alerts');
 
   static Future<bool> checkOverlayPermission() async {
     try {
@@ -24,6 +24,16 @@ class OrderAlertPermissionManager {
     try {
       await _channel.invokeMethod<void>('requestBatteryOptimizationExemption');
     } catch (_) {}
+  }
+
+  static Future<bool> isBatteryOptimizationDisabled() async {
+    try {
+      return await _channel
+              .invokeMethod<bool>('isIgnoringBatteryOptimizations') ??
+          true;
+    } catch (_) {
+      return true;
+    }
   }
 
   static Future<void> requestForegroundServicePermission() async {

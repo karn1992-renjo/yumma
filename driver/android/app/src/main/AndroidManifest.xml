@@ -18,7 +18,7 @@
     <uses-permission android:name="android.permission.VIBRATE" />
     
     <application
-        android:label="FoodFlow Go"
+        android:label="Yumma! Go"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
         android:usesCleartextTraffic="true">
@@ -58,6 +58,7 @@
         <service
             android:name=".OrderAlertForegroundService"
             android:exported="false"
+            android:stopWithTask="false"
             android:foregroundServiceType="dataSync|location" />
             
         <!-- Support for file sharing is provided by StripeFileProvider and plugin providers. -->

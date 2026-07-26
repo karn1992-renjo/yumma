@@ -86,6 +86,9 @@ class MainActivity : FlutterActivity() {
                     requestBatteryOptimizationExemption()
                     result.success(true)
                 }
+                "isIgnoringBatteryOptimizations" -> {
+                    result.success(isIgnoringBatteryOptimizations())
+                }
                 "openAppNotificationSettings" -> {
                     openAppNotificationSettings()
                     result.success(true)
@@ -134,10 +137,14 @@ class MainActivity : FlutterActivity() {
         startActivity(intent)
     }
 
-    private fun requestBatteryOptimizationExemption() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return
+    private fun isIgnoringBatteryOptimizations(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return true
         val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
-        if (powerManager.isIgnoringBatteryOptimizations(packageName)) return
+        return powerManager.isIgnoringBatteryOptimizations(packageName)
+    }
+
+    private fun requestBatteryOptimizationExemption() {
+        if (isIgnoringBatteryOptimizations()) return
         val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
             .setData(Uri.parse("package:$packageName"))
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)

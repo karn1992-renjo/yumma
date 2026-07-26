@@ -78,7 +78,8 @@ class _ModernLoginScreenState extends State<ModernLoginScreen>
 
   Future<void> _requestOtp() async {
     if (_isLoading) return;
-    if (_phoneController.text.trim().length < 10) {
+    final digits = _phoneController.text.replaceAll(RegExp(r'\D'), '');
+    if (digits.length < 8) {
       _showError('Please enter a valid mobile number');
       return;
     }
@@ -240,7 +241,7 @@ class _ModernLoginScreenState extends State<ModernLoginScreen>
                             'Welcome Back',
                             style: GoogleFonts.nunitoSans(
                               fontSize: 32,
-                              fontWeight: FontWeight.bold,
+                              fontWeight: FontWeight.w800,
                               color: Colors.white,
                             ),
                           ),
@@ -299,7 +300,7 @@ class _ModernLoginScreenState extends State<ModernLoginScreen>
                                       'OTP',
                                       textAlign: TextAlign.center,
                                       style: GoogleFonts.nunitoSans(
-                                        fontWeight: FontWeight.w600,
+                                        fontWeight: FontWeight.w400,
                                         color: _useOtp
                                             ? Color(0xFF667EEA)
                                             : Colors.white,
@@ -327,7 +328,7 @@ class _ModernLoginScreenState extends State<ModernLoginScreen>
                                       'Password',
                                       textAlign: TextAlign.center,
                                       style: GoogleFonts.nunitoSans(
-                                        fontWeight: FontWeight.w600,
+                                        fontWeight: FontWeight.w400,
                                         color: !_useOtp
                                             ? Color(0xFF667EEA)
                                             : Colors.white,
@@ -347,15 +348,17 @@ class _ModernLoginScreenState extends State<ModernLoginScreen>
                           _buildInputField(
                             controller: _phoneController,
                             label: 'Mobile Number',
-                            hint: 'Enter your 10-digit mobile number',
+                            hint: 'Enter your mobile number',
                             keyboardType: TextInputType.phone,
                             prefixIcon: Icons.phone,
                             validator: (value) {
-                              if (value?.isEmpty ?? true) {
+                              final digits =
+                                  (value ?? '').replaceAll(RegExp(r'\D'), '');
+                              if (digits.isEmpty) {
                                 return 'Mobile number is required';
                               }
-                              if (value!.length < 10) {
-                                return 'Mobile number must be at least 10 digits';
+                              if (digits.length < 8) {
+                                return 'Enter a valid mobile number';
                               }
                               return null;
                             },
@@ -391,7 +394,7 @@ class _ModernLoginScreenState extends State<ModernLoginScreen>
                                   'Change number?',
                                   style: GoogleFonts.nunitoSans(
                                     color: Colors.white,
-                                    fontWeight: FontWeight.w600,
+                                    fontWeight: FontWeight.w400,
                                   ),
                                 ),
                               ),
@@ -483,7 +486,7 @@ class _ModernLoginScreenState extends State<ModernLoginScreen>
                                       style: GoogleFonts.nunitoSans(
                                         color: Colors.white,
                                         fontSize: 13,
-                                        fontWeight: FontWeight.w600,
+                                        fontWeight: FontWeight.w400,
                                       ),
                                     ),
                                   ],
@@ -526,7 +529,7 @@ class _ModernLoginScreenState extends State<ModernLoginScreen>
                                             : 'Continue',
                                     style: GoogleFonts.nunitoSans(
                                       fontSize: 16,
-                                      fontWeight: FontWeight.w600,
+                                      fontWeight: FontWeight.w400,
                                       color: Color(0xFF667EEA),
                                     ),
                                   ),
@@ -551,7 +554,7 @@ class _ModernLoginScreenState extends State<ModernLoginScreen>
                                   style: GoogleFonts.nunitoSans(
                                     color: Colors.white,
                                     fontSize: 14,
-                                    fontWeight: FontWeight.w700,
+                                    fontWeight: FontWeight.w800,
                                     decoration: TextDecoration.underline,
                                   ),
                                   recognizer: TapGestureRecognizer()
@@ -578,7 +581,7 @@ class _ModernLoginScreenState extends State<ModernLoginScreen>
     if (AppConfig.isDriverApp) {
       return 'Deliver food and earn money';
     } else if (AppConfig.isRestaurantApp) {
-      return 'Manage your restaurant';
+      return 'Manage your store';
     } else {
       return 'Order delicious food delivered fast';
     }
@@ -603,7 +606,7 @@ class _ModernLoginScreenState extends State<ModernLoginScreen>
           label,
           style: GoogleFonts.nunitoSans(
             fontSize: 14,
-            fontWeight: FontWeight.w600,
+            fontWeight: FontWeight.w400,
             color: Colors.white,
           ),
         ),

@@ -8,17 +8,13 @@ class AppConfig {
   );
   static const String appPackageName = String.fromEnvironment(
     'APP_PACKAGE_NAME',
-    defaultValue: 'com.adgraph.delivery',
+    defaultValue: 'com.adgraph.yamma_delivery',
   );
 
-  static const String appName = appRole == 'driver'
-      ? 'FoodFlow Go'
-      : appRole == 'restaurant'
-          ? 'FoodFlow Resto'
-          : 'FoodFlow';
+  static const String appName = 'Yumma';
   static const String apiBaseUrl = String.fromEnvironment(
     'API_BASE_URL',
-    defaultValue: 'https://food.unisell.online/api',
+    defaultValue: 'https://yumma.in/api',
   );
   static const String googleMapsApiKey = String.fromEnvironment(
     'GOOGLE_MAPS_API_KEY',
@@ -40,7 +36,7 @@ class AppConfig {
   );
   static const String supportEmail = String.fromEnvironment(
     'SUPPORT_EMAIL',
-    defaultValue: 'info@food.unisell.online',
+    defaultValue: 'info@yumma.in',
   );
 
   static bool get isCustomerApp => appRole == 'customer';

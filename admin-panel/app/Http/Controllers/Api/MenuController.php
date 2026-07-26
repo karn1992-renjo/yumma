@@ -17,7 +17,7 @@ class MenuController extends Controller
             
             $categories = $restaurant->categories()
                 ->with(['menuItems' => function($q) {
-                    $q->with('cuisine')
+                    $q->with(['cuisine', 'masterMenuItem'])
                         ->where('is_available', true)
                         ->where(function ($statusQuery) {
                             $statusQuery->whereNull('approval_status')
@@ -50,7 +50,7 @@ class MenuController extends Controller
                     $statusQuery->whereNull('approval_status')
                         ->orWhere('approval_status', 'approved');
                 })
-                ->with('cuisine')
+                ->with(['cuisine', 'masterMenuItem'])
                 ->get();
 
             foreach ($uncategorizedItems as $item) {
@@ -97,7 +97,7 @@ class MenuController extends Controller
         try {
             $item = MenuItem::where('restaurant_id', $restaurantId)
                 ->where('id', $itemId)
-                ->with(['category', 'cuisine'])
+                ->with(['category', 'cuisine', 'masterMenuItem'])
                 ->firstOrFail();
 
             return response()->json([
@@ -144,7 +144,7 @@ class MenuController extends Controller
                     $statusQuery->whereNull('approval_status')
                         ->orWhere('approval_status', 'approved');
                 })
-                ->with(['category', 'cuisine'])
+                ->with(['category', 'cuisine', 'masterMenuItem'])
                 ->limit(50)
                 ->get();
 

@@ -234,12 +234,17 @@ class MasterMenuItemController extends Controller
             $validated['subcategory_name'] = $globalSubcategory?->name ?: $validated['subcategory_name'];
         }
 
-        $validated['cuisine_id'] = $validated['cuisine_id'] ?? $this->resolveCuisineId(
-            null,
-            $validated['subcategory_name'] ?? null,
-            $validated['category_name'] ?? null,
-            $validated['name'] ?? null
-        );
+        $validated['cuisine_id'] = $validated['cuisine_id']
+            ?? $this->resolveGlobalCategoryCuisineId(
+                $request->input('global_category_id'),
+                $request->input('global_subcategory_id')
+            )
+            ?? $this->resolveCuisineId(
+                null,
+                $validated['subcategory_name'] ?? null,
+                $validated['category_name'] ?? null,
+                $validated['name'] ?? null
+            );
 
         $validated['variants'] = $this->parseOptions($request->input('variants_text'));
         $validated['add_ons'] = $this->parseOptions($request->input('add_ons_text'));
@@ -294,10 +299,51 @@ class MasterMenuItemController extends Controller
     {
         return GlobalMenuCategory::active()
             ->parents()
-            ->with(['children' => fn ($query) => $query->active()])
+            ->with([
+                'cuisines:id,name',
+                'children' => fn ($query) => $query->active()->with('cuisines:id,name'),
+            ])
             ->orderBy('display_order')
             ->orderBy('name')
             ->get();
+    }
+
+    private function resolveGlobalCategoryCuisineId(?int $globalCategoryId = null, ?int $globalSubcategoryId = null): ?int
+    {
+        if ($globalSubcategoryId) {
+            $subcategory = GlobalMenuCategory::active()
+                ->where('parent_id', $globalCategoryId)
+                ->with('cuisines:id')
+                ->find($globalSubcategoryId);
+
+            if ($cuisineId = $this->singleMappedCuisineId($subcategory)) {
+                return $cuisineId;
+            }
+        }
+
+        if ($globalCategoryId) {
+            $category = GlobalMenuCategory::active()
+                ->with('cuisines:id')
+                ->find($globalCategoryId);
+
+            return $this->singleMappedCuisineId($category);
+        }
+
+        return null;
+    }
+
+    private function singleMappedCuisineId(?GlobalMenuCategory $category): ?int
+    {
+        if (! $category) {
+            return null;
+        }
+
+        $ids = $category->cuisines->pluck('id')
+            ->map(fn ($id) => (int) $id)
+            ->unique()
+            ->values();
+
+        return $ids->count() === 1 ? $ids->first() : null;
     }
 
     private function parseOptions(?string $text): array

@@ -1,6 +1,11 @@
 // lib/screens/driver/driver_order_detail_screen.dart
+import 'dart:async';
+import 'dart:convert';
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:qr_flutter/qr_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../services/api_service.dart';
 import '../../services/directions_service.dart';
@@ -28,7 +33,7 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
   String? _loadError;
   bool _isLoading = true;
   bool _isUpdating = false;
-  late GoogleMapController _mapController;
+  GoogleMapController? _mapController;
   LatLng? _restaurantLocation;
   LatLng? _deliveryLocation;
   List<LatLng> _routePoints = [];
@@ -37,6 +42,8 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
   double _swipeProgress = 0;
   String _selectedPaymentMode = 'cash';
   bool _cashCollected = false;
+  bool _isGeneratingQr = false;
+  Timer? _paymentPollTimer;
 
   @override
   void initState() {
@@ -47,7 +54,8 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
   @override
   void dispose() {
     _otpController.dispose();
-    _mapController.dispose();
+    _paymentPollTimer?.cancel();
+    _mapController?.dispose();
     super.dispose();
   }
 
@@ -84,7 +92,7 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
         setState(() {
           _order = order;
           _loadError = null;
-          _selectedPaymentMode = order.paymentStatus == 'success'
+          _selectedPaymentMode = order.isPaymentPaid
               ? 'online'
               : _paymentModeFor(order);
           _cashCollected = false;
@@ -212,9 +220,16 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
       return;
     }
 
-    if (_selectedPaymentMode == 'cash' && !_cashCollected) {
+    if (!_isPaymentAlreadyPaid && _selectedPaymentMode == 'cash' && !_cashCollected) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Confirm cash collection first')),
+      );
+      return;
+    }
+
+    if (!_isPaymentAlreadyPaid && _selectedPaymentMode == 'online') {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Online payment is still pending')),
       );
       return;
     }
@@ -290,31 +305,31 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
         address: _order?.deliveryAddress ?? '',
         location: _deliveryLocation,
         icon: Icons.person_rounded,
-        color: FoodFlowTheme.success,
+        color: foodflow.success,
       );
     }
 
     return _DriverActionTarget(
-      title: 'Restaurant',
-      name: _order?.restaurant?.name ?? 'Restaurant',
+      title: 'Store',
+      name: _order?.restaurant?.name ?? 'Store',
       phone: _order?.restaurant?.phone ?? '',
       address: _order?.restaurant?.address ?? '',
       location: _restaurantLocation,
       icon: Icons.restaurant_rounded,
-      color: FoodFlowTheme.primaryColor,
+      color: foodflow.primaryColor,
     );
   }
 
   _DriverActionTarget get _alternateContactTarget {
     if (_isCustomerLegActive) {
       return _DriverActionTarget(
-        title: 'Restaurant',
-        name: _order?.restaurant?.name ?? 'Restaurant',
+        title: 'Store',
+        name: _order?.restaurant?.name ?? 'Store',
         phone: _order?.restaurant?.phone ?? '',
         address: _order?.restaurant?.address ?? '',
         location: _restaurantLocation,
         icon: Icons.restaurant_rounded,
-        color: FoodFlowTheme.primaryColor,
+        color: foodflow.primaryColor,
       );
     }
 
@@ -325,7 +340,7 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
       address: _order?.deliveryAddress ?? '',
       location: _deliveryLocation,
       icon: Icons.person_rounded,
-      color: FoodFlowTheme.success,
+      color: foodflow.success,
     );
   }
 
@@ -379,7 +394,7 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
         title: 'Navigate to ${primary.title.toLowerCase()}',
         subtitle: _isCustomerLegActive
             ? 'Use customer drop-off location'
-            : 'Use restaurant pickup location',
+            : 'Use store pickup location',
         primaryAction: _DriverSheetAction(
           target: primary,
           label: 'Open ${primary.title} route',
@@ -485,7 +500,7 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
 
     if (points.isEmpty) {
       if (_restaurantLocation != null) {
-        _mapController.animateCamera(
+        _mapController?.animateCamera(
           CameraUpdate.newCameraPosition(
             CameraPosition(target: _restaurantLocation!, zoom: 13),
           ),
@@ -495,7 +510,7 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
     }
 
     if (points.length == 1) {
-      _mapController.animateCamera(
+      _mapController?.animateCamera(
         CameraUpdate.newCameraPosition(
           CameraPosition(target: points[0], zoom: 13),
         ),
@@ -514,7 +529,7 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
       longitudes.reduce((a, b) => a > b ? a : b),
     );
 
-    _mapController.animateCamera(
+    _mapController?.animateCamera(
       CameraUpdate.newLatLngBounds(
         LatLngBounds(southwest: southwest, northeast: northeast),
         70,
@@ -531,15 +546,29 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
     return 'online';
   }
 
-  bool get _isPaymentAlreadyPaid => _order?.paymentStatus == 'success';
+  bool get _isPaymentAlreadyPaid => _order?.isPaymentPaid == true;
+
+  String _driverEarningText(Order order) {
+    final earning = formatCurrency(context, order.driverEarningAmount);
+    if (order.driverIncentiveAmount > 0) {
+      return '$earning + ${formatCurrency(context, order.driverIncentiveAmount)} incentive';
+    }
+    return earning;
+  }
 
   String get _paymentMethodLabel {
     final method = _order?.paymentMethod.toLowerCase() ?? 'cod';
     switch (method) {
       case 'cod':
         return 'Cash on delivery';
+      case 'cash':
+        return 'Cash';
       case 'razorpay':
         return 'Razorpay';
+      case 'cashfree':
+        return 'Cashfree';
+      case 'stripe':
+        return 'Stripe';
       case 'upi':
         return 'UPI';
       case 'card':
@@ -547,6 +576,278 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
       default:
         return method.toUpperCase();
     }
+  }
+
+  Future<void> _markCashReceived() async {
+    final order = _order;
+    if (order == null || _isUpdating) return;
+
+    setState(() => _isUpdating = true);
+    try {
+      final response = await _api.post(
+        ApiConstants.driverCash(order.id),
+        data: {
+          'amount': order.total,
+          'collection_notes': 'Collected by driver at delivery',
+        },
+      );
+      if (response['success'] == true) {
+        await _loadOrder();
+        if (mounted) {
+          setState(() => _cashCollected = true);
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Cash payment recorded')),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(_cleanApiError(e))),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isUpdating = false);
+    }
+  }
+
+  Future<void> _generateQr() async {
+    if (_order == null || _isGeneratingQr) return;
+
+    setState(() => _isGeneratingQr = true);
+    try {
+      final endpoint = ApiConstants.driverPaymentLink(_order!.id);
+      debugPrint('Driver QR Flutter endpoint: $endpoint');
+      final response = await _api.post(endpoint);
+      final data = Map<String, dynamic>.from(response['data'] ?? const {});
+      debugPrint('Driver QR API response: ${_qrResponseDebugSummary(data)}');
+      debugPrint('Driver QR image_url received by Flutter: ${data['image_url'] ?? data['qr_image_url'] ?? ''}');
+      await _showQrPaymentSheet(data);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(_cleanApiError(e))),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isGeneratingQr = false);
+    }
+  }
+
+  Future<void> _showQrPaymentSheet(Map<String, dynamic> data) async {
+    final qrData = (data['image_content'] ?? data['qr_payload'] ?? data['qr_code'])
+            ?.toString()
+            .trim() ??
+        '';
+    final qrImageBytes = _decodeQrImageBytes(data['image_bytes']);
+    final expiresAt = DateTime.tryParse(data['expires_at']?.toString() ?? '') ??
+        DateTime.now().add(const Duration(minutes: 10));
+    if (qrData.isEmpty && qrImageBytes == null) {
+      debugPrint(
+        'Driver QR render data missing. image_url=${data['image_url'] ?? data['qr_image_url'] ?? ''}, '
+        'image_content_length=${(data['image_content'] ?? data['qr_payload'] ?? data['qr_code'] ?? '').toString().length}, '
+        'image_bytes_length=${(data['image_bytes'] ?? '').toString().length}',
+      );
+      throw StateError('Payment QR image unavailable. Please try again.');
+    }
+
+    Timer? ticker;
+    Timer? poller;
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(26)),
+      ),
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setSheetState) {
+            ticker ??= Timer.periodic(const Duration(seconds: 1), (_) {
+              if (context.mounted) setSheetState(() {});
+            });
+            poller ??= Timer.periodic(const Duration(seconds: 3), (_) async {
+              final order = _order;
+              if (order == null || !context.mounted) return;
+              final response = await _api.get(ApiConstants.orderPaymentStatus(order.id));
+              final status = response['data'] is Map
+                  ? (response['data']['payment_status']?.toString() ?? '')
+                  : '';
+              if (status == 'success' || status == 'paid') {
+                ticker?.cancel();
+                poller?.cancel();
+                if (context.mounted) Navigator.pop(context);
+                await _loadOrder();
+                if (mounted) {
+                  ScaffoldMessenger.of(this.context).showSnackBar(
+                    const SnackBar(content: Text('Payment received')),
+                  );
+                }
+              }
+            });
+
+            final remaining = expiresAt.difference(DateTime.now());
+            final expired = remaining.inSeconds <= 0;
+            final minutes = remaining.inMinutes.remainder(60).toString().padLeft(2, '0');
+            final seconds = remaining.inSeconds.remainder(60).toString().padLeft(2, '0');
+            final qrSize = (MediaQuery.of(context).size.width * 0.86)
+                .clamp(300.0, 430.0)
+                .toDouble();
+
+            return SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(22, 18, 22, 24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Row(
+                      children: [
+                        const Expanded(
+                          child: Text(
+                            'UPI QR',
+                            style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800),
+                          ),
+                        ),
+                        IconButton(
+                          onPressed: () {
+                            ticker?.cancel();
+                            poller?.cancel();
+                            Navigator.pop(context);
+                          },
+                          icon: const Icon(Icons.close),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    _buildQrDisplay(qrData, qrImageBytes, qrSize),
+                    const SizedBox(height: 12),
+                    Text(
+                      expired ? 'QR expired' : 'Expires in $minutes:$seconds',
+                      style: TextStyle(
+                        color: expired ? foodflow.crimson : foodflow.success,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    Text(
+                      formatCurrency(context, (data['amount'] as num?)?.toDouble() ?? (_order?.total ?? 0)),
+                      style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
+                    ),
+                    const SizedBox(height: 14),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton(
+                            onPressed: () {
+                              ticker?.cancel();
+                              poller?.cancel();
+                              Navigator.pop(context);
+                            },
+                            child: const Text('Cancel'),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: ElevatedButton(
+                            onPressed: expired
+                                ? () {
+                                    ticker?.cancel();
+                                    poller?.cancel();
+                                    Navigator.pop(context);
+                                    _generateQr();
+                                  }
+                                : null,
+                            child: const Text('Refresh QR'),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    ).whenComplete(() {
+      ticker?.cancel();
+      poller?.cancel();
+    });
+  }
+
+  Uint8List? _decodeQrImageBytes(dynamic value) {
+    final encoded = value?.toString().trim() ?? '';
+    if (encoded.isEmpty) return null;
+
+    try {
+      return base64Decode(encoded);
+    } catch (e) {
+      debugPrint('Payment QR image decode error: $e');
+      return null;
+    }
+  }
+
+  Widget _buildQrDisplay(String qrData, Uint8List? qrImageBytes, double size) {
+    if (qrData.isEmpty && qrImageBytes != null) {
+      return ClipRect(
+        child: Image.memory(
+          qrImageBytes,
+          width: size,
+          height: size,
+          fit: BoxFit.cover,
+          alignment: Alignment.center,
+          filterQuality: FilterQuality.high,
+          errorBuilder: (context, error, stackTrace) {
+            debugPrint('Payment QR image loading exception: $error');
+            debugPrint('Payment QR image loading stack: $stackTrace');
+            return _qrLoadError(size);
+          },
+        ),
+      );
+    }
+
+    return QrImageView(
+      data: qrData,
+      size: size,
+      backgroundColor: Colors.white,
+    );
+  }
+
+  Widget _qrLoadError(double size) {
+    return SizedBox(
+      width: size,
+      height: size,
+      child: const Center(
+        child: Text(
+          'Unable to load payment QR',
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            color: foodflow.crimson,
+            fontSize: 16,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+      ),
+    );
+  }
+
+  String _qrResponseDebugSummary(Map<String, dynamic> data) {
+    final imageContent = (data['image_content'] ?? data['qr_payload'] ?? data['qr_code'] ?? '')
+        .toString();
+    final imageBytes = (data['image_bytes'] ?? '').toString();
+    return {
+      'payment_attempt_id': data['payment_attempt_id'],
+      'qr_id': data['qr_id'],
+      'status': data['status'],
+      'render_mode': data['render_mode'],
+      'image_url': data['image_url'] ?? data['qr_image_url'],
+      'image_content_length': imageContent.length,
+      'image_bytes_length': imageBytes.length,
+      'image_mime_type': data['image_mime_type'],
+      'image_encoding': data['image_encoding'],
+      'expires_at': data['expires_at'],
+    }.toString();
   }
 
   Set<Polyline> _buildDriverRoutePolylines() {
@@ -600,7 +901,7 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
   Widget _buildRouteCard() {
     final heading = _order!.isPickedUp || _order!.isOnTheWay
         ? _order!.customerName
-        : _order!.restaurant?.name ?? 'Restaurant';
+        : _order!.restaurant?.name ?? 'Store';
     final address = _order!.isPickedUp || _order!.isOnTheWay
         ? _order!.deliveryAddress
         : _order!.restaurant?.address ?? 'Pickup location';
@@ -608,8 +909,8 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
         ? Icons.person_pin_circle_outlined
         : Icons.storefront_outlined;
     final color = _order!.isPickedUp || _order!.isOnTheWay
-        ? FoodFlowTheme.success
-        : FoodFlowTheme.crimson;
+        ? foodflow.success
+        : foodflow.crimson;
 
     return Row(
       children: [
@@ -632,8 +933,8 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: const TextStyle(
-                  color: FoodFlowTheme.ink,
-                  fontWeight: FontWeight.w900,
+                  color: foodflow.ink,
+                  fontWeight: FontWeight.w800,
                   fontSize: 15,
                 ),
               ),
@@ -643,9 +944,9 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
                 style: const TextStyle(
-                  color: FoodFlowTheme.muted,
+                  color: foodflow.muted,
                   fontSize: 12,
-                  fontWeight: FontWeight.w600,
+                  fontWeight: FontWeight.w400,
                 ),
               ),
             ],
@@ -653,7 +954,7 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
         ),
         IconButton(
           onPressed: _showNavigateDialog,
-          icon: const Icon(Icons.navigation, color: FoodFlowTheme.success),
+          icon: const Icon(Icons.navigation, color: foodflow.success),
         ),
       ],
     );
@@ -671,8 +972,8 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
   String get _bottomStatusTitle {
     if (_order == null) return '';
     if (_order!.isDriverAssignmentPending) return 'New order incoming';
-    if (_order!.isReadyForPickup) return 'You are heading to restaurant';
-    if (_order!.isReachedPickup) return 'You reached restaurant';
+    if (_order!.isReadyForPickup) return 'You are heading to store';
+    if (_order!.isReachedPickup) return 'You reached store';
     if (_order!.isPickedUp) return 'Order picked up';
     if (_order!.isOnTheWay) return 'On the way to customer';
     if (_order!.isDelivered) return 'Order delivered';
@@ -692,7 +993,7 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
   String get _bottomActionHint {
     if (_order == null) return '';
     if (_order!.isDriverAssignmentPending) return 'Review payout and accept';
-    if (_order!.isReadyForPickup) return 'Confirm when you reach restaurant';
+    if (_order!.isReadyForPickup) return 'Confirm when you reach store';
     if (_order!.isReachedPickup) return 'Confirm food is collected';
     if (_order!.isPickedUp) return 'Start customer delivery';
     if (_order!.isOnTheWay) return 'Enter OTP, then swipe';
@@ -727,7 +1028,7 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 14),
         decoration: BoxDecoration(
           color: Colors.white,
-          border: const Border(top: BorderSide(color: FoodFlowTheme.line)),
+          border: const Border(top: BorderSide(color: foodflow.line)),
           boxShadow: [
             BoxShadow(
               color: Colors.black.withOpacity(0.10),
@@ -746,15 +1047,15 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
                   height: 42,
                   decoration: BoxDecoration(
                     color: _order!.isDelivered
-                        ? FoodFlowTheme.success.withOpacity(0.12)
-                        : FoodFlowTheme.crimson.withOpacity(0.10),
+                        ? foodflow.success.withOpacity(0.12)
+                        : foodflow.crimson.withOpacity(0.10),
                     borderRadius: BorderRadius.circular(10),
                   ),
                   child: Icon(
                     _order!.isDelivered ? Icons.check_circle : _getStatusIcon(),
                     color: _order!.isDelivered
-                        ? FoodFlowTheme.success
-                        : FoodFlowTheme.crimson,
+                        ? foodflow.success
+                        : foodflow.crimson,
                   ),
                 ),
                 const SizedBox(width: 12),
@@ -765,9 +1066,9 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
                       Text(
                         _bottomStatusTitle,
                         style: const TextStyle(
-                          color: FoodFlowTheme.ink,
+                          color: foodflow.ink,
                           fontSize: 15,
-                          fontWeight: FontWeight.w900,
+                          fontWeight: FontWeight.w800,
                         ),
                       ),
                       const SizedBox(height: 2),
@@ -778,7 +1079,7 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
                               width: 7,
                               height: 7,
                               decoration: BoxDecoration(
-                                color: FoodFlowTheme.success,
+                                color: foodflow.success,
                                 borderRadius: BorderRadius.circular(4),
                               ),
                             ),
@@ -792,9 +1093,9 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: const TextStyle(
-                                color: FoodFlowTheme.muted,
+                                color: foodflow.muted,
                                 fontSize: 12,
-                                fontWeight: FontWeight.w600,
+                                fontWeight: FontWeight.w400,
                               ),
                             ),
                           ),
@@ -804,11 +1105,11 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
                   ),
                 ),
                 Text(
-                  formatCurrency(context, _order!.deliveryFee),
+                  _driverEarningText(_order!),
                   style: const TextStyle(
-                    color: FoodFlowTheme.success,
+                    color: foodflow.success,
                     fontSize: 17,
-                    fontWeight: FontWeight.w900,
+                    fontWeight: FontWeight.w800,
                   ),
                 ),
               ],
@@ -853,23 +1154,77 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
         decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: FoodFlowTheme.crimson.withOpacity(0.28)),
+          border: Border.all(color: foodflow.crimson.withOpacity(0.28)),
         ),
         child: const Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.close_rounded, color: FoodFlowTheme.crimson, size: 20),
+            Icon(Icons.close_rounded, color: foodflow.crimson, size: 20),
             SizedBox(width: 6),
             Text(
               'Reject',
               style: TextStyle(
-                color: FoodFlowTheme.crimson,
-                fontWeight: FontWeight.w900,
+                color: foodflow.crimson,
+                fontWeight: FontWeight.w800,
               ),
             ),
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildPickupTimingPanel(Order order) {
+    return StreamBuilder<int>(
+      stream: Stream.periodic(const Duration(seconds: 1), (value) => value),
+      builder: (context, _) {
+        final delayed = order.isPreparationDelayed ||
+            (order.readyByAt?.isBefore(DateTime.now()) == true &&
+                (order.isConfirmed || order.isPreparing));
+        final color = delayed ? foodflow.crimson : foodflow.orange;
+
+        return Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: color.withOpacity(0.08),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: color.withOpacity(0.24)),
+          ),
+          child: Row(
+            children: [
+              Icon(
+                delayed ? Icons.warning_amber_rounded : Icons.timer_outlined,
+                color: color,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      delayed ? 'Pickup delayed' : 'Pickup timing',
+                      style: TextStyle(
+                        color: color,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      order.pickupTimingLabel,
+                      style: const TextStyle(
+                        color: foodflow.ink,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 
@@ -882,7 +1237,7 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: FoodFlowTheme.line),
+        border: Border.all(color: foodflow.line),
       ),
       child: Column(
         children: [
@@ -892,12 +1247,12 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
                 width: 40,
                 height: 40,
                 decoration: BoxDecoration(
-                  color: FoodFlowTheme.success.withOpacity(0.12),
+                  color: foodflow.success.withOpacity(0.12),
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: const Icon(
                   Icons.payments_rounded,
-                  color: FoodFlowTheme.success,
+                  color: foodflow.success,
                 ),
               ),
               const SizedBox(width: 10),
@@ -910,36 +1265,39 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
                           ? 'Payment completed'
                           : 'Collect payment',
                       style: const TextStyle(
-                        color: FoodFlowTheme.ink,
+                        color: foodflow.ink,
                         fontSize: 14,
-                        fontWeight: FontWeight.w900,
+                        fontWeight: FontWeight.w800,
                       ),
                     ),
                     const SizedBox(height: 2),
                     Text(
                       _isPaymentAlreadyPaid
-                          ? 'Verified by backend via $_paymentMethodLabel'
-                          : 'Customer payable: $amountText',
+                          ? 'Payment completed'
+                          : order.isCodPayment
+                              ? 'Amount to collect: $amountText'
+                              : 'No cash collection required',
                       style: const TextStyle(
-                        color: FoodFlowTheme.muted,
+                        color: foodflow.muted,
                         fontSize: 12,
-                        fontWeight: FontWeight.w600,
+                        fontWeight: FontWeight.w400,
                       ),
                     ),
                   ],
                 ),
               ),
-              Text(
-                amountText,
-                style: const TextStyle(
-                  color: FoodFlowTheme.ink,
-                  fontSize: 16,
-                  fontWeight: FontWeight.w900,
+              if (order.isCodPayment && !_isPaymentAlreadyPaid)
+                Text(
+                  amountText,
+                  style: const TextStyle(
+                    color: foodflow.ink,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w800,
+                  ),
                 ),
-              ),
             ],
           ),
-          if (!_isPaymentAlreadyPaid) ...[
+          if (!_isPaymentAlreadyPaid && order.isCodPayment) ...[
             const SizedBox(height: 12),
             Row(
               children: [
@@ -963,22 +1321,20 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
             if (_selectedPaymentMode == 'cash') ...[
               const SizedBox(height: 10),
               InkWell(
-                onTap: _isUpdating
-                    ? null
-                    : () => setState(() => _cashCollected = !_cashCollected),
+                onTap: _isUpdating ? null : _markCashReceived,
                 borderRadius: BorderRadius.circular(12),
                 child: Container(
                   padding:
                       const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
                   decoration: BoxDecoration(
                     color: _cashCollected
-                        ? FoodFlowTheme.success.withOpacity(0.10)
-                        : FoodFlowTheme.canvas,
+                        ? foodflow.success.withOpacity(0.10)
+                        : foodflow.canvas,
                     borderRadius: BorderRadius.circular(12),
                     border: Border.all(
                       color: _cashCollected
-                          ? FoodFlowTheme.success.withOpacity(0.36)
-                          : FoodFlowTheme.line,
+                          ? foodflow.success.withOpacity(0.36)
+                          : foodflow.line,
                     ),
                   ),
                   child: Row(
@@ -988,8 +1344,8 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
                             ? Icons.check_circle_rounded
                             : Icons.radio_button_unchecked_rounded,
                         color: _cashCollected
-                            ? FoodFlowTheme.success
-                            : FoodFlowTheme.faint,
+                            ? foodflow.success
+                            : foodflow.faint,
                       ),
                       const SizedBox(width: 8),
                       Expanded(
@@ -997,9 +1353,9 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
                           'Cash collected from customer',
                           style: TextStyle(
                             color: _cashCollected
-                                ? FoodFlowTheme.success
-                                : FoodFlowTheme.ink,
-                            fontWeight: FontWeight.w900,
+                                ? foodflow.success
+                                : foodflow.ink,
+                            fontWeight: FontWeight.w800,
                           ),
                         ),
                       ),
@@ -1009,12 +1365,34 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
               ),
             ] else ...[
               const SizedBox(height: 10),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: _isGeneratingQr ? null : _generateQr,
+                  icon: _isGeneratingQr
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.qr_code_2_rounded),
+                  label: Text(_isGeneratingQr ? 'Generating...' : 'Generate QR'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: foodflow.ink,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 8),
               const Text(
-                'Backend will verify captured Razorpay payment before delivery is completed.',
+                'Ask the customer to scan and complete the payment.',
                 style: TextStyle(
-                  color: FoodFlowTheme.muted,
+                  color: foodflow.muted,
                   fontSize: 12,
-                  fontWeight: FontWeight.w600,
+                  fontWeight: FontWeight.w400,
                 ),
               ),
             ],
@@ -1043,10 +1421,10 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
         duration: const Duration(milliseconds: 160),
         height: 48,
         decoration: BoxDecoration(
-          color: selected ? FoodFlowTheme.ink : FoodFlowTheme.canvas,
+          color: selected ? foodflow.ink : foodflow.canvas,
           borderRadius: BorderRadius.circular(12),
           border: Border.all(
-            color: selected ? FoodFlowTheme.ink : FoodFlowTheme.line,
+            color: selected ? foodflow.ink : foodflow.line,
           ),
         ),
         child: Row(
@@ -1054,15 +1432,15 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
           children: [
             Icon(
               icon,
-              color: selected ? Colors.white : FoodFlowTheme.muted,
+              color: selected ? Colors.white : foodflow.muted,
               size: 20,
             ),
             const SizedBox(width: 7),
             Text(
               title,
               style: TextStyle(
-                color: selected ? Colors.white : FoodFlowTheme.ink,
-                fontWeight: FontWeight.w900,
+                color: selected ? Colors.white : foodflow.ink,
+                fontWeight: FontWeight.w800,
               ),
             ),
           ],
@@ -1077,7 +1455,7 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
       decoration: BoxDecoration(
         color: const Color(0xFFFFFAF5),
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: FoodFlowTheme.orange.withOpacity(0.22)),
+        border: Border.all(color: foodflow.orange.withOpacity(0.22)),
       ),
       child: Row(
         children: [
@@ -1085,12 +1463,12 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
             width: 38,
             height: 38,
             decoration: BoxDecoration(
-              color: FoodFlowTheme.orange.withOpacity(0.12),
+              color: foodflow.orange.withOpacity(0.12),
               borderRadius: BorderRadius.circular(11),
             ),
             child: Icon(
               Icons.password_rounded,
-              color: FoodFlowTheme.orange,
+              color: foodflow.orange,
               size: 20,
             ),
           ),
@@ -1103,16 +1481,16 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
               maxLength: 4,
               textAlign: TextAlign.center,
               style: const TextStyle(
-                color: FoodFlowTheme.ink,
+                color: foodflow.ink,
                 fontSize: 18,
-                fontWeight: FontWeight.w900,
+                fontWeight: FontWeight.w800,
                 letterSpacing: 4,
               ),
               decoration: const InputDecoration(
                 counterText: '',
                 hintText: 'OTP',
                 hintStyle: TextStyle(
-                  color: FoodFlowTheme.faint,
+                  color: foodflow.faint,
                   letterSpacing: 0,
                   fontWeight: FontWeight.w800,
                 ),
@@ -1133,11 +1511,11 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
                 decoration: BoxDecoration(
                   color: Colors.white,
                   borderRadius: BorderRadius.circular(11),
-                  border: Border.all(color: FoodFlowTheme.line),
+                  border: Border.all(color: foodflow.line),
                 ),
                 child: const Icon(
                   Icons.refresh_rounded,
-                  color: FoodFlowTheme.ink,
+                  color: foodflow.ink,
                   size: 20,
                 ),
               ),
@@ -1183,16 +1561,16 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
             duration: const Duration(milliseconds: 180),
             height: 58,
             decoration: BoxDecoration(
-              color: _isUpdating ? FoodFlowTheme.line : const Color(0xFFECFFF4),
+              color: _isUpdating ? foodflow.line : const Color(0xFFECFFF4),
               borderRadius: BorderRadius.circular(16),
               border: Border.all(
                 color: _isUpdating
-                    ? FoodFlowTheme.line
-                    : FoodFlowTheme.success.withOpacity(0.30),
+                    ? foodflow.line
+                    : foodflow.success.withOpacity(0.30),
               ),
               boxShadow: [
                 BoxShadow(
-                  color: FoodFlowTheme.success.withOpacity(0.18),
+                  color: foodflow.success.withOpacity(0.18),
                   blurRadius: 18,
                   offset: const Offset(0, 8),
                 ),
@@ -1211,7 +1589,7 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
                         width: progressWidth,
                         decoration: const BoxDecoration(
                           gradient: LinearGradient(
-                            colors: [FoodFlowTheme.success, Color(0xFF24A866)],
+                            colors: [foodflow.success, Color(0xFF24A866)],
                           ),
                         ),
                       ),
@@ -1224,8 +1602,8 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
                       duration: const Duration(milliseconds: 120),
                       style: TextStyle(
                         color:
-                            readyToConfirm ? Colors.white : FoodFlowTheme.ink,
-                        fontWeight: FontWeight.w900,
+                            readyToConfirm ? Colors.white : foodflow.ink,
+                        fontWeight: FontWeight.w800,
                         fontSize: 14,
                       ),
                       child: Text(
@@ -1252,7 +1630,7 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
                       border: Border.all(
                         color: readyToConfirm
                             ? Colors.white
-                            : FoodFlowTheme.success.withOpacity(0.20),
+                            : foodflow.success.withOpacity(0.20),
                       ),
                       boxShadow: [
                         BoxShadow(
@@ -1265,10 +1643,10 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
                     child: Icon(
                       _isUpdating ? Icons.hourglass_top : Icons.arrow_forward,
                       color: _isUpdating
-                          ? FoodFlowTheme.muted
+                          ? foodflow.muted
                           : readyToConfirm
-                              ? FoodFlowTheme.success
-                              : FoodFlowTheme.success,
+                              ? foodflow.success
+                              : foodflow.success,
                     ),
                   ),
                 ),
@@ -1290,7 +1668,7 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
 
     if (_order == null) {
       return Scaffold(
-        backgroundColor: FoodFlowTheme.canvas,
+        backgroundColor: foodflow.canvas,
         appBar: AppBar(title: const Text('Order Details')),
         body: NetworkErrorView(
           title: 'Unable to load order',
@@ -1301,11 +1679,11 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
     }
 
     return Scaffold(
-      backgroundColor: FoodFlowTheme.canvas,
+      backgroundColor: foodflow.canvas,
       appBar: AppBar(
         title: Text('Order ID: ${_order!.orderNumber}'),
         backgroundColor: Colors.white,
-        foregroundColor: FoodFlowTheme.ink,
+        foregroundColor: foodflow.ink,
         elevation: 0,
         actions: [
           Container(
@@ -1313,18 +1691,18 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
             decoration: BoxDecoration(
               color: _order!.paymentStatus == 'paid'
-                  ? FoodFlowTheme.success.withOpacity(0.12)
-                  : FoodFlowTheme.crimson.withOpacity(0.12),
+                  ? foodflow.success.withOpacity(0.12)
+                  : foodflow.crimson.withOpacity(0.12),
               borderRadius: BorderRadius.circular(5),
             ),
             child: Text(
               _order!.paymentStatus.toUpperCase(),
               style: TextStyle(
                 color: _order!.paymentStatus == 'paid'
-                    ? FoodFlowTheme.success
-                    : FoodFlowTheme.crimson,
+                    ? foodflow.success
+                    : foodflow.crimson,
                 fontSize: 11,
-                fontWeight: FontWeight.w900,
+                fontWeight: FontWeight.w800,
               ),
             ),
           ),
@@ -1380,7 +1758,7 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
                       decoration: BoxDecoration(
                         color: _order!.isOnTheWay
                             ? const Color(0xFF0F7A45)
-                            : FoodFlowTheme.crimson,
+                            : foodflow.crimson,
                         borderRadius: BorderRadius.circular(8),
                         boxShadow: [
                           BoxShadow(
@@ -1408,11 +1786,11 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
                                       ? 'Head straight'
                                       : _order!.isReadyForPickup ||
                                               _order!.isReachedPickup
-                                          ? 'Go to restaurant'
+                                          ? 'Go to store'
                                           : _order!.statusText,
                                   style: const TextStyle(
                                     color: Colors.white,
-                                    fontWeight: FontWeight.w900,
+                                    fontWeight: FontWeight.w800,
                                     fontSize: 15,
                                   ),
                                 ),
@@ -1423,7 +1801,7 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
                                   style: TextStyle(
                                     color: Colors.white.withOpacity(0.85),
                                     fontSize: 12,
-                                    fontWeight: FontWeight.w600,
+                                    fontWeight: FontWeight.w400,
                                   ),
                                 ),
                               ],
@@ -1462,19 +1840,22 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
               Container(
                 margin: const EdgeInsets.fromLTRB(16, 16, 16, 0),
                 padding: const EdgeInsets.all(22),
-                decoration: FoodFlowTheme.surface(radius: 12),
+                decoration: foodflow.surface(radius: 12),
                 child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
                     Container(
                       width: 72,
                       height: 72,
+                      alignment: Alignment.center,
                       decoration: BoxDecoration(
-                        color: FoodFlowTheme.success.withOpacity(0.12),
+                        color: foodflow.success.withOpacity(0.12),
                         shape: BoxShape.circle,
                       ),
                       child: const Icon(
                         Icons.check_circle,
-                        color: FoodFlowTheme.success,
+                        color: foodflow.success,
                         size: 44,
                       ),
                     ),
@@ -1482,23 +1863,23 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
                     const Text(
                       'Order Delivered!',
                       style: TextStyle(
-                        color: FoodFlowTheme.ink,
+                        color: foodflow.ink,
                         fontSize: 18,
-                        fontWeight: FontWeight.w900,
+                        fontWeight: FontWeight.w800,
                       ),
                     ),
                     const SizedBox(height: 8),
                     Text(
-                      formatCurrency(context, _order!.deliveryFee),
+                      _driverEarningText(_order!),
                       style: const TextStyle(
-                        color: FoodFlowTheme.success,
+                        color: foodflow.success,
                         fontSize: 24,
-                        fontWeight: FontWeight.w900,
+                        fontWeight: FontWeight.w800,
                       ),
                     ),
                     const Text(
-                      'Total Earnings',
-                      style: TextStyle(color: FoodFlowTheme.muted),
+                      'Delivery Earnings',
+                      style: TextStyle(color: foodflow.muted),
                     ),
                   ],
                 ),
@@ -1508,7 +1889,7 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
               elevation: 0,
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(12),
-                side: const BorderSide(color: FoodFlowTheme.line),
+                side: const BorderSide(color: foodflow.line),
               ),
               child: Padding(
                 padding: const EdgeInsets.all(16),
@@ -1540,7 +1921,7 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
                                   'Grouped Delivery Route',
                                   style: TextStyle(
                                     color: Color(0xFF1D4ED8),
-                                    fontWeight: FontWeight.w900,
+                                    fontWeight: FontWeight.w800,
                                   ),
                                 ),
                               ],
@@ -1551,7 +1932,7 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
                               style: const TextStyle(
                                 color: Color(0xFF334155),
                                 fontSize: 12,
-                                fontWeight: FontWeight.w700,
+                                fontWeight: FontWeight.w800,
                               ),
                             ),
                             const SizedBox(height: 6),
@@ -1560,7 +1941,7 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
                               style: const TextStyle(
                                 color: Color(0xFF475569),
                                 fontSize: 12,
-                                fontWeight: FontWeight.w600,
+                                fontWeight: FontWeight.w400,
                               ),
                             ),
                             if (_order!.routeBatch!.restaurants.isNotEmpty) ...[
@@ -1570,7 +1951,7 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
                                 style: const TextStyle(
                                   color: Color(0xFF475569),
                                   fontSize: 12,
-                                  fontWeight: FontWeight.w600,
+                                  fontWeight: FontWeight.w400,
                                 ),
                               ),
                             ],
@@ -1578,11 +1959,16 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
                         ),
                       ),
                     ],
+                    if (_order!.hasActivePreparationTimer ||
+                        _order!.isPreparationDelayed) ...[
+                      _buildPickupTimingPanel(_order!),
+                      const SizedBox(height: 16),
+                    ],
                     const Text(
                       'Order Details',
                       style: TextStyle(
                         fontSize: 16,
-                        fontWeight: FontWeight.bold,
+                        fontWeight: FontWeight.w800,
                       ),
                     ),
                     const SizedBox(height: 12),
@@ -1651,7 +2037,7 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
                       'Items',
                       style: TextStyle(
                         fontSize: 14,
-                        fontWeight: FontWeight.w500,
+                        fontWeight: FontWeight.w400,
                       ),
                     ),
                     const SizedBox(height: 8),
@@ -1682,68 +2068,34 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
                                   ],
                                 ),
                               ),
-                              const SizedBox(width: 12),
-                              Text(
-                                formatCurrency(context, item.totalPrice),
-                                style: const TextStyle(fontSize: 14),
-                              ),
                             ],
                           ),
                         )),
-                    const Divider(),
-
-                    // Totals
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 8),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          const Text('Subtotal'),
-                          Text(formatCurrency(context, _order!.subtotal)),
-                        ],
-                      ),
-                    ),
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 8),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          const Text('Delivery Fee'),
-                          Text(formatCurrency(context, _order!.deliveryFee)),
-                        ],
-                      ),
-                    ),
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 8),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          const Text('Tax'),
-                          Text(formatCurrency(context, _order!.tax)),
-                        ],
-                      ),
-                    ),
-                    const Divider(),
-                    Padding(
-                      padding: const EdgeInsets.only(top: 8),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          const Text(
-                            'Total',
-                            style: TextStyle(fontWeight: FontWeight.bold),
-                          ),
-                          Text(
-                            formatCurrency(context, _order!.total),
-                            style: const TextStyle(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 16,
-                              color: Color(0xFF0E9F6E),
+                    if (_order!.isCodPayment) ...[
+                      const Divider(),
+                      Padding(
+                        padding: const EdgeInsets.only(top: 8),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            const Text(
+                              'Amount to collect',
+                              style: TextStyle(fontWeight: FontWeight.w800),
                             ),
-                          ),
-                        ],
+                            Text(
+                              _order!.isPaymentPaid
+                                  ? 'Paid'
+                                  : formatCurrency(context, _order!.total),
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w800,
+                                fontSize: 16,
+                                color: Color(0xFF0E9F6E),
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
-                    ),
+                    ],
                   ],
                 ),
               ),
@@ -1864,18 +2216,18 @@ class _DriverActionSheet extends StatelessWidget {
                       Text(
                         title,
                         style: const TextStyle(
-                          color: FoodFlowTheme.ink,
+                          color: foodflow.ink,
                           fontSize: 18,
-                          fontWeight: FontWeight.w900,
+                          fontWeight: FontWeight.w800,
                         ),
                       ),
                       const SizedBox(height: 3),
                       Text(
                         subtitle,
                         style: const TextStyle(
-                          color: FoodFlowTheme.muted,
+                          color: foodflow.muted,
                           fontSize: 12,
-                          fontWeight: FontWeight.w700,
+                          fontWeight: FontWeight.w800,
                         ),
                       ),
                     ],
@@ -1909,7 +2261,7 @@ class _DriverActionTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = action.enabled ? action.target.color : FoodFlowTheme.faint;
+    final color = action.enabled ? action.target.color : foodflow.faint;
 
     return Material(
       color: prominent
@@ -1927,7 +2279,7 @@ class _DriverActionTile extends StatelessWidget {
             border: Border.all(
               color: prominent
                   ? action.target.color.withOpacity(0.24)
-                  : FoodFlowTheme.line,
+                  : foodflow.line,
             ),
           ),
           child: Row(
@@ -1938,7 +2290,7 @@ class _DriverActionTile extends StatelessWidget {
                 decoration: BoxDecoration(
                   color: Colors.white,
                   borderRadius: BorderRadius.circular(13),
-                  border: Border.all(color: FoodFlowTheme.line),
+                  border: Border.all(color: foodflow.line),
                 ),
                 child: Icon(action.icon, color: color, size: 21),
               ),
@@ -1951,10 +2303,10 @@ class _DriverActionTile extends StatelessWidget {
                       action.label,
                       style: TextStyle(
                         color: action.enabled
-                            ? FoodFlowTheme.ink
-                            : FoodFlowTheme.faint,
+                            ? foodflow.ink
+                            : foodflow.faint,
                         fontSize: 14,
-                        fontWeight: FontWeight.w900,
+                        fontWeight: FontWeight.w800,
                       ),
                     ),
                     const SizedBox(height: 4),
@@ -1963,9 +2315,9 @@ class _DriverActionTile extends StatelessWidget {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
-                        color: FoodFlowTheme.inkSoft,
+                        color: foodflow.inkSoft,
                         fontSize: 12,
-                        fontWeight: FontWeight.w700,
+                        fontWeight: FontWeight.w800,
                       ),
                     ),
                     const SizedBox(height: 2),
@@ -1975,10 +2327,10 @@ class _DriverActionTile extends StatelessWidget {
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                         color: action.enabled
-                            ? FoodFlowTheme.muted
-                            : FoodFlowTheme.faint,
+                            ? foodflow.muted
+                            : foodflow.faint,
                         fontSize: 12,
-                        fontWeight: FontWeight.w600,
+                        fontWeight: FontWeight.w400,
                       ),
                     ),
                   ],

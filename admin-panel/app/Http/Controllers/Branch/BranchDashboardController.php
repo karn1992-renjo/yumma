@@ -15,6 +15,7 @@ use App\Models\Cuisine;
 use App\Models\Order;
 use App\Models\Restaurant;
 use App\Models\User;
+use App\Rules\UniqueUserContactForRole;
 use App\Services\AutoAssignDriverService;
 use App\Services\BranchManagementService;
 use Illuminate\Http\Request;
@@ -42,6 +43,7 @@ class BranchDashboardController extends Controller
                 $query->where('branch_id', $branch->id)
                     ->when($restaurantIds->isNotEmpty(), fn ($builder) => $builder->orWhereIn('restaurant_id', $restaurantIds));
             })
+            ->visibleToRestaurant()
             ->latest()
             ->limit(15)
             ->get();
@@ -63,10 +65,7 @@ class BranchDashboardController extends Controller
             'zones' => $branch->zones()->count(),
         ];
 
-        $dailyRevenue = Order::where(function ($query) use ($branch, $restaurantIds) {
-                $query->where('branch_id', $branch->id)
-                    ->when($restaurantIds->isNotEmpty(), fn ($builder) => $builder->orWhereIn('restaurant_id', $restaurantIds));
-            })
+        $dailyRevenue = $this->branchOrderQuery($branch, $restaurantIds)
             ->where('status', 'delivered')
             ->where('created_at', '>=', now()->subDays(29)->startOfDay())
             ->selectRaw('DATE(created_at) as date, SUM(total) as revenue')
@@ -78,7 +77,7 @@ class BranchDashboardController extends Controller
                 $query->where('branch_id', $branch->id)
                     ->when($restaurantIds->isNotEmpty(), fn ($builder) => $builder->orWhereIn('id', $restaurantIds));
             })
-            ->withCount('orders')
+            ->withCount(['orders' => fn ($query) => $query->visibleToRestaurant()])
             ->withSum(['orders as revenue' => fn ($query) => $query->where('status', 'delivered')], 'total')
             ->orderByDesc('revenue')
             ->orderByDesc('orders_count')
@@ -87,7 +86,7 @@ class BranchDashboardController extends Controller
 
         $topDrivers = User::role('delivery_partner')
             ->where('branch_id', $branch->id)
-            ->withCount('orders')
+            ->withCount(['orders' => fn ($query) => $query->visibleToRestaurant()])
             ->orderByDesc('orders_count')
             ->limit(5)
             ->get();
@@ -179,6 +178,7 @@ class BranchDashboardController extends Controller
         $branch = $this->currentBranch($request);
         $this->authorizeBranch($request, 'branch.orders.view', ['view_orders', 'manage_orders']);
         abort_unless($this->orderBelongsToBranch($order, $branch), 404);
+        abort_unless($order->isVisibleToRestaurant(), 404);
 
         $order->load(['restaurant', 'customer', 'driver', 'branch']);
         $availableDrivers = $this->availableBranchDrivers($branch, $order);
@@ -192,6 +192,7 @@ class BranchDashboardController extends Controller
         $branch = $this->currentBranch($request);
         $this->authorizeBranch($request, 'branch.orders.assign_driver', ['manage_orders', 'manage_drivers']);
         abort_unless($this->orderBelongsToBranch($order, $branch), 404);
+        abort_unless($order->isVisibleToRestaurant(), 404);
 
         if ($order->driver_id) {
             return back()->withErrors(['driver_id' => 'This order already has a driver assigned.']);
@@ -352,9 +353,9 @@ class BranchDashboardController extends Controller
         $this->authorizeBranch($request, 'branch.restaurants.view', ['manage_restaurants']);
         abort_unless($this->restaurantBelongsToBranch($restaurant, $branch), 404);
 
-        $restaurant->load(['owner', 'orders' => fn ($query) => $query->latest()->limit(10)]);
-        $totalOrders = $restaurant->orders()->count();
-        $totalRevenue = $restaurant->orders()->where('status', 'delivered')->sum('total');
+        $restaurant->load(['owner', 'orders' => fn ($query) => $query->visibleToRestaurant()->latest()->limit(10)]);
+        $totalOrders = $restaurant->orders()->visibleToRestaurant()->count();
+        $totalRevenue = $restaurant->orders()->visibleToRestaurant()->where('status', 'delivered')->sum('total');
         $totalMenuItems = $restaurant->menuItems()->count();
         $averageRating = $restaurant->reviews()->avg('rating') ?? 0;
         $capabilities = $this->branchCapabilities($request);
@@ -522,7 +523,7 @@ class BranchDashboardController extends Controller
         $this->authorizeBranch($request, 'branch.drivers.create', ['manage_drivers']);
 
         $data = $this->validateDriver($request);
-        $this->ensureInsideBranchZone($branch, $data, 'driver');
+        $data = $this->assignDriverToBranchDeliveryArea($branch, $data);
 
         $driver = User::create(array_merge([
             'branch_id' => $branch->id,
@@ -535,6 +536,7 @@ class BranchDashboardController extends Controller
             'vehicle_number' => $data['vehicle_number'],
             'license_number' => $data['license_number'],
             'address' => $data['address'] ?? null,
+            'delivery_area_id' => $data['delivery_area_id'] ?? null,
             'latitude' => $data['latitude'] ?? null,
             'longitude' => $data['longitude'] ?? null,
             'max_active_orders' => $data['max_active_orders'] ?? null,
@@ -570,7 +572,7 @@ class BranchDashboardController extends Controller
         abort_unless($driver->hasRole('delivery_partner') && (int) $driver->branch_id === (int) $branch->id, 404);
 
         $data = $this->validateDriver($request, $driver);
-        $this->ensureInsideBranchZone($branch, $data, 'driver');
+        $data = $this->assignDriverToBranchDeliveryArea($branch, $data);
 
         $payload = array_merge([
             'branch_id' => $branch->id,
@@ -582,6 +584,7 @@ class BranchDashboardController extends Controller
             'vehicle_number' => $data['vehicle_number'],
             'license_number' => $data['license_number'],
             'address' => $data['address'] ?? null,
+            'delivery_area_id' => $data['delivery_area_id'] ?? null,
             'latitude' => $data['latitude'] ?? null,
             'longitude' => $data['longitude'] ?? null,
             'max_active_orders' => $data['max_active_orders'] ?? null,
@@ -820,8 +823,8 @@ class BranchDashboardController extends Controller
         $data = $request->validate([
             'name' => ['required', 'string', 'max:255'],
             'owner_name' => ['required', 'string', 'max:255'],
-            'owner_email' => ['required', 'email', Rule::unique('branches', 'owner_email')->ignore($branch->id), Rule::unique('users', 'email')->ignore($branch->owner_user_id)],
-            'owner_phone' => ['required', 'string', 'max:20', Rule::unique('branches', 'owner_phone')->ignore($branch->id), Rule::unique('users', 'phone')->ignore($branch->owner_user_id)],
+            'owner_email' => ['required', 'email', Rule::unique('branches', 'owner_email')->ignore($branch->id), UniqueUserContactForRole::email(BranchManagementService::OWNER_ROLE, $branch->owner_user_id)],
+            'owner_phone' => ['required', 'string', 'max:20', Rule::unique('branches', 'owner_phone')->ignore($branch->id), UniqueUserContactForRole::phone(BranchManagementService::OWNER_ROLE, $branch->owner_user_id)],
             'country' => ['nullable', 'string', 'max:100'],
             'state' => ['nullable', 'string', 'max:100'],
             'city' => ['nullable', 'string', 'max:100'],
@@ -860,8 +863,8 @@ class BranchDashboardController extends Controller
         $catalog = array_keys($this->branchPermissionCatalog());
         $data = $request->validate([
             'name' => ['required', 'string', 'max:255'],
-            'email' => ['required', 'email', Rule::unique('users', 'email')],
-            'phone' => ['required', 'string', 'max:20', Rule::unique('users', 'phone')],
+            'email' => ['required', 'email', UniqueUserContactForRole::email($request->input('role'))],
+            'phone' => ['required', 'string', 'max:20', UniqueUserContactForRole::phone($request->input('role'))],
             'password' => ['required', 'string', 'min:6'],
             'role' => ['required', Rule::in([BranchManagementService::MANAGER_ROLE, BranchManagementService::STAFF_ROLE])],
             'permissions' => ['nullable', 'array'],
@@ -901,8 +904,8 @@ class BranchDashboardController extends Controller
         $catalog = array_keys($this->branchPermissionCatalog());
         $data = $request->validate([
             'name' => ['required', 'string', 'max:255'],
-            'email' => ['required', 'email', Rule::unique('users', 'email')->ignore($staff->user_id)],
-            'phone' => ['required', 'string', 'max:20', Rule::unique('users', 'phone')->ignore($staff->user_id)],
+            'email' => ['required', 'email', UniqueUserContactForRole::email($request->input('role'), $staff->user_id)],
+            'phone' => ['required', 'string', 'max:20', UniqueUserContactForRole::phone($request->input('role'), $staff->user_id)],
             'password' => ['nullable', 'string', 'min:6'],
             'role' => ['required', Rule::in([BranchManagementService::MANAGER_ROLE, BranchManagementService::STAFF_ROLE])],
             'permissions' => ['nullable', 'array'],
@@ -1039,7 +1042,7 @@ class BranchDashboardController extends Controller
         return Order::where(function ($query) use ($branch, $restaurantIds) {
             $query->where('branch_id', $branch->id)
                 ->when($restaurantIds->isNotEmpty(), fn ($builder) => $builder->orWhereIn('restaurant_id', $restaurantIds));
-        });
+        })->visibleToRestaurant();
     }
 
     private function creditedBranchOrderQuery($branch, $restaurantIds)
@@ -1173,8 +1176,8 @@ class BranchDashboardController extends Controller
             'logo' => ['nullable', 'image', 'mimes:jpeg,png,jpg,gif', 'max:2048'],
             'banner' => ['nullable', 'image', 'mimes:jpeg,png,jpg,gif', 'max:5120'],
             'owner_name' => [$restaurant ? 'nullable' : 'required', 'string', 'max:255'],
-            'owner_email' => [$restaurant ? 'nullable' : 'required', 'email', Rule::unique('users', 'email')->ignore($restaurant?->owner_id)],
-            'owner_phone' => [$restaurant ? 'nullable' : 'required', 'string', 'max:20', Rule::unique('users', 'phone')->ignore($restaurant?->owner_id)],
+            'owner_email' => [$restaurant ? 'nullable' : 'required', 'email', UniqueUserContactForRole::email('restaurant_owner', $restaurant?->owner_id)],
+            'owner_phone' => [$restaurant ? 'nullable' : 'required', 'string', 'max:20', UniqueUserContactForRole::phone('restaurant_owner', $restaurant?->owner_id)],
             'owner_password' => [$restaurant ? 'nullable' : 'required', 'string', 'min:8', 'confirmed'],
             'account_holder_name' => ['nullable', 'string', 'max:255'],
             'bank_name' => ['nullable', 'string', 'max:255'],
@@ -1191,8 +1194,8 @@ class BranchDashboardController extends Controller
     {
         return $request->validate([
             'name' => ['required', 'string', 'max:255'],
-            'email' => ['required', 'email', Rule::unique('users', 'email')->ignore($driver?->id)],
-            'phone' => ['required', 'string', 'max:20', Rule::unique('users', 'phone')->ignore($driver?->id)],
+            'email' => ['required', 'email', UniqueUserContactForRole::email('delivery_partner', $driver?->id)],
+            'phone' => ['required', 'string', 'max:20', UniqueUserContactForRole::phone('delivery_partner', $driver?->id)],
             'password' => [$driver ? 'nullable' : 'required', 'string', 'min:6'],
             'vehicle_type' => ['required', 'string', 'max:50'],
             'vehicle_number' => ['required', 'string', 'max:50'],
@@ -1211,6 +1214,38 @@ class BranchDashboardController extends Controller
             'stripe_account_id' => ['nullable', 'string', 'max:255'],
             'gateway_account_id' => ['nullable', 'string', 'max:255'],
         ]);
+    }
+
+    private function assignDriverToBranchDeliveryArea($branch, array $data): array
+    {
+        $zone = $branch->zones()
+            ->with('deliveryArea')
+            ->where('is_active', true)
+            ->whereNotNull('delivery_area_id')
+            ->get()
+            ->first(fn (BranchZone $zone) => $zone->deliveryArea && $zone->deliveryArea->is_active);
+
+        if (! $zone?->deliveryArea) {
+            throw ValidationException::withMessages([
+                'address' => 'Branch has no active delivery zone. Please ask admin to create or activate a branch zone first.',
+            ]);
+        }
+
+        $area = $zone->deliveryArea;
+        $data['delivery_area_id'] = $area->id;
+        $data['latitude'] = $data['latitude'] ?? $area->latitude;
+        $data['longitude'] = $data['longitude'] ?? $area->longitude;
+        $data['address'] = ($data['address'] ?? '') ?: collect([$zone->area, $zone->city, $zone->state, $zone->pincode])
+            ->filter()
+            ->join(', ');
+
+        if ($data['latitude'] !== null && $data['longitude'] !== null && ! $area->containsPoint((float) $data['latitude'], (float) $data['longitude'])) {
+            throw ValidationException::withMessages([
+                'address' => 'Driver location is outside this branch delivery zone.',
+            ]);
+        }
+
+        return $data;
     }
 
     private function ensureInsideBranchZone($branch, array $data, string $type): void

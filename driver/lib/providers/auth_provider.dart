@@ -3,11 +3,12 @@ import 'package:flutter/material.dart';
 import '../config/app_config.dart';
 import '../models/user.dart';
 import '../services/auth_service.dart';
+import '../services/foreground_service_manager.dart';
 import '../utils/currency_utils.dart';
 
 class AuthProvider extends ChangeNotifier {
   final AuthService _authService = AuthService();
-  
+
   User? _currentUser;
   bool _isLoading = false;
   String? _error;
@@ -16,7 +17,7 @@ class AuthProvider extends ChangeNotifier {
   bool get isLoading => _isLoading;
   String? get error => _error;
   bool get isAuthenticated => _currentUser != null;
-  
+
   String? get userRole => _currentUser?.role;
   bool get isCustomer => _currentUser?.isCustomer ?? false;
   bool get isRestaurantOwner => _currentUser?.isRestaurantOwner ?? false;
@@ -42,7 +43,7 @@ class AuthProvider extends ChangeNotifier {
   }) async {
     _setLoading(true);
     _clearError();
-    
+
     try {
       final result = await _authService.register(
         name: name,
@@ -71,7 +72,7 @@ class AuthProvider extends ChangeNotifier {
   }) async {
     _setLoading(true);
     _clearError();
-    
+
     try {
       final result = await _authService.login(
         email: email,
@@ -253,6 +254,7 @@ class AuthProvider extends ChangeNotifier {
     if (storedUser != null) {
       _currentUser = storedUser;
       _syncCurrencySettings();
+      await _keepForegroundServiceAlive(storedUser);
       notifyListeners();
     }
 
@@ -261,6 +263,7 @@ class AuthProvider extends ChangeNotifier {
       _currentUser = user;
       _syncCurrencySettings();
       await _authService.persistUser(user);
+      await _keepForegroundServiceAlive(user);
       notifyListeners();
     } catch (e) {
       debugPrint('Load user error: $e');
@@ -273,7 +276,7 @@ class AuthProvider extends ChangeNotifier {
     String? profileImagePath,
   }) async {
     _setLoading(true);
-    
+
     try {
       final user = await _authService.updateProfile(
         name: name,
@@ -297,7 +300,7 @@ class AuthProvider extends ChangeNotifier {
     required String newPasswordConfirmation,
   }) async {
     _setLoading(true);
-    
+
     try {
       await _authService.updatePassword(
         currentPassword: currentPassword,
@@ -311,6 +314,16 @@ class AuthProvider extends ChangeNotifier {
       _setLoading(false);
       return false;
     }
+  }
+
+  Future<void> _keepForegroundServiceAlive(User user) async {
+    if (!user.isDriver && !user.isRestaurantOwner) return;
+    await ForegroundServiceManager.startForegroundService(
+      status: user.isDriver
+          ? 'Logged in and ready for delivery orders'
+          : 'Logged in and ready for restaurant orders',
+      trackLocation: false,
+    );
   }
 
   void _setLoading(bool loading) {

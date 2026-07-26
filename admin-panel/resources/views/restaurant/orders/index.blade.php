@@ -1,6 +1,33 @@
 @extends('layouts.restaurant')
+
 @php
-    $currencySymbol = App\Models\AppSetting::getValue('currency_symbol', '?');
+    $currencySymbol = App\Models\AppSetting::getValue('currency_symbol', html_entity_decode('&#8377;', ENT_QUOTES, 'UTF-8'));
+    $currencyDecimals = App\Models\AppSetting::currencyDecimals();
+    $canManageOrders = auth()->user()->hasRestaurantPermission('manage_orders') || auth()->user()->hasRestaurantPermission('update_order_status');
+    $totalOrders = array_sum($statusCounts);
+    $activeOrders = collect(['pending', 'confirmed', 'preparing', 'ready_for_pickup'])
+        ->sum(fn ($status) => (int) ($statusCounts[$status] ?? 0));
+    $statusMeta = [
+        'pending' => ['label' => 'Pending', 'icon' => 'clock', 'tone' => 'warning'],
+        'confirmed' => ['label' => 'Confirmed', 'icon' => 'check-circle', 'tone' => 'primary'],
+        'preparing' => ['label' => 'Preparing', 'icon' => 'utensils', 'tone' => 'info'],
+        'ready_for_pickup' => ['label' => 'Ready', 'icon' => 'box-open', 'tone' => 'success'],
+        'delivered' => ['label' => 'Delivered', 'icon' => 'circle-check', 'tone' => 'success'],
+        'cancelled' => ['label' => 'Cancelled', 'icon' => 'ban', 'tone' => 'danger'],
+    ];
+    $statusTiles = collect(['pending', 'confirmed', 'preparing', 'ready_for_pickup', 'delivered'])
+        ->map(function ($statusKey) use ($statusMeta, $statusCounts) {
+            $meta = $statusMeta[$statusKey];
+
+            return [
+                'key' => $statusKey,
+                'label' => $meta['label'],
+                'icon' => $meta['icon'],
+                'tone' => $meta['tone'],
+                'tile_color' => 'var(--' . $meta['tone'] . ')',
+                'count' => (int) ($statusCounts[$statusKey] ?? 0),
+            ];
+        });
     $itemImageUrl = function ($image) {
         if (is_array($image)) {
             $image = collect($image)->filter()->first();
@@ -15,254 +42,415 @@
             : \Illuminate\Support\Facades\Storage::disk('public')->url($image);
     };
 @endphp
-@php
-    $canManageOrders = auth()->user()->hasRestaurantPermission('manage_orders') || auth()->user()->hasRestaurantPermission('update_order_status');
-@endphp
 
 @section('title', 'Orders Management')
 
 @section('styles')
 <style>
-    .order-card {
-        transition: all 0.3s ease;
-        border-radius: 20px;
-        overflow: hidden;
-        background: white;
-        border: 1px solid rgba(0,0,0,0.05);
-        margin-bottom: 20px;
+    .orders-shell {
+        display: grid;
+        gap: 18px;
+        max-width: 100%;
+        min-width: 0;
     }
-    
-    .order-card:hover {
-        transform: translateY(-3px);
-        box-shadow: 0 15px 35px rgba(0,0,0,0.1);
+
+    .orders-actionbar {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 14px;
+        align-items: center;
+        padding: 16px;
     }
-    
-    .order-header {
-        padding: 15px 20px;
-        color: white;
+
+    .orders-filter-form {
+        display: grid;
+        grid-template-columns: minmax(220px, 1fr) repeat(2, minmax(145px, 180px)) auto;
+        gap: 10px;
+        align-items: center;
     }
-    
-    .order-header.pending { background: linear-gradient(135deg, #f6ad55, #ed8936); }
-    .order-header.confirmed { background: linear-gradient(135deg, #4299e1, #3182ce); }
-    .order-header.preparing { background: linear-gradient(135deg, #9f7aea, #805ad5); }
-    .order-header.ready_for_pickup { background: linear-gradient(135deg, #48bb78, #38a169); }
-    .order-header.delivered { background: linear-gradient(135deg, #38b2ac, #319795); }
-    .order-header.cancelled { background: linear-gradient(135deg, #fc8181, #f56565); }
-    
-    .status-badge {
-        padding: 5px 12px;
-        border-radius: 20px;
+
+    .orders-status-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+        gap: 14px;
+    }
+
+    .order-status-tile {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 14px;
+        min-height: 102px;
+        padding: 16px;
+        color: inherit;
+        text-decoration: none;
+        border: 1px solid rgba(226, 232, 240, .88);
+        border-radius: 22px;
+        background: rgba(255, 255, 255, .94);
+        box-shadow: 0 16px 42px rgba(15, 23, 42, .06);
+        transition: border-color .18s ease, transform .18s ease, box-shadow .18s ease;
+    }
+
+    .order-status-tile:hover {
+        transform: translateY(-2px);
+        border-color: color-mix(in srgb, var(--primary) 34%, #e2e8f0);
+        box-shadow: 0 22px 54px rgba(15, 23, 42, .09);
+    }
+
+    .order-status-tile.active {
+        border-color: color-mix(in srgb, var(--primary) 54%, #e2e8f0);
+        background:
+            linear-gradient(180deg, rgba(255,255,255,.98), rgba(255,255,255,.92)),
+            radial-gradient(circle at top right, color-mix(in srgb, var(--primary) 16%, transparent), transparent 42%);
+    }
+
+    .order-status-label {
+        color: #64748b;
         font-size: 12px;
-        font-weight: 600;
-        text-transform: uppercase;
-    }
-    
-    .counter-card {
-        background: white;
-        border-radius: 16px;
-        padding: 20px;
-        text-align: center;
-        transition: all 0.3s;
-        cursor: pointer;
-        border: 2px solid transparent;
-    }
-    
-    .counter-card:hover {
-        transform: translateY(-5px);
-        box-shadow: 0 10px 30px rgba(0,0,0,0.1);
-    }
-    
-    .counter-card.active {
-        border-color: #FF6B35;
-        background: #FFF7F5;
-    }
-    
-    .counter-number {
-        font-size: 32px;
         font-weight: 800;
-        margin-bottom: 5px;
     }
-    
-    .item-badge {
-        background: #f7fafc;
+
+    .order-status-value {
+        color: #0f172a;
+        font-size: 27px;
+        font-weight: 950;
+        line-height: 1;
+        margin-top: 6px;
+    }
+
+    .order-status-icon {
+        width: 44px;
+        height: 44px;
+        border-radius: 16px;
+        display: grid;
+        place-items: center;
+        color: var(--tile-color);
+        background: color-mix(in srgb, var(--tile-color) 13%, white);
+        flex: 0 0 auto;
+    }
+
+    .orders-tabs {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        padding: 14px 16px;
+        border-bottom: 1px solid rgba(226, 232, 240, .88);
+    }
+
+    .orders-tab {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
         padding: 8px 12px;
-        border-radius: 12px;
-        margin-bottom: 8px;
+        border-radius: 999px;
+        color: #64748b;
+        text-decoration: none;
+        font-size: 12px;
+        font-weight: 900;
+        background: #f8fafc;
+        border: 1px solid rgba(226, 232, 240, .9);
     }
 
-    .order-item-thumb {
-        width: 42px;
-        height: 42px;
-        border-radius: 10px;
-        object-fit: cover;
-        flex: 0 0 42px;
-        background: #f1f5f9;
-        border: 1px solid #e2e8f0;
+    .orders-tab.active {
+        color: #fff;
+        background: var(--primary);
+        border-color: var(--primary);
     }
 
+    .orders-list {
+        display: grid;
+    }
+
+    .order-row {
+        display: grid;
+        grid-template-columns: minmax(260px, .9fr) minmax(0, 1.35fr) minmax(220px, .72fr) auto;
+        gap: 16px;
+        align-items: center;
+        padding: 16px;
+        border-bottom: 1px solid rgba(226, 232, 240, .88);
+    }
+
+    .order-row:last-child {
+        border-bottom: 0;
+    }
+
+    .order-id-block {
+        min-width: 0;
+    }
+
+    .order-avatar {
+        width: 48px;
+        height: 48px;
+        border-radius: 17px;
+        display: grid;
+        place-items: center;
+        color: #fff;
+        font-weight: 900;
+        background: linear-gradient(135deg, var(--primary), var(--primary-dark));
+        flex: 0 0 auto;
+    }
+
+    .order-number {
+        color: #0f172a;
+        font-size: 15px;
+        font-weight: 950;
+    }
+
+    .order-meta {
+        color: #64748b;
+        font-size: 12px;
+        font-weight: 700;
+    }
+
+    .order-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 9px;
+        border-radius: 999px;
+        font-size: 11px;
+        font-weight: 900;
+        background: #f8fafc;
+        color: #475569;
+        border: 1px solid rgba(226, 232, 240, .9);
+        white-space: nowrap;
+    }
+
+    .order-chip.status-pending { background: #fffbeb; color: #92400e; border-color: #fde68a; }
+    .order-chip.status-confirmed { background: #eff6ff; color: #1d4ed8; border-color: #bfdbfe; }
+    .order-chip.status-preparing { background: #f5f3ff; color: #6d28d9; border-color: #ddd6fe; }
+    .order-chip.status-ready_for_pickup { background: #ecfdf5; color: #047857; border-color: #bbf7d0; }
+    .order-chip.status-delivered { background: #dcfce7; color: #166534; border-color: #bbf7d0; }
+    .order-chip.status-cancelled { background: #fef2f2; color: #991b1b; border-color: #fecaca; }
+
+    .order-items-preview {
+        display: grid;
+        gap: 8px;
+        min-width: 0;
+    }
+
+    .order-item-line {
+        display: grid;
+        grid-template-columns: 42px minmax(0, 1fr) auto;
+        gap: 10px;
+        align-items: center;
+        min-width: 0;
+    }
+
+    .order-item-thumb,
     .order-item-thumb-placeholder {
         width: 42px;
         height: 42px;
-        border-radius: 10px;
-        flex: 0 0 42px;
-        display: inline-flex;
+        border-radius: 13px;
+        border: 1px solid rgba(226, 232, 240, .96);
+        background: #f8fafc;
+        flex: 0 0 auto;
+    }
+
+    .order-item-thumb {
+        object-fit: cover;
+        display: block;
+    }
+
+    .order-item-thumb-placeholder {
+        display: grid;
+        place-items: center;
+        color: var(--primary);
+        background: color-mix(in srgb, var(--primary) 9%, white);
+    }
+
+    .order-money-card {
+        padding: 13px;
+        border-radius: 18px;
+        background: #f8fafc;
+        border: 1px solid rgba(226, 232, 240, .9);
+    }
+
+    .order-total {
+        color: #0f172a;
+        font-size: 22px;
+        font-weight: 950;
+        letter-spacing: -0.03em;
+    }
+
+    .order-actions {
+        display: flex;
         align-items: center;
-        justify-content: center;
-        background: #fff7ed;
-        color: #f97316;
-        border: 1px solid #fed7aa;
+        justify-content: flex-end;
+        gap: 8px;
+        flex-wrap: wrap;
+        min-width: 190px;
+    }
+
+    .order-empty {
+        display: grid;
+        place-items: center;
+        min-height: 280px;
+        padding: 34px;
+        text-align: center;
+        color: #64748b;
+    }
+
+    @media (max-width: 1400px) {
+        .order-row {
+            grid-template-columns: minmax(240px, .9fr) minmax(0, 1.1fr) minmax(210px, .8fr);
+        }
+
+        .order-actions {
+            grid-column: 1 / -1;
+            justify-content: flex-end;
+            min-width: 0;
+        }
+    }
+
+    @media (max-width: 900px) {
+        .orders-actionbar,
+        .orders-filter-form,
+        .order-row {
+            grid-template-columns: 1fr;
+        }
+
+        .orders-actionbar .d-flex,
+        .order-actions {
+            justify-content: stretch !important;
+        }
+
+        .orders-actionbar .btn,
+        .orders-filter-form .btn,
+        .order-actions .btn {
+            width: 100%;
+        }
     }
 </style>
 @endsection
 
 @section('content')
-<div class="container-fluid">
-    <!-- Page Header -->
-    <div class="page-header mb-4">
-        <div class="d-flex justify-content-between align-items-center">
+<div class="orders-shell">
+    <div class="page-header">
+        <div class="d-flex justify-content-between align-items-center flex-wrap gap-3">
             <div>
-                <h1 class="display-6 fw-bold">Orders</h1>
-                <p class="text-muted">Manage and track all your restaurant orders</p>
+                <h1>Orders</h1>
+                <p>Manage and track restaurant orders.</p>
             </div>
-            <div>
-                <button class="btn btn-outline-primary" onclick="window.location.reload()">
-                    <i class="fas fa-sync-alt me-2"></i> Refresh
+            <div class="d-flex gap-2 flex-wrap">
+                <button class="btn btn-outline-primary rounded-3" onclick="window.location.reload()">
+                    <i class="fas fa-rotate me-2"></i> Refresh
                 </button>
-                <button class="btn btn-primary ms-2" data-bs-toggle="modal" data-bs-target="#exportModal">
+                <button class="btn btn-primary rounded-3" data-bs-toggle="modal" data-bs-target="#exportModal">
                     <i class="fas fa-download me-2"></i> Export
                 </button>
             </div>
         </div>
     </div>
 
-    <!-- Status Counters -->
-    <div class="row mb-4">
-        <div class="col-md-3 col-6 mb-3">
-            <div class="counter-card {{ !$currentStatus ? 'active' : '' }}" onclick="window.location.href='{{ route('restaurant.orders.index') }}'">
-                <div class="counter-number">{{ array_sum($statusCounts) }}</div>
-                <div class="text-muted">Total Orders</div>
-                <i class="fas fa-shopping-bag mt-2 d-block text-primary"></i>
+    <section class="orders-status-grid">
+        <a href="{{ route('restaurant.orders.index') }}" class="order-status-tile {{ !$currentStatus ? 'active' : '' }}" style="--tile-color: var(--primary);">
+            <div>
+                <div class="order-status-label">Total Orders</div>
+                <div class="order-status-value">{{ number_format($totalOrders) }}</div>
             </div>
-        </div>
-        <div class="col-md-3 col-6 mb-3">
-            <div class="counter-card {{ $currentStatus == 'pending' ? 'active' : '' }}" onclick="window.location.href='{{ route('restaurant.orders.index', ['status' => 'pending']) }}'">
-                <div class="counter-number text-warning">{{ $statusCounts['pending'] ?? 0 }}</div>
-                <div class="text-muted">Pending</div>
-                <i class="fas fa-clock mt-2 d-block text-warning"></i>
-            </div>
-        </div>
-        <div class="col-md-3 col-6 mb-3">
-            <div class="counter-card {{ $currentStatus == 'confirmed' ? 'active' : '' }}" onclick="window.location.href='{{ route('restaurant.orders.index', ['status' => 'confirmed']) }}'">
-                <div class="counter-number text-primary">{{ $statusCounts['confirmed'] ?? 0 }}</div>
-                <div class="text-muted">Confirmed</div>
-                <i class="fas fa-check-circle mt-2 d-block text-primary"></i>
-            </div>
-        </div>
-        <div class="col-md-3 col-6 mb-3">
-            <div class="counter-card {{ $currentStatus == 'preparing' ? 'active' : '' }}" onclick="window.location.href='{{ route('restaurant.orders.index', ['status' => 'preparing']) }}'">
-                <div class="counter-number text-info">{{ $statusCounts['preparing'] ?? 0 }}</div>
-                <div class="text-muted">Preparing</div>
-                <i class="fas fa-utensils mt-2 d-block text-info"></i>
-            </div>
-        </div>
-    </div>
+            <div class="order-status-icon"><i class="fas fa-bag-shopping"></i></div>
+        </a>
 
-    <!-- Filters -->
-    <div class="table-card mb-4">
-        <div class="card-header bg-white">
-            <div class="row align-items-center">
-                <div class="col-md-8">
-                    <div class="btn-group flex-wrap gap-2">
-                        <a href="{{ route('restaurant.orders.index') }}" class="btn btn-sm {{ !$currentStatus ? 'btn-primary' : 'btn-light' }}">All</a>
-                        <a href="{{ route('restaurant.orders.index', ['status' => 'pending']) }}" class="btn btn-sm {{ $currentStatus == 'pending' ? 'btn-warning' : 'btn-light' }}">Pending</a>
-                        <a href="{{ route('restaurant.orders.index', ['status' => 'confirmed']) }}" class="btn btn-sm {{ $currentStatus == 'confirmed' ? 'btn-primary' : 'btn-light' }}">Confirmed</a>
-                        <a href="{{ route('restaurant.orders.index', ['status' => 'preparing']) }}" class="btn btn-sm {{ $currentStatus == 'preparing' ? 'btn-info' : 'btn-light' }}">Preparing</a>
-                        <a href="{{ route('restaurant.orders.index', ['status' => 'ready_for_pickup']) }}" class="btn btn-sm {{ $currentStatus == 'ready_for_pickup' ? 'btn-success' : 'btn-light' }}">Ready for Pickup</a>
-                        <a href="{{ route('restaurant.orders.index', ['status' => 'delivered']) }}" class="btn btn-sm {{ $currentStatus == 'delivered' ? 'btn-success' : 'btn-light' }}">Delivered</a>
-                        <a href="{{ route('restaurant.orders.index', ['status' => 'cancelled']) }}" class="btn btn-sm {{ $currentStatus == 'cancelled' ? 'btn-danger' : 'btn-light' }}">Cancelled</a>
-                    </div>
+        @foreach($statusTiles as $tile)
+            <a href="{{ route('restaurant.orders.index', ['status' => $tile['key']]) }}"
+               class="order-status-tile {{ $currentStatus === $tile['key'] ? 'active' : '' }}"
+               style="--tile-color: {{ $tile['tile_color'] }};">
+                <div>
+                    <div class="order-status-label">{{ $tile['label'] }}</div>
+                    <div class="order-status-value">{{ number_format($tile['count']) }}</div>
                 </div>
-                <div class="col-md-4">
-                    <form method="GET" class="d-flex gap-2">
-                        <input type="text" name="search" class="form-control form-control-sm" placeholder="Search order #, customer..." value="{{ $searchTerm }}">
-                        <input type="date" name="date_from" class="form-control form-control-sm" value="{{ $dateFrom }}">
-                        <input type="date" name="date_to" class="form-control form-control-sm" value="{{ $dateTo }}">
-                        <button type="submit" class="btn btn-sm btn-primary"><i class="fas fa-search"></i></button>
-                    </form>
-                </div>
+                <div class="order-status-icon"><i class="fas fa-{{ $tile['icon'] }}"></i></div>
+            </a>
+        @endforeach
+    </section>
+
+    <div class="table-card overflow-hidden">
+        <div class="orders-actionbar">
+            <form method="GET" class="orders-filter-form">
+                @if($currentStatus)
+                    <input type="hidden" name="status" value="{{ $currentStatus }}">
+                @endif
+                <input type="text" name="search" class="form-control" placeholder="Search order #, customer, phone" value="{{ $searchTerm }}">
+                <input type="date" name="date_from" class="form-control" value="{{ $dateFrom }}">
+                <input type="date" name="date_to" class="form-control" value="{{ $dateTo }}">
+                <button type="submit" class="btn btn-primary rounded-3">
+                    <i class="fas fa-search me-2"></i> Search
+                </button>
+            </form>
+            <div class="text-end">
+                <div class="small text-muted fw-semibold">Showing</div>
+                <div class="fw-bold text-dark">{{ number_format($orders->total()) }} orders</div>
             </div>
         </div>
-    </div>
 
-    <!-- Orders List -->
-    @forelse($orders as $order)
-    <div class="order-card">
-        <div class="order-header {{ $order->status }}">
-            <div class="row align-items-center">
-                <div class="col-md-4">
-                    <div class="d-flex align-items-center gap-3">
-                        <i class="fas fa-receipt fa-2x"></i>
-                        <div>
-                            <h5 class="mb-0 fw-bold">#{{ $order->order_number }}</h5>
-                            <small>{{ $order->created_at->format('d M Y, h:i A') }}</small>
+        <nav class="orders-tabs">
+            <a href="{{ route('restaurant.orders.index') }}" class="orders-tab {{ !$currentStatus ? 'active' : '' }}">
+                All <span>{{ number_format($totalOrders) }}</span>
+            </a>
+            @foreach($statuses as $statusKey => $statusLabel)
+                <a href="{{ route('restaurant.orders.index', ['status' => $statusKey]) }}"
+                   class="orders-tab {{ $currentStatus === $statusKey ? 'active' : '' }}">
+                    {{ $statusLabel }} <span>{{ number_format($statusCounts[$statusKey] ?? 0) }}</span>
+                </a>
+            @endforeach
+        </nav>
+
+        <div class="orders-list">
+            @forelse($orders as $order)
+                @php
+                    $itemsList = [];
+                    if ($order->orderItems && $order->orderItems->count() > 0) {
+                        $itemsList = $order->orderItems->toArray();
+                    } elseif ($order->items) {
+                        if (is_string($order->items)) {
+                            $itemsList = json_decode($order->items, true) ?: [];
+                        } elseif (is_array($order->items)) {
+                            $itemsList = $order->items;
+                        }
+                    }
+                    $itemsList = is_array($itemsList) ? $itemsList : [];
+                    $statusClass = 'status-' . str_replace('-', '_', $order->status);
+                    $customerInitial = strtoupper(substr($order->customer_name ?? $order->customer?->name ?? 'G', 0, 1));
+                    $paymentOk = in_array($order->payment_status, ['success', 'paid', 'completed'], true);
+                @endphp
+                <article class="order-row">
+                    <div class="d-flex align-items-center gap-3 order-id-block">
+                        <div class="order-avatar">{{ $customerInitial }}</div>
+                        <div class="min-w-0">
+                            <div class="d-flex align-items-center gap-2 flex-wrap mb-1">
+                                <a href="{{ route('restaurant.orders.show', $order->id) }}" class="order-number text-decoration-none">#{{ $order->order_number }}</a>
+                                <span class="order-chip {{ $statusClass }}">{{ ucfirst(str_replace('_', ' ', $order->status)) }}</span>
+                            </div>
+                            <div class="order-meta text-truncate">
+                                <i class="fas fa-user me-1"></i>{{ $order->customer_name ?? $order->customer?->name ?? 'Guest' }}
+                            </div>
+                            <div class="order-meta">
+                                <i class="fas fa-clock me-1"></i>{{ $order->created_at->format('d M Y, h:i A') }}
+                            </div>
+                            <div class="d-flex gap-2 flex-wrap mt-2">
+                                <span class="order-chip"><i class="fas fa-phone"></i>{{ $order->customer_phone ?? 'N/A' }}</span>
+                                <span class="order-chip"><i class="fas fa-credit-card"></i>{{ strtoupper($order->payment_method ?? 'N/A') }}</span>
+                                <span class="order-chip">
+                                    <i class="fas fa-circle" style="color: {{ $paymentOk ? '#10b981' : '#f59e0b' }}"></i>
+                                    {{ ucfirst($order->payment_status ?? 'pending') }}
+                                </span>
+                            </div>
                         </div>
                     </div>
-                </div>
-                <div class="col-md-3">
-                    <i class="fas fa-user me-2"></i> {{ $order->customer_name ?? 'Guest' }}
-                    <br>
-                    <i class="fas fa-phone me-2"></i> {{ $order->customer_phone ?? 'N/A' }}
-                </div>
-                <div class="col-md-2">
-                    <span class="status-badge bg-white text-dark">
-                        {{ $currencySymbol }}{{ number_format($order->total, App\Models\AppSetting::currencyDecimals()) }}
-                    </span>
-                </div>
-                <div class="col-md-3 text-md-end">
-                    <span class="status-badge bg-white text-{{ $order->status == 'cancelled' ? 'danger' : 'success' }}">
-                        {{ ucfirst(str_replace('_', ' ', $order->status)) }}
-                    </span>
-                </div>
-            </div>
-        </div>
-        
-        <div class="p-4">
-            <div class="row">
-                <div class="col-md-7">
-                    <h6 class="fw-bold mb-3"><i class="fas fa-box me-2"></i>Order Items</h6>
-                    @php
-                        $itemsList = [];
 
-                        // Prefer orderItems relation so menu item images are available.
-                        if ($order->orderItems && $order->orderItems->count() > 0) {
-                            $itemsList = $order->orderItems->toArray();
-                        } elseif ($order->items) {
-                            if (is_string($order->items)) {
-                                $itemsList = json_decode($order->items, true);
-                            } elseif (is_array($order->items)) {
-                                $itemsList = $order->items;
-                            }
-                        }
-                        
-                        // Ensure it's an array
-                        if (!is_array($itemsList)) {
-                            $itemsList = [];
-                        }
-                    @endphp
-                    
-                    @if(count($itemsList) > 0)
-                        @foreach(array_slice($itemsList, 0, 3) as $item)
+                    <div class="order-items-preview">
+                        @forelse(array_slice($itemsList, 0, 2) as $item)
                             @php
-                                // Get item details safely
                                 $itemName = 'Item';
                                 $itemQty = 1;
                                 $itemPrice = 0;
                                 $itemImage = null;
-                                
+
                                 if (is_array($item)) {
                                     $itemName = $item['name'] ?? $item['item_name'] ?? data_get($item, 'menu_item.name') ?? $item['title'] ?? 'Item';
-                                    $itemQty = $item['quantity'] ?? $item['qty'] ?? 1;
-                                    $itemPrice = $item['price'] ?? $item['unit_price'] ?? 0;
+                                    $itemQty = (int) ($item['quantity'] ?? $item['qty'] ?? 1);
+                                    $itemPrice = (float) ($item['price'] ?? $item['unit_price'] ?? 0);
                                     $itemImage = $itemImageUrl(
                                         $item['image']
                                         ?? $item['image_url']
@@ -275,119 +463,89 @@
                                     );
                                 }
                             @endphp
-                            <div class="item-badge">
-                                <div class="d-flex align-items-center justify-content-between gap-3">
-                                    <div class="d-flex align-items-center gap-3 min-w-0">
-                                        @if($itemImage)
-                                            <img src="{{ $itemImage }}" alt="{{ $itemName }}" class="order-item-thumb">
-                                        @else
-                                            <div class="order-item-thumb-placeholder">
-                                                <i class="fas fa-utensils"></i>
-                                            </div>
-                                        @endif
-                                        <div class="min-w-0">
-                                            <div class="fw-semibold text-truncate">{{ $itemName }}</div>
-                                            <small class="text-muted">x{{ $itemQty }}</small>
-                                        </div>
-                                    </div>
-                                    <span class="fw-bold text-nowrap">{{ $currencySymbol }}{{ number_format($itemPrice * $itemQty, App\Models\AppSetting::currencyDecimals()) }}</span>
+                            <div class="order-item-line">
+                                @if($itemImage)
+                                    <img src="{{ $itemImage }}" alt="{{ $itemName }}" class="order-item-thumb">
+                                @else
+                                    <div class="order-item-thumb-placeholder"><i class="fas fa-utensils"></i></div>
+                                @endif
+                                <div class="min-w-0">
+                                    <div class="fw-bold text-dark text-truncate">{{ $itemName }}</div>
+                                    <div class="small text-muted">Qty {{ $itemQty }}</div>
                                 </div>
+                                <div class="fw-bold text-nowrap">{{ $currencySymbol }}{{ number_format($itemPrice * $itemQty, $currencyDecimals) }}</div>
                             </div>
-                        @endforeach
-                        @if(count($itemsList) > 3)
-                            <small class="text-muted">+{{ count($itemsList) - 3 }} more items</small>
+                        @empty
+                            <div class="text-muted small fw-semibold">No items found</div>
+                        @endforelse
+                        @if(count($itemsList) > 2)
+                            <div class="small text-muted fw-semibold">+{{ count($itemsList) - 2 }} more items</div>
                         @endif
-                    @else
-                        <div class="text-muted">No items found</div>
-                    @endif
-                </div>
-                <div class="col-md-5">
-                    <div class="bg-light rounded p-3">
-                        <div class="d-flex justify-content-between mb-2">
-                            <span>Subtotal:</span>
-                            <span>{{ $currencySymbol }}{{ number_format($order->subtotal, App\Models\AppSetting::currencyDecimals()) }}</span>
+                    </div>
+
+                    <div class="order-money-card">
+                        <div class="d-flex justify-content-between small text-muted mb-1">
+                            <span>Subtotal</span>
+                            <span>{{ $currencySymbol }}{{ number_format($order->subtotal, $currencyDecimals) }}</span>
                         </div>
-                        <div class="d-flex justify-content-between mb-2">
-                            <span>Delivery Fee:</span>
-                            <span>{{ $currencySymbol }}{{ number_format($order->delivery_fee, App\Models\AppSetting::currencyDecimals()) }}</span>
-                        </div>
-                        <div class="d-flex justify-content-between mb-2">
-                            <span>Platform Fee:</span>
-                            <span>{{ $currencySymbol }}{{ number_format($order->platform_fee ?? 0, App\Models\AppSetting::currencyDecimals()) }}</span>
-                        </div>
-                        <div class="d-flex justify-content-between mb-2">
-                            <span>Taxes & Charges:</span>
-                            <span>{{ $currencySymbol }}{{ number_format($order->tax, App\Models\AppSetting::currencyDecimals()) }}</span>
+                        <div class="d-flex justify-content-between small text-muted mb-1">
+                            <span>Fees & tax</span>
+                            <span>{{ $currencySymbol }}{{ number_format(((float) $order->delivery_fee + (float) ($order->platform_fee ?? 0) + (float) $order->tax), $currencyDecimals) }}</span>
                         </div>
                         @if((float) $order->discount > 0)
-                        <div class="d-flex justify-content-between mb-2 text-success">
-                            <span>Coupon Discount:</span>
-                            <span>-{{ $currencySymbol }}{{ number_format($order->discount, App\Models\AppSetting::currencyDecimals()) }}</span>
-                        </div>
-                        @endif
-                        <hr>
-                        <div class="d-flex justify-content-between fw-bold">
-                            <span>Total Bill Payable:</span>
-                            <span class="text-primary">{{ $currencySymbol }}{{ number_format($order->total, App\Models\AppSetting::currencyDecimals()) }}</span>
-                        </div>
-                        @if(($order->payout_status ?? '') === 'Payout Released')
-                            <div class="mt-2">
-                                <span class="badge bg-success"><i class="fas fa-wallet me-1"></i>Payout Released</span>
+                            <div class="d-flex justify-content-between small text-success mb-1">
+                                <span>Discount</span>
+                                <span>-{{ $currencySymbol }}{{ number_format($order->discount, $currencyDecimals) }}</span>
                             </div>
                         @endif
-                        <div class="mt-2">
-                            <span class="badge bg-light text-dark">
-                                <i class="fas fa-credit-card me-1"></i> {{ strtoupper($order->payment_method) }}
-                            </span>
-                            <span class="badge bg-light text-dark ms-2">
-                                <i class="fas fa-circle me-1" style="color: {{ $order->payment_status == 'success' ? '#10b981' : '#f59e0b' }}"></i>
-                                {{ ucfirst($order->payment_status) }}
-                            </span>
+                        <div class="d-flex justify-content-between align-items-end mt-2 pt-2 border-top">
+                            <span class="small text-muted fw-bold">Total</span>
+                            <span class="order-total">{{ $currencySymbol }}{{ number_format($order->total, $currencyDecimals) }}</span>
                         </div>
+                        @if(($order->payout_status ?? '') === 'Payout Released')
+                            <span class="order-chip mt-2"><i class="fas fa-wallet"></i>Payout Released</span>
+                        @endif
+                    </div>
+
+                    <div class="order-actions">
+                        <a href="{{ route('restaurant.orders.show', $order->id) }}" class="btn btn-sm btn-outline-primary rounded-3">
+                            <i class="fas fa-eye me-1"></i> Details
+                        </a>
+                        @if($canManageOrders && $order->status == 'pending')
+                            <button class="btn btn-sm btn-success rounded-3 accept-order" data-id="{{ $order->id }}">
+                                <i class="fas fa-check me-1"></i> Accept
+                            </button>
+                            <button class="btn btn-sm btn-danger rounded-3 reject-order" data-id="{{ $order->id }}">
+                                <i class="fas fa-times me-1"></i> Reject
+                            </button>
+                        @elseif($canManageOrders && $order->status == 'confirmed')
+                            <button class="btn btn-sm btn-info rounded-3 update-status" data-id="{{ $order->id }}" data-status="preparing">
+                                <i class="fas fa-utensils me-1"></i> Preparing
+                            </button>
+                        @elseif($canManageOrders && $order->status == 'preparing')
+                            <button class="btn btn-sm btn-success rounded-3 update-status" data-id="{{ $order->id }}" data-status="ready_for_pickup">
+                                <i class="fas fa-check-circle me-1"></i> Ready
+                            </button>
+                        @endif
+                    </div>
+                </article>
+            @empty
+                <div class="order-empty">
+                    <div>
+                        <i class="fas fa-shopping-bag fa-4x text-muted opacity-25 mb-3"></i>
+                        <h4 class="fw-bold text-dark">No Orders Found</h4>
+                        <p class="mb-0">When customers place orders, they will appear here.</p>
                     </div>
                 </div>
-            </div>
-            
-            <hr>
-            
-            <div class="d-flex justify-content-end gap-2">
-                <a href="{{ route('restaurant.orders.show', $order->id) }}" class="btn btn-sm btn-outline-primary">
-                    <i class="fas fa-eye me-1"></i> View Details
-                </a>
-                @if($canManageOrders && $order->status == 'pending')
-                    <button class="btn btn-sm btn-success accept-order" data-id="{{ $order->id }}">
-                        <i class="fas fa-check me-1"></i> Accept Order
-                    </button>
-                    <button class="btn btn-sm btn-danger reject-order" data-id="{{ $order->id }}">
-                        <i class="fas fa-times me-1"></i> Reject
-                    </button>
-                @elseif($canManageOrders && $order->status == 'confirmed')
-                    <button class="btn btn-sm btn-info update-status" data-id="{{ $order->id }}" data-status="preparing">
-                        <i class="fas fa-utensils me-1"></i> Start Preparing
-                    </button>
-                @elseif($canManageOrders && $order->status == 'preparing')
-                    <button class="btn btn-sm btn-success update-status" data-id="{{ $order->id }}" data-status="ready_for_pickup">
-                        <i class="fas fa-check-circle me-1"></i> Ready for Pickup
-                    </button>
-                @endif
-            </div>
+            @endforelse
         </div>
     </div>
-    @empty
-    <div class="table-card text-center py-5">
-        <i class="fas fa-shopping-bag fa-4x text-muted mb-3"></i>
-        <h4>No Orders Found</h4>
-        <p class="text-muted">When customers place orders, they will appear here</p>
-    </div>
-    @endforelse
 
-    <!-- Pagination -->
-    <div class="mt-4">
+    <div class="d-flex justify-content-center">
         {{ $orders->withQueryString()->links() }}
     </div>
 </div>
 
-<!-- Export Modal -->
 <div class="modal fade" id="exportModal" tabindex="-1">
     <div class="modal-dialog modal-dialog-centered">
         <div class="modal-content">
@@ -399,18 +557,18 @@
                 <div class="modal-body">
                     <div class="mb-3">
                         <label class="form-label">Date From</label>
-                        <input type="date" name="date_from" class="form-control">
+                        <input type="date" name="date_from" class="form-control" value="{{ $dateFrom }}">
                     </div>
                     <div class="mb-3">
                         <label class="form-label">Date To</label>
-                        <input type="date" name="date_to" class="form-control">
+                        <input type="date" name="date_to" class="form-control" value="{{ $dateTo }}">
                     </div>
                     <div class="mb-3">
                         <label class="form-label">Status</label>
                         <select name="status" class="form-select">
                             <option value="">All</option>
                             @foreach($statuses as $key => $label)
-                                <option value="{{ $key }}">{{ $label }}</option>
+                                <option value="{{ $key }}" @selected($currentStatus === $key)>{{ $label }}</option>
                             @endforeach
                         </select>
                     </div>
@@ -424,7 +582,6 @@
     </div>
 </div>
 
-<!-- Reject Order Modal -->
 <div class="modal fade" id="rejectModal" tabindex="-1">
     <div class="modal-dialog modal-dialog-centered">
         <div class="modal-content">
@@ -436,7 +593,7 @@
                 @csrf
                 <div class="modal-body">
                     <p>Please provide a reason for rejecting this order:</p>
-                    <textarea name="reason" class="form-control" rows="3" required placeholder="e.g., Out of stock, Kitchen busy..."></textarea>
+                    <textarea name="reason" class="form-control" rows="3" required placeholder="e.g., Out of stock, kitchen busy..."></textarea>
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
@@ -450,17 +607,13 @@
 
 @section('scripts')
 <script>
-    let currentRejectId = null;
-    
-    // Accept Order
-    document.querySelectorAll('.accept-order').forEach(btn => {
+    document.querySelectorAll('.accept-order').forEach((btn) => {
         btn.addEventListener('click', async function() {
             const orderId = this.dataset.id;
-            const btnElement = this;
-            
-            btnElement.disabled = true;
-            btnElement.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i> Accepting...';
-            
+            const original = this.innerHTML;
+            this.disabled = true;
+            this.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i> Accepting';
+
             try {
                 const response = await fetch(`/restaurant/orders/${orderId}/accept`, {
                     method: 'POST',
@@ -470,39 +623,39 @@
                     }
                 });
                 const data = await response.json();
-                
+
                 if (data.success) {
                     showToast('Order accepted successfully!', 'success');
-                    setTimeout(() => location.reload(), 1000);
+                    setTimeout(() => location.reload(), 800);
                 } else {
                     showToast(data.message || 'Failed to accept order', 'error');
-                    btnElement.disabled = false;
-                    btnElement.innerHTML = '<i class="fas fa-check me-1"></i> Accept Order';
+                    this.disabled = false;
+                    this.innerHTML = original;
                 }
             } catch (error) {
                 showToast('Error accepting order', 'error');
-                btnElement.disabled = false;
-                btnElement.innerHTML = '<i class="fas fa-check me-1"></i> Accept Order';
+                this.disabled = false;
+                this.innerHTML = original;
             }
         });
     });
-    
-    // Reject Order
-    document.querySelectorAll('.reject-order').forEach(btn => {
+
+    document.querySelectorAll('.reject-order').forEach((btn) => {
         btn.addEventListener('click', function() {
-            currentRejectId = this.dataset.id;
             const form = document.getElementById('rejectForm');
-            form.action = `/restaurant/orders/${currentRejectId}/reject`;
+            form.action = `/restaurant/orders/${this.dataset.id}/reject`;
             new bootstrap.Modal(document.getElementById('rejectModal')).show();
         });
     });
-    
-    // Update Status
-    document.querySelectorAll('.update-status').forEach(btn => {
+
+    document.querySelectorAll('.update-status').forEach((btn) => {
         btn.addEventListener('click', async function() {
             const orderId = this.dataset.id;
             const newStatus = this.dataset.status;
-            
+            const original = this.innerHTML;
+            this.disabled = true;
+            this.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i> Updating';
+
             try {
                 const response = await fetch(`/restaurant/orders/${orderId}/update-status`, {
                     method: 'POST',
@@ -514,25 +667,29 @@
                     body: JSON.stringify({ status: newStatus })
                 });
                 const data = await response.json();
-                
+
                 if (data.success) {
                     showToast('Status updated successfully!', 'success');
-                    location.reload();
+                    setTimeout(() => location.reload(), 800);
                 } else {
                     showToast(data.message || 'Failed to update status', 'error');
+                    this.disabled = false;
+                    this.innerHTML = original;
                 }
             } catch (error) {
                 showToast('Error updating status', 'error');
+                this.disabled = false;
+                this.innerHTML = original;
             }
         });
     });
-    
+
     function showToast(message, type) {
         const toastContainer = document.createElement('div');
-        toastContainer.className = `position-fixed bottom-0 end-0 p-3`;
+        toastContainer.className = 'position-fixed bottom-0 end-0 p-3';
         toastContainer.style.zIndex = '1100';
-        
         const bgColor = type === 'success' ? 'bg-success' : (type === 'error' ? 'bg-danger' : 'bg-warning');
+
         toastContainer.innerHTML = `
             <div class="toast align-items-center text-white ${bgColor} border-0" role="alert">
                 <div class="d-flex">
@@ -544,7 +701,7 @@
         document.body.appendChild(toastContainer);
         const toast = new bootstrap.Toast(toastContainer.querySelector('.toast'), { delay: 3000 });
         toast.show();
-        setTimeout(() => toastContainer.remove(), 3000);
+        setTimeout(() => toastContainer.remove(), 3300);
     }
 </script>
 @endsection

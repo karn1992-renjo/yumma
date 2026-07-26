@@ -26,7 +26,7 @@ class _MenuItemCardState extends State<MenuItemCard> {
       onLongPress: widget.item.isAvailable ? widget.onAddToCart : null,
       child: Container(
         margin: const EdgeInsets.fromLTRB(16, 0, 16, 14),
-        decoration: FoodFlowTheme.softSurface(radius: 14),
+        decoration: foodflow.softSurface(radius: 14),
         child: Padding(
           padding: const EdgeInsets.all(14),
           child: Row(
@@ -36,14 +36,14 @@ class _MenuItemCardState extends State<MenuItemCard> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    FoodFlowTheme.vegDot(widget.item.isVeg, size: 15),
+                    foodflow.vegDot(widget.item.isVeg, size: 15),
                     const SizedBox(height: 8),
                     Text(
                       widget.item.name,
                       style: const TextStyle(
                         fontSize: 16,
-                        fontWeight: FontWeight.w900,
-                        color: FoodFlowTheme.ink,
+                        fontWeight: FontWeight.w800,
+                        color: foodflow.ink,
                       ),
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
@@ -56,8 +56,8 @@ class _MenuItemCardState extends State<MenuItemCard> {
                             formatCurrency(context, widget.item.finalPrice),
                             style: const TextStyle(
                               fontSize: 14,
-                              fontWeight: FontWeight.w900,
-                              color: FoodFlowTheme.ink,
+                              fontWeight: FontWeight.w800,
+                              color: foodflow.ink,
                             ),
                           ),
                           if (widget.item.hasDiscount) ...[
@@ -66,7 +66,7 @@ class _MenuItemCardState extends State<MenuItemCard> {
                               formatCurrency(context, widget.item.price),
                               style: TextStyle(
                                 fontSize: 12,
-                                color: FoodFlowTheme.faint,
+                                color: foodflow.faint,
                                 decoration: TextDecoration.lineThrough,
                               ),
                             ),
@@ -83,7 +83,7 @@ class _MenuItemCardState extends State<MenuItemCard> {
                                 style: TextStyle(
                                   fontSize: 11,
                                   color: Colors.red.shade700,
-                                  fontWeight: FontWeight.w600,
+                                  fontWeight: FontWeight.w400,
                                 ),
                               ),
                             ),
@@ -101,7 +101,7 @@ class _MenuItemCardState extends State<MenuItemCard> {
                           widget.item.description!,
                           style: const TextStyle(
                             fontSize: 12,
-                            color: FoodFlowTheme.muted,
+                            color: foodflow.muted,
                             height: 1.35,
                           ),
                           maxLines: 2,
@@ -111,13 +111,13 @@ class _MenuItemCardState extends State<MenuItemCard> {
                     Row(
                       children: [
                         if (widget.item.rating != null) ...[
-                          FoodFlowTheme.ratingBadge(widget.item.rating!,
+                          foodflow.ratingBadge(widget.item.rating!,
                               compact: true),
                           const SizedBox(width: 6),
                           Text(
                             '(${widget.item.totalOrders})',
                             style: const TextStyle(
-                                fontSize: 11, color: FoodFlowTheme.muted),
+                                fontSize: 11, color: foodflow.muted),
                           ),
                         ],
                         if (!widget.item.isAvailable)
@@ -134,7 +134,7 @@ class _MenuItemCardState extends State<MenuItemCard> {
                               style: TextStyle(
                                 fontSize: 10,
                                 color: Colors.red.shade700,
-                                fontWeight: FontWeight.w600,
+                                fontWeight: FontWeight.w400,
                               ),
                             ),
                           ),
@@ -171,15 +171,15 @@ class _MenuItemCardState extends State<MenuItemCard> {
                             height: 34,
                             alignment: Alignment.center,
                             decoration: BoxDecoration(
-                              border: Border.all(color: FoodFlowTheme.orange),
+                              border: Border.all(color: foodflow.orange),
                               borderRadius: BorderRadius.circular(8),
                             ),
                             child: Text(
                               'ADD',
                               style: TextStyle(
-                                color: FoodFlowTheme.orange,
+                                color: foodflow.orange,
                                 fontSize: 13,
-                                fontWeight: FontWeight.w900,
+                                fontWeight: FontWeight.w800,
                               ),
                             ),
                           ),

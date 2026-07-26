@@ -5,6 +5,75 @@
 
 @section('title', 'Menu Items')
 
+@section('styles')
+<style>
+    .menu-list-card {
+        border-radius: 16px;
+    }
+
+    .menu-list-row {
+        display: grid;
+        grid-template-columns: 64px minmax(0, 1fr) auto;
+        gap: 14px;
+        padding: 14px 16px;
+        border-bottom: 1px solid rgba(148, 163, 184, 0.18);
+        align-items: center;
+    }
+
+    .menu-list-row:last-child {
+        border-bottom: 0;
+    }
+
+    .menu-list-image {
+        width: 64px;
+        height: 64px;
+        border-radius: 12px;
+        overflow: hidden;
+        background: #f8fafc;
+        border: 1px solid rgba(148, 163, 184, 0.24);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+    }
+
+    .menu-list-row .min-w-0 {
+        min-width: 0;
+    }
+
+    .menu-status-dot {
+        width: 9px;
+        height: 9px;
+        border-radius: 50%;
+        display: inline-block;
+        flex-shrink: 0;
+    }
+
+    .menu-row-actions {
+        min-width: 210px;
+    }
+
+    @media (max-width: 767.98px) {
+        .menu-list-row {
+            grid-template-columns: 54px minmax(0, 1fr);
+        }
+
+        .menu-list-image {
+            width: 54px;
+            height: 54px;
+            border-radius: 10px;
+        }
+
+        .menu-row-actions {
+            grid-column: 1 / -1;
+            width: 100%;
+            min-width: 0;
+            justify-content: space-between !important;
+        }
+    }
+</style>
+@endsection
+
 @section('content')
 <div class="page-header">
     <div class="d-flex justify-content-between align-items-center flex-wrap gap-3">
@@ -175,41 +244,59 @@
 </div>
 @endif
 
-<!-- Menu Items Grid -->
-<div class="row g-4">
+<!-- Menu Items List -->
+<div class="table-card menu-list-card overflow-hidden">
     @forelse($menuItems as $item)
-    <div class="col-xl-4 col-lg-6">
-        <div class="stat-card p-0 overflow-hidden h-100">
-            <!-- Item Image -->
-            <div class="position-relative bg-light" style="height: 180px;">
+        @php($foodType = $item->food_type ?: ($item->is_veg ? 'veg' : 'non_veg'))
+        <div class="menu-list-row">
+            <div class="menu-list-image">
                 @if($item->image ?? false)
-                    <img src="{{ \App\Services\MediaStorage::url($item->image) }}" 
-                         alt="{{ $item->name }}" 
-                         class="w-100 h-100" 
+                    <img src="{{ \App\Services\MediaStorage::url($item->image) }}"
+                         alt="{{ $item->name }}"
+                         class="w-100 h-100"
                          style="object-fit: cover;">
                 @else
-                    <div class="d-flex align-items-center justify-content-center h-100">
-                        <i class="fas fa-utensils fa-4x text-muted opacity-25"></i>
-                    </div>
+                    <i class="fas fa-utensils text-muted opacity-50"></i>
                 @endif
-                
-                <!-- Badges -->
-                <div class="position-absolute top-0 start-0 p-2 d-flex gap-1">
-                    @php($foodType = $item->food_type ?: ($item->is_veg ? 'veg' : 'non_veg'))
-                    <span class="badge {{ $foodType === 'veg' ? 'bg-success' : ($foodType === 'egg' ? 'bg-warning text-dark' : 'bg-danger') }} bg-opacity-90">
+            </div>
+
+            <div class="min-w-0">
+                <div class="d-flex align-items-center gap-2 flex-wrap mb-1">
+                    <span class="menu-status-dot {{ $item->is_available && $item->is_scheduled_available ? 'bg-success' : 'bg-secondary' }}"></span>
+                    <h5 class="mb-0 fw-bold text-truncate">{{ $item->name }}</h5>
+                    <span class="badge {{ $foodType === 'veg' ? 'bg-success' : ($foodType === 'egg' ? 'bg-warning text-dark' : 'bg-danger') }}">
                         {{ $item->diet_label }}
                     </span>
+                    <span class="badge bg-info bg-opacity-10 text-info">{{ ($item->item_source ?? 'custom') === 'global' ? 'Global' : 'Custom' }}</span>
                     @if(!$item->is_available)
-                        <span class="badge bg-dark bg-opacity-75">Unavailable</span>
+                        <span class="badge bg-dark">Unavailable</span>
                     @elseif(!$item->is_scheduled_available)
-                        <span class="badge bg-secondary bg-opacity-75">Outside Schedule</span>
+                        <span class="badge bg-secondary">Outside Schedule</span>
                     @endif
-                    <span class="badge bg-info bg-opacity-90">{{ ($item->item_source ?? 'custom') === 'global' ? 'Global' : 'Custom' }}</span>
                     @if($item->discounted_price && $item->discounted_price < $item->price)
                         <span class="badge bg-warning text-dark">
                             {{ round((($item->price - $item->discounted_price) / $item->price) * 100) }}% OFF
                         </span>
                     @endif
+                </div>
+
+                <div class="small text-muted d-flex align-items-center gap-2 flex-wrap">
+                    @if($item->category)
+                        <span><i class="fas fa-folder me-1"></i>{{ $item->category->name }}</span>
+                    @else
+                        <span>Uncategorized</span>
+                    @endif
+                    @if($item->preparation_time)
+                        <span><i class="fas fa-clock me-1"></i>{{ $item->preparation_time }} min</span>
+                    @endif
+                    <span><i class="fas fa-shopping-cart me-1"></i>{{ $item->total_orders ?? 0 }} orders</span>
+                </div>
+
+                @if($item->description)
+                    <div class="text-muted small mt-1">{{ Str::limit($item->description, 120) }}</div>
+                @endif
+
+                <div class="d-flex align-items-center gap-1 flex-wrap mt-2">
                     @foreach([
                         'is_bestseller' => 'Bestseller',
                         'is_new' => 'New',
@@ -217,19 +304,41 @@
                         'is_combo' => 'Combo',
                     ] as $flag => $label)
                         @if($item->{$flag})
-                            <span class="badge bg-light text-dark">{{ $label }}</span>
+                            <span class="badge bg-light text-dark border">{{ $label }}</span>
                         @endif
                     @endforeach
                     @foreach(collect($item->tags ?? [])->filter()->take(4) as $tag)
                         <span class="badge bg-primary bg-opacity-10 text-primary">{{ $tag }}</span>
                     @endforeach
                 </div>
-                
-                <!-- Actions Dropdown -->
-                <div class="position-absolute top-0 end-0 p-2">
-                    @if($canManageMenu)
+            </div>
+
+            <div class="menu-row-actions d-flex align-items-center justify-content-end gap-3">
+                <div class="text-end">
+                    @if($item->discounted_price && $item->discounted_price < $item->price)
+                        <div class="text-decoration-line-through text-muted small">
+                            {{ $currencySymbol }}{{ number_format($item->price, App\Models\AppSetting::currencyDecimals()) }}
+                        </div>
+                        <div class="h5 text-success fw-bold mb-0">
+                            {{ $currencySymbol }}{{ number_format($item->discounted_price, App\Models\AppSetting::currencyDecimals()) }}
+                        </div>
+                    @else
+                        <div class="h5 fw-bold mb-0">
+                            {{ $currencySymbol }}{{ number_format($item->price, App\Models\AppSetting::currencyDecimals()) }}
+                        </div>
+                    @endif
+                </div>
+
+                @if($canManageMenu)
+                    <div class="form-check form-switch mb-0">
+                        <input class="form-check-input" type="checkbox"
+                               aria-label="Toggle availability for {{ $item->name }}"
+                               {{ $item->is_available ? 'checked' : '' }}
+                               onchange="toggleAvailability({{ $item->id }})">
+                    </div>
+
                     <div class="dropdown">
-                        <button class="btn btn-sm btn-light rounded-3 shadow-sm" data-bs-toggle="dropdown">
+                        <button class="btn btn-sm btn-light rounded-3 border" data-bs-toggle="dropdown" aria-label="Item actions">
                             <i class="fas fa-ellipsis-v"></i>
                         </button>
                         <ul class="dropdown-menu dropdown-menu-end p-2" style="border-radius: 12px; min-width: 180px;">
@@ -240,7 +349,7 @@
                             </li>
                             <li>
                                 <button class="dropdown-item rounded-3 py-2" onclick="toggleAvailability({{ $item->id }})">
-                                    <i class="fas fa-power-off me-2 text-warning"></i> 
+                                    <i class="fas fa-power-off me-2 text-warning"></i>
                                     {{ $item->is_available ? 'Mark Unavailable' : 'Mark Available' }}
                                 </button>
                             </li>
@@ -257,78 +366,21 @@
                             </li>
                         </ul>
                     </div>
-                    @endif
-                </div>
-            </div>
-            
-            <!-- Item Details -->
-            <div class="p-4">
-                <div class="d-flex justify-content-between align-items-start mb-2">
-                    <div>
-                        <h5 class="mb-1 fw-bold">{{ $item->name }}</h5>
-                        @if($item->category)
-                            <span class="badge bg-light text-muted">
-                                <i class="fas fa-folder me-1"></i> {{ $item->category->name }}
-                            </span>
-                        @endif
-                    </div>
-                </div>
-                
-                @if($item->description)
-                    <p class="text-muted small mb-3">{{ Str::limit($item->description, 80) }}</p>
                 @endif
-                
-                <div class="d-flex justify-content-between align-items-center mb-3">
-                    <div>
-                        @if($item->discounted_price && $item->discounted_price < $item->price)
-                            <span class="text-decoration-line-through text-muted me-2 small">
-                                {{ $currencySymbol }}{{ number_format($item->price, App\Models\AppSetting::currencyDecimals()) }}
-                            </span>
-                            <span class="h5 text-success fw-bold mb-0">
-                                {{ $currencySymbol }}{{ number_format($item->discounted_price, App\Models\AppSetting::currencyDecimals()) }}
-                            </span>
-                        @else
-                            <span class="h5 fw-bold mb-0">{{ $currencySymbol }}{{ number_format($item->price, App\Models\AppSetting::currencyDecimals()) }}</span>
-                        @endif
-                    </div>
-                    
-                    @if($item->preparation_time)
-                        <small class="text-muted">
-                            <i class="fas fa-clock me-1"></i> {{ $item->preparation_time }} min
-                        </small>
-                    @endif
-                </div>
-                
-                <div class="d-flex justify-content-between align-items-center pt-2 border-top">
-                    <div class="small text-muted">
-                        <i class="fas fa-shopping-cart me-1"></i> 
-                        {{ $item->total_orders ?? 0 }} orders
-                    </div>
-                    @if($canManageMenu)
-                    <div class="form-check form-switch mb-0">
-                        <input class="form-check-input" type="checkbox" 
-                               {{ $item->is_available ? 'checked' : '' }}
-                               onchange="toggleAvailability({{ $item->id }})">
-                    </div>
-                    @endif
-                </div>
             </div>
         </div>
-    </div>
     @empty
-    <div class="col-12">
-        <div class="text-center py-5">
-            <div class="mb-4">
-                <i class="fas fa-utensils fa-5x text-muted opacity-25"></i>
-            </div>
-            <h3 class="text-muted mb-2">No Menu Items Yet</h3>
-            <p class="text-muted mb-4">Start building your menu by adding delicious items</p>
-            @if($canManageMenu)
-            <a href="{{ route('restaurant.menu.create') }}" class="btn btn-primary btn-lg rounded-3">
-                <i class="fas fa-plus me-2"></i> Add Your First Item
-            </a>
-            @endif
+    <div class="text-center py-5">
+        <div class="mb-4">
+            <i class="fas fa-utensils fa-5x text-muted opacity-25"></i>
         </div>
+        <h3 class="text-muted mb-2">No Menu Items Yet</h3>
+        <p class="text-muted mb-4">Start building your menu by adding delicious items</p>
+        @if($canManageMenu)
+        <a href="{{ route('restaurant.menu.create') }}" class="btn btn-primary btn-lg rounded-3">
+            <i class="fas fa-plus me-2"></i> Add Your First Item
+        </a>
+        @endif
     </div>
     @endforelse
 </div>

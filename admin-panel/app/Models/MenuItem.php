@@ -36,6 +36,7 @@ class MenuItem extends Model
         'diet_label',
         'image',
         'image_url',
+        'is_orderable_now',
     ];
     
     public function restaurant(): BelongsTo
@@ -93,7 +94,8 @@ class MenuItem extends Model
             return true;
         }
 
-        $now = now();
+        $timezone = $this->restaurant?->timezone ?: config('app.timezone', 'Asia/Kolkata');
+        $now = now($timezone);
         $currentMinutes = ((int) $now->format('H')) * 60 + (int) $now->format('i');
         $today = strtolower($now->format('l'));
 
@@ -123,6 +125,11 @@ class MenuItem extends Model
         }
 
         return false;
+    }
+
+    public function getIsOrderableNowAttribute(): bool
+    {
+        return $this->is_scheduled_available && (bool) $this->restaurant?->isOpenNow();
     }
 
     private function timeToMinutes(string $value): ?int

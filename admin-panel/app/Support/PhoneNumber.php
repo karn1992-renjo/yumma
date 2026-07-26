@@ -26,21 +26,19 @@ class PhoneNumber
                 return '+' . $digits;
             }
 
-            if (str_starts_with($digits, '0')) {
-                $digits = ltrim($digits, '0');
-            }
-
             return $defaultCountryCode . $digits;
         }
 
-        return '+' . ltrim($digits, '0');
+        return '+' . $digits;
     }
 
     public static function isValidIndianMobile(?string $phone, ?string $defaultCountryCode = null): bool
     {
-        $normalized = self::normalize($phone, $defaultCountryCode ?: '+91');
+        $countryCode = self::normalizeCountryCode($defaultCountryCode ?: '+91');
+        $normalized = self::normalize($phone, $countryCode);
 
-        return (bool) preg_match('/^\+91[6-9]\d{9}$/', $normalized);
+        return $countryCode !== ''
+            && (bool) preg_match('/^' . preg_quote($countryCode, '/') . '\d+$/', $normalized);
     }
 
     public static function normalizeCountryCode(?string $countryCode): string

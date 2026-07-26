@@ -78,6 +78,21 @@
                                     <button type="submit" class="btn btn-outline-danger btn-sm">Delete</button>
                                 </form>
                             </div>
+                        @else
+                            <div class="d-flex flex-wrap gap-2 justify-content-end">
+                                <form method="POST" action="{{ route('admin.home-sections.built-in.content', $section['token']) }}" class="d-flex flex-wrap gap-2 justify-content-end">
+                                    @csrf
+                                    <input type="text" name="title" value="{{ $section['title'] }}" class="form-control form-control-sm" style="width: 180px;" required>
+                                    <input type="text" name="subtitle" value="{{ $section['subtitle'] }}" class="form-control form-control-sm" style="width: 240px;">
+                                    <button type="submit" class="btn btn-outline-primary btn-sm">Save</button>
+                                </form>
+                                <form method="POST" action="{{ route('admin.home-sections.built-in.toggle', $section['token']) }}">
+                                    @csrf
+                                    <button type="submit" class="btn {{ $section['is_active'] ? 'btn-outline-warning' : 'btn-outline-success' }} btn-sm">
+                                        {{ $section['is_active'] ? 'Hide' : 'Show' }}
+                                    </button>
+                                </form>
+                            </div>
                         @endif
                     </div>
                 </div>

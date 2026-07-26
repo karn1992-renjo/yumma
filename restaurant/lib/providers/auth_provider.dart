@@ -230,6 +230,18 @@ class AuthProvider extends ChangeNotifier {
     }
   }
 
+  bool hasCompletedMsg91WidgetVerification({
+    required String phone,
+    required String flow,
+    required String role,
+  }) {
+    return _authService.hasCompletedMsg91WidgetVerification(
+      phone: phone,
+      flow: flow,
+      role: role,
+    );
+  }
+
   void setUser(User? user) {
     _currentUser = user;
     _syncCurrencySettings();

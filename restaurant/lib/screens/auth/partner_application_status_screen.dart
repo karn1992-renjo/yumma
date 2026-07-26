@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../services/partner_application_service.dart';
+import '../../theme/foodflow_theme.dart';
 
 class PartnerApplicationStatusScreen extends StatefulWidget {
   const PartnerApplicationStatusScreen({
@@ -17,12 +18,13 @@ class PartnerApplicationStatusScreen extends StatefulWidget {
 
 class _PartnerApplicationStatusScreenState
     extends State<PartnerApplicationStatusScreen> {
-  static const _red = Color(0xFFEF4F5F);
-  static const _orange = Color(0xFFFF7A00);
   static const _green = Color(0xFF22C55E);
   static const _ink = Color(0xFF111827);
   static const _muted = Color(0xFF6B7280);
   static const _canvas = Color(0xFFF8F9FB);
+
+  Color get _brand => FoodFlowTheme.orange;
+  Color get _brandSoft => FoodFlowTheme.orange.withOpacity(0.08);
 
   final TextEditingController _applicationController = TextEditingController();
   final PartnerApplicationService _service = PartnerApplicationService.instance;
@@ -86,9 +88,9 @@ class _PartnerApplicationStatusScreenState
     final onboardingMeta = _statusData?['onboarding_meta'];
 
     return Scaffold(
-      backgroundColor: _canvas,
+      backgroundColor: FoodFlowTheme.orange.withOpacity(0.04),
       appBar: AppBar(
-        backgroundColor: _canvas,
+        backgroundColor: FoodFlowTheme.orange.withOpacity(0.04),
         elevation: 0,
         title: const Text(
           'Application Status',
@@ -96,7 +98,7 @@ class _PartnerApplicationStatusScreenState
         ),
       ),
       body: ListView(
-        padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
         children: [
           _hero(status),
           const SizedBox(height: 18),
@@ -110,12 +112,19 @@ class _PartnerApplicationStatusScreenState
             _detailCard(
               title: 'Application snapshot',
               children: [
-                _kv('Application number', _statusData?['application_number']?.toString() ?? '-'),
-                _kv('Business name', _statusData?['business_name']?.toString() ?? '-'),
+                _kv('Application number',
+                    _statusData?['application_number']?.toString() ?? '-'),
+                _kv('Business name',
+                    _statusData?['business_name']?.toString() ?? '-'),
                 _kv('Primary email', _statusData?['email']?.toString() ?? '-'),
                 _kv('Mobile', _statusData?['phone']?.toString() ?? '-'),
-                _kv('Delivery zone', _statusData?['delivery_area']?['name']?.toString() ?? onboardingMeta?['zone_name']?.toString() ?? '-'),
-                _kv('Menu summary', onboardingMeta?['menu_summary']?.toString() ?? '-'),
+                _kv(
+                    'Delivery zone',
+                    _statusData?['delivery_area']?['name']?.toString() ??
+                        onboardingMeta?['zone_name']?.toString() ??
+                        '-'),
+                _kv('Menu summary',
+                    onboardingMeta?['menu_summary']?.toString() ?? '-'),
               ],
             ),
             const SizedBox(height: 18),
@@ -125,29 +134,41 @@ class _PartnerApplicationStatusScreenState
                 _statusPill(
                   'FSSAI & GST verification',
                   status == 'approved' ? 'Verified' : 'Under review',
-                  status == 'approved' ? _green : _orange,
+                  status == 'approved' ? _green : _brand,
                 ),
                 _statusPill(
                   'Bank & payout check',
                   status == 'approved' ? 'Ready' : 'Queued',
-                  status == 'approved' ? _green : _orange,
+                  status == 'approved' ? _green : _brand,
                 ),
                 _statusPill(
                   'Menu moderation',
-                  status == 'rejected' ? 'Needs correction' : status == 'approved' ? 'Cleared' : 'Pending',
-                  status == 'rejected' ? Colors.redAccent : status == 'approved' ? _green : _orange,
+                  status == 'rejected'
+                      ? 'Needs correction'
+                      : status == 'approved'
+                          ? 'Cleared'
+                          : 'Pending',
+                  status == 'rejected'
+                      ? FoodFlowTheme.danger
+                      : status == 'approved'
+                          ? _green
+                          : _brand,
                 ),
                 _statusPill(
                   'Delivery zone review',
                   status == 'approved' ? 'Mapped' : 'Checking',
-                  status == 'approved' ? _green : _orange,
+                  status == 'approved' ? _green : _brand,
                 ),
               ],
             ),
             const SizedBox(height: 18),
-            if ((_statusData?['admin_notes'] ?? '').toString().trim().isNotEmpty)
+            if ((_statusData?['admin_notes'] ?? '')
+                .toString()
+                .trim()
+                .isNotEmpty)
               _detailCard(
-                title: status == 'rejected' ? 'Correction notes' : 'Admin notes',
+                title:
+                    status == 'rejected' ? 'Correction notes' : 'Admin notes',
                 children: [
                   Text(
                     _statusData?['admin_notes']?.toString() ?? '',
@@ -173,16 +194,28 @@ class _PartnerApplicationStatusScreenState
     final approved = status == 'approved';
     final rejected = status == 'rejected';
     return Container(
-      padding: const EdgeInsets.all(24),
+      padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
         gradient: LinearGradient(
           colors: approved
               ? const [Color(0xFF16A34A), Color(0xFF22C55E)]
               : rejected
                   ? const [Color(0xFFDC2626), Color(0xFFFB7185)]
-                  : const [_red, _orange],
+                  : [FoodFlowTheme.orange, FoodFlowTheme.orangeDark],
         ),
-        borderRadius: BorderRadius.circular(28),
+        borderRadius: BorderRadius.circular(22),
+        boxShadow: [
+          BoxShadow(
+            color: (approved
+                    ? _green
+                    : rejected
+                        ? FoodFlowTheme.danger
+                        : _brand)
+                .withOpacity(0.18),
+            blurRadius: 20,
+            offset: const Offset(0, 10),
+          ),
+        ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -190,11 +223,11 @@ class _PartnerApplicationStatusScreenState
           Row(
             children: [
               Container(
-                width: 58,
-                height: 58,
+                width: 48,
+                height: 48,
                 decoration: BoxDecoration(
                   color: Colors.white.withOpacity(0.18),
-                  borderRadius: BorderRadius.circular(18),
+                  borderRadius: BorderRadius.circular(15),
                 ),
                 child: Icon(
                   approved
@@ -203,7 +236,7 @@ class _PartnerApplicationStatusScreenState
                           ? Icons.error_outline_rounded
                           : Icons.hourglass_top_rounded,
                   color: Colors.white,
-                  size: 28,
+                  size: 25,
                 ),
               ),
               const Spacer(),
@@ -225,7 +258,7 @@ class _PartnerApplicationStatusScreenState
                     : 'Your restaurant is under review',
             style: const TextStyle(
               color: Colors.white,
-              fontSize: 28,
+              fontSize: 24,
               fontWeight: FontWeight.w900,
               height: 1.2,
             ),
@@ -239,7 +272,7 @@ class _PartnerApplicationStatusScreenState
                     : 'We are validating documents, mapping delivery coverage, and checking your merchant profile before activation.',
             style: const TextStyle(
               color: Colors.white,
-              fontWeight: FontWeight.w500,
+              fontWeight: FontWeight.w600,
               height: 1.5,
             ),
           ),
@@ -250,15 +283,16 @@ class _PartnerApplicationStatusScreenState
 
   Widget _lookupCard() {
     return Container(
-      padding: const EdgeInsets.all(22),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(24),
-        boxShadow: const [
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: FoodFlowTheme.line),
+        boxShadow: [
           BoxShadow(
-            color: Color(0x12000000),
-            blurRadius: 20,
-            offset: Offset(0, 10),
+            color: Colors.black.withOpacity(0.035),
+            blurRadius: 14,
+            offset: const Offset(0, 6),
           ),
         ],
       ),
@@ -268,7 +302,7 @@ class _PartnerApplicationStatusScreenState
           const Text(
             'Track live approval',
             style: TextStyle(
-              fontSize: 20,
+              fontSize: 18,
               fontWeight: FontWeight.w900,
               color: _ink,
             ),
@@ -288,20 +322,23 @@ class _PartnerApplicationStatusScreenState
             decoration: InputDecoration(
               labelText: 'Application number',
               hintText: 'APPXXXXXX',
-              prefixIcon: const Icon(Icons.confirmation_number_outlined),
+              prefixIcon: Icon(
+                Icons.confirmation_number_outlined,
+                color: _brand,
+              ),
               filled: true,
-              fillColor: const Color(0xFFF8F9FB),
+              fillColor: Colors.white,
               border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(18),
+                borderRadius: BorderRadius.circular(14),
                 borderSide: BorderSide.none,
               ),
               enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(18),
-                borderSide: const BorderSide(color: Color(0xFFE5E7EB)),
+                borderRadius: BorderRadius.circular(14),
+                borderSide: const BorderSide(color: FoodFlowTheme.line),
               ),
               focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(18),
-                borderSide: const BorderSide(color: _red, width: 1.4),
+                borderRadius: BorderRadius.circular(14),
+                borderSide: BorderSide(color: _brand, width: 1.4),
               ),
             ),
           ),
@@ -310,15 +347,18 @@ class _PartnerApplicationStatusScreenState
             width: double.infinity,
             child: DecoratedBox(
               decoration: BoxDecoration(
-                gradient: const LinearGradient(colors: [_red, _orange]),
-                borderRadius: BorderRadius.circular(18),
+                gradient: FoodFlowTheme.brandGradient,
+                borderRadius: BorderRadius.circular(14),
               ),
               child: ElevatedButton(
                 onPressed: _isLoading ? null : _refresh,
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.transparent,
                   shadowColor: Colors.transparent,
-                  minimumSize: const Size.fromHeight(56),
+                  minimumSize: const Size.fromHeight(50),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                  ),
                 ),
                 child: Text(
                   _isLoading ? 'Refreshing...' : 'Refresh Status',
@@ -340,10 +380,11 @@ class _PartnerApplicationStatusScreenState
     final rejected = status == 'rejected';
     final message = _statusData?['status_message']?.toString() ?? '-';
     return Container(
-      padding: const EdgeInsets.all(22),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(24),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: FoodFlowTheme.line),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -396,7 +437,8 @@ class _PartnerApplicationStatusScreenState
       children: [
         for (var index = 0; index < steps.length; index++)
           Padding(
-            padding: EdgeInsets.only(bottom: index == steps.length - 1 ? 0 : 16),
+            padding:
+                EdgeInsets.only(bottom: index == steps.length - 1 ? 0 : 16),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -406,7 +448,8 @@ class _PartnerApplicationStatusScreenState
                       width: 24,
                       height: 24,
                       decoration: BoxDecoration(
-                        color: steps[index].$2 ? _green : const Color(0xFFE5E7EB),
+                        color:
+                            steps[index].$2 ? _green : const Color(0xFFE5E7EB),
                         shape: BoxShape.circle,
                       ),
                       child: Icon(
@@ -451,10 +494,11 @@ class _PartnerApplicationStatusScreenState
     required List<Widget> children,
   }) {
     return Container(
-      padding: const EdgeInsets.all(22),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(24),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: FoodFlowTheme.line),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -464,7 +508,7 @@ class _PartnerApplicationStatusScreenState
             style: const TextStyle(
               color: _ink,
               fontWeight: FontWeight.w900,
-              fontSize: 18,
+              fontSize: 16,
             ),
           ),
           const SizedBox(height: 16),
@@ -476,13 +520,11 @@ class _PartnerApplicationStatusScreenState
 
   Widget _approvedCard() {
     return Container(
-      padding: const EdgeInsets.all(22),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [Color(0xFFF1FBF4), Color(0xFFECFDF5)],
-        ),
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: const Color(0xFFD1FAE5)),
+        color: _green.withOpacity(0.08),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: _green.withOpacity(0.20)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -515,9 +557,9 @@ class _PartnerApplicationStatusScreenState
               ),
               style: ElevatedButton.styleFrom(
                 backgroundColor: _green,
-                minimumSize: const Size.fromHeight(56),
+                minimumSize: const Size.fromHeight(50),
                 shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(18),
+                  borderRadius: BorderRadius.circular(14),
                 ),
               ),
               child: const Text(
@@ -570,8 +612,9 @@ class _PartnerApplicationStatusScreenState
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
         decoration: BoxDecoration(
-          color: const Color(0xFFF8F9FB),
-          borderRadius: BorderRadius.circular(18),
+          color: color.withOpacity(0.08),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: color.withOpacity(0.14)),
         ),
         child: Row(
           children: [
@@ -599,15 +642,15 @@ class _PartnerApplicationStatusScreenState
 
   Widget _floatingBadge(String label, {bool dark = false}) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
       decoration: BoxDecoration(
-        color: dark ? const Color(0xFFFFF4EB) : Colors.white.withOpacity(0.18),
-        borderRadius: BorderRadius.circular(18),
+        color: dark ? _brandSoft : Colors.white.withOpacity(0.18),
+        borderRadius: BorderRadius.circular(14),
       ),
       child: Text(
         label,
         style: TextStyle(
-          color: dark ? _orange : Colors.white,
+          color: dark ? _brand : Colors.white,
           fontWeight: FontWeight.w800,
         ),
       ),

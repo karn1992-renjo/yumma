@@ -3,25 +3,27 @@ import 'package:flutter/material.dart';
 import '../services/api_service.dart';
 import '../config/api_constants.dart';
 import '../models/order.dart';
+import '../models/scratch_card.dart';
 
 class OrderProvider extends ChangeNotifier {
   final ApiService _api = ApiService();
 
   List<Order> _orders = [];
   Order? _currentOrder;
+  List<ScratchCard> _lastCreatedScratchCards = const [];
   bool _isLoading = false;
   String? _error;
 
   List<Order> get orders => _orders;
   Order? get currentOrder => _currentOrder;
+  List<ScratchCard> get lastCreatedScratchCards => _lastCreatedScratchCards;
   bool get isLoading => _isLoading;
   String? get error => _error;
 
   Order? applyOrderStatusUpdate(Map<String, dynamic> data) {
     final rawId = data['order_id'] ?? data['id'];
-    final orderId = rawId is num
-        ? rawId.toInt()
-        : int.tryParse(rawId?.toString() ?? '');
+    final orderId =
+        rawId is num ? rawId.toInt() : int.tryParse(rawId?.toString() ?? '');
     final status = data['status']?.toString();
     if (orderId == null || status == null || status.trim().isEmpty) return null;
 
@@ -45,7 +47,13 @@ class OrderProvider extends ChangeNotifier {
       final response =
           await _api.post(ApiConstants.createOrder, data: orderData);
       if (response['success'] == true) {
-        final order = Order.fromJson(response['data']['order']);
+        final data = response['data'] is Map
+            ? Map<String, dynamic>.from(response['data'] as Map)
+            : <String, dynamic>{};
+        final order = Order.fromJson(
+          Map<String, dynamic>.from(data['order'] as Map),
+        );
+        _lastCreatedScratchCards = _parseScratchCards(data['scratch_cards']);
         _currentOrder = order;
         _setLoading(false);
         return order;
@@ -230,6 +238,16 @@ class OrderProvider extends ChangeNotifier {
       _setLoading(false);
       return false;
     }
+  }
+
+  List<ScratchCard> _parseScratchCards(dynamic value) {
+    if (value is! List) return const [];
+
+    return value
+        .whereType<Map>()
+        .map((row) => ScratchCard.fromJson(Map<String, dynamic>.from(row)))
+        .where((card) => card.id > 0)
+        .toList(growable: false);
   }
 
   void _setLoading(bool loading) {

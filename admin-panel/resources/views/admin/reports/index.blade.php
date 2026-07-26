@@ -1,725 +1,352 @@
 @extends('layouts.admin')
 
-@section('title', 'Reports')
+@section('title', 'Analytics')
 
 @section('styles')
 <style>
-    .reports-shell {
-        display: flex;
-        flex-direction: column;
-        gap: 1.5rem;
+    .aa-shell { display: flex; flex-direction: column; gap: 18px; }
+    .aa-head,
+    .aa-card {
+        background: #fff;
+        border: 1px solid var(--border);
+        border-radius: 18px;
+        box-shadow: 0 14px 34px rgba(15, 23, 42, .06);
     }
-
-    .reports-hero {
-        position: relative;
-        overflow: hidden;
-        padding: 2rem;
-        border-radius: 28px;
-        background:
-            radial-gradient(circle at top right, rgba(255, 255, 255, 0.2), transparent 34%),
-            linear-gradient(135deg, #171717 0%, #2b1f16 42%, #f97316 100%);
-        color: #fff;
-        box-shadow: 0 22px 48px rgba(15, 23, 42, 0.16);
-    }
-
-    .reports-hero::after {
-        content: '';
-        position: absolute;
-        right: -36px;
-        bottom: -42px;
-        width: 180px;
-        height: 180px;
-        border-radius: 999px;
-        background: rgba(255, 255, 255, 0.08);
-    }
-
-    .reports-hero h1 {
-        margin-bottom: 0.65rem;
-        font-size: 2rem;
-        font-weight: 800;
-        letter-spacing: -0.03em;
-    }
-
-    .reports-hero p {
-        max-width: 780px;
-        color: rgba(255, 255, 255, 0.8);
-        margin-bottom: 1rem;
-        font-size: 0.96rem;
-    }
-
-    .hero-chip-row {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 0.7rem;
-    }
-
-    .hero-chip {
+    .aa-head { padding: 18px; }
+    .aa-title h1 { margin: 0; color: #0f172a; font-size: 1.55rem; font-weight: 850; letter-spacing: 0; }
+    .aa-title p { margin: 4px 0 0; color: #64748b; font-size: .9rem; }
+    .aa-chip {
         display: inline-flex;
         align-items: center;
-        gap: 0.45rem;
-        padding: 0.6rem 0.9rem;
+        gap: 7px;
+        padding: 8px 11px;
         border-radius: 999px;
-        background: rgba(255, 255, 255, 0.12);
-        color: #fff;
-        font-size: 0.85rem;
-        font-weight: 600;
-        backdrop-filter: blur(12px);
+        background: #f1f5f9;
+        color: #475569;
+        font-size: .78rem;
+        font-weight: 850;
+        white-space: nowrap;
     }
-
-    .hero-chip i {
-        color: #fdba74;
-    }
-
-    .filter-panel,
-    .report-surface {
-        border: 0;
-        border-radius: 24px;
-        overflow: hidden;
-        background: #fff;
-        box-shadow: 0 18px 40px rgba(15, 23, 42, 0.08);
-    }
-
-    .filter-panel .card-header,
-    .report-surface .card-header {
-        border: 0;
-        background: transparent;
-        padding: 1.2rem 1.35rem 0.35rem;
-    }
-
-    .filter-panel .card-header h5,
-    .report-surface .card-header h5 {
-        font-weight: 800;
-        letter-spacing: -0.02em;
-    }
-
-    .filter-panel .card-body,
-    .report-surface .card-body {
-        padding: 1.35rem;
-    }
-
-    .filter-panel .form-label {
-        font-size: 0.8rem;
-        font-weight: 700;
-        color: #6b7280;
-        text-transform: uppercase;
-        letter-spacing: 0.04em;
-    }
-
-    .filter-panel .form-control,
-    .filter-panel .form-select {
-        min-height: 48px;
-        border-radius: 14px;
-        border-color: #e5e7eb;
-        box-shadow: none;
-    }
-
-    .section-kicker {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 1rem;
-    }
-
-    .section-kicker h4 {
-        margin: 0;
-        font-size: 1rem;
-        font-weight: 800;
-        letter-spacing: -0.02em;
-        color: #111827;
-    }
-
-    .section-kicker span {
-        color: #6b7280;
-        font-size: 0.84rem;
-        font-weight: 600;
-    }
-
-    .metric-card {
-        position: relative;
-        overflow: hidden;
-        min-height: 165px;
-        padding: 1.25rem;
-        border-radius: 24px;
-        border: 1px solid rgba(249, 115, 22, 0.08);
-        background: linear-gradient(180deg, rgba(255, 255, 255, 0.98) 0%, rgba(255, 247, 237, 0.98) 100%);
-        box-shadow: 0 16px 32px rgba(15, 23, 42, 0.06);
-        transition: transform 0.22s ease, box-shadow 0.22s ease;
-    }
-
-    .metric-card:hover {
-        transform: translateY(-4px);
-        box-shadow: 0 22px 36px rgba(15, 23, 42, 0.1);
-    }
-
-    .metric-card::before {
-        content: '';
-        position: absolute;
-        inset: 0 auto auto 0;
-        width: 100%;
-        height: 4px;
-        background: linear-gradient(90deg, #fb923c 0%, #f97316 55%, #ea580c 100%);
-    }
-
-    .metric-card .text-muted.small {
-        font-size: 0.74rem !important;
-        font-weight: 800;
-        text-transform: uppercase;
-        letter-spacing: 0.08em;
-        color: #9ca3af !important;
-    }
-
-    .metric-card h3 {
-        font-weight: 800;
-        letter-spacing: -0.04em;
-        color: #111827;
-    }
-
-    .metric-card .icon {
-        width: 52px;
-        height: 52px;
+    .aa-chip.success { background: #dcfce7; color: #047857; }
+    .aa-chip.warning { background: #fef3c7; color: #92400e; }
+    .aa-chip.danger { background: #fee2e2; color: #b91c1c; }
+    .aa-chip.info { background: #dbeafe; color: #1d4ed8; }
+    .aa-filter { padding: 16px; }
+    .aa-stat-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
+    .aa-stat {
+        min-height: 118px;
+        padding: 17px;
+        border: 1px solid var(--border);
         border-radius: 18px;
+        background: #fff;
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+    }
+    .aa-stat-icon {
+        width: 46px;
+        height: 46px;
+        border-radius: 14px;
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        font-size: 1.15rem;
-        color: #fff;
+        color: var(--stat-color);
+        background: color-mix(in srgb, var(--stat-color) 13%, #fff);
+        flex: 0 0 auto;
     }
-
-    .metric-card .icon.primary { background: linear-gradient(135deg, #f97316, #fb923c); }
-    .metric-card .icon.success { background: linear-gradient(135deg, #10b981, #34d399); }
-    .metric-card .icon.info { background: linear-gradient(135deg, #0f766e, #14b8a6); }
-    .metric-card .icon.warning { background: linear-gradient(135deg, #f59e0b, #f97316); }
-    .metric-card .icon.danger { background: linear-gradient(135deg, #ef4444, #fb7185); }
-
-    .report-list-row {
+    .aa-stat-label { color: #64748b; font-size: .72rem; font-weight: 850; text-transform: uppercase; letter-spacing: .05em; }
+    .aa-stat-value { color: #0f172a; font-size: 1.45rem; font-weight: 900; line-height: 1.15; }
+    .aa-stat-sub { color: #64748b; font-size: .8rem; font-weight: 650; margin-top: 4px; }
+    .aa-card-head {
         display: flex;
-        align-items: center;
         justify-content: space-between;
-        gap: 1rem;
-        padding: 0.9rem 0;
-        border-bottom: 1px solid #f1f5f9;
+        align-items: center;
+        gap: 12px;
+        padding: 16px 18px;
+        border-bottom: 1px solid #e2e8f0;
     }
-
-    .report-list-row:first-child {
-        padding-top: 0;
+    .aa-card-head h2 { margin: 0; color: #0f172a; font-size: 1.02rem; font-weight: 850; }
+    .aa-card-head p { margin: 3px 0 0; color: #64748b; font-size: .82rem; font-weight: 650; }
+    .aa-grid-2 { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(320px, .6fr); gap: 18px; }
+    .aa-grid-3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
+    .aa-chart { height: 320px; padding: 18px; }
+    .aa-chart.small { height: 320px; }
+    .aa-list { padding: 8px 18px 18px; }
+    .aa-list-row {
+        display: flex;
+        justify-content: space-between;
+        gap: 14px;
+        padding: 12px 0;
+        border-bottom: 1px solid #edf2f7;
     }
-
-    .report-list-row:last-child {
-        border-bottom: 0;
-        padding-bottom: 0;
-    }
-
-    .report-list-row strong {
-        color: #111827;
-        font-weight: 800;
-    }
-
-    .report-table thead th {
-        border-bottom: 1px solid #f1f5f9;
-        color: #6b7280;
-        font-size: 0.76rem;
+    .aa-list-row:last-child { border-bottom: 0; }
+    .aa-list-row span { color: #64748b; font-weight: 700; }
+    .aa-list-row strong { color: #0f172a; font-weight: 850; text-align: right; }
+    .aa-table { margin: 0; }
+    .aa-table thead th {
+        padding: 13px 18px;
+        background: #f8fafc;
+        border-bottom: 1px solid #e2e8f0;
+        color: #64748b;
+        font-size: .73rem;
+        font-weight: 850;
         text-transform: uppercase;
-        letter-spacing: 0.05em;
-        font-weight: 800;
-        padding-top: 1rem;
-        padding-bottom: 1rem;
+        letter-spacing: .05em;
+        white-space: nowrap;
     }
+    .aa-table tbody td { padding: 15px 18px; vertical-align: middle; border-color: #edf2f7; }
+    .aa-primary { color: #0f172a; font-weight: 850; }
+    .aa-muted { color: #64748b; font-size: .82rem; font-weight: 650; }
 
-    .report-table tbody td {
-        vertical-align: middle;
-        padding-top: 0.95rem;
-        padding-bottom: 0.95rem;
+    @media (max-width: 1300px) {
+        .aa-stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .aa-grid-2,
+        .aa-grid-3 { grid-template-columns: 1fr; }
     }
-
-    #salesTrendChart,
-    #statusBreakdownChart {
-        min-height: 280px;
-    }
-
-    @media (max-width: 991px) {
-        .reports-hero {
-            padding: 1.45rem;
+    @media (max-width: 767px) {
+        .aa-title h1 { font-size: 1.25rem; }
+        .aa-stat-grid { grid-template-columns: 1fr; }
+        .aa-card-head { align-items: flex-start; flex-direction: column; }
+        .aa-chart, .aa-chart.small { height: 280px; padding: 12px; }
+        .aa-table thead { display: none; }
+        .aa-table, .aa-table tbody, .aa-table tr, .aa-table td { display: block; width: 100%; }
+        .aa-table tbody tr {
+            margin: 12px;
+            border: 1px solid #e2e8f0;
+            border-radius: 16px;
+            overflow: hidden;
+            background: #fff;
         }
-
-        .reports-hero h1 {
-            font-size: 1.55rem;
+        .aa-table tbody td {
+            display: flex;
+            justify-content: space-between;
+            gap: 14px;
+            padding: 12px 14px;
+            border-bottom: 1px solid #edf2f7;
         }
-
-        .section-kicker {
-            flex-direction: column;
-            align-items: flex-start;
+        .aa-table tbody td::before {
+            content: attr(data-label);
+            flex: 0 0 96px;
+            color: #64748b;
+            font-size: .72rem;
+            font-weight: 850;
+            text-transform: uppercase;
+            letter-spacing: .04em;
         }
-
-        #salesTrendChart,
-        #statusBreakdownChart {
-            min-height: 240px;
-        }
+        .aa-table tbody td:last-child { border-bottom: 0; }
     }
 </style>
 @endsection
 
 @section('content')
 @php
-    $currencySymbol = \App\Models\AppSetting::getValue('currency_symbol', '₹');
+    $currencySymbol = \App\Models\AppSetting::getValue('currency_symbol', 'Rs');
+    $decimals = \App\Models\AppSetting::currencyDecimals();
     $statusLabels = \App\Models\Order::getStatuses();
     $paymentStatusLabels = \App\Models\Order::getPaymentStatuses();
+    $pageRoute = request()->routeIs('admin.analytics') ? route('admin.analytics') : route('admin.reports.index');
+    $csvRoute = request()->routeIs('admin.analytics') ? route('admin.analytics', array_merge(request()->query(), ['export' => 'csv'])) : route('admin.reports.index', array_merge(request()->query(), ['export' => 'csv']));
+    $money = fn ($value) => $currencySymbol . number_format((float) $value, $decimals);
 @endphp
 
-<div class="reports-shell">
-    <div class="reports-hero">
-        <div class="d-flex flex-column flex-xl-row justify-content-between align-items-xl-start gap-4 position-relative" style="z-index: 1;">
-            <div>
-                <h1>Growth, Earnings and Dispatch Intelligence</h1>
-                <p>Track platform revenue, restaurant momentum, payout exposure, driver batching, and real order behavior across your selected reporting window.</p>
-                <div class="hero-chip-row">
-                    <div class="hero-chip"><i class="fas fa-calendar-alt"></i>{{ $startDate->format('d M Y') }} - {{ $endDate->format('d M Y') }}</div>
-                    <div class="hero-chip"><i class="fas fa-receipt"></i>{{ number_format((int) ($summary->total_orders ?? 0)) }} total orders</div>
-                    <div class="hero-chip"><i class="fas fa-bolt"></i>{{ number_format((float) ($dispatchMetrics['acceptance_rate'] ?? 0), 1) }}% dispatch acceptance</div>
-                </div>
+<div class="aa-shell">
+    <section class="aa-head">
+        <div class="d-flex justify-content-between align-items-center gap-3 flex-wrap">
+            <div class="aa-title">
+                <h1>Admin Analytics</h1>
+                <p>Revenue, order health, dispatch performance, payouts, and partner contribution for the selected period.</p>
             </div>
             <div class="d-flex gap-2 flex-wrap">
-                <a href="{{ route('admin.reports.index', array_merge(request()->query(), ['export' => 'csv'])) }}" class="btn btn-light">
-                    <i class="fas fa-download me-2"></i>Export CSV
-                </a>
+                <span class="aa-chip info"><i class="fas fa-calendar"></i>{{ $startDate->format('d M Y') }} - {{ $endDate->format('d M Y') }}</span>
+                <a href="{{ $csvRoute }}" class="btn btn-primary fw-bold"><i class="fas fa-download me-2"></i>Export CSV</a>
             </div>
         </div>
-    </div>
+    </section>
 
-    <div class="table-card filter-panel">
-        <div class="card-header">
-            <div class="section-kicker w-100">
-                <h4>Filter Window</h4>
-                <span>Refine the report by date, restaurant, order status, and payment state.</span>
+    <section class="aa-card aa-filter">
+        <form method="GET" action="{{ $pageRoute }}" class="row g-3 align-items-end">
+            <div class="col-lg-2 col-md-6">
+                <label class="form-label fw-bold">Start Date</label>
+                <input type="date" name="start_date" class="form-control" value="{{ request('start_date', $startDate->format('Y-m-d')) }}">
             </div>
-        </div>
-        <div class="card-body">
-            <form method="GET" action="{{ route('admin.reports.index') }}">
-                <div class="row g-3">
-                    <div class="col-md-3">
-                        <label class="form-label">Start Date</label>
-                        <input type="date" name="start_date" class="form-control" value="{{ request('start_date', $startDate->format('Y-m-d')) }}">
-                    </div>
-                    <div class="col-md-3">
-                        <label class="form-label">End Date</label>
-                        <input type="date" name="end_date" class="form-control" value="{{ request('end_date', $endDate->format('Y-m-d')) }}">
-                    </div>
-                    <div class="col-md-3">
-                        <label class="form-label">Restaurant</label>
-                        <select name="restaurant_id" class="form-select">
-                            <option value="">All Restaurants</option>
-                            @foreach($restaurantOptions as $restaurant)
-                                <option value="{{ $restaurant->id }}" @selected((string) request('restaurant_id') === (string) $restaurant->id)>
-                                    {{ $restaurant->name }}
-                                </option>
-                            @endforeach
-                        </select>
-                    </div>
-                    <div class="col-md-3">
-                        <label class="form-label">Order Status</label>
-                        <select name="status" class="form-select">
-                            <option value="">All Statuses</option>
-                            @foreach($statusLabels as $statusKey => $statusLabel)
-                                <option value="{{ $statusKey }}" @selected(request('status') === $statusKey)>{{ $statusLabel }}</option>
-                            @endforeach
-                        </select>
-                    </div>
-                    <div class="col-md-3">
-                        <label class="form-label">Payment Status</label>
-                        <select name="payment_status" class="form-select">
-                            <option value="">All Payments</option>
-                            @foreach($paymentStatusLabels as $statusKey => $statusLabel)
-                                <option value="{{ $statusKey }}" @selected(request('payment_status') === $statusKey)>{{ $statusLabel }}</option>
-                            @endforeach
-                        </select>
-                    </div>
-                    <div class="col-md-9 d-flex align-items-end gap-2">
-                        <button type="submit" class="btn btn-primary">
-                            <i class="fas fa-filter me-2"></i>Apply Filters
-                        </button>
-                        <a href="{{ route('admin.reports.index') }}" class="btn btn-light border">Reset</a>
-                    </div>
-                </div>
-            </form>
-        </div>
-    </div>
+            <div class="col-lg-2 col-md-6">
+                <label class="form-label fw-bold">End Date</label>
+                <input type="date" name="end_date" class="form-control" value="{{ request('end_date', $endDate->format('Y-m-d')) }}">
+            </div>
+            <div class="col-lg-3 col-md-6">
+                <label class="form-label fw-bold">Restaurant</label>
+                <select name="restaurant_id" class="form-select">
+                    <option value="">All Restaurants</option>
+                    @foreach($restaurantOptions as $restaurant)
+                        <option value="{{ $restaurant->id }}" @selected((string) request('restaurant_id') === (string) $restaurant->id)>{{ $restaurant->name }}</option>
+                    @endforeach
+                </select>
+            </div>
+            <div class="col-lg-2 col-md-6">
+                <label class="form-label fw-bold">Order Status</label>
+                <select name="status" class="form-select">
+                    <option value="">All Statuses</option>
+                    @foreach($statusLabels as $statusKey => $statusLabel)
+                        <option value="{{ $statusKey }}" @selected(request('status') === $statusKey)>{{ $statusLabel }}</option>
+                    @endforeach
+                </select>
+            </div>
+            <div class="col-lg-2 col-md-6">
+                <label class="form-label fw-bold">Payment</label>
+                <select name="payment_status" class="form-select">
+                    <option value="">All Payments</option>
+                    @foreach($paymentStatusLabels as $statusKey => $statusLabel)
+                        <option value="{{ $statusKey }}" @selected(request('payment_status') === $statusKey)>{{ $statusLabel }}</option>
+                    @endforeach
+                </select>
+            </div>
+            <div class="col-lg-1 col-md-6 d-flex gap-2">
+                <button class="btn btn-primary flex-fill" type="submit"><i class="fas fa-filter"></i></button>
+                <a class="btn btn-light border" href="{{ $pageRoute }}">Reset</a>
+            </div>
+        </form>
+    </section>
 
-    <div class="section-kicker">
-        <h4>Revenue Overview</h4>
-        <span>Core sales, fee, and partner earning performance for this reporting window</span>
-    </div>
-    <div class="row g-4">
-        <div class="col-md-6 col-xl-3">
-            <div class="stat-card metric-card">
-                <div class="d-flex justify-content-between align-items-start">
-                    <div>
-                        <div class="text-muted small mb-1">Gross Sales</div>
-                        <h3 class="mb-1">{{ $currencySymbol }}{{ number_format((float) ($summary->gross_sales ?? 0), App\Models\AppSetting::currencyDecimals()) }}</h3>
-                        <div class="small text-muted">{{ $summary->total_orders ?? 0 }} total orders</div>
-                    </div>
-                    <div class="icon primary"><i class="fas fa-chart-line"></i></div>
-                </div>
-            </div>
+    <section class="aa-stat-grid">
+        <div class="aa-stat" style="--stat-color:#f97316;">
+            <div><div class="aa-stat-label">Gross Sales</div><div class="aa-stat-value">{{ $money($summary->gross_sales ?? 0) }}</div><div class="aa-stat-sub">{{ number_format($summary->total_orders ?? 0) }} orders</div></div>
+            <div class="aa-stat-icon"><i class="fas fa-chart-line"></i></div>
         </div>
-        <div class="col-md-6 col-xl-3">
-            <div class="stat-card metric-card">
-                <div class="d-flex justify-content-between align-items-start">
-                    <div>
-                        <div class="text-muted small mb-1">Admin Revenue</div>
-                        <h3 class="mb-1">{{ $currencySymbol }}{{ number_format((float) ($summary->admin_commission_total ?? 0), App\Models\AppSetting::currencyDecimals()) }}</h3>
-                        <div class="small text-muted">Commission, platform fee and delivery-side cut</div>
-                    </div>
-                    <div class="icon success"><i class="fas fa-percent"></i></div>
-                </div>
-            </div>
+        <div class="aa-stat" style="--stat-color:#10b981;">
+            <div><div class="aa-stat-label">Admin Revenue</div><div class="aa-stat-value">{{ $money($summary->admin_commission_total ?? 0) }}</div><div class="aa-stat-sub">Commission and platform fees</div></div>
+            <div class="aa-stat-icon"><i class="fas fa-percent"></i></div>
         </div>
-        <div class="col-md-6 col-xl-3">
-            <div class="stat-card metric-card">
-                <div class="d-flex justify-content-between align-items-start">
-                    <div>
-                        <div class="text-muted small mb-1">Restaurant Earnings</div>
-                        <h3 class="mb-1">{{ $currencySymbol }}{{ number_format((float) ($summary->restaurant_earning_total ?? 0), App\Models\AppSetting::currencyDecimals()) }}</h3>
-                        <div class="small text-muted">Partner settlement side</div>
-                    </div>
-                    <div class="icon info"><i class="fas fa-store"></i></div>
-                </div>
-            </div>
+        <div class="aa-stat" style="--stat-color:#2563eb;">
+            <div><div class="aa-stat-label">Restaurant Earnings</div><div class="aa-stat-value">{{ $money($summary->restaurant_earning_total ?? 0) }}</div><div class="aa-stat-sub">Partner settlement side</div></div>
+            <div class="aa-stat-icon"><i class="fas fa-store"></i></div>
         </div>
-        <div class="col-md-6 col-xl-3">
-            <div class="stat-card metric-card">
-                <div class="d-flex justify-content-between align-items-start">
-                    <div>
-                        <div class="text-muted small mb-1">Driver Earnings</div>
-                        <h3 class="mb-1">{{ $currencySymbol }}{{ number_format((float) ($summary->driver_earning_total ?? 0), App\Models\AppSetting::currencyDecimals()) }}</h3>
-                        <div class="small text-muted">Delivery-side payouts</div>
-                    </div>
-                    <div class="icon warning"><i class="fas fa-truck"></i></div>
-                </div>
-            </div>
+        <div class="aa-stat" style="--stat-color:#7c3aed;">
+            <div><div class="aa-stat-label">Driver Earnings</div><div class="aa-stat-value">{{ $money($summary->driver_earning_total ?? 0) }}</div><div class="aa-stat-sub">Delivery partner payouts</div></div>
+            <div class="aa-stat-icon"><i class="fas fa-truck"></i></div>
         </div>
-        <div class="col-md-6 col-xl-3">
-            <div class="stat-card metric-card">
-                <div class="d-flex justify-content-between align-items-start">
-                    <div>
-                        <div class="text-muted small mb-1">Delivery Charges</div>
-                        <h3 class="mb-1">{{ $currencySymbol }}{{ number_format((float) ($summary->delivery_fee_total ?? 0), App\Models\AppSetting::currencyDecimals()) }}</h3>
-                        <div class="small text-muted">Distance-based collections</div>
-                    </div>
-                    <div class="icon primary"><i class="fas fa-route"></i></div>
-                </div>
-            </div>
+        <div class="aa-stat" style="--stat-color:#14b8a6;">
+            <div><div class="aa-stat-label">Avg Order Value</div><div class="aa-stat-value">{{ $money($summary->avg_order_value ?? 0) }}</div><div class="aa-stat-sub">{{ number_format($summary->successful_payments ?? 0) }} paid orders</div></div>
+            <div class="aa-stat-icon"><i class="fas fa-receipt"></i></div>
         </div>
-        <div class="col-md-6 col-xl-3">
-            <div class="stat-card metric-card">
-                <div class="d-flex justify-content-between align-items-start">
-                    <div>
-                        <div class="text-muted small mb-1">Tax Collected</div>
-                        <h3 class="mb-1">{{ $currencySymbol }}{{ number_format((float) ($summary->tax_total ?? 0), App\Models\AppSetting::currencyDecimals()) }}</h3>
-                        <div class="small text-muted">Checkout tax totals</div>
-                    </div>
-                    <div class="icon danger"><i class="fas fa-file-invoice-dollar"></i></div>
-                </div>
-            </div>
+        <div class="aa-stat" style="--stat-color:#f59e0b;">
+            <div><div class="aa-stat-label">Delivery Charges</div><div class="aa-stat-value">{{ $money($summary->delivery_fee_total ?? 0) }}</div><div class="aa-stat-sub">Distance collections</div></div>
+            <div class="aa-stat-icon"><i class="fas fa-route"></i></div>
         </div>
-        <div class="col-md-6 col-xl-3">
-            <div class="stat-card metric-card">
-                <div class="d-flex justify-content-between align-items-start">
-                    <div>
-                        <div class="text-muted small mb-1">Discount Given</div>
-                        <h3 class="mb-1">{{ $currencySymbol }}{{ number_format((float) ($summary->discount_total ?? 0), App\Models\AppSetting::currencyDecimals()) }}</h3>
-                        <div class="small text-muted">Coupon and promo impact</div>
-                    </div>
-                    <div class="icon warning"><i class="fas fa-tags"></i></div>
-                </div>
-            </div>
+        <div class="aa-stat" style="--stat-color:#ef4444;">
+            <div><div class="aa-stat-label">Discounts</div><div class="aa-stat-value">{{ $money($summary->discount_total ?? 0) }}</div><div class="aa-stat-sub">Promo impact</div></div>
+            <div class="aa-stat-icon"><i class="fas fa-tags"></i></div>
         </div>
-        <div class="col-md-6 col-xl-3">
-            <div class="stat-card metric-card">
-                <div class="d-flex justify-content-between align-items-start">
-                    <div>
-                        <div class="text-muted small mb-1">Refunds</div>
-                        <h3 class="mb-1">{{ $currencySymbol }}{{ number_format((float) ($summary->refund_total ?? 0), App\Models\AppSetting::currencyDecimals()) }}</h3>
-                        <div class="small text-muted">{{ $summary->cancelled_orders ?? 0 }} cancelled orders</div>
-                    </div>
-                    <div class="icon danger"><i class="fas fa-rotate-left"></i></div>
-                </div>
-            </div>
+        <div class="aa-stat" style="--stat-color:#64748b;">
+            <div><div class="aa-stat-label">Refunds</div><div class="aa-stat-value">{{ $money($summary->refund_total ?? 0) }}</div><div class="aa-stat-sub">{{ number_format($summary->cancelled_orders ?? 0) }} cancelled orders</div></div>
+            <div class="aa-stat-icon"><i class="fas fa-rotate-left"></i></div>
         </div>
-    </div>
+    </section>
 
-    <div class="section-kicker">
-        <h4>Dispatch and Fulfilment</h4>
-        <span>Assignment quality, batching behavior, and route efficiency signals</span>
-    </div>
-    <div class="row g-4">
-        <div class="col-md-6 col-xl-3">
-            <div class="stat-card metric-card">
-                <div class="d-flex justify-content-between align-items-start">
-                    <div>
-                        <div class="text-muted small mb-1">Assigned Orders</div>
-                        <h3 class="mb-1">{{ $dispatchMetrics['assigned_orders'] }}</h3>
-                        <div class="small text-muted">Driver assignment attempts tracked</div>
-                    </div>
-                    <div class="icon info"><i class="fas fa-user-check"></i></div>
-                </div>
+    <section class="aa-grid-2">
+        <div class="aa-card">
+            <div class="aa-card-head">
+                <div><h2>Daily Sales Trend</h2><p>Sales and order count across the selected window.</p></div>
             </div>
+            <div class="aa-chart"><canvas id="salesTrendChart"></canvas></div>
         </div>
-        <div class="col-md-6 col-xl-3">
-            <div class="stat-card metric-card">
-                <div class="d-flex justify-content-between align-items-start">
-                    <div>
-                        <div class="text-muted small mb-1">Acceptance Rate</div>
-                        <h3 class="mb-1">{{ number_format((float) $dispatchMetrics['acceptance_rate'], 1) }}%</h3>
-                        <div class="small text-muted">{{ $dispatchMetrics['accepted_orders'] }} accepted orders</div>
-                    </div>
-                    <div class="icon success"><i class="fas fa-thumbs-up"></i></div>
-                </div>
+        <div class="aa-card">
+            <div class="aa-card-head">
+                <div><h2>Status Mix</h2><p>Order lifecycle split.</p></div>
             </div>
+            <div class="aa-chart small"><canvas id="statusBreakdownChart"></canvas></div>
         </div>
-        <div class="col-md-6 col-xl-3">
-            <div class="stat-card metric-card">
-                <div class="d-flex justify-content-between align-items-start">
-                    <div>
-                        <div class="text-muted small mb-1">Avg Acceptance Time</div>
-                        <h3 class="mb-1">{{ number_format((float) $dispatchMetrics['avg_acceptance_minutes'], 1) }} min</h3>
-                        <div class="small text-muted">Avg attempts {{ number_format((float) $dispatchMetrics['avg_assignment_attempts'], 2) }}</div>
-                    </div>
-                    <div class="icon warning"><i class="fas fa-stopwatch"></i></div>
-                </div>
-            </div>
-        </div>
-        <div class="col-md-6 col-xl-3">
-            <div class="stat-card metric-card">
-                <div class="d-flex justify-content-between align-items-start">
-                    <div>
-                        <div class="text-muted small mb-1">Route-Matched Batches</div>
-                        <h3 class="mb-1">{{ $dispatchMetrics['route_matched_batches'] }}</h3>
-                        <div class="small text-muted">{{ $dispatchMetrics['route_matched_orders'] }} orders inside {{ number_format((float) $dispatchMetrics['route_match_radius_km'], 1) }} km radius</div>
-                    </div>
-                    <div class="icon primary"><i class="fas fa-route"></i></div>
-                </div>
-            </div>
-        </div>
-    </div>
+    </section>
 
-    <div class="row g-4">
-        <div class="col-lg-8">
-            <div class="table-card report-surface h-100">
-                <div class="card-header">
-                    <div class="section-kicker w-100">
-                        <h4>Daily Sales Trend</h4>
-                        <span>Sales amount and order volume across the selected window</span>
-                    </div>
-                </div>
-                <div class="card-body">
-                    <canvas id="salesTrendChart" height="120"></canvas>
-                </div>
+    <section class="aa-grid-3">
+        <div class="aa-card">
+            <div class="aa-card-head"><div><h2>Dispatch Health</h2><p>Assignment quality indicators.</p></div></div>
+            <div class="aa-list">
+                <div class="aa-list-row"><span>Assigned Orders</span><strong>{{ number_format($dispatchMetrics['assigned_orders'] ?? 0) }}</strong></div>
+                <div class="aa-list-row"><span>Accepted Orders</span><strong>{{ number_format($dispatchMetrics['accepted_orders'] ?? 0) }}</strong></div>
+                <div class="aa-list-row"><span>Acceptance Rate</span><strong>{{ number_format((float) ($dispatchMetrics['acceptance_rate'] ?? 0), 1) }}%</strong></div>
+                <div class="aa-list-row"><span>Avg Acceptance Time</span><strong>{{ number_format((float) ($dispatchMetrics['avg_acceptance_minutes'] ?? 0), 1) }} min</strong></div>
+                <div class="aa-list-row"><span>Route Matched Batches</span><strong>{{ number_format($dispatchMetrics['route_matched_batches'] ?? 0) }}</strong></div>
             </div>
         </div>
-        <div class="col-lg-4">
-            <div class="table-card report-surface h-100">
-                <div class="card-header">
-                    <div class="section-kicker w-100">
-                        <h4>Order Status Mix</h4>
-                        <span>Delivered, cancelled, and in-flight composition</span>
-                    </div>
-                </div>
-                <div class="card-body">
-                    <canvas id="statusBreakdownChart" height="220"></canvas>
-                </div>
+        <div class="aa-card">
+            <div class="aa-card-head"><div><h2>Platform Users</h2><p>Current user base by role.</p></div></div>
+            <div class="aa-list">
+                <div class="aa-list-row"><span>Customers</span><strong>{{ number_format($userCounts['customers'] ?? 0) }}</strong></div>
+                <div class="aa-list-row"><span>Drivers</span><strong>{{ number_format($userCounts['drivers'] ?? 0) }}</strong></div>
+                <div class="aa-list-row"><span>Restaurant Owners</span><strong>{{ number_format($userCounts['restaurant_owners'] ?? 0) }}</strong></div>
+                <div class="aa-list-row"><span>Restaurant Staff</span><strong>{{ number_format($userCounts['restaurant_staff'] ?? 0) }}</strong></div>
+                <div class="aa-list-row"><span>Successful Payments</span><strong>{{ number_format($summary->successful_payments ?? 0) }}</strong></div>
             </div>
         </div>
-    </div>
+        <div class="aa-card">
+            <div class="aa-card-head"><div><h2>Payout Overview</h2><p>Settlement processing exposure.</p></div></div>
+            <div class="aa-list">
+                <div class="aa-list-row"><span>Total Payouts</span><strong>{{ number_format($payoutSummary->total_payouts ?? 0) }}</strong></div>
+                <div class="aa-list-row"><span>Total Amount</span><strong>{{ $money($payoutSummary->total_amount ?? 0) }}</strong></div>
+                <div class="aa-list-row"><span>Processed</span><strong>{{ number_format($payoutSummary->processed_count ?? 0) }}</strong></div>
+                <div class="aa-list-row"><span>Pending</span><strong>{{ number_format($payoutSummary->pending_count ?? 0) }}</strong></div>
+                <div class="aa-list-row"><span>Failed</span><strong>{{ number_format($payoutSummary->failed_count ?? 0) }}</strong></div>
+            </div>
+        </div>
+    </section>
 
-    <div class="row g-4">
-        <div class="col-lg-4">
-            <div class="table-card report-surface h-100">
-                <div class="card-header">
-                    <div class="section-kicker w-100">
-                        <h4>Dispatch Health</h4>
-                        <span>Assignment quality indicators</span>
-                    </div>
-                </div>
-                <div class="card-body">
-                    <div class="report-list-row"><span>Assigned Orders</span><strong>{{ $dispatchMetrics['assigned_orders'] }}</strong></div>
-                    <div class="report-list-row"><span>Accepted Orders</span><strong>{{ $dispatchMetrics['accepted_orders'] }}</strong></div>
-                    <div class="report-list-row"><span>Acceptance Rate</span><strong>{{ number_format((float) $dispatchMetrics['acceptance_rate'], 1) }}%</strong></div>
-                    <div class="report-list-row"><span>Auto-cancelled Unassigned</span><strong>{{ $dispatchMetrics['auto_cancelled_unassigned'] }}</strong></div>
-                    <div class="report-list-row"><span>Avg Assignment Attempts</span><strong>{{ number_format((float) $dispatchMetrics['avg_assignment_attempts'], 2) }}</strong></div>
-                    <div class="report-list-row"><span>Route Match Radius</span><strong>{{ number_format((float) $dispatchMetrics['route_match_radius_km'], 1) }} km</strong></div>
-                </div>
-            </div>
-        </div>
-        <div class="col-lg-4">
-            <div class="table-card report-surface h-100">
-                <div class="card-header">
-                    <div class="section-kicker w-100">
-                        <h4>Platform Snapshot</h4>
-                        <span>User base and order economics</span>
-                    </div>
-                </div>
-                <div class="card-body">
-                    <div class="report-list-row"><span>Total Customers</span><strong>{{ $userCounts['customers'] }}</strong></div>
-                    <div class="report-list-row"><span>Total Drivers</span><strong>{{ $userCounts['drivers'] }}</strong></div>
-                    <div class="report-list-row"><span>Restaurant Owners</span><strong>{{ $userCounts['restaurant_owners'] }}</strong></div>
-                    <div class="report-list-row"><span>Restaurant Staff</span><strong>{{ $userCounts['restaurant_staff'] }}</strong></div>
-                    <div class="report-list-row"><span>Successful Payments</span><strong>{{ $summary->successful_payments ?? 0 }}</strong></div>
-                    <div class="report-list-row"><span>Average Order Value</span><strong>{{ $currencySymbol }}{{ number_format((float) ($summary->avg_order_value ?? 0), App\Models\AppSetting::currencyDecimals()) }}</strong></div>
-                </div>
-            </div>
-        </div>
-        <div class="col-lg-4">
-            <div class="table-card report-surface h-100">
-                <div class="card-header">
-                    <div class="section-kicker w-100">
-                        <h4>Payout Overview</h4>
-                        <span>Settlement and processing exposure</span>
-                    </div>
-                </div>
-                <div class="card-body">
-                    <div class="report-list-row"><span>Total Payouts</span><strong>{{ $payoutSummary->total_payouts ?? 0 }}</strong></div>
-                    <div class="report-list-row"><span>Payout Amount</span><strong>{{ $currencySymbol }}{{ number_format((float) ($payoutSummary->total_amount ?? 0), App\Models\AppSetting::currencyDecimals()) }}</strong></div>
-                    <div class="report-list-row"><span>Processed</span><strong>{{ $payoutSummary->processed_count ?? 0 }}</strong></div>
-                    <div class="report-list-row"><span>Pending</span><strong>{{ $payoutSummary->pending_count ?? 0 }}</strong></div>
-                    <div class="report-list-row"><span>Failed</span><strong>{{ $payoutSummary->failed_count ?? 0 }}</strong></div>
-                </div>
-            </div>
-        </div>
-        <div class="col-lg-4">
-            <div class="table-card report-surface h-100">
-                <div class="card-header">
-                    <div class="section-kicker w-100">
-                        <h4>Payment Method Mix</h4>
-                        <span>Checkout channel preference</span>
-                    </div>
-                </div>
-                <div class="card-body">
-                    @forelse($paymentBreakdown as $method => $count)
-                        <div class="report-list-row">
-                            <span>{{ strtoupper($method ?: 'N/A') }}</span>
-                            <strong>{{ $count }}</strong>
-                        </div>
-                    @empty
-                        <div class="text-muted">No payment data found for the selected range.</div>
-                    @endforelse
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <div class="row g-4">
-        <div class="col-lg-6">
-            <div class="table-card report-surface h-100">
-                <div class="card-header">
-                    <div class="section-kicker w-100">
-                        <h4>Top Batched Drivers</h4>
-                        <span>Strongest grouped-route operators</span>
-                    </div>
-                </div>
-                <div class="table-responsive">
-                    <table class="table table-hover mb-0 report-table">
-                        <thead>
+    <section class="aa-grid-3">
+        <div class="aa-card">
+            <div class="aa-card-head"><div><h2>Top Restaurants</h2><p>Highest sales in this window.</p></div></div>
+            <div class="table-responsive">
+                <table class="table aa-table">
+                    <thead><tr><th>Restaurant</th><th>Orders</th><th>Sales</th></tr></thead>
+                    <tbody>
+                        @forelse($topRestaurants as $restaurant)
                             <tr>
-                                <th>Driver</th>
-                                <th>Route-Matched Orders</th>
-                                <th>Batch Groups</th>
+                                <td data-label="Restaurant" class="aa-primary">{{ $restaurant->name }}</td>
+                                <td data-label="Orders">{{ number_format($restaurant->orders_count) }}</td>
+                                <td data-label="Sales" class="aa-primary">{{ $money($restaurant->sales_total) }}</td>
                             </tr>
-                        </thead>
-                        <tbody>
-                            @forelse($dispatchMetrics['top_batched_drivers'] as $driverMetric)
-                                <tr>
-                                    <td>{{ $driverMetric['driver_name'] }}</td>
-                                    <td>{{ $driverMetric['route_matched_orders'] }}</td>
-                                    <td>{{ $driverMetric['bundles'] }}</td>
-                                </tr>
-                            @empty
-                                <tr>
-                                    <td colspan="3" class="text-center text-muted py-4">No route-matched batches found for the selected range.</td>
-                                </tr>
-                            @endforelse
-                        </tbody>
-                    </table>
-                </div>
+                        @empty
+                            <tr><td colspan="3" class="text-center text-muted py-4">No restaurant data found.</td></tr>
+                        @endforelse
+                    </tbody>
+                </table>
             </div>
         </div>
-        <div class="col-lg-6">
-            <div class="table-card report-surface h-100">
-                <div class="card-header">
-                    <div class="section-kicker w-100">
-                        <h4>Top Restaurants</h4>
-                        <span>Restaurants leading this sales window</span>
-                    </div>
-                </div>
-                <div class="table-responsive">
-                    <table class="table table-hover mb-0 report-table">
-                        <thead>
+        <div class="aa-card">
+            <div class="aa-card-head"><div><h2>Top Drivers</h2><p>Highest delivery contribution.</p></div></div>
+            <div class="table-responsive">
+                <table class="table aa-table">
+                    <thead><tr><th>Driver</th><th>Orders</th><th>Earnings</th></tr></thead>
+                    <tbody>
+                        @forelse($topDrivers as $driver)
                             <tr>
-                                <th>Restaurant</th>
-                                <th>Orders</th>
-                                <th>Sales</th>
+                                <td data-label="Driver" class="aa-primary">{{ $driver->name }}</td>
+                                <td data-label="Orders">{{ number_format($driver->orders_count) }}</td>
+                                <td data-label="Earnings" class="aa-primary">{{ $money($driver->earnings_total) }}</td>
                             </tr>
-                        </thead>
-                        <tbody>
-                            @forelse($topRestaurants as $restaurant)
-                                <tr>
-                                    <td>{{ $restaurant->name }}</td>
-                                    <td>{{ $restaurant->orders_count }}</td>
-                                    <td>{{ $currencySymbol }}{{ number_format((float) $restaurant->sales_total, App\Models\AppSetting::currencyDecimals()) }}</td>
-                                </tr>
-                            @empty
-                                <tr>
-                                    <td colspan="3" class="text-center text-muted py-4">No restaurants found for the selected filters.</td>
-                                </tr>
-                            @endforelse
-                        </tbody>
-                    </table>
-                </div>
+                        @empty
+                            <tr><td colspan="3" class="text-center text-muted py-4">No driver data found.</td></tr>
+                        @endforelse
+                    </tbody>
+                </table>
             </div>
         </div>
-        <div class="col-lg-6">
-            <div class="table-card report-surface h-100">
-                <div class="card-header">
-                    <div class="section-kicker w-100">
-                        <h4>Top Drivers</h4>
-                        <span>Highest delivery contribution in the range</span>
-                    </div>
-                </div>
-                <div class="table-responsive">
-                    <table class="table table-hover mb-0 report-table">
-                        <thead>
-                            <tr>
-                                <th>Driver</th>
-                                <th>Orders</th>
-                                <th>Earnings</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            @forelse($topDrivers as $driver)
-                                <tr>
-                                    <td>{{ $driver->name }}</td>
-                                    <td>{{ $driver->orders_count }}</td>
-                                    <td>{{ $currencySymbol }}{{ number_format((float) $driver->earnings_total, App\Models\AppSetting::currencyDecimals()) }}</td>
-                                </tr>
-                            @empty
-                                <tr>
-                                    <td colspan="3" class="text-center text-muted py-4">No driver data found for the selected filters.</td>
-                                </tr>
-                            @endforelse
-                        </tbody>
-                    </table>
-                </div>
+        <div class="aa-card">
+            <div class="aa-card-head"><div><h2>Payment Mix</h2><p>Checkout channel preference.</p></div></div>
+            <div class="aa-list">
+                @forelse($paymentBreakdown as $method => $count)
+                    <div class="aa-list-row"><span>{{ strtoupper($method ?: 'N/A') }}</span><strong>{{ number_format($count) }}</strong></div>
+                @empty
+                    <div class="text-muted p-3">No payment data found.</div>
+                @endforelse
             </div>
         </div>
-    </div>
+    </section>
 
-    <div class="table-card report-surface">
-        <div class="card-header">
-            <div class="section-kicker w-100">
-                <h4>Recent Orders</h4>
-                <span>Detailed operational records for the active report selection</span>
-            </div>
+    <section class="aa-card">
+        <div class="aa-card-head">
+            <div><h2>Recent Orders</h2><p>Operational records matching the selected analytics filters.</p></div>
         </div>
         <div class="table-responsive">
-            <table class="table table-hover mb-0 report-table">
+            <table class="table aa-table">
                 <thead>
                     <tr>
                         <th>Order</th>
@@ -734,115 +361,111 @@
                 </thead>
                 <tbody>
                     @forelse($orders as $order)
+                        @php
+                            $statusClass = match ($order->status) {
+                                'delivered', 'completed' => 'success',
+                                'cancelled', 'failed' => 'danger',
+                                'pending' => 'warning',
+                                default => 'info',
+                            };
+                            $paymentClass = $order->payment_status === 'success' ? 'success' : ($order->payment_status === 'failed' ? 'danger' : 'warning');
+                        @endphp
                         <tr>
-                            <td>
-                                <div class="fw-semibold">{{ $order->order_number }}</div>
-                                <div class="small text-muted">{{ strtoupper($order->payment_method ?? 'N/A') }}</div>
+                            <td data-label="Order">
+                                <div class="aa-primary">{{ $order->order_number }}</div>
+                                <div class="aa-muted">{{ strtoupper($order->payment_method ?? 'N/A') }}</div>
                             </td>
-                            <td>{{ $order->restaurant?->name ?? 'N/A' }}</td>
-                            <td>{{ $order->customer?->name ?? $order->customer_name ?? 'N/A' }}</td>
-                            <td><span class="badge badge-{{ $order->status }}">{{ ucfirst(str_replace('_', ' ', $order->status)) }}</span></td>
-                            <td><span class="badge badge-{{ $order->payment_status === 'success' ? 'success' : ($order->payment_status === 'failed' ? 'danger' : 'warning') }}">{{ ucfirst($order->payment_status) }}</span></td>
-                            <td>{{ $currencySymbol }}{{ number_format((float) ($order->admin_commission ?? 0), App\Models\AppSetting::currencyDecimals()) }}</td>
-                            <td class="fw-semibold">{{ $currencySymbol }}{{ number_format((float) $order->total, App\Models\AppSetting::currencyDecimals()) }}</td>
-                            <td>{{ optional($order->created_at)->format('d M Y, h:i A') }}</td>
+                            <td data-label="Restaurant">{{ $order->restaurant?->name ?? 'N/A' }}</td>
+                            <td data-label="Customer">{{ $order->customer?->name ?? $order->customer_name ?? 'N/A' }}</td>
+                            <td data-label="Status"><span class="aa-chip {{ $statusClass }}">{{ ucfirst(str_replace('_', ' ', $order->status)) }}</span></td>
+                            <td data-label="Payment"><span class="aa-chip {{ $paymentClass }}">{{ ucfirst($order->payment_status ?? 'pending') }}</span></td>
+                            <td data-label="Commission">{{ $money($order->admin_commission ?? 0) }}</td>
+                            <td data-label="Total" class="aa-primary">{{ $money($order->total ?? 0) }}</td>
+                            <td data-label="Date">{{ optional($order->created_at)->format('d M Y, h:i A') }}</td>
                         </tr>
                     @empty
-                        <tr>
-                            <td colspan="8" class="text-center text-muted py-5">No orders found for the selected filters.</td>
-                        </tr>
+                        <tr><td colspan="8" class="text-center text-muted py-5">No orders found for the selected filters.</td></tr>
                     @endforelse
                 </tbody>
             </table>
         </div>
-        <div class="p-3">
-            {{ $orders->links() }}
+        <div class="p-3 border-top">
+            {{ $orders->withQueryString()->links() }}
         </div>
-    </div>
+    </section>
 </div>
 @endsection
 
 @section('scripts')
 <script>
-    const salesTrendLabels = @json($dailyPerformance->pluck('report_date')->map(fn ($date) => \Carbon\Carbon::parse($date)->format('d M'))->values());
-    const salesTrendOrders = @json($dailyPerformance->pluck('orders_count')->map(fn ($value) => (int) $value)->values());
-    const salesTrendAmounts = @json($dailyPerformance->pluck('sales_total')->map(fn ($value) => round((float) $value, 2))->values());
-    const statusLabels = @json(collect($statusBreakdown)->keys()->map(fn ($label) => ucfirst(str_replace('_', ' ', $label)))->values());
-    const statusValues = @json(collect($statusBreakdown)->values()->map(fn ($value) => (int) $value)->values());
+const salesTrendLabels = @json($dailyPerformance->pluck('report_date')->map(fn ($date) => \Carbon\Carbon::parse($date)->format('d M'))->values());
+const salesTrendOrders = @json($dailyPerformance->pluck('orders_count')->map(fn ($value) => (int) $value)->values());
+const salesTrendAmounts = @json($dailyPerformance->pluck('sales_total')->map(fn ($value) => round((float) $value, 2))->values());
+const statusLabels = @json(collect($statusBreakdown)->keys()->map(fn ($label) => ucfirst(str_replace('_', ' ', $label)))->values());
+const statusValues = @json(collect($statusBreakdown)->values()->map(fn ($value) => (int) $value)->values());
 
-    const salesTrendCtx = document.getElementById('salesTrendChart');
-    if (salesTrendCtx) {
-        new Chart(salesTrendCtx, {
-            type: 'line',
-            data: {
-                labels: salesTrendLabels,
-                datasets: [
-                    {
-                        label: 'Sales',
-                        data: salesTrendAmounts,
-                        borderColor: '#F97316',
-                        backgroundColor: 'rgba(249, 115, 22, 0.16)',
-                        tension: 0.35,
-                        fill: true,
-                        yAxisID: 'y',
-                    },
-                    {
-                        label: 'Orders',
-                        data: salesTrendOrders,
-                        borderColor: '#0F766E',
-                        backgroundColor: 'rgba(15, 118, 110, 0.12)',
-                        tension: 0.35,
-                        fill: false,
-                        yAxisID: 'y1',
-                    }
-                ]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                interaction: {
-                    mode: 'index',
-                    intersect: false,
+const salesTrendCanvas = document.getElementById('salesTrendChart');
+if (salesTrendCanvas && window.Chart) {
+    new Chart(salesTrendCanvas, {
+        type: 'line',
+        data: {
+            labels: salesTrendLabels,
+            datasets: [
+                {
+                    label: 'Sales',
+                    data: salesTrendAmounts,
+                    borderColor: '#f97316',
+                    backgroundColor: 'rgba(249, 115, 22, .14)',
+                    fill: true,
+                    tension: .35,
+                    pointRadius: 3,
+                    yAxisID: 'sales',
                 },
-                scales: {
-                    y: {
-                        beginAtZero: true,
-                        position: 'left',
-                    },
-                    y1: {
-                        beginAtZero: true,
-                        position: 'right',
-                        grid: {
-                            drawOnChartArea: false,
-                        },
-                    },
+                {
+                    label: 'Orders',
+                    data: salesTrendOrders,
+                    borderColor: '#2563eb',
+                    backgroundColor: 'rgba(37, 99, 235, .12)',
+                    fill: false,
+                    tension: .35,
+                    pointRadius: 3,
+                    yAxisID: 'orders',
                 }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
+            plugins: { legend: { labels: { usePointStyle: true, boxWidth: 8 } } },
+            scales: {
+                sales: { beginAtZero: true, position: 'left', grid: { color: '#edf2f7' } },
+                orders: { beginAtZero: true, position: 'right', grid: { drawOnChartArea: false }, ticks: { precision: 0 } },
             }
-        });
-    }
+        }
+    });
+}
 
-    const statusCtx = document.getElementById('statusBreakdownChart');
-    if (statusCtx) {
-        new Chart(statusCtx, {
-            type: 'doughnut',
-            data: {
-                labels: statusLabels,
-                datasets: [{
-                    data: statusValues,
-                    backgroundColor: ['#F97316', '#0F766E', '#F59E0B', '#2563EB', '#EF4444', '#14B8A6', '#FB7185', '#7C3AED'],
-                    borderWidth: 0
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: {
-                    legend: {
-                        position: 'bottom'
-                    }
-                }
-            }
-        });
-    }
+const statusCanvas = document.getElementById('statusBreakdownChart');
+if (statusCanvas && window.Chart) {
+    new Chart(statusCanvas, {
+        type: 'doughnut',
+        data: {
+            labels: statusLabels,
+            datasets: [{
+                data: statusValues,
+                backgroundColor: ['#10b981', '#f97316', '#2563eb', '#f59e0b', '#ef4444', '#7c3aed', '#14b8a6', '#64748b'],
+                borderColor: '#ffffff',
+                borderWidth: 3,
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            cutout: '64%',
+            plugins: { legend: { position: 'bottom', labels: { usePointStyle: true, boxWidth: 8 } } }
+        }
+    });
+}
 </script>
 @endsection

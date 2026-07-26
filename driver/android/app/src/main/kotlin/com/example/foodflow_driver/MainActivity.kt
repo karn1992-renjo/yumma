@@ -1,4 +1,4 @@
-package com.adgraph.delivery
+package com.adgraph.yamma_delivery
 
 import android.app.NotificationManager
 import android.content.Context
@@ -16,9 +16,9 @@ import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity() {
-    private val audioChannelName = "com.adgraph.delivery/order_audio"
-    private val alertChannelName = "com.adgraph.delivery/order_alerts"
-    private val configChannelName = "com.adgraph.delivery/app_config"
+    private val audioChannelName = "com.adgraph.yamma_delivery/order_audio"
+    private val alertChannelName = "com.adgraph.yamma_delivery/order_alerts"
+    private val configChannelName = "com.adgraph.yamma_delivery/app_config"
     private var previousRingerMode: Int? = null
     private var previousAudioMode: Int? = null
     private var previousSpeakerphone: Boolean? = null
@@ -86,8 +86,15 @@ class MainActivity : FlutterActivity() {
                     requestBatteryOptimizationExemption()
                     result.success(true)
                 }
+                "isIgnoringBatteryOptimizations" -> {
+                    result.success(isIgnoringBatteryOptimizations())
+                }
                 "openAppNotificationSettings" -> {
                     openAppNotificationSettings()
+                    result.success(true)
+                }
+                "openAppLocationSettings" -> {
+                    openAppLocationSettings()
                     result.success(true)
                 }
                 else -> result.notImplemented()
@@ -100,6 +107,7 @@ class MainActivity : FlutterActivity() {
         ).setMethodCallHandler { call, result ->
             when (call.method) {
                 "getGoogleMapsApiKey" -> result.success(getGoogleMapsApiKey())
+                "getAppName" -> result.success(getAppName())
                 else -> result.notImplemented()
             }
         }
@@ -134,10 +142,14 @@ class MainActivity : FlutterActivity() {
         startActivity(intent)
     }
 
-    private fun requestBatteryOptimizationExemption() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return
+    private fun isIgnoringBatteryOptimizations(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return true
         val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
-        if (powerManager.isIgnoringBatteryOptimizations(packageName)) return
+        return powerManager.isIgnoringBatteryOptimizations(packageName)
+    }
+
+    private fun requestBatteryOptimizationExemption() {
+        if (isIgnoringBatteryOptimizations()) return
         val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
             .setData(Uri.parse("package:$packageName"))
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -155,6 +167,39 @@ class MainActivity : FlutterActivity() {
         startActivity(intent)
     }
 
+    private fun openAppLocationSettings() {
+        if (openAppPermissionSettings("android.settings.APP_PERMISSION_SETTINGS")) return
+        if (openAppPermissionSettings("android.settings.APPLICATION_PERMISSION_SETTINGS")) return
+
+        val intent = Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        startActivity(intent)
+    }
+
+    private fun openAppPermissionSettings(action: String): Boolean {
+        val intent = Intent(action)
+            .putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
+            .putExtra("android.provider.extra.APP_PACKAGE", packageName)
+            .putExtra("android.provider.extra.PACKAGE_NAME", packageName)
+            .putExtra("android.intent.extra.PACKAGE_NAME", packageName)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+
+        return openSettingsIntent(intent)
+    }
+
+    private fun openSettingsIntent(intent: Intent): Boolean {
+        return try {
+            if (intent.resolveActivity(packageManager) == null) {
+                false
+            } else {
+                startActivity(intent)
+                true
+            }
+        } catch (_: Exception) {
+            false
+        }
+    }
+
     private fun bringAppToFront() {
         val intent = Intent(this, MainActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
@@ -168,6 +213,15 @@ class MainActivity : FlutterActivity() {
                 PackageManager.GET_META_DATA
             )
             appInfo.metaData?.getString("com.google.android.geo.API_KEY") ?: ""
+        } catch (_: Exception) {
+            ""
+        }
+    }
+
+    private fun getAppName(): String {
+        return try {
+            val appInfo = packageManager.getApplicationInfo(packageName, 0)
+            packageManager.getApplicationLabel(appInfo).toString()
         } catch (_: Exception) {
             ""
         }

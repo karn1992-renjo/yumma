@@ -20,7 +20,7 @@
                     <div class="mb-3">
                         <label class="form-label fw-semibold">Current Image</label>
                         <div>
-                            <img src="{{ Storage::url($promo->promo_image) }}" height="120" class="rounded" alt="{{ $promo->title }}">
+                            <img src="{{ \App\Services\MediaStorage::url($promo->promo_image) }}" height="120" class="rounded" alt="{{ $promo->title }}">
                         </div>
                     </div>
                 @endif

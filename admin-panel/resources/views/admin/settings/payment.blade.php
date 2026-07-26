@@ -12,14 +12,20 @@
 @endphp
 
 @section('content')
-<div class="page-header">
-    <div class="d-flex justify-content-between align-items-center">
+@include('admin.settings._style')
+
+<div class="settings-shell">
+<div class="settings-hero">
+    <div>
+        <span class="settings-eyebrow"><i class="fas fa-credit-card"></i> Checkout Money Flow</span>
         <div>
             <h1>Payment Settings</h1>
-            <p>Configure payment gateway credentials and modes.</p>
+            <p>Configure customer checkout gateways, COD visibility, gateway logos, payout routing, currency, and provider credentials.</p>
         </div>
     </div>
 </div>
+
+@include('admin.settings._tabs')
 
 <div class="row g-4">
     <div class="col-12">
@@ -90,7 +96,9 @@
                                 <label class="form-label fw-semibold">Customer App Payment Gateways</label>
                                 <div class="row g-3">
                                     @foreach($customerGatewayProviders as $gatewayKey => $gatewayLabel)
-                                        @php($logoKey = 'payment_gateway_logo_' . $gatewayKey)
+                                        @php
+                                            $logoKey = 'payment_gateway_logo_' . $gatewayKey;
+                                        @endphp
                                         <div class="col-md-4">
                                             <div class="border rounded-4 p-3 h-100">
                                                 <div class="form-check mb-3">
@@ -502,5 +510,6 @@
             </div>
         </div>
     </div>
+</div>
 </div>
 @endsection

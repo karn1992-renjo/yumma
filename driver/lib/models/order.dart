@@ -27,9 +27,16 @@ class Order {
   final double tax;
   final double discount;
   final double total;
+  final double? driverEarning;
+  final double? driverIncentive;
   final String status;
   final String paymentMethod;
   final String paymentStatus;
+  final String? paymentSource;
+  final String? paymentGateway;
+  final String? paymentLinkId;
+  final DateTime? paidAt;
+  final PaymentAttempt? activePaymentAttempt;
   final String? deliveryPaymentMode;
   final double? cashCollectedAmount;
   final DateTime? cashCollectedAt;
@@ -39,6 +46,13 @@ class Order {
   final double? refundAmount;
   final DateTime createdAt;
   final DateTime? confirmedAt;
+  final int? preparationTimeMinutes;
+  final DateTime? readyByAt;
+  final int? readyCountdownSeconds;
+  final bool isPreparationDelayed;
+  final int preparationDelayMinutes;
+  final int? remainingPreparationMinutes;
+  final Map<String, dynamic> eta;
   final DateTime? reachedAt;
   final DateTime? deliveredAt;
   final DateTime? cancelledAt;
@@ -75,9 +89,16 @@ class Order {
     required this.tax,
     required this.discount,
     required this.total,
+    this.driverEarning,
+    this.driverIncentive,
     required this.status,
     required this.paymentMethod,
     required this.paymentStatus,
+    this.paymentSource,
+    this.paymentGateway,
+    this.paymentLinkId,
+    this.paidAt,
+    this.activePaymentAttempt,
     this.deliveryPaymentMode,
     this.cashCollectedAmount,
     this.cashCollectedAt,
@@ -87,6 +108,13 @@ class Order {
     this.refundAmount,
     required this.createdAt,
     this.confirmedAt,
+    this.preparationTimeMinutes,
+    this.readyByAt,
+    this.readyCountdownSeconds,
+    this.isPreparationDelayed = false,
+    this.preparationDelayMinutes = 0,
+    this.remainingPreparationMinutes,
+    this.eta = const {},
     this.reachedAt,
     this.deliveredAt,
     this.cancelledAt,
@@ -171,6 +199,17 @@ class Order {
       total: parseDoubleValue(
         source['total'] ?? source['grand_total'] ?? source['amount'],
       ),
+      driverEarning: parseNullableDouble(
+        source['driver_earning'] ??
+            source['driver_earnings'] ??
+            source['earnings'] ??
+            source['earning'] ??
+            source['estimated_earning'] ??
+            source['delivery_earning'],
+      ),
+      driverIncentive: parseNullableDouble(
+        source['driver_incentive'] ?? source['incentive'],
+      ),
       status: _normalizeStatus(
         _firstNonEmptyString([source['status'], source['order_status']]) ??
             'pending',
@@ -188,6 +227,14 @@ class Order {
             ]) ??
             'pending',
       ),
+      paymentSource: source['payment_source']?.toString(),
+      paymentGateway: source['payment_gateway']?.toString(),
+      paymentLinkId: source['payment_link_id']?.toString(),
+      paidAt: _parseDate(source['paid_at']),
+      activePaymentAttempt: PaymentAttempt.fromJsonOrNull(
+        source['active_payment_attempt'] ??
+            (_mapOrNull(source['payment_summary'])?['active_attempt']),
+      ),
       deliveryPaymentMode: source['delivery_payment_mode']?.toString(),
       cashCollectedAmount: parseNullableDouble(source['cash_collected_amount']),
       cashCollectedAt: _parseDate(source['cash_collected_at']),
@@ -197,6 +244,25 @@ class Order {
       refundAmount: parseNullableDouble(source['refund_amount']),
       createdAt: _parseDate(source['created_at']) ?? DateTime.now(),
       confirmedAt: _parseDate(source['confirmed_at']),
+      preparationTimeMinutes:
+          parseNullableInt(source['preparation_time_minutes']),
+      readyByAt: _parseDate(source['ready_by_at']),
+      readyCountdownSeconds: parseNullableInt(source['ready_countdown_seconds']),
+      isPreparationDelayed:
+          source['is_preparation_delayed'] == true ||
+              source['is_preparation_delayed']?.toString() == '1',
+      preparationDelayMinutes:
+          parseIntValue(source['preparation_delay_minutes'] ?? 0),
+      remainingPreparationMinutes:
+          parseNullableInt(source['remaining_preparation_minutes']),
+      eta: source['eta'] is Map
+          ? Map<String, dynamic>.from(source['eta'])
+          : <String, dynamic>{
+              if (source['estimated_delivery_minutes'] != null)
+                'eta_minutes': source['estimated_delivery_minutes'],
+              if (source['estimated_delivery_label'] != null)
+                'eta_range': source['estimated_delivery_label'],
+            },
       reachedAt: _parseDate(
         source['reached_at'] ?? source['reached_pickup_at'],
       ),
@@ -254,6 +320,51 @@ class Order {
   bool get canCancel =>
       isPending && DateTime.now().isBefore(customerCancellationClosesAt);
   bool get canRequestRefund => isDelivered && refundStatus == null;
+  bool get hasActivePreparationTimer =>
+      (isConfirmed || isPreparing) && readyByAt != null;
+  Duration get readyTimeRemaining {
+    final target = readyByAt;
+    if (target == null || !(isConfirmed || isPreparing)) {
+      return Duration.zero;
+    }
+    final remaining = target.difference(DateTime.now());
+    return remaining.isNegative ? Duration.zero : remaining;
+  }
+
+  String get pickupTimingLabel {
+    if (isReadyForPickup || isReachedPickup) return 'Ready for pickup';
+    if (isPreparationDelayed) {
+      final minutes = preparationDelayMinutes <= 0 ? 1 : preparationDelayMinutes;
+      return 'Restaurant delayed by ${minutes} min';
+    }
+    if (!hasActivePreparationTimer) return statusText;
+    final remaining = readyTimeRemaining;
+    if (remaining.inSeconds <= 0) return 'Expected any moment';
+    final minutes = remaining.inMinutes;
+    if (minutes <= 0) return 'Ready in under 1 min';
+    return 'Ready in about $minutes min';
+  }
+
+  int? get etaMinutes {
+    final value = eta['eta_minutes'];
+    if (value is int) return value;
+    if (value is double) return value.toInt();
+    return int.tryParse(value?.toString() ?? '');
+  }
+
+  String? get etaRange {
+    final value = eta['eta_range']?.toString().trim();
+    if (value == null || value.isEmpty) return null;
+    return value;
+  }
+
+  bool get isPaymentPaid => paymentStatus == 'paid' || paymentStatus == 'success';
+  bool get isCodPayment => paymentMethod.toLowerCase() == 'cod';
+  bool get canCollectPayment =>
+      !isPaymentPaid && !isDelivered && !isCancelled && isCodPayment;
+  double get driverEarningAmount => driverEarning ?? deliveryFee;
+  double get driverIncentiveAmount => driverIncentive ?? 0;
+  double get totalDriverEarning => driverEarningAmount + driverIncentiveAmount;
 
   String get statusText {
     switch (status) {
@@ -287,7 +398,7 @@ class Order {
       case 'confirmed':
         return Colors.blue;
       case 'preparing':
-        return Colors.purple;
+        return const Color(0xFFFF6E00);
       case 'ready_for_pickup':
         return Colors.teal;
       case 'reached_pickup':
@@ -370,6 +481,52 @@ class Order {
     final text = value?.toString();
     if (text == null || text.isEmpty) return null;
     return DateTime.tryParse(text);
+  }
+}
+
+class PaymentAttempt {
+  final int id;
+  final String gateway;
+  final String source;
+  final String status;
+  final double amount;
+  final String currency;
+  final String? paymentLink;
+  final String? qrReference;
+  final DateTime? expiresAt;
+
+  const PaymentAttempt({
+    required this.id,
+    required this.gateway,
+    required this.source,
+    required this.status,
+    required this.amount,
+    required this.currency,
+    this.paymentLink,
+    this.qrReference,
+    this.expiresAt,
+  });
+
+  factory PaymentAttempt.fromJson(Map<String, dynamic> json) {
+    return PaymentAttempt(
+      id: parseIntValue(json['id']),
+      gateway: json['gateway']?.toString() ?? '',
+      source: json['source']?.toString() ?? '',
+      status: json['status']?.toString() ?? 'pending',
+      amount: parseDoubleValue(json['amount']),
+      currency: json['currency']?.toString() ?? 'INR',
+      paymentLink: json['payment_link']?.toString(),
+      qrReference: json['qr_reference']?.toString(),
+      expiresAt: json['expires_at'] != null
+          ? DateTime.tryParse(json['expires_at'].toString())
+          : null,
+    );
+  }
+
+  static PaymentAttempt? fromJsonOrNull(dynamic value) {
+    if (value is Map<String, dynamic>) return PaymentAttempt.fromJson(value);
+    if (value is Map) return PaymentAttempt.fromJson(Map<String, dynamic>.from(value));
+    return null;
   }
 }
 

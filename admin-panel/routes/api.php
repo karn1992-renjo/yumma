@@ -20,17 +20,20 @@ use App\Http\Controllers\Api\ContentController;
 use App\Http\Controllers\Api\CouponController;
 use App\Http\Controllers\Api\AddressController;
 use App\Http\Controllers\Api\PaymentController;
+use App\Http\Controllers\Api\OrderPaymentController;
 use App\Http\Controllers\Api\WalletController;
 use App\Http\Controllers\Api\SearchController;
+use App\Http\Controllers\Api\ScratchCardController;
 use App\Http\Controllers\Api\SupportController;
 use App\Http\Controllers\Api\RecaptchaController;
 use App\Http\Controllers\Api\PartnerApplicationController;
+use App\Http\Controllers\Api\PromotionController;
+use App\Http\Controllers\Api\ReferralController;
 use App\Http\Controllers\DirectChatController;
 use App\Http\Resources\RestaurantResource;
 use App\Models\AppSetting;
 use App\Models\DeliveryArea;
 use App\Models\Restaurant;
-use App\Models\PromoCode;
 
 /*
 |--------------------------------------------------------------------------
@@ -82,6 +85,8 @@ Route::get('/banners', [ContentController::class, 'banners']);
 Route::get('/banners/{type}', [ContentController::class, 'bannersByType']);
 Route::get('/cuisines/popular', [ContentController::class, 'popularCuisines']);
 Route::get('/offers/active', [ContentController::class, 'activeOffers']);
+Route::get('/promotions', [PromotionController::class, 'index']);
+Route::get('/promotions/{promotion}', [PromotionController::class, 'show'])->whereNumber('promotion');
 Route::get('/app/branding', [AuthController::class, 'branding']);
 Route::get('/content/legal', function () {
     $settings = AppSetting::all()->pluck('value', 'key')->toArray();
@@ -95,7 +100,6 @@ Route::get('/content/legal', function () {
         ],
     ]);
 });
-
 // Public Restaurant Discovery Routes
 Route::get('/restaurants/nearby', [RestaurantController::class, 'nearby']);
 Route::get('/restaurants/search', [RestaurantController::class, 'search']);
@@ -165,11 +169,20 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/user/fcm-token', [AuthController::class, 'registerFcmToken']);
     Route::match(['put', 'post'], '/user/profile', [AuthController::class, 'updateProfile']);
     Route::post('/user/change-password', [AuthController::class, 'changePassword']);
+    Route::delete('/user/account', [AuthController::class, 'deleteAccount']);
     Route::get('/v1/search/history', [SearchController::class, 'history']);
     Route::delete('/v1/search/history', [SearchController::class, 'clearHistory']);
     Route::delete('/v1/search/history/{id}', [SearchController::class, 'clearHistory']);
     Route::get('/wallet', [WalletController::class, 'show']);
     Route::post('/wallet/withdraw', [WalletController::class, 'withdraw']);
+    Route::get('/scratch-cards', [ScratchCardController::class, 'index']);
+    Route::post('/scratch-cards/{scratchCard}/view', [ScratchCardController::class, 'view']);
+    Route::post('/scratch-cards/{scratchCard}/reveal', [ScratchCardController::class, 'reveal']);
+    Route::get('/rewards/history', [ScratchCardController::class, 'rewardHistory']);
+    Route::get('/rewards/coupons', [ScratchCardController::class, 'generatedCoupons']);
+    Route::get('/rewards/points', [ScratchCardController::class, 'rewardPoints']);
+    Route::post('/rewards/points/redeem', [ScratchCardController::class, 'redeemRewardPoints']);
+    Route::get('/referrals/summary', [ReferralController::class, 'summary']);
     Route::get('/notifications', [NotificationController::class, 'index']);
     Route::delete('/notifications', [NotificationController::class, 'clear']);
     Route::post('/notifications/read', [NotificationController::class, 'markRead']);
@@ -190,19 +203,15 @@ Route::middleware('auth:sanctum')->group(function () {
     });
 
     // Menu reads are public above for customer discovery screens.
-    Route::get('/restaurants/{restaurant}/promos', function (Restaurant $restaurant) {
-        $promos = PromoCode::where('is_active', true)
-            ->where('restaurant_id', $restaurant->id)
-            ->where(function ($query) {
-                $query->whereNull('start_date')->orWhere('start_date', '<=', now());
-            })
-            ->where(function ($query) {
-                $query->whereNull('end_date')->orWhere('end_date', '>=', now());
-            })
-            ->orderByDesc('discount_value')
-            ->get();
-
-        return response()->json(['success' => true, 'data' => $promos]);
+    Route::get('/restaurants/{restaurant}/promos', function (Request $request, Restaurant $restaurant, \App\Services\PromotionEngineService $engine) {
+        return response()->json([
+            'success' => true,
+            'data' => $engine->listForViewer([
+                'restaurant_id' => $restaurant->id,
+                'user_id' => $request->user()?->id,
+                'platform' => 'customer_app',
+            ]),
+        ]);
     });
     Route::get('/favorites/restaurants', function (Request $request) {
         return response()->json([
@@ -247,7 +256,6 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/orders/{orderId}/chat', [OrderChatController::class, 'store'])->middleware('restaurant.permission:view_orders,manage_orders');
         Route::post('/orders/{orderId}/chat/read', [OrderChatController::class, 'markRead'])->middleware('restaurant.permission:view_orders,manage_orders');
         Route::post('/orders/{orderId}/chat/typing', [OrderChatController::class, 'typing'])->middleware('restaurant.permission:view_orders,manage_orders');
-        Route::post('/orders/{orderId}/chat/assistant', [OrderChatController::class, 'assistant'])->middleware('restaurant.permission:view_orders,manage_orders');
         Route::post('/orders/{id}/accept', [RestaurantController::class, 'acceptOrder'])->middleware('restaurant.permission:manage_orders,update_order_status');
         Route::post('/orders/{id}/reject', [RestaurantController::class, 'rejectOrder'])->middleware('restaurant.permission:manage_orders,update_order_status');
         Route::post('/orders/{id}/status', [RestaurantController::class, 'updateOrderStatus'])->middleware('restaurant.permission:manage_orders,update_order_status');
@@ -266,8 +274,6 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/global-categories', [RestaurantMenuController::class, 'globalCategories'])->middleware('restaurant.permission:view_menu_items,manage_menu');
         Route::post('/menu', [RestaurantMenuController::class, 'store'])->middleware('restaurant.permission:manage_menu');
         Route::post('/menu/from-global', [RestaurantMenuController::class, 'importFromGlobal'])->middleware('restaurant.permission:manage_menu');
-        Route::post('/menu/adjust-prices', [RestaurantMenuController::class, 'adjustPrices'])->middleware('restaurant.permission:manage_menu');
-        Route::post('/menu/{id}/delete', [RestaurantMenuController::class, 'destroy'])->middleware('restaurant.permission:manage_menu');
         Route::post('/menu/{id}', [RestaurantMenuController::class, 'update'])->middleware('restaurant.permission:manage_menu');
         Route::put('/menu/{id}', [RestaurantMenuController::class, 'update'])->middleware('restaurant.permission:manage_menu');
         Route::delete('/menu/{id}', [RestaurantMenuController::class, 'destroy'])->middleware('restaurant.permission:manage_menu');
@@ -283,17 +289,17 @@ Route::middleware('auth:sanctum')->group(function () {
         // Staff Management
         Route::get('/staff', [RestaurantController::class, 'getStaff'])->middleware('role:restaurant_owner');
         Route::post('/staff', [RestaurantController::class, 'createStaff'])->middleware('role:restaurant_owner');
-        Route::post('/staff/{id}', [RestaurantController::class, 'updateStaff'])->middleware('role:restaurant_owner');
         Route::put('/staff/{id}', [RestaurantController::class, 'updateStaff'])->middleware('role:restaurant_owner');
         Route::post('/staff/{id}/toggle', [RestaurantController::class, 'toggleStaff'])->middleware('role:restaurant_owner');
-        Route::post('/staff/{id}/delete', [RestaurantController::class, 'deleteStaff'])->middleware('role:restaurant_owner');
         Route::delete('/staff/{id}', [RestaurantController::class, 'deleteStaff'])->middleware('role:restaurant_owner');
 
         // Promotions
         Route::get('/promos', [RestaurantController::class, 'getPromos'])->middleware('role:restaurant_owner');
         Route::post('/promos', [RestaurantController::class, 'createPromo'])->middleware('role:restaurant_owner');
+        Route::get('/promos/options', [RestaurantController::class, 'promoOptions'])->middleware('role:restaurant_owner');
+        Route::get('/promos/{id}', [RestaurantController::class, 'showPromo'])->middleware('role:restaurant_owner');
+        Route::put('/promos/{id}', [RestaurantController::class, 'updatePromo'])->middleware('role:restaurant_owner');
         Route::post('/promos/{id}/toggle', [RestaurantController::class, 'togglePromo'])->middleware('role:restaurant_owner');
-        Route::post('/promos/{id}/delete', [RestaurantController::class, 'deletePromo'])->middleware('role:restaurant_owner');
         Route::delete('/promos/{id}', [RestaurantController::class, 'deletePromo'])->middleware('role:restaurant_owner');
 
         // Printers
@@ -324,20 +330,34 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/orders/summary', [OrderController::class, 'summary'])->middleware('throttle:20,1');
     Route::post('/orders', [OrderController::class, 'store'])->middleware('throttle:10,1');
     Route::post('/coupons/validate', [CouponController::class, 'validateCoupon']);
+    Route::post('/promotions/calculate', [PromotionController::class, 'calculate']);
+    Route::post('/promotions/coupon/validate', [PromotionController::class, 'validateCoupon']);
+    Route::post('/promotions/apply-best', [PromotionController::class, 'applyBest']);
+    Route::post('/promotions/remove', [PromotionController::class, 'remove']);
+    Route::post('/promotions/preview', [PromotionController::class, 'preview']);
+    Route::get('/promotions/preview', [PromotionController::class, 'preview']);
+    Route::post('/promotions/coupons/generate', [PromotionController::class, 'generateCoupons']);
+    Route::get('/promotions/coupons/{code}', [PromotionController::class, 'couponDetails']);
+    Route::get('/promotions/analytics/summary', [PromotionController::class, 'analytics']);
+    Route::get('/promotions/logs', [PromotionController::class, 'logs']);
     Route::get('/orders', [OrderController::class, 'myOrders']);
     Route::get('/orders/{id}', [OrderController::class, 'show']);
     Route::get('/orders/{orderId}/chat', [OrderChatController::class, 'index']);
     Route::post('/orders/{orderId}/chat', [OrderChatController::class, 'store']);
     Route::post('/orders/{orderId}/chat/read', [OrderChatController::class, 'markRead']);
     Route::post('/orders/{orderId}/chat/typing', [OrderChatController::class, 'typing']);
-    Route::post('/orders/{orderId}/chat/assistant', [OrderChatController::class, 'assistant']);
     Route::post('/orders/{id}/feedback', [OrderController::class, 'submitFeedback']);
     Route::post('/orders/{id}/cancel', [OrderController::class, 'cancel']);
     Route::get('/orders/{id}/track', [OrderController::class, 'track']);
     Route::post('/orders/{id}/refund-request', [OrderController::class, 'requestRefund']);
+    Route::post('/orders/{id}/pay', [OrderPaymentController::class, 'pay'])->middleware('throttle:20,1');
+    Route::post('/orders/{id}/driver/payment-link', [OrderPaymentController::class, 'driverPaymentLink'])->middleware('throttle:20,1');
+    Route::post('/orders/{id}/driver/cash', [OrderPaymentController::class, 'driverCash'])->middleware('throttle:20,1');
+    Route::get('/orders/{id}/payment-status', [OrderPaymentController::class, 'status'])->middleware('throttle:60,1');
     
     // Payments
     Route::post('/payments/create', [PaymentController::class, 'createPayment']);
+    Route::post('/payments/checkout/create', [PaymentController::class, 'createCheckoutPayment'])->middleware('throttle:20,1');
     Route::post('/payments/verify', [PaymentController::class, 'verifyPayment']);
     Route::post('/payments/cancel', [PaymentController::class, 'cancelPayment']);
     
@@ -381,11 +401,12 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/orders/{orderId}/chat', [OrderChatController::class, 'store']);
         Route::post('/orders/{orderId}/chat/read', [OrderChatController::class, 'markRead']);
         Route::post('/orders/{orderId}/chat/typing', [OrderChatController::class, 'typing']);
-        Route::post('/orders/{orderId}/chat/assistant', [OrderChatController::class, 'assistant']);
         Route::post('/orders/{orderId}/accept', [DriverController::class, 'acceptOrder']);
         Route::post('/orders/{orderId}/reject', [DriverController::class, 'rejectOrder']);
         Route::post('/orders/{orderId}/status', [DriverController::class, 'updateOrderStatus']);
         Route::put('/orders/{orderId}/status', [DriverController::class, 'updateOrderStatus']);
+        Route::post('/orders/{id}/payment-link', [OrderPaymentController::class, 'driverPaymentLink'])->middleware('throttle:20,1');
+        Route::post('/orders/{id}/cash', [OrderPaymentController::class, 'driverCash'])->middleware('throttle:20,1');
         Route::get('/gigs', [DriverController::class, 'getMyGigs']);
         Route::post('/gigs/{gigId}/book', [DriverController::class, 'bookGig']);
         Route::get('/earnings', [DriverController::class, 'getEarnings']);

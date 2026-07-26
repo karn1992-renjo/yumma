@@ -7,6 +7,7 @@ use App\Models\AppSetting;
 use App\Models\DeliveryArea;
 use App\Models\PartnerApplication;
 use App\Models\User;
+use App\Rules\UniqueUserContactForRole;
 use App\Services\DeliveryAreaResolver;
 use App\Support\PhoneNumber;
 use Illuminate\Http\Request;
@@ -155,7 +156,7 @@ class PartnerApplicationController extends Controller
             return [
                 'partner_type' => 'required|in:restaurant',
                 'business_name' => 'required|string|max:255',
-                'business_email' => 'required|email|unique:partner_applications,business_email|unique:restaurants,email|unique:users,email',
+                'business_email' => ['required', 'email', 'unique:partner_applications,business_email', 'unique:restaurants,email', UniqueUserContactForRole::email('restaurant_owner')],
                 'business_phone' => 'required|string|max:20|unique:partner_applications,business_phone',
                 'city' => 'required|string|max:120',
                 'address' => 'required|string|max:1000',
@@ -179,8 +180,8 @@ class PartnerApplicationController extends Controller
             'partner_type' => 'required|in:driver',
             'verified_phone_token' => 'required|string|min:20|max:255',
             'full_name' => 'required|string|max:255',
-            'email' => 'required|email|unique:partner_applications,email|unique:users,email',
-            'phone' => 'required|string|max:20|unique:partner_applications,phone|unique:users,phone',
+            'email' => ['required', 'email', 'unique:partner_applications,email', UniqueUserContactForRole::email('delivery_partner')],
+            'phone' => ['required', 'string', 'max:20', 'unique:partner_applications,phone', UniqueUserContactForRole::phone('delivery_partner')],
             'city' => 'required|string|max:120',
             'address' => 'required|string|max:1000',
             'vehicle_type' => 'required|in:bike,scooter,ev_scooter,bicycle,car',

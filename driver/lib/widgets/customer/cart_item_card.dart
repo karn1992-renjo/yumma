@@ -1,6 +1,7 @@
 // lib/widgets/customer/cart_item_card.dart
 import 'package:flutter/material.dart';
 import '../../utils/currency_utils.dart';
+import '../common/network_image_loader.dart';
 import '../../providers/cart_provider.dart';
 import '../../theme/foodflow_theme.dart';
 
@@ -22,7 +23,7 @@ class CartItemCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
-      decoration: FoodFlowTheme.softSurface(radius: 14),
+      decoration: foodflow.softSurface(radius: 14),
       child: Row(
         children: [
           Container(
@@ -41,10 +42,10 @@ class CartItemCard extends StatelessWidget {
                 bottomLeft: Radius.circular(14),
               ),
               child: item.menuItem.imageUrl.isNotEmpty
-                  ? Image.network(
-                      item.menuItem.imageUrl,
+                  ? NetworkImageLoader(
+                      imageUrl: item.menuItem.imageUrl,
                       fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) => _buildPlaceholder(),
+                      errorWidget: _buildPlaceholder(),
                     )
                   : _buildPlaceholder(),
             ),
@@ -55,14 +56,14 @@ class CartItemCard extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  FoodFlowTheme.vegDot(item.menuItem.isVeg, size: 14),
+                  foodflow.vegDot(item.menuItem.isVeg, size: 14),
                   const SizedBox(height: 8),
                   Text(
                     item.menuItem.name,
                     style: const TextStyle(
                       fontSize: 15,
-                      fontWeight: FontWeight.w900,
-                      color: FoodFlowTheme.ink,
+                      fontWeight: FontWeight.w800,
+                      color: foodflow.ink,
                     ),
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
@@ -74,8 +75,8 @@ class CartItemCard extends StatelessWidget {
                         formatCurrency(context, item.menuItem.finalPrice),
                         style: TextStyle(
                           fontSize: 14,
-                          fontWeight: FontWeight.w900,
-                          color: FoodFlowTheme.orange,
+                          fontWeight: FontWeight.w800,
+                          color: foodflow.orange,
                         ),
                       ),
                       if (item.menuItem.hasDiscount) ...[
@@ -126,7 +127,7 @@ class CartItemCard extends StatelessWidget {
                                 textAlign: TextAlign.center,
                                 style: const TextStyle(
                                   fontSize: 14,
-                                  fontWeight: FontWeight.w600,
+                                  fontWeight: FontWeight.w400,
                                 ),
                               ),
                             ),

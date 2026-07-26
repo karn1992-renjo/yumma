@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Events\DriverOrderAssignedEvent;
 use App\Models\AppSetting;
+use App\Models\DeliveryChargeSetting;
 use App\Models\Order;
 use App\Models\Restaurant;
 use App\Models\User;
@@ -64,12 +65,20 @@ class AutoAssignDriverService
                 continue;
             }
 
-            $activeGig = $driver->gigs()
-                ->whereDate('date', today())
-                ->whereIn('status', ['available', 'booked'])
-                ->whereTime('start_time', '<=', $now->copy()->addMinutes(30)->format('H:i:s'))
-                ->whereTime('end_time', '>=', $now->format('H:i:s'))
+            $activeGig = $driver->gigBookings()
+                ->where('status', 'booked')
+                ->whereHas('gig', function ($query) use ($now) {
+                    $query->whereDate('date', today())
+                        ->whereIn('status', ['available', 'booked'])
+                        ->whereTime('start_time', '<=', $now->copy()->addMinutes(30)->format('H:i:s'))
+                        ->whereTime('end_time', '>=', $now->format('H:i:s'));
+                })
                 ->first();
+
+            if (!$activeGig) {
+                $fallbackDriver ??= $driver;
+                continue;
+            }
 
             $fallbackDriver ??= $driver;
 
@@ -185,7 +194,9 @@ class AutoAssignDriverService
             );
 
             if ($scheduleRetry) {
-                dispatch(new \App\Jobs\RetryAssignDriverJob($order))->delay(now()->addMinutes(2));
+                dispatch(new \App\Jobs\RetryAssignDriverJob($order))->delay(
+                    now()->addSeconds(DeliveryChargeSetting::getOrderAcceptanceTimeoutSeconds())
+                );
             }
             
             return $nearestDriver;
@@ -200,7 +211,9 @@ class AutoAssignDriverService
         }
         
         if ($scheduleRetry) {
-            dispatch(new \App\Jobs\RetryAssignDriverJob($order))->delay(now()->addMinutes(2));
+            dispatch(new \App\Jobs\RetryAssignDriverJob($order))->delay(
+                now()->addSeconds(DeliveryChargeSetting::getOrderAcceptanceTimeoutSeconds())
+            );
         }
         
         return null;
@@ -225,6 +238,7 @@ class AutoAssignDriverService
 
         $title = 'New Order Assignment';
         $body = "Order #{$order->order_number} from {$order->restaurant->name} is ready for pickup";
+        $acceptanceTimeout = DeliveryChargeSetting::getOrderAcceptanceTimeoutSeconds();
 
         // Send data-only Firebase notification so the driver app can show its urgent full-screen alert immediately.
         $message = CloudMessage::withTarget('token', $token)
@@ -234,18 +248,28 @@ class AutoAssignDriverService
                 'role' => 'driver',
                 'notification_title' => $title,
                 'notification_body' => $body,
-                'timer_duration' => '30',
+                'timer_duration' => (string) $acceptanceTimeout,
                 'order_id' => (string) $order->id,
                 'order_number' => (string) $order->order_number,
                 'restaurant_name' => (string) ($order->restaurant?->name ?? ''),
                 'pickup' => (string) ($order->restaurant?->address ?? ''),
+                'pickup_lat' => (string) ($order->restaurant?->latitude ?? ''),
+                'pickup_lng' => (string) ($order->restaurant?->longitude ?? ''),
+                'restaurant_lat' => (string) ($order->restaurant?->latitude ?? ''),
+                'restaurant_lng' => (string) ($order->restaurant?->longitude ?? ''),
                 'delivery_address' => (string) ($order->delivery_address ?? ''),
+                'delivery_lat' => (string) ($order->delivery_lat ?? ''),
+                'delivery_lng' => (string) ($order->delivery_lng ?? ''),
                 'customer_name' => (string) ($order->customer_name ?? ''),
                 'earnings' => (string) ($order->driver_earning ?? $order->delivery_fee ?? 0),
                 'amount' => (string) ($order->total ?? 0),
                 'total' => (string) ($order->total ?? 0),
                 'metadata' => json_encode([
                     'pickup' => $order->restaurant?->address,
+                    'pickup_lat' => $order->restaurant?->latitude !== null ? (float) $order->restaurant->latitude : null,
+                    'pickup_lng' => $order->restaurant?->longitude !== null ? (float) $order->restaurant->longitude : null,
+                    'delivery_lat' => $order->delivery_lat !== null ? (float) $order->delivery_lat : null,
+                    'delivery_lng' => $order->delivery_lng !== null ? (float) $order->delivery_lng : null,
                     'amount' => (float) ($order->total ?? 0),
                     'earnings' => (float) ($order->driver_earning ?? $order->delivery_fee ?? 0),
                 ]),
@@ -320,11 +344,14 @@ class AutoAssignDriverService
                 continue;
             }
 
-            $activeGig = $driver->gigs()
-                ->whereDate('date', today())
-                ->whereIn('status', ['available', 'booked'])
-                ->whereTime('start_time', '<=', $now->copy()->addMinutes(30)->format('H:i:s'))
-                ->whereTime('end_time', '>=', $now->format('H:i:s'))
+            $activeGig = $driver->gigBookings()
+                ->where('status', 'booked')
+                ->whereHas('gig', function ($query) use ($now) {
+                    $query->whereDate('date', today())
+                        ->whereIn('status', ['available', 'booked'])
+                        ->whereTime('start_time', '<=', $now->copy()->addMinutes(30)->format('H:i:s'))
+                        ->whereTime('end_time', '>=', $now->format('H:i:s'));
+                })
                 ->first();
 
             if (!$activeGig) {

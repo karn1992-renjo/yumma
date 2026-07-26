@@ -9,9 +9,12 @@ use App\Models\Wallet;
 use App\Models\WalletTransaction;
 use App\Services\OrderStatusPushService;
 use App\Services\PayoutCalculationService;
+use App\Services\ScratchCardService;
+use App\Services\SmsService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 
 class DeliveryController extends Controller
 {
@@ -65,6 +68,8 @@ class DeliveryController extends Controller
             $payoutCalculation->processOrderEarnings($order->fresh());
         });
 
+        $this->issueScratchCardsForOrderEvent($order, 'delivery');
+
         app(OrderStatusPushService::class)->notifyParticipants(
             $order->fresh(['customer', 'restaurant'])
         );
@@ -83,9 +88,24 @@ class DeliveryController extends Controller
             ->findOrFail($orderId);
             
         $otp = $order->generateDeliveryOtp();
-        
-        // Send OTP via SMS
-        // $this->sendSms($order->customer_phone, "Your delivery OTP is: $otp");
+
+        try {
+            $sent = app(SmsService::class)->sendDeliveryOtp($order->fresh(['customer', 'restaurant']));
+
+            if (! $sent) {
+                throw new \RuntimeException('SMS message service is not configured.');
+            }
+        } catch (\Throwable $e) {
+            Log::warning('Delivery OTP resend SMS failed.', [
+                'order_id' => $order->id,
+                'message' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'OTP was regenerated but SMS could not be sent. Please check the configured OTP provider.',
+            ], 502);
+        }
         
         return response()->json([
             'success' => true,
@@ -128,6 +148,22 @@ class DeliveryController extends Controller
         }
 
         return ['success' => true];
+    }
+
+    private function issueScratchCardsForOrderEvent(Order $order, string $event): void
+    {
+        try {
+            app(ScratchCardService::class)->issueForRecordedUsage(
+                $order->fresh(['customer', 'restaurant']),
+                $event
+            );
+        } catch (\Throwable $e) {
+            Log::warning('Scratch card issue failed for delivery order event.', [
+                'order_id' => $order->id,
+                'event' => $event,
+                'message' => $e->getMessage(),
+            ]);
+        }
     }
 
     private function verifyRazorpayPayment(Order $order): bool

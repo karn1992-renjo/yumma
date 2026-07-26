@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\AppSetting;
 use App\Models\DeliveryArea;
 use App\Models\DriverGig;
+use App\Models\DriverGigBooking;
 use App\Models\Order;
 use App\Models\User;
 use Carbon\Carbon;
@@ -22,7 +23,9 @@ class FleetController extends Controller
         $drivers = User::role('delivery_partner')
             ->with('deliveryArea')
             ->withCount([
-                'gigs as booked_gigs_count' => fn ($query) => $query->where('status', 'booked')->whereDate('date', '>=', today()),
+                'gigBookings as booked_gigs_count' => fn ($query) => $query
+                    ->where('status', 'booked')
+                    ->whereHas('gig', fn ($gigQuery) => $gigQuery->whereDate('date', '>=', today())),
                 'orders as active_orders_count' => fn ($query) => $query->whereIn('status', ['confirmed', 'preparing', 'ready_for_pickup', 'reached_pickup', 'picked_up', 'on_the_way']),
             ]);
 
@@ -81,35 +84,25 @@ class FleetController extends Controller
         $stats = [
             'total_drivers' => $drivers->count(),
             'online_drivers' => $onlineDriverIds->count(),
-            'booked_gigs_today' => DriverGig::whereDate('date', today())->where('status', 'booked')->count(),
-            'available_gigs_today' => DriverGig::whereDate('date', today())->where('status', 'available')->count(),
+            'booked_gigs_today' => DriverGigBooking::where('status', 'booked')
+                ->whereHas('gig', fn ($query) => $query->whereDate('date', today()))
+                ->count(),
+            'available_gigs_today' => DriverGig::withCount(['activeBookings as active_bookings_count'])
+                ->whereDate('date', today())
+                ->whereIn('status', ['available', 'booked'])
+                ->get()
+                ->filter(fn (DriverGig $gig) => $gig->available_seats > 0)
+                ->count(),
             'active_deliveries' => Order::whereIn('status', ['picked_up', 'on_the_way'])->count(),
         ];
 
-        $todayGigs = DriverGig::with(['driver', 'area'])
+        $todayGigs = DriverGig::with(['driver', 'area', 'bookings.driver'])
+            ->withCount(['activeBookings as active_bookings_count'])
             ->whereDate('date', today())
             ->orderBy('start_time')
             ->get();
 
-        $driverMarkers = $drivers
-            ->map(function ($driver) use ($onlineDriverIds) {
-                $location = Cache::get("driver_location_{$driver->id}");
-
-                return [
-                    'id' => $driver->id,
-                    'name' => $driver->name,
-                    'phone' => $driver->phone,
-                    'area' => $driver->deliveryArea?->name,
-                    'is_online' => $onlineDriverIds->contains($driver->id),
-                    'lat' => $location['lat'] ?? $driver->latitude,
-                    'lng' => $location['lng'] ?? $driver->longitude,
-                    'updated_at' => isset($location['updated_at']) ? (string) $location['updated_at'] : null,
-                    'active_orders_count' => $driver->active_orders_count,
-                    'booked_gigs_count' => $driver->booked_gigs_count,
-                ];
-            })
-            ->filter(fn ($driver) => !empty($driver['lat']) && !empty($driver['lng']))
-            ->values();
+        $driverMarkers = $this->driverMarkersFor($drivers, $onlineDriverIds);
 
         $areas = DeliveryArea::active()->orderBy('name')->get(['id', 'name']);
         $googleMapsApiKey = AppSetting::getValue('google_maps_api_key', AppSetting::getValue('google_maps_key', ''));
@@ -124,5 +117,78 @@ class FleetController extends Controller
             'areas',
             'googleMapsApiKey'
         ));
+    }
+
+    public function markers(Request $request)
+    {
+        $autoAssignService = app(AutoAssignDriverService::class);
+
+        $drivers = User::role('delivery_partner')
+            ->with('deliveryArea')
+            ->withCount([
+                'gigBookings as booked_gigs_count' => fn ($query) => $query
+                    ->where('status', 'booked')
+                    ->whereHas('gig', fn ($gigQuery) => $gigQuery->whereDate('date', '>=', today())),
+                'orders as active_orders_count' => fn ($query) => $query->whereIn('status', ['confirmed', 'preparing', 'ready_for_pickup', 'reached_pickup', 'picked_up', 'on_the_way']),
+            ]);
+
+        if ($request->filled('driver')) {
+            $search = trim($request->input('driver'));
+            $drivers->where(function ($query) use ($search) {
+                $query->where('name', 'like', '%' . $search . '%')
+                    ->orWhere('phone', 'like', '%' . $search . '%');
+            });
+        }
+
+        if ($request->filled('area_id')) {
+            $drivers->where('delivery_area_id', $request->integer('area_id'));
+        }
+
+        $drivers = $drivers->orderBy('name')->get();
+
+        $drivers->each(function ($driver) use ($autoAssignService) {
+            $driver->effective_max_active_orders = $autoAssignService->maxActiveOrdersForDriver($driver);
+        });
+
+        $onlineDriverIds = $drivers
+            ->filter(fn ($driver) => (bool) (Cache::get("driver_status_{$driver->id}")['is_online'] ?? false))
+            ->pluck('id');
+
+        $driverStatusFilter = $request->input('status');
+        if ($driverStatusFilter === 'online') {
+            $drivers = $drivers->filter(fn ($driver) => $onlineDriverIds->contains($driver->id))->values();
+        } elseif ($driverStatusFilter === 'offline') {
+            $drivers = $drivers->reject(fn ($driver) => $onlineDriverIds->contains($driver->id))->values();
+        }
+
+        return response()->json([
+            'success' => true,
+            'data' => $this->driverMarkersFor($drivers, $onlineDriverIds),
+        ]);
+    }
+
+    private function driverMarkersFor($drivers, $onlineDriverIds)
+    {
+        return $drivers
+            ->map(function ($driver) use ($onlineDriverIds) {
+                $location = Cache::get("driver_location_{$driver->id}", []);
+                $lat = is_array($location) ? ($location['lat'] ?? null) : null;
+                $lng = is_array($location) ? ($location['lng'] ?? null) : null;
+
+                return [
+                    'id' => $driver->id,
+                    'name' => $driver->name,
+                    'phone' => $driver->phone,
+                    'area' => $driver->deliveryArea?->name,
+                    'is_online' => $onlineDriverIds->contains($driver->id),
+                    'lat' => $lat ?? $driver->latitude,
+                    'lng' => $lng ?? $driver->longitude,
+                    'updated_at' => is_array($location) && isset($location['updated_at']) ? (string) $location['updated_at'] : null,
+                    'active_orders_count' => $driver->active_orders_count,
+                    'booked_gigs_count' => $driver->booked_gigs_count,
+                ];
+            })
+            ->filter(fn ($driver) => !empty($driver['lat']) && !empty($driver['lng']))
+            ->values();
     }
 }

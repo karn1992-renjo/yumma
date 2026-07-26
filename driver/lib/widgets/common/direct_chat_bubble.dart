@@ -224,7 +224,7 @@ class _DirectChatBubbleState extends State<DirectChatBubble> {
                     style: const TextStyle(
                       color: Colors.white,
                       fontSize: 11,
-                      fontWeight: FontWeight.w900,
+                      fontWeight: FontWeight.w800,
                     ),
                   ),
                 ),
@@ -289,7 +289,7 @@ class _DirectChatBubbleState extends State<DirectChatBubble> {
                     style: const TextStyle(
                         color: Colors.white,
                         fontSize: 18,
-                        fontWeight: FontWeight.w900)),
+                        fontWeight: FontWeight.w800)),
                 if (subtitle != null)
                   Text(subtitle,
                       style:
@@ -323,7 +323,7 @@ class _DirectChatBubbleState extends State<DirectChatBubble> {
             textAlign: TextAlign.center,
             style: TextStyle(
                 color: active ? const Color(0xFF075E54) : Colors.grey,
-                fontWeight: FontWeight.w900)),
+                fontWeight: FontWeight.w800)),
       ),
     );
   }
@@ -397,7 +397,7 @@ class _DirectChatBubbleState extends State<DirectChatBubble> {
         backgroundColor: const Color(0xFFE1F7E8),
         child: Text(_initials(title),
             style: const TextStyle(
-                color: Color(0xFF075E54), fontWeight: FontWeight.w900)),
+                color: Color(0xFF075E54), fontWeight: FontWeight.w800)),
       ),
       title: Text(title,
           maxLines: 1,
@@ -438,7 +438,7 @@ class _DirectChatBubbleState extends State<DirectChatBubble> {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
-                        color: Colors.white, fontWeight: FontWeight.w900)),
+                        color: Colors.white, fontWeight: FontWeight.w800)),
               ),
             ],
           ),

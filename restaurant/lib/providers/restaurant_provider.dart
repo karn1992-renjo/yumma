@@ -49,6 +49,17 @@ class RestaurantProvider extends ChangeNotifier {
         'restaurant_id': _selectedRestaurantId?.toString() ?? 'all',
       };
 
+  Map<String, dynamic> _asMap(dynamic value) {
+    if (value is Map<String, dynamic>) return value;
+    if (value is Map) return Map<String, dynamic>.from(value);
+    return <String, dynamic>{};
+  }
+
+  List<dynamic> _asList(dynamic value) {
+    if (value is List) return List<dynamic>.from(value);
+    return <dynamic>[];
+  }
+
   Future<void> loadRestaurants() async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -106,18 +117,21 @@ class RestaurantProvider extends ChangeNotifier {
       );
 
       if (response['success'] == true) {
-        final data = response['data'];
-        _restaurant = data['restaurant'];
+        final data = _asMap(response['data']);
+        final restaurant = data['restaurant'];
+        _restaurant = restaurant is Map ? Map<String, dynamic>.from(restaurant) : null;
         if (data['restaurants'] is List) {
           _restaurants = (data['restaurants'] as List)
               .whereType<Map>()
               .map((item) => Map<String, dynamic>.from(item))
               .toList();
         }
-        _stats = data['stats'];
-        _pendingOrders = data['pending_orders'] ?? [];
-        _activeOrders = data['active_orders'] ?? [];
-        _isOpen = _restaurant?['is_open'] ?? false;
+        _stats = _asMap(data['stats']);
+        _pendingOrders = _asList(data['pending_orders']);
+        _activeOrders = _asList(data['active_orders']);
+        _isOpen = _restaurant?['is_open'] == true ||
+            _stats['is_open'] == true;
+        _error = null;
       } else {
         _error = response['message'] ?? 'Failed to load dashboard';
       }
@@ -231,6 +245,26 @@ class RestaurantProvider extends ChangeNotifier {
       return false;
     } catch (e) {
       debugPrint('Mark order ready error: $e');
+      return false;
+    }
+  }
+
+  Future<bool> extendPreparationTime(
+    int orderId, {
+    int additionalMinutes = 10,
+  }) async {
+    try {
+      final response = await _api.post(
+        ApiConstants.restaurantExtendPrepTime(orderId),
+        data: {'additional_minutes': additionalMinutes},
+      );
+      if (response['success'] == true) {
+        await loadDashboardData();
+        return true;
+      }
+      return false;
+    } catch (e) {
+      debugPrint('Extend prep time error: $e');
       return false;
     }
   }

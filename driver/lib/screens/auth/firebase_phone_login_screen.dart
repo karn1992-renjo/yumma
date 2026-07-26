@@ -200,7 +200,7 @@ class _FirebasePhoneLoginScreenState extends State<FirebasePhoneLoginScreen> {
               children: [
                 const Text(
                   'Continue with phone',
-                  style: TextStyle(fontSize: 28, fontWeight: FontWeight.w700),
+                  style: TextStyle(fontSize: 28, fontWeight: FontWeight.w800),
                 ),
                 const SizedBox(height: 8),
                 Text(

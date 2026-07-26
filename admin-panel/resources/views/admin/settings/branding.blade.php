@@ -4,14 +4,20 @@
 @section('header', 'App Branding')
 
 @section('content')
-<div class="page-header">
-    <div class="d-flex justify-content-between align-items-center">
+@include('admin.settings._style')
+
+<div class="settings-shell">
+<div class="settings-hero">
+    <div>
+        <span class="settings-eyebrow"><i class="fas fa-palette"></i> Brand System</span>
         <div>
             <h1>App Branding</h1>
-            <p>Update the platform branding settings.</p>
+            <p>Update logo, app name, panel colors, deep links, favicon, storefront background, and onboarding content.</p>
         </div>
     </div>
 </div>
+
+@include('admin.settings._tabs')
 
 <div class="row g-4">
     <div class="col-12">
@@ -29,8 +35,8 @@
                     <div class="mb-3">
                         <label class="form-label fw-semibold">App Logo</label>
                         @if(isset($settings['app_logo']))
-                            <div class="mb-2">
-                                <img src="{{ Storage::disk('public')->url($settings['app_logo']) }}" height="50" alt="Logo">
+                            <div class="settings-image-preview mb-2">
+                                <img src="{{ Storage::disk('public')->url($settings['app_logo']) }}" alt="Logo">
                             </div>
                         @endif
                         <input type="file" name="app_logo" class="form-control" accept="image/*">
@@ -48,8 +54,8 @@
                     <div class="mb-3">
                         <label class="form-label fw-semibold">App Icon</label>
                         @if(isset($settings['app_icon']))
-                            <div class="mb-2">
-                                <img src="{{ Storage::disk('public')->url($settings['app_icon']) }}" height="40" alt="Icon">
+                            <div class="settings-image-preview is-icon mb-2">
+                                <img src="{{ Storage::disk('public')->url($settings['app_icon']) }}" alt="Icon">
                             </div>
                         @endif
                         <input type="file" name="app_icon" class="form-control" accept="image/*">
@@ -57,8 +63,8 @@
                     <div class="mb-3">
                         <label class="form-label fw-semibold">Favicon</label>
                         @if(!empty($settings['app_favicon']))
-                            <div class="mb-2">
-                                <img src="{{ Storage::disk('public')->url($settings['app_favicon']) }}" height="32" width="32" style="object-fit: contain;" alt="Favicon">
+                            <div class="settings-image-preview is-favicon mb-2">
+                                <img src="{{ Storage::disk('public')->url($settings['app_favicon']) }}" alt="Favicon">
                             </div>
                         @endif
                         <input type="file" name="app_favicon" class="form-control" accept="image/x-icon,image/png,image/jpeg,image/webp,image/svg+xml">
@@ -67,8 +73,8 @@
                     <div class="mb-3">
                         <label class="form-label fw-semibold">Frontend Background Image</label>
                         @if(!empty($settings['frontend_background_image']))
-                            <div class="mb-2">
-                                <img src="{{ Storage::disk('public')->url($settings['frontend_background_image']) }}" height="96" class="rounded-3 border" style="width: 180px; object-fit: cover;" alt="Frontend background">
+                            <div class="settings-image-preview is-wide mb-2">
+                                <img src="{{ Storage::disk('public')->url($settings['frontend_background_image']) }}" alt="Frontend background">
                             </div>
                         @endif
                         <input type="file" name="frontend_background_image" class="form-control" accept="image/png,image/jpeg,image/jpg,image/webp">
@@ -148,6 +154,52 @@
                             </div>
                         </div>
                     </div>
+                    <div class="border rounded-3 p-3 mb-3">
+                        <h6 class="fw-bold mb-3">Release Updates</h6>
+                        <p class="text-muted small mb-3">Set the latest release per app. Builds below the minimum supported build are forced to update.</p>
+                        <div class="row g-3">
+                            @foreach (['customer' => 'Customer', 'restaurant' => 'Restaurant', 'driver' => 'Driver'] as $appKey => $appLabel)
+                                <div class="col-12">
+                                    <div class="border rounded-3 p-3">
+                                        <div class="d-flex align-items-center justify-content-between gap-3 mb-3">
+                                            <h6 class="fw-bold mb-0">{{ $appLabel }} App</h6>
+                                            <div class="form-check form-switch mb-0">
+                                                <input type="hidden" name="{{ $appKey }}_force_update" value="0">
+                                                <input class="form-check-input" type="checkbox" role="switch" name="{{ $appKey }}_force_update" value="1" {{ !empty($settings["{$appKey}_force_update"]) && filter_var($settings["{$appKey}_force_update"], FILTER_VALIDATE_BOOLEAN) ? 'checked' : '' }}>
+                                                <label class="form-check-label">Force update</label>
+                                            </div>
+                                        </div>
+                                        <div class="row g-3">
+                                            <div class="col-md-4">
+                                                <label class="form-label fw-semibold">Latest Version</label>
+                                                <input type="text" name="{{ $appKey }}_latest_version" class="form-control" value="{{ $settings["{$appKey}_latest_version"] ?? '' }}" placeholder="2.4.1">
+                                            </div>
+                                            <div class="col-md-4">
+                                                <label class="form-label fw-semibold">Latest Build Number</label>
+                                                <input type="number" min="0" name="{{ $appKey }}_latest_build_number" class="form-control" value="{{ $settings["{$appKey}_latest_build_number"] ?? '' }}" placeholder="21">
+                                            </div>
+                                            <div class="col-md-4">
+                                                <label class="form-label fw-semibold">Minimum Supported Build</label>
+                                                <input type="number" min="0" name="{{ $appKey }}_min_supported_build_number" class="form-control" value="{{ $settings["{$appKey}_min_supported_build_number"] ?? '' }}" placeholder="20">
+                                            </div>
+                                            <div class="col-md-6">
+                                                <label class="form-label fw-semibold">Android Update URL</label>
+                                                <input type="url" name="{{ $appKey }}_android_update_url" class="form-control" value="{{ $settings["{$appKey}_android_update_url"] ?? ($appKey === 'customer' ? ($settings['customer_play_store_url'] ?? '') : '') }}" placeholder="https://play.google.com/store/apps/details?id=...">
+                                            </div>
+                                            <div class="col-md-6">
+                                                <label class="form-label fw-semibold">iOS Update URL</label>
+                                                <input type="url" name="{{ $appKey }}_ios_update_url" class="form-control" value="{{ $settings["{$appKey}_ios_update_url"] ?? '' }}" placeholder="https://apps.apple.com/app/id...">
+                                            </div>
+                                            <div class="col-12">
+                                                <label class="form-label fw-semibold">Release Notes</label>
+                                                <textarea name="{{ $appKey }}_release_notes" class="form-control" rows="2" placeholder="What changed in this release">{{ $settings["{$appKey}_release_notes"] ?? '' }}</textarea>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            @endforeach
+                        </div>
+                    </div>
                     <hr class="my-4">
                     <h6 class="fw-bold mb-3">Onboarding Content</h6>
                     <div class="mb-3">
@@ -173,8 +225,8 @@
                             <div class="mb-2">
                                 <label class="form-label fw-semibold">Image</label>
                                 @if(!empty($settings["onboarding_slide_{$i}_image"]))
-                                    <div class="mb-2">
-                                        <img src="{{ Storage::disk('public')->url($settings["onboarding_slide_{$i}_image"]) }}" height="72" alt="Slide {{ $i }} image">
+                                    <div class="settings-image-preview mb-2">
+                                        <img src="{{ Storage::disk('public')->url($settings["onboarding_slide_{$i}_image"]) }}" alt="Slide {{ $i }} image">
                                     </div>
                                 @endif
                                 <input type="file" name="onboarding_slide_{{ $i }}_image" class="form-control" accept="image/*">
@@ -186,5 +238,6 @@
             </div>
         </div>
     </div>
+</div>
 </div>
 @endsection

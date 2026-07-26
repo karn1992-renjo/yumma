@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class GlobalMenuCategory extends Model
@@ -31,6 +32,14 @@ class GlobalMenuCategory extends Model
     public function children(): HasMany
     {
         return $this->hasMany(self::class, 'parent_id')->orderBy('display_order')->orderBy('name');
+    }
+
+    public function cuisines(): BelongsToMany
+    {
+        return $this->belongsToMany(Cuisine::class, 'global_menu_category_cuisine')
+            ->withTimestamps()
+            ->orderBy('display_order')
+            ->orderBy('name');
     }
 
     public function scopeActive($query)

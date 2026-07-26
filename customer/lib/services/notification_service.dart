@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:ui' show Color;
 
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
@@ -11,6 +12,7 @@ import 'package:http/http.dart' as http;
 import '../config/api_constants.dart';
 import '../config/app_config.dart';
 import '../firebase_options.dart';
+import '../models/order.dart';
 import '../models/user.dart';
 import 'api_service.dart';
 import 'customer_order_status_overlay_service.dart';
@@ -50,6 +52,7 @@ class FirebaseNotificationService {
       RawResourceAndroidNotificationSound('custom_push');
   static const String _defaultChannelId = 'default_notification_channel_custom';
   static const String _orderStatusChannelId = 'order_status_channel_custom';
+  static const int _liveOrderNotificationBaseId = 810000;
 
   static final FirebaseNotificationService instance =
       FirebaseNotificationService._internal();
@@ -427,6 +430,55 @@ class FirebaseNotificationService {
     RemoteMessage message,
   ) async {
     final data = _normalizeOrderData(_safeDataMap(message.data));
+    if (_isForeignOrderData(data)) {
+      return;
+    }
+
+    await _showLiveOrderNotification(
+      data: data,
+      titleOverride: message.notification?.title?.toString() ??
+          data['notification_title']?.toString(),
+      bodyOverride:
+          message.notification?.body?.toString() ?? data['message']?.toString(),
+      alertOnce: true,
+    );
+  }
+
+  static Future<void> showLiveOrderNotificationFromOrder(
+    Order order, {
+    String? etaText,
+    String? distanceText,
+  }) async {
+    await _showLiveOrderNotification(
+      data: {
+        'type': 'customer_order_status',
+        'role': 'customer',
+        'order_id': order.id,
+        'order_number': order.orderNumber,
+        'status': order.status,
+        'service_type': order.serviceType,
+        'order_type': order.orderType,
+        'eta_range': etaText ?? order.etaRange,
+        'eta_minutes': order.etaMinutes,
+        'distance_remaining': distanceText ?? order.deliveryDistanceLabel,
+        'restaurant_name': order.restaurant?.name,
+      },
+      alertOnce: false,
+      silent: true,
+    );
+  }
+
+  static Future<void> _showLiveOrderNotification({
+    required Map<String, dynamic> data,
+    String? titleOverride,
+    String? bodyOverride,
+    bool alertOnce = true,
+    bool silent = false,
+  }) async {
+    final normalized = _normalizeOrderData(data);
+    final orderId = _parseOrderId(normalized['order_id'] ?? normalized['id']);
+    if (orderId == null) return;
+
     final plugin = FlutterLocalNotificationsPlugin();
     const androidSettings =
         AndroidInitializationSettings('@mipmap/ic_launcher');
@@ -452,33 +504,190 @@ class FirebaseNotificationService {
             AndroidFlutterLocalNotificationsPlugin>()
         ?.createNotificationChannel(channel);
 
-    final orderId = data['order_id'] ?? data['id'] ?? '';
-    final title = message.notification?.title?.toString() ??
-        data['notification_title']?.toString() ??
-        'Order update';
-    final body = message.notification?.body?.toString() ??
-        data['message']?.toString() ??
-        'Order #$orderId has a new update.';
+    final status = _normalizedStatus(normalized['status'] ??
+        normalized['order_status'] ??
+        normalized['current_status']);
+    final terminal = status == 'delivered' || status == 'cancelled';
+    final etaLabel = _etaLabelFromData(normalized);
+    final progress = _progressForOrderNotification(normalized, status);
+    final title = _liveOrderTitle(
+      status: status,
+      etaLabel: etaLabel,
+      orderType: normalized['order_type']?.toString(),
+      fallback: titleOverride,
+    );
+    final body = bodyOverride?.trim().isNotEmpty == true
+        ? bodyOverride!.trim()
+        : _liveOrderBody(
+            status: status,
+            orderType: normalized['order_type']?.toString(),
+            restaurantName: normalized['restaurant_name']?.toString(),
+          );
+    final payload = {
+      ...normalized,
+      'type': 'customer_order_status',
+      'role': 'customer',
+      'order_id': orderId,
+      'deep_link': '/order/track',
+    };
 
     await plugin.show(
-      id: DateTime.now().millisecondsSinceEpoch ~/ 1000,
+      id: _liveOrderNotificationId(orderId),
       title: title,
       body: body,
-      notificationDetails: const NotificationDetails(
+      notificationDetails: NotificationDetails(
         android: AndroidNotificationDetails(
           _orderStatusChannelId,
           'Order Status Updates',
           channelDescription: 'Customer order status alerts',
           importance: Importance.high,
-          priority: Priority.high,
-          playSound: true,
-          sound: _customPushSound,
+          priority: Priority.max,
+          category: AndroidNotificationCategory.progress,
+          playSound: !silent && alertOnce,
+          sound: !silent && alertOnce ? _customPushSound : null,
           visibility: NotificationVisibility.public,
+          ongoing: !terminal,
+          autoCancel: terminal,
+          onlyAlertOnce: true,
+          showProgress: true,
+          maxProgress: 100,
+          progress: progress,
+          color: const Color(0xFFE23744),
+          colorized: false,
+          subText: etaLabel,
+          timeoutAfter: terminal ? 45000 : null,
+          ticker: title,
         ),
-        iOS: DarwinNotificationDetails(sound: 'custom-push.mp3'),
+        iOS: DarwinNotificationDetails(
+          sound: !silent && alertOnce ? 'custom-push.mp3' : null,
+        ),
       ),
-      payload: jsonEncode(data),
+      payload: jsonEncode(payload),
     );
+  }
+
+  static int _liveOrderNotificationId(int orderId) {
+    return _liveOrderNotificationBaseId + orderId.remainder(100000);
+  }
+
+  static String _normalizedStatus(dynamic value) {
+    return value
+            ?.toString()
+            .trim()
+            .toLowerCase()
+            .replaceAll('-', '_')
+            .replaceAll(' ', '_') ??
+        '';
+  }
+
+  static String? _etaLabelFromData(Map<String, dynamic> data) {
+    final range =
+        (data['eta_range'] ?? data['estimated_delivery_label'])?.toString();
+    if (range != null && range.trim().isNotEmpty) return range.trim();
+
+    final minutes = _parseOrderId(
+      data['eta_minutes'] ??
+          data['estimated_delivery_minutes'] ??
+          data['delivery_eta_minutes'],
+    );
+    if (minutes != null && minutes > 0) return '$minutes mins';
+    return null;
+  }
+
+  static String _liveOrderTitle({
+    required String status,
+    required String? etaLabel,
+    required String? orderType,
+    required String? fallback,
+  }) {
+    if (status == 'picked_up' || status == 'on_the_way') {
+      return etaLabel == null ? 'Arriving soon' : 'Arriving in $etaLabel';
+    }
+    if (orderType == 'takeaway' && status == 'ready_for_pickup') {
+      return 'Ready to collect';
+    }
+    if (status == 'delivered') return 'Delivered';
+    if (status == 'cancelled') return 'Order cancelled';
+    if (fallback != null && fallback.trim().isNotEmpty) return fallback.trim();
+    if (status == 'preparing') return 'Preparing your order';
+    if (status == 'ready_for_pickup') return 'Rider heading to pickup';
+    if (status == 'confirmed') return 'Order confirmed';
+    return 'Order update';
+  }
+
+  static String _liveOrderBody({
+    required String status,
+    required String? orderType,
+    required String? restaurantName,
+  }) {
+    final store = restaurantName?.trim().isNotEmpty == true
+        ? restaurantName!.trim()
+        : 'The store';
+    if (orderType == 'takeaway') {
+      if (status == 'ready_for_pickup') {
+        return 'Your order is waiting at the counter';
+      }
+      if (status == 'delivered' || status == 'picked_up') {
+        return 'Thanks for ordering with FoodFlow';
+      }
+      return '$store is preparing your pickup';
+    }
+
+    switch (status) {
+      case 'confirmed':
+        return '$store accepted your order';
+      case 'preparing':
+        return 'Your food is being prepared';
+      case 'ready_for_pickup':
+        return 'Delivery partner will pick it up soon';
+      case 'picked_up':
+      case 'on_the_way':
+        return 'Order is on the way';
+      case 'delivered':
+        return 'Enjoy your meal';
+      case 'cancelled':
+        return 'This order is no longer active';
+      default:
+        return 'We are tracking your order';
+    }
+  }
+
+  static int _progressForOrderNotification(
+    Map<String, dynamic> data,
+    String status,
+  ) {
+    final explicitProgress = _parseOrderId(
+      data['progress'] ??
+          data['progress_percent'] ??
+          data['completion_percent'],
+    );
+    if (explicitProgress != null) {
+      return explicitProgress.clamp(0, 100);
+    }
+
+    final isTakeaway = data['order_type']?.toString() == 'takeaway';
+    final progressMap = isTakeaway
+        ? const {
+            'pending': 8,
+            'confirmed': 25,
+            'preparing': 55,
+            'ready_for_pickup': 90,
+            'picked_up': 100,
+            'delivered': 100,
+            'cancelled': 100,
+          }
+        : const {
+            'pending': 8,
+            'confirmed': 18,
+            'preparing': 36,
+            'ready_for_pickup': 54,
+            'reached_pickup': 62,
+            'picked_up': 70,
+            'on_the_way': 84,
+            'delivered': 100,
+            'cancelled': 100,
+          };
+    return progressMap[status] ?? 12;
   }
 
   void _showInAppOrderOverlay(RemoteMessage message) {
@@ -653,8 +862,9 @@ class FirebaseNotificationService {
     final normalized = _normalizeOrderData(data);
     final type = normalized['type']?.toString().toLowerCase() ?? '';
     final targetApp = normalized['target_app']?.toString().toLowerCase() ?? '';
-    final dataOnly = normalized['data_only']?.toString().toLowerCase() == 'true' ||
-        normalized['data_only']?.toString() == '1';
+    final dataOnly =
+        normalized['data_only']?.toString().toLowerCase() == 'true' ||
+            normalized['data_only']?.toString() == '1';
     return type == 'admin_broadcast' && (targetApp == 'customer' || dataOnly);
   }
 

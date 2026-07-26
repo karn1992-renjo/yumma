@@ -17,7 +17,7 @@ class RestaurantPremium {
     return BoxDecoration(
       color: Colors.white,
       borderRadius: BorderRadius.circular(radius),
-      border: Border.all(color: FoodFlowTheme.line),
+      border: Border.all(color: foodflow.line),
       boxShadow: [
         BoxShadow(
           color: navy.withOpacity(0.07),
@@ -87,7 +87,7 @@ class PremiumRestaurantHeader extends StatelessWidget {
                   style: const TextStyle(
                     color: Colors.white,
                     fontSize: 20,
-                    fontWeight: FontWeight.w900,
+                    fontWeight: FontWeight.w800,
                   ),
                 ),
                 const SizedBox(height: 4),
@@ -98,7 +98,7 @@ class PremiumRestaurantHeader extends StatelessWidget {
                   style: TextStyle(
                     color: Colors.white.withOpacity(0.72),
                     fontSize: 12,
-                    fontWeight: FontWeight.w700,
+                    fontWeight: FontWeight.w800,
                   ),
                 ),
               ],
@@ -161,9 +161,9 @@ class PremiumMetricCard extends StatelessWidget {
                   child: Text(
                     caption!,
                     style: const TextStyle(
-                      color: FoodFlowTheme.muted,
+                      color: foodflow.muted,
                       fontSize: 10,
-                      fontWeight: FontWeight.w900,
+                      fontWeight: FontWeight.w800,
                     ),
                   ),
                 ),
@@ -175,9 +175,9 @@ class PremiumMetricCard extends StatelessWidget {
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(
-              color: FoodFlowTheme.ink,
+              color: foodflow.ink,
               fontSize: 20,
-              fontWeight: FontWeight.w900,
+              fontWeight: FontWeight.w800,
             ),
           ),
           const SizedBox(height: 3),
@@ -186,9 +186,9 @@ class PremiumMetricCard extends StatelessWidget {
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(
-              color: FoodFlowTheme.muted,
+              color: foodflow.muted,
               fontSize: 12,
-              fontWeight: FontWeight.w700,
+              fontWeight: FontWeight.w800,
             ),
           ),
         ],
@@ -223,9 +223,9 @@ class PremiumSectionTitle extends StatelessWidget {
                 Text(
                   title,
                   style: const TextStyle(
-                    color: FoodFlowTheme.ink,
+                    color: foodflow.ink,
                     fontSize: 18,
-                    fontWeight: FontWeight.w900,
+                    fontWeight: FontWeight.w800,
                   ),
                 ),
                 if (subtitle != null) ...[
@@ -233,9 +233,9 @@ class PremiumSectionTitle extends StatelessWidget {
                   Text(
                     subtitle!,
                     style: const TextStyle(
-                      color: FoodFlowTheme.muted,
+                      color: foodflow.muted,
                       fontSize: 12,
-                      fontWeight: FontWeight.w700,
+                      fontWeight: FontWeight.w800,
                     ),
                   ),
                 ],

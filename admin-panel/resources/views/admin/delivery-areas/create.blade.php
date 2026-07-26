@@ -56,6 +56,22 @@
                         <small class="text-muted">Set 0 for unlimited bookings</small>
                         @error('max_daily_bookings') <div class="invalid-feedback">{{ $message }}</div> @enderror
                     </div>
+
+                    <div class="border rounded-3 p-3 mb-3">
+                        <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" name="free_delivery_enabled" id="freeDeliveryEnabled" value="1" {{ old('free_delivery_enabled') ? 'checked' : '' }}>
+                            <label class="form-check-label fw-semibold" for="freeDeliveryEnabled">
+                                Enable Free Delivery for this Zone
+                            </label>
+                        </div>
+                        <div class="mt-3">
+                            <label class="form-label fw-semibold">Free Delivery Above Amount</label>
+                            <input type="number" step="0.01" min="0" name="free_delivery_threshold" class="form-control @error('free_delivery_threshold') is-invalid @enderror"
+                                   value="{{ old('free_delivery_threshold') }}" placeholder="Example: 200">
+                            <small class="text-muted">Customers inside this zone get free delivery when order subtotal reaches this amount.</small>
+                            @error('free_delivery_threshold') <div class="invalid-feedback">{{ $message }}</div> @enderror
+                        </div>
+                    </div>
                     
                     <div class="mb-3">
                         <label class="form-label fw-semibold">Area Type</label>

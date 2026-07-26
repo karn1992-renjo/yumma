@@ -124,7 +124,7 @@ class _PartnerApplicationStatusScreenState
                   style: const TextStyle(
                     color: _subtext,
                     height: 1.45,
-                    fontWeight: FontWeight.w500,
+                    fontWeight: FontWeight.w400,
                   ),
                 ),
                 const SizedBox(height: 16),
@@ -164,7 +164,7 @@ class _PartnerApplicationStatusScreenState
                   style: TextStyle(
                     color: _text,
                     fontSize: 18,
-                    fontWeight: FontWeight.w700,
+                    fontWeight: FontWeight.w800,
                   ),
                 ),
                 const SizedBox(height: 12),
@@ -222,7 +222,7 @@ class _PartnerApplicationStatusScreenState
                       'Application in progress',
                   style: const TextStyle(
                     color: _text,
-                    fontWeight: FontWeight.w600,
+                    fontWeight: FontWeight.w400,
                     height: 1.45,
                   ),
                 ),
@@ -239,7 +239,7 @@ class _PartnerApplicationStatusScreenState
                       _statusData?['admin_notes']?.toString() ?? '',
                       style: const TextStyle(
                         color: _text,
-                        fontWeight: FontWeight.w500,
+                        fontWeight: FontWeight.w400,
                         height: 1.45,
                       ),
                     ),
@@ -286,7 +286,7 @@ class _PartnerApplicationStatusScreenState
             style: const TextStyle(
               color: _text,
               fontSize: 18,
-              fontWeight: FontWeight.w700,
+              fontWeight: FontWeight.w800,
             ),
           ),
           const SizedBox(height: 12),
@@ -308,7 +308,7 @@ class _PartnerApplicationStatusScreenState
               label,
               style: const TextStyle(
                 color: _subtext,
-                fontWeight: FontWeight.w600,
+                fontWeight: FontWeight.w400,
               ),
             ),
           ),
@@ -317,7 +317,7 @@ class _PartnerApplicationStatusScreenState
               value?.toString() ?? '-',
               style: const TextStyle(
                 color: _text,
-                fontWeight: FontWeight.w600,
+                fontWeight: FontWeight.w400,
               ),
             ),
           ),

@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:appsflyer_sdk/appsflyer_sdk.dart';
 import 'package:flutter/material.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../config/app_config.dart';
@@ -33,6 +34,8 @@ class AppsFlyerDeepLinkService {
       return;
     }
 
+    await _requestTrackingAuthorizationIfNeeded();
+
     final options = AppsFlyerOptions(
       afDevKey: devKey,
       appId: AppConfig.appsFlyerAppId.trim(),
@@ -62,6 +65,22 @@ class AppsFlyerDeepLinkService {
     } catch (error, stackTrace) {
       _log('AppsFlyer init failed: $error');
       debugPrintStack(stackTrace: stackTrace);
+    }
+  }
+
+  Future<void> _requestTrackingAuthorizationIfNeeded() async {
+    if (!Platform.isIOS) return;
+
+    try {
+      final currentStatus = await Permission.appTrackingTransparency.status;
+      if (currentStatus.isDenied) {
+        final status = await Permission.appTrackingTransparency.request();
+        _log('ATT authorization status: $status');
+        return;
+      }
+      _log('ATT authorization status: $currentStatus');
+    } catch (error) {
+      _log('ATT authorization unavailable: $error');
     }
   }
 
@@ -304,7 +323,8 @@ class AppsFlyerDeepLinkDestination {
   String get signature =>
       '${type.name}:${primaryRaw ?? ''}:${secondaryRaw ?? ''}:${tertiaryRaw ?? ''}';
 
-  static AppsFlyerDeepLinkDestination? fromPayload(Map<String, dynamic> payload) {
+  static AppsFlyerDeepLinkDestination? fromPayload(
+      Map<String, dynamic> payload) {
     final value = _read(payload, const [
       'deep_link_value',
       'deepLinkValue',

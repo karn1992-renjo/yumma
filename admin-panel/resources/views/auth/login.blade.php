@@ -5,211 +5,305 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="csrf-token" content="{{ csrf_token() }}">
     @php
-        $appName = App\Models\AppSetting::getValue('app_name', 'FoodFlow');
-        $appLogo = App\Models\AppSetting::getValue('app_logo', null);
-        $appFavicon = App\Models\AppSetting::getValue('app_favicon', null);
+        $appName = App\Models\AppSetting::getValue('app_name', config('app.name', 'FoodFlow'));
+        $appLogo = App\Models\AppSetting::getValue('app_logo');
+        $appFavicon = App\Models\AppSetting::getValue('app_favicon');
         $headerBrandingType = App\Models\AppSetting::getValue('header_branding_type', 'text');
-        $headerBrandingType = in_array($headerBrandingType, ['text', 'logo', 'logo_text']) ? $headerBrandingType : 'text';
+        $headerBrandingType = in_array($headerBrandingType, ['text', 'logo', 'logo_text'], true) ? $headerBrandingType : 'text';
+        $brandingUrl = function (?string $path) {
+            if (!$path) {
+                return null;
+            }
+
+            return str_starts_with($path, 'branding/')
+                ? route('media.branding', ['file' => basename($path)])
+                : \Illuminate\Support\Facades\Storage::disk('public')->url($path);
+        };
+        $appLogoUrl = $brandingUrl($appLogo);
+        $appFaviconUrl = $brandingUrl($appFavicon);
+        $activeForm = session('otp_phone') ? 'otp' : (old('active_form') ?? 'login');
     @endphp
     <title>Login - {{ $appName }}</title>
-    <link rel="icon" href="{{ $appFavicon ? \Illuminate\Support\Facades\Storage::disk('public')->url($appFavicon) : asset('favicon.ico') }}">
-
-    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="icon" href="{{ $appFaviconUrl ?: asset('favicon.ico') }}">
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 
     <style>
         * {
+            box-sizing: border-box;
             margin: 0;
             padding: 0;
-            box-sizing: border-box;
         }
 
+        html,
         body {
-            font-family: 'Poppins', sans-serif;
-            background: #fff;
-            min-height: 100vh;
+            width: 100%;
+            max-width: 100%;
+            min-height: 100%;
             overflow-x: hidden;
         }
 
-        .page {
-            display: grid;
-            grid-template-columns: 1.1fr 0.9fr;
+        body {
             min-height: 100vh;
+            font-family: 'Plus Jakarta Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            color: #0f172a;
+            background:
+                radial-gradient(circle at 10% 10%, rgba(139, 92, 246, .16), transparent 30%),
+                radial-gradient(circle at 90% 10%, rgba(249, 115, 22, .14), transparent 28%),
+                linear-gradient(135deg, #f8fafc 0%, #eef2ff 48%, #fff7ed 100%);
         }
 
-        .hero {
+        .auth-shell {
+            display: grid;
+            grid-template-columns: minmax(0, 1.08fr) minmax(420px, .92fr);
+            min-height: 100vh;
+            width: 100%;
+        }
+
+        .auth-story {
             position: relative;
-            background: linear-gradient(135deg, #667EEA 0%, #764BA2 100%);
-            color: white;
-            padding: 48px;
             display: flex;
             align-items: center;
+            min-width: 0;
+            padding: 56px;
+            color: #fff;
+            background:
+                linear-gradient(135deg, rgba(15, 23, 42, .94), rgba(88, 28, 135, .86)),
+                linear-gradient(135deg, #111827, #7c3aed);
             overflow: hidden;
         }
 
-        .hero::before {
+        .auth-story::before {
             content: '';
             position: absolute;
             inset: 0;
-            opacity: 0.1;
-            background-image: url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23ffffff' fill-opacity='0.4'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
+            background:
+                linear-gradient(rgba(255, 255, 255, .07) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(255, 255, 255, .07) 1px, transparent 1px);
+            background-size: 42px 42px;
+            mask-image: linear-gradient(135deg, #000 0%, transparent 76%);
         }
 
-        .hero-content {
+        .auth-story::after {
+            content: '';
+            position: absolute;
+            right: -120px;
+            bottom: -120px;
+            width: 360px;
+            height: 360px;
+            border-radius: 50%;
+            background: rgba(249, 115, 22, .28);
+            filter: blur(8px);
+        }
+
+        .story-content {
             position: relative;
             z-index: 1;
-            max-width: 540px;
-            margin: 0 auto;
+            width: 100%;
+            max-width: 640px;
         }
 
-        .hero-logo {
-            font-size: 72px;
-            font-weight: 800;
+        .brand-mark {
             display: inline-flex;
             align-items: center;
-            gap: 18px;
-            width: auto;
-            margin: 0 0 32px 0;
+            gap: 13px;
+            margin-bottom: 42px;
         }
 
-        .hero-logo img {
-            height: 72px;
-            width: auto;
+        .brand-icon {
+            width: 58px;
+            height: 58px;
+            display: grid;
+            place-items: center;
+            border-radius: 20px;
+            background:
+                radial-gradient(circle at 30% 18%, rgba(255, 255, 255, .48), transparent 30%),
+                linear-gradient(135deg, #f97316, #7c3aed);
+            box-shadow: 0 18px 42px rgba(0, 0, 0, .22);
+            overflow: hidden;
+        }
+
+        .brand-icon img {
+            width: 100%;
+            height: 100%;
             object-fit: contain;
+            padding: 8px;
         }
 
-        .hero-logo span {
-            color: #FFE066;
-            font-size: inherit;
+        .brand-name {
+            font-size: 26px;
+            font-weight: 950;
             line-height: 1;
+            letter-spacing: 0;
         }
 
-        .hero-title {
-            font-size: 48px;
-            line-height: 1.15;
+        .brand-name span {
+            color: #fdba74;
+        }
+
+        .story-kicker {
+            display: inline-flex;
+            align-items: center;
+            gap: 9px;
+            padding: 8px 12px;
+            margin-bottom: 18px;
+            border: 1px solid rgba(255, 255, 255, .18);
+            border-radius: 999px;
+            background: rgba(255, 255, 255, .1);
+            color: #fde68a;
+            font-size: 12px;
+            font-weight: 900;
+        }
+
+        .story-title {
+            max-width: 620px;
+            margin: 0;
+            font-size: clamp(36px, 4.2vw, 58px);
+            line-height: 1.02;
+            font-weight: 950;
+            letter-spacing: 0;
+        }
+
+        .story-copy {
+            max-width: 560px;
+            margin-top: 18px;
+            color: rgba(255, 255, 255, .78);
+            font-size: 16px;
+            font-weight: 600;
+            line-height: 1.7;
+        }
+
+        .story-metrics {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 12px;
+            margin-top: 34px;
+        }
+
+        .story-metric {
+            padding: 16px;
+            border: 1px solid rgba(255, 255, 255, .16);
+            border-radius: 20px;
+            background: rgba(255, 255, 255, .1);
+            backdrop-filter: blur(14px);
+        }
+
+        .story-metric strong {
+            display: block;
+            color: #fff;
+            font-size: 20px;
+            font-weight: 950;
+        }
+
+        .story-metric span {
+            display: block;
+            margin-top: 4px;
+            color: rgba(255, 255, 255, .72);
+            font-size: 12px;
             font-weight: 800;
+        }
+
+        .auth-panel {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 0;
+            padding: 36px 28px;
+        }
+
+        .auth-card {
+            width: min(100%, 480px);
+            border: 1px solid rgba(226, 232, 240, .92);
+            border-radius: 30px;
+            background: rgba(255, 255, 255, .88);
+            box-shadow: 0 32px 80px rgba(15, 23, 42, .14);
+            backdrop-filter: blur(20px);
+            overflow: hidden;
+        }
+
+        .auth-card-header {
+            padding: 26px 28px 18px;
+        }
+
+        .mobile-brand {
+            display: none;
+            align-items: center;
+            gap: 11px;
             margin-bottom: 18px;
         }
 
-        .hero-subtitle {
-            font-size: 18px;
-            opacity: 0.9;
-            line-height: 1.6;
-            margin-bottom: 40px;
+        .auth-title {
+            margin: 0;
+            color: #0f172a;
+            font-size: 28px;
+            font-weight: 950;
+            line-height: 1.1;
+            letter-spacing: 0;
         }
 
-        .hero-points {
-            display: flex;
-            flex-direction: column;
-            gap: 22px;
-        }
-
-        .hero-point {
-            display: flex;
-            gap: 14px;
-            align-items: flex-start;
-        }
-
-        .hero-point-icon {
-            width: 42px;
-            height: 42px;
-            border-radius: 12px;
-            background: rgba(255, 255, 255, 0.18);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            flex-shrink: 0;
-        }
-
-        .hero-point h3 {
-            font-size: 16px;
-            font-weight: 600;
-            margin-bottom: 4px;
-        }
-
-        .hero-point p {
-            font-size: 14px;
-            opacity: 0.82;
-        }
-
-        .panel {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            padding: 40px 28px;
-            background: #fff;
-        }
-
-        .card {
-            width: 100%;
-            max-width: 460px;
-            animation: fadeInUp 0.5s ease;
-        }
-
-        .header {
-            margin-bottom: 28px;
-        }
-
-        .header h2 {
-            font-size: 32px;
+        .auth-subtitle {
+            margin-top: 8px;
+            color: #64748b;
+            font-size: 13px;
             font-weight: 700;
-            color: #1F2937;
-            margin-bottom: 10px;
-        }
-
-        .header p {
-            font-size: 14px;
-            color: #6B7280;
+            line-height: 1.5;
         }
 
         .alert {
-            padding: 14px 16px;
-            border-radius: 14px;
-            margin-bottom: 22px;
             display: flex;
-            gap: 12px;
-            align-items: center;
-            font-size: 14px;
+            align-items: flex-start;
+            gap: 10px;
+            margin-top: 16px;
+            padding: 12px 13px;
+            border-radius: 16px;
+            font-size: 13px;
+            font-weight: 750;
         }
 
         .alert-danger {
-            background: #FEF2F2;
-            border: 1px solid #FECACA;
-            color: #B91C1C;
+            color: #991b1b;
+            border: 1px solid #fecaca;
+            background: #fef2f2;
         }
 
         .alert-success {
-            background: #F0FDF4;
-            border: 1px solid #BBF7D0;
-            color: #15803D;
+            color: #166534;
+            border: 1px solid #bbf7d0;
+            background: #f0fdf4;
         }
 
-        .toggle {
-            display: flex;
-            gap: 10px;
-            background: #F3F4F6;
-            padding: 4px;
-            border-radius: 999px;
-            margin-bottom: 28px;
+        .auth-toggle {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 5px;
+            margin: 0 28px 18px;
+            padding: 5px;
+            border: 1px solid #e2e8f0;
+            border-radius: 18px;
+            background: #f8fafc;
         }
 
         .toggle-btn {
-            flex: 1;
+            min-height: 40px;
             border: 0;
+            border-radius: 14px;
             background: transparent;
-            border-radius: 999px;
-            padding: 10px 12px;
+            color: #64748b;
+            font: inherit;
             font-size: 13px;
-            font-weight: 600;
-            color: #6B7280;
+            font-weight: 900;
             cursor: pointer;
-            transition: all 0.2s ease;
+            transition: all .18s ease;
         }
 
         .toggle-btn.active {
-            background: #fff;
-            color: #667EEA;
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+            color: #fff;
+            background: linear-gradient(135deg, #7c3aed, #f97316);
+            box-shadow: 0 12px 24px rgba(124, 58, 237, .2);
+        }
+
+        .auth-card-body {
+            padding: 0 28px 28px;
         }
 
         .auth-form {
@@ -221,15 +315,15 @@
         }
 
         .form-group {
-            margin-bottom: 20px;
+            margin-bottom: 16px;
         }
 
         .form-label {
             display: block;
-            font-size: 14px;
-            font-weight: 600;
-            color: #374151;
-            margin-bottom: 8px;
+            margin-bottom: 7px;
+            color: #334155;
+            font-size: 13px;
+            font-weight: 900;
         }
 
         .input-wrap {
@@ -238,73 +332,83 @@
 
         .input-wrap > i:not(.toggle-password) {
             position: absolute;
-            left: 16px;
+            left: 15px;
             top: 50%;
             transform: translateY(-50%);
-            color: #9CA3AF;
-            font-size: 18px;
+            color: #94a3b8;
+            pointer-events: none;
         }
 
         .toggle-password {
             position: absolute;
-            right: 16px;
+            right: 15px;
             top: 50%;
             transform: translateY(-50%);
+            color: #7c3aed;
             cursor: pointer;
-            color: #667EEA !important;
-            z-index: 2;
         }
 
         .form-control {
             width: 100%;
-            padding: 14px 16px 14px 48px;
-            border: 2px solid #E5E7EB;
-            border-radius: 14px;
-            font-size: 15px;
-            font-family: 'Poppins', sans-serif;
-            transition: all 0.2s ease;
-            background: #fff;
+            min-height: 48px;
+            border: 1.5px solid #dbe4f0;
+            border-radius: 16px;
+            background: rgba(255, 255, 255, .92);
+            color: #0f172a;
+            font: inherit;
+            font-size: 14px;
+            font-weight: 700;
+            outline: none;
+            padding: 12px 44px 12px 44px;
+            transition: border-color .18s ease, box-shadow .18s ease, background .18s ease;
+        }
+
+        select.form-control {
+            appearance: none;
         }
 
         .form-control:focus {
-            outline: none;
-            border-color: #667EEA;
-            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.12);
+            border-color: #8b5cf6;
+            background: #fff;
+            box-shadow: 0 0 0 4px rgba(139, 92, 246, .13);
         }
 
         .error-text {
             display: block;
             margin-top: 6px;
+            color: #dc2626;
             font-size: 12px;
-            color: #DC2626;
+            font-weight: 750;
         }
 
         .checkbox-row {
             display: flex;
             align-items: center;
             justify-content: space-between;
-            gap: 12px;
-            margin-bottom: 22px;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin: 4px 0 18px;
         }
 
         .checkbox-label {
-            display: flex;
+            display: inline-flex;
             align-items: center;
             gap: 8px;
+            color: #64748b;
+            font-size: 13px;
+            font-weight: 800;
             cursor: pointer;
-            color: #6B7280;
-            font-size: 14px;
         }
 
         .checkbox-label input {
-            accent-color: #667EEA;
+            accent-color: #7c3aed;
         }
 
         .link {
-            color: #667EEA;
+            color: #7c3aed;
             text-decoration: none;
-            font-size: 14px;
-            font-weight: 500;
+            font-size: 13px;
+            font-weight: 900;
         }
 
         .link:hover {
@@ -313,494 +417,456 @@
 
         .submit-btn {
             width: 100%;
-            border: none;
-            border-radius: 14px;
-            padding: 14px;
-            font-size: 16px;
-            font-weight: 700;
+            min-height: 50px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 9px;
+            border: 0;
+            border-radius: 16px;
             color: #fff;
-            background: linear-gradient(135deg, #667EEA 0%, #764BA2 100%);
+            background: linear-gradient(135deg, #7c3aed, #f97316);
+            box-shadow: 0 18px 34px rgba(124, 58, 237, .22);
+            font: inherit;
+            font-size: 15px;
+            font-weight: 950;
             cursor: pointer;
-            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.25);
-            transition: all 0.2s ease;
+            transition: transform .18s ease, box-shadow .18s ease, opacity .18s ease;
         }
 
         .submit-btn:hover {
             transform: translateY(-1px);
+            box-shadow: 0 22px 40px rgba(124, 58, 237, .28);
         }
 
         .submit-btn:disabled {
-            opacity: 0.75;
+            opacity: .75;
             cursor: not-allowed;
             transform: none;
         }
 
-        .footer-text {
-            margin-top: 20px;
-            text-align: center;
-            color: #6B7280;
-            font-size: 14px;
+        .spinner {
+            width: 16px;
+            height: 16px;
+            display: inline-block;
+            border: 2px solid rgba(255, 255, 255, .45);
+            border-top-color: #fff;
+            border-radius: 50%;
+            animation: spin .75s linear infinite;
         }
 
-        .spinner {
-            display: inline-block;
-            width: 18px;
-            height: 18px;
-            border: 2px solid rgba(255, 255, 255, 0.35);
-            border-top-color: white;
-            border-radius: 50%;
-            animation: spin 0.8s linear infinite;
-            vertical-align: middle;
-            margin-right: 8px;
+        .footer-text {
+            margin-top: 18px;
+            color: #64748b;
+            text-align: center;
+            font-size: 13px;
+            font-weight: 750;
         }
 
         @keyframes spin {
             to { transform: rotate(360deg); }
         }
 
-        @keyframes fadeInUp {
-            from {
-                opacity: 0;
-                transform: translateY(18px);
-            }
-            to {
-                opacity: 1;
-                transform: translateY(0);
-            }
-        }
-
         @media (max-width: 980px) {
-            .page {
+            .auth-shell {
                 grid-template-columns: 1fr;
             }
 
-            .hero {
+            .auth-story {
                 display: none;
             }
 
-            .panel {
+            .auth-panel {
                 min-height: 100vh;
+                padding: 22px 14px;
+            }
+
+            .mobile-brand {
+                display: flex;
+            }
+
+            .auth-card {
+                border-radius: 24px;
+            }
+        }
+
+        @media (max-width: 520px) {
+            body {
+                background: #f8fafc;
+            }
+
+            .auth-panel {
+                align-items: flex-start;
+                padding: 14px;
+            }
+
+            .auth-card {
+                width: 100%;
+                border-radius: 22px;
+                box-shadow: 0 16px 42px rgba(15, 23, 42, .1);
+            }
+
+            .auth-card-header,
+            .auth-card-body {
+                padding-left: 18px;
+                padding-right: 18px;
+            }
+
+            .auth-card-header {
+                padding-top: 20px;
+            }
+
+            .auth-toggle {
+                margin-left: 18px;
+                margin-right: 18px;
+            }
+
+            .auth-title {
+                font-size: 24px;
+            }
+
+            .form-control {
+                min-height: 46px;
             }
         }
     </style>
-@include('partials.public-blade-polish')
 </head>
 <body>
-    <div class="page">
-        <section class="hero">
-            <div class="hero-content">
-                <div class="hero-logo">
-                    @if(($headerBrandingType === 'logo' || $headerBrandingType === 'logo_text') && $appLogo)
-                        <img src="{{ \Illuminate\Support\Facades\Storage::disk('public')->url($appLogo) }}" alt="{{ $appName }}" style="height: 42px; width: auto; object-fit: contain;">
-                    @endif
-                    @if($headerBrandingType === 'text' || $headerBrandingType === 'logo_text' || ! $appLogo)
-                        <span>{{ $appName }}</span>
-                    @endif
+    <main class="auth-shell">
+        <section class="auth-story" aria-hidden="true">
+            <div class="story-content">
+                <div class="brand-mark">
+                    <div class="brand-icon">
+                        @if(($headerBrandingType === 'logo' || $headerBrandingType === 'logo_text') && $appLogoUrl)
+                            <img src="{{ $appLogoUrl }}" alt="{{ $appName }}">
+                        @else
+                            <i class="fas fa-utensils"></i>
+                        @endif
+                    </div>
+                    <div class="brand-name">{{ $appName }} <span>Access</span></div>
                 </div>
 
-                <h1 class="hero-title">Manage orders, customers, and growth in one place</h1>
-                <p class="hero-subtitle">Use password login, OTP login, or quick sign up without losing the smoother {{ $appName }} experience.</p>
+                <div class="story-kicker">
+                    <i class="fas fa-shield-halved"></i>
+                    Secure operations login
+                </div>
+                <h1 class="story-title">Run customers, restaurants, drivers and orders from one clean console.</h1>
+                <p class="story-copy">Use password login, OTP login, or quick sign up while keeping the experience fast across admin, branch, restaurant and customer workflows.</p>
 
-                <div class="hero-points">
-                    <div class="hero-point">
-                        <div class="hero-point-icon"><i class="fas fa-chart-line"></i></div>
-                        <div>
-                            <h3>Track performance</h3>
-                            <p>Watch orders, sales, and engagement in real time.</p>
-                        </div>
+                <div class="story-metrics">
+                    <div class="story-metric">
+                        <strong>Live</strong>
+                        <span>Order operations</span>
                     </div>
-                    <div class="hero-point">
-                        <div class="hero-point-icon"><i class="fas fa-bag-shopping"></i></div>
-                        <div>
-                            <h3>Handle orders faster</h3>
-                            <p>Stay on top of incoming requests and fulfillment.</p>
-                        </div>
+                    <div class="story-metric">
+                        <strong>OTP</strong>
+                        <span>Phone access</span>
                     </div>
-                    <div class="hero-point">
-                        <div class="hero-point-icon"><i class="fas fa-users"></i></div>
-                        <div>
-                            <h3>Keep customers close</h3>
-                            <p>Support repeat ordering with a simpler auth flow.</p>
-                        </div>
+                    <div class="story-metric">
+                        <strong>Secure</strong>
+                        <span>Role routing</span>
                     </div>
                 </div>
             </div>
         </section>
 
-        <section class="panel">
-            <div class="card">
-                <div class="header">
-                    <h2>Welcome back</h2>
-                    <p>Sign in or create your {{ $appName }} account.</p>
+        <section class="auth-panel">
+            <div class="auth-card">
+                <div class="auth-card-header">
+                    <div class="mobile-brand">
+                        <div class="brand-icon">
+                            @if(($headerBrandingType === 'logo' || $headerBrandingType === 'logo_text') && $appLogoUrl)
+                                <img src="{{ $appLogoUrl }}" alt="{{ $appName }}">
+                            @else
+                                <i class="fas fa-utensils"></i>
+                            @endif
+                        </div>
+                        <div class="brand-name" style="color:#0f172a; font-size:20px;">{{ $appName }}</div>
+                    </div>
+
+                    <h2 class="auth-title">Welcome back</h2>
+                    <p class="auth-subtitle">Sign in with your password, request an OTP, or create a new customer account.</p>
+
+                    @if(session('success'))
+                        <div class="alert alert-success">
+                            <i class="fas fa-check-circle"></i>
+                            <span>{{ session('success') }}</span>
+                        </div>
+                    @endif
+
+                    @if($errors->any())
+                        <div class="alert alert-danger">
+                            <i class="fas fa-exclamation-circle"></i>
+                            <span>{{ $errors->first() }}</span>
+                        </div>
+                    @endif
                 </div>
 
-                @if(session('success'))
-                    <div class="alert alert-success">
-                        <i class="fas fa-check-circle"></i>
-                        <span>{{ session('success') }}</span>
-                    </div>
-                @endif
-
-                @if($errors->any())
-                    <div class="alert alert-danger">
-                        <i class="fas fa-exclamation-circle"></i>
-                        <span>{{ $errors->first() }}</span>
-                    </div>
-                @endif
-
-                @php
-                    $activeForm = session('otp_phone') ? 'otp' : (old('active_form') ?? 'login');
-                @endphp
-
-                <div class="toggle" id="authToggle">
+                <div class="auth-toggle" id="authToggle">
                     <button type="button" class="toggle-btn {{ $activeForm === 'login' ? 'active' : '' }}" data-form="login">Login</button>
                     <button type="button" class="toggle-btn {{ $activeForm === 'otp' ? 'active' : '' }}" data-form="otp">OTP</button>
                     <button type="button" class="toggle-btn {{ $activeForm === 'register' ? 'active' : '' }}" data-form="register">Sign Up</button>
                 </div>
 
-                <!-- Login Form -->
-                <form id="loginForm" class="auth-form {{ $activeForm === 'login' ? 'active' : '' }}" method="POST" action="{{ route('login') }}">
-                    @csrf
-                    <input type="hidden" name="active_form" value="login">
-                    @if(request()->has('redirect'))
-                        <input type="hidden" name="redirect" value="{{ request()->input('redirect') }}">
-                    @endif
+                <div class="auth-card-body">
+                    <form id="loginForm" class="auth-form {{ $activeForm === 'login' ? 'active' : '' }}" method="POST" action="{{ route('login') }}">
+                        @csrf
+                        <input type="hidden" name="active_form" value="login">
+                        @if(request()->has('redirect'))
+                            <input type="hidden" name="redirect" value="{{ request()->input('redirect') }}">
+                        @endif
 
-                    <div class="form-group">
-                        <label class="form-label">Email Address</label>
-                        <div class="input-wrap">
-                            <i class="fas fa-envelope"></i>
-                            <input type="email" name="email" class="form-control" placeholder="Enter your email" value="{{ old('email') }}" required autocomplete="username">
-                        </div>
-                        @error('email')
-                            <span class="error-text">{{ $message }}</span>
-                        @enderror
-                    </div>
-
-                    <div class="form-group">
-                        <label class="form-label">Password</label>
-                        <div class="input-wrap">
-                            <i class="fas fa-lock"></i>
-                            <input type="password" id="loginPassword" name="password" class="form-control" placeholder="Enter your password" required autocomplete="current-password">
-                            <i class="fas fa-eye toggle-password" data-target="loginPassword"></i>
-                        </div>
-                        @error('password')
-                            <span class="error-text">{{ $message }}</span>
-                        @enderror
-                    </div>
-
-                    <div class="checkbox-row">
-                        <label class="checkbox-label">
-                            <input type="checkbox" name="remember">
-                            <span>Remember me</span>
-                        </label>
-                        <a href="{{ route('password.request') }}" class="link">Forgot password?</a>
-                    </div>
-
-                    <button type="submit" class="submit-btn" id="loginSubmitBtn">
-                        <span>Login</span>
-                    </button>
-                </form>
-
-                <!-- OTP Form -->
-                <form id="otpForm" class="auth-form {{ $activeForm === 'otp' ? 'active' : '' }}" method="POST" action="{{ session('otp_phone') ? route('login.otp.verify') : route('login.otp.send') }}">
-                    @csrf
-                    <input type="hidden" name="active_form" value="otp">
-
-                    <div class="form-group">
-                        <label class="form-label">Login Role</label>
-                        <div class="input-wrap">
-                            <i class="fas fa-user-tag"></i>
-                            <select name="role" class="form-control" required>
-                                <option value="customer" {{ session('otp_role', 'customer') === 'customer' ? 'selected' : '' }}>Customer</option>
-                                <option value="restaurant" {{ session('otp_role') === 'restaurant' ? 'selected' : '' }}>Restaurant</option>
-                                <option value="restaurant_staff" {{ session('otp_role') === 'restaurant_staff' ? 'selected' : '' }}>Restaurant Staff</option>
-                                <option value="driver" {{ session('otp_role') === 'driver' ? 'selected' : '' }}>Driver</option>
-                            </select>
-                        </div>
-                    </div>
-
-                    <div class="form-group">
-                        <label class="form-label">Mobile Number</label>
-                        <div class="input-wrap">
-                            <i class="fas fa-phone"></i>
-                            <input type="tel" name="phone" class="form-control" placeholder="Enter 10 digit mobile number" value="{{ session('otp_phone') }}" required autocomplete="tel" inputmode="numeric" pattern="[0-9]{10}" maxlength="10">
-                        </div>
-                    </div>
-
-                    @if(session('otp_phone'))
                         <div class="form-group">
-                            <label class="form-label">OTP</label>
+                            <label class="form-label">Email Address</label>
                             <div class="input-wrap">
-                                <i class="fas fa-key"></i>
-                                <input type="text" name="otp" class="form-control" placeholder="Enter 6 digit OTP" maxlength="6" required inputmode="numeric">
+                                <i class="fas fa-envelope"></i>
+                                <input type="email" name="email" class="form-control" placeholder="Enter your email" value="{{ old('email') }}" required autocomplete="username">
                             </div>
-                            @error('otp')
-                                <span class="error-text">{{ $message }}</span>
-                            @enderror
+                            @error('email') <span class="error-text">{{ $message }}</span> @enderror
                         </div>
-                    @endif
 
-                    <button type="submit" class="submit-btn" id="otpSubmitBtn">
-                        <span>{{ session('otp_phone') ? 'Verify OTP' : 'Send OTP' }}</span>
-                    </button>
-                </form>
-
-                <!-- Register Form -->
-                <form id="registerForm" class="auth-form {{ $activeForm === 'register' ? 'active' : '' }}" method="POST" action="{{ route('register') }}">
-                    @csrf
-                    <input type="hidden" name="active_form" value="register">
-
-                    <div class="form-group">
-                        <label class="form-label">Full Name</label>
-                        <div class="input-wrap">
-                            <i class="fas fa-user"></i>
-                            <input type="text" name="name" class="form-control" placeholder="Enter your full name" value="{{ old('name') }}" required autocomplete="name">
+                        <div class="form-group">
+                            <label class="form-label">Password</label>
+                            <div class="input-wrap">
+                                <i class="fas fa-lock"></i>
+                                <input type="password" id="loginPassword" name="password" class="form-control" placeholder="Enter your password" required autocomplete="current-password">
+                                <i class="fas fa-eye toggle-password" data-target="loginPassword"></i>
+                            </div>
+                            @error('password') <span class="error-text">{{ $message }}</span> @enderror
                         </div>
-                        @error('name')
-                            <span class="error-text">{{ $message }}</span>
-                        @enderror
+
+                        <div class="checkbox-row">
+                            <label class="checkbox-label">
+                                <input type="checkbox" name="remember">
+                                <span>Remember me</span>
+                            </label>
+                            <a href="{{ route('password.request') }}" class="link">Forgot password?</a>
+                        </div>
+
+                        <button type="submit" class="submit-btn" id="loginSubmitBtn">
+                            <span>Login</span>
+                        </button>
+                    </form>
+
+                    <form id="otpForm" class="auth-form {{ $activeForm === 'otp' ? 'active' : '' }}" method="POST" action="{{ session('otp_phone') ? route('login.otp.verify') : route('login.otp.send') }}">
+                        @csrf
+                        <input type="hidden" name="active_form" value="otp">
+
+                        <div class="form-group">
+                            <label class="form-label">Login Role</label>
+                            <div class="input-wrap">
+                                <i class="fas fa-user-tag"></i>
+                                <select name="role" class="form-control" required>
+                                    <option value="customer" {{ session('otp_role', 'customer') === 'customer' ? 'selected' : '' }}>Customer</option>
+                                    <option value="restaurant" {{ session('otp_role') === 'restaurant' ? 'selected' : '' }}>Restaurant</option>
+                                    <option value="restaurant_staff" {{ session('otp_role') === 'restaurant_staff' ? 'selected' : '' }}>Restaurant Staff</option>
+                                    <option value="driver" {{ session('otp_role') === 'driver' ? 'selected' : '' }}>Driver</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label">Mobile Number</label>
+                            <div class="input-wrap">
+                                <i class="fas fa-phone"></i>
+                                <input type="tel" name="phone" class="form-control" placeholder="Enter mobile number" value="{{ session('otp_phone') }}" required autocomplete="tel" inputmode="tel" maxlength="20">
+                            </div>
+                            @error('phone') <span class="error-text">{{ $message }}</span> @enderror
+                        </div>
+
+                        @if(session('otp_phone'))
+                            <div class="form-group">
+                                <label class="form-label">OTP</label>
+                                <div class="input-wrap">
+                                    <i class="fas fa-key"></i>
+                                    <input type="text" name="otp" class="form-control" placeholder="Enter OTP" maxlength="8" required inputmode="numeric">
+                                </div>
+                                @error('otp') <span class="error-text">{{ $message }}</span> @enderror
+                            </div>
+                        @endif
+
+                        <button type="submit" class="submit-btn" id="otpSubmitBtn">
+                            <span>{{ session('otp_phone') ? 'Verify OTP' : 'Send OTP' }}</span>
+                        </button>
+                    </form>
+
+                    <form id="registerForm" class="auth-form {{ $activeForm === 'register' ? 'active' : '' }}" method="POST" action="{{ route('register') }}">
+                        @csrf
+                        <input type="hidden" name="active_form" value="register">
+
+                        <div class="form-group">
+                            <label class="form-label">Full Name</label>
+                            <div class="input-wrap">
+                                <i class="fas fa-user"></i>
+                                <input type="text" name="name" class="form-control" placeholder="Enter your full name" value="{{ old('name') }}" required autocomplete="name">
+                            </div>
+                            @error('name') <span class="error-text">{{ $message }}</span> @enderror
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label">Email Address</label>
+                            <div class="input-wrap">
+                                <i class="fas fa-envelope"></i>
+                                <input type="email" name="email" class="form-control" placeholder="Enter your email" value="{{ old('email') }}" required autocomplete="username">
+                            </div>
+                            @error('email') <span class="error-text">{{ $message }}</span> @enderror
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label">Phone Number</label>
+                            <div class="input-wrap">
+                                <i class="fas fa-phone"></i>
+                                <input type="tel" name="phone" class="form-control" placeholder="Enter your phone number" value="{{ old('phone') }}" required autocomplete="tel">
+                            </div>
+                            @error('phone') <span class="error-text">{{ $message }}</span> @enderror
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label">Password</label>
+                            <div class="input-wrap">
+                                <i class="fas fa-lock"></i>
+                                <input type="password" id="registerPassword" name="password" class="form-control" placeholder="Create a password" required autocomplete="new-password">
+                                <i class="fas fa-eye toggle-password" data-target="registerPassword"></i>
+                            </div>
+                            @error('password') <span class="error-text">{{ $message }}</span> @enderror
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label">Confirm Password</label>
+                            <div class="input-wrap">
+                                <i class="fas fa-lock"></i>
+                                <input type="password" id="registerPasswordConfirmation" name="password_confirmation" class="form-control" placeholder="Confirm your password" required autocomplete="new-password">
+                                <i class="fas fa-eye toggle-password" data-target="registerPasswordConfirmation"></i>
+                            </div>
+                        </div>
+
+                        <button type="submit" class="submit-btn" id="registerSubmitBtn">
+                            <span>Create Account</span>
+                        </button>
+                    </form>
+
+                    <div class="footer-text" id="loginFooter" style="{{ $activeForm === 'register' ? 'display:none;' : '' }}">
+                        Don't have an account? <a href="#" class="link" data-switch="register">Sign up</a>
                     </div>
-
-                    <div class="form-group">
-                        <label class="form-label">Email Address</label>
-                        <div class="input-wrap">
-                            <i class="fas fa-envelope"></i>
-                            <input type="email" name="email" class="form-control" placeholder="Enter your email" value="{{ old('email') }}" required autocomplete="username">
-                        </div>
-                        @error('email')
-                            <span class="error-text">{{ $message }}</span>
-                        @enderror
+                    <div class="footer-text" id="registerFooter" style="{{ $activeForm === 'register' ? 'display:block;' : 'display:none;' }}">
+                        Already have an account? <a href="#" class="link" data-switch="login">Login</a>
                     </div>
-
-                    <div class="form-group">
-                        <label class="form-label">Phone Number</label>
-                        <div class="input-wrap">
-                            <i class="fas fa-phone"></i>
-                            <input type="tel" name="phone" class="form-control" placeholder="Enter your phone number" value="{{ old('phone') }}" required autocomplete="tel">
-                        </div>
-                        @error('phone')
-                            <span class="error-text">{{ $message }}</span>
-                        @enderror
-                    </div>
-
-                    <div class="form-group">
-                        <label class="form-label">Password</label>
-                        <div class="input-wrap">
-                            <i class="fas fa-lock"></i>
-                            <input type="password" id="registerPassword" name="password" class="form-control" placeholder="Create a password" required autocomplete="new-password">
-                            <i class="fas fa-eye toggle-password" data-target="registerPassword"></i>
-                        </div>
-                        @error('password')
-                            <span class="error-text">{{ $message }}</span>
-                        @enderror
-                    </div>
-
-                    <div class="form-group">
-                        <label class="form-label">Confirm Password</label>
-                        <div class="input-wrap">
-                            <i class="fas fa-lock"></i>
-                            <input type="password" id="registerPasswordConfirmation" name="password_confirmation" class="form-control" placeholder="Confirm your password" required autocomplete="new-password">
-                            <i class="fas fa-eye toggle-password" data-target="registerPasswordConfirmation"></i>
-                        </div>
-                    </div>
-
-                    <button type="submit" class="submit-btn" id="registerSubmitBtn">
-                        <span>Create Account</span>
-                    </button>
-                </form>
-
-                <div class="footer-text" id="loginFooter" style="{{ $activeForm === 'register' ? 'display:none;' : '' }}">
-                    Don't have an account? <a href="#" class="link" data-switch="register">Sign up</a>
-                </div>
-                <div class="footer-text" id="registerFooter" style="{{ $activeForm === 'register' ? 'display:block;' : 'display:none;' }}">
-                    Already have an account? <a href="#" class="link" data-switch="login">Login</a>
                 </div>
             </div>
         </section>
-    </div>
+    </main>
 
     <script>
         (function() {
-            // DOM Elements
             const forms = {
                 login: document.getElementById('loginForm'),
                 otp: document.getElementById('otpForm'),
                 register: document.getElementById('registerForm')
             };
-            
             const toggleButtons = document.querySelectorAll('.toggle-btn');
             const loginFooter = document.getElementById('loginFooter');
             const registerFooter = document.getElementById('registerFooter');
-            
-            // Form submission state tracking
             let isSubmitting = false;
-            
-            // Switch between forms
+
             function switchForm(target) {
-                // Update forms visibility
                 Object.keys(forms).forEach(function(formKey) {
-                    if (forms[formKey]) {
-                        forms[formKey].classList.toggle('active', formKey === target);
-                    }
+                    forms[formKey]?.classList.toggle('active', formKey === target);
                 });
-                
-                // Update toggle buttons
+
                 toggleButtons.forEach(function(button) {
                     button.classList.toggle('active', button.dataset.form === target);
                 });
-                
-                // Update footer visibility
+
                 if (loginFooter && registerFooter) {
                     loginFooter.style.display = target === 'register' ? 'none' : 'block';
                     registerFooter.style.display = target === 'register' ? 'block' : 'none';
                 }
-                
-                // Focus first input in active form
+
                 setTimeout(function() {
-                    const activeForm = document.querySelector('.auth-form.active');
-                    if (activeForm) {
-                        const firstInput = activeForm.querySelector('input:not([type="hidden"])');
-                        if (firstInput) {
-                            firstInput.focus();
-                        }
-                    }
-                }, 100);
+                    const firstInput = document.querySelector('.auth-form.active input:not([type="hidden"]), .auth-form.active select');
+                    firstInput?.focus();
+                }, 80);
             }
-            
-            // Toggle password visibility
-            function initializePasswordToggles() {
-                document.querySelectorAll('.toggle-password').forEach(function(icon) {
-                    icon.addEventListener('click', function(e) {
-                        e.preventDefault();
-                        const fieldId = this.dataset.target;
-                        const field = document.getElementById(fieldId);
-                        if (field) {
-                            const isPassword = field.type === 'password';
-                            field.type = isPassword ? 'text' : 'password';
-                            this.classList.toggle('fa-eye', !isPassword);
-                            this.classList.toggle('fa-eye-slash', isPassword);
-                        }
-                    });
+
+            document.querySelectorAll('.toggle-password').forEach(function(icon) {
+                icon.addEventListener('click', function(event) {
+                    event.preventDefault();
+                    const field = document.getElementById(this.dataset.target);
+                    if (!field) return;
+                    const show = field.type === 'password';
+                    field.type = show ? 'text' : 'password';
+                    this.classList.toggle('fa-eye', !show);
+                    this.classList.toggle('fa-eye-slash', show);
                 });
-            }
-            
-            // Validate password match for registration
+            });
+
             function validatePasswordMatch() {
                 const password = document.getElementById('registerPassword');
                 const confirmPassword = document.getElementById('registerPasswordConfirmation');
-                
-                if (password && confirmPassword) {
-                    const checkMatch = function() {
-                        if (password.value !== confirmPassword.value) {
-                            confirmPassword.setCustomValidity('Passwords do not match');
-                        } else {
-                            confirmPassword.setCustomValidity('');
-                        }
-                    };
-                    
-                    password.addEventListener('input', checkMatch);
-                    confirmPassword.addEventListener('input', checkMatch);
-                }
+                if (!password || !confirmPassword) return;
+
+                const checkMatch = function() {
+                    confirmPassword.setCustomValidity(password.value !== confirmPassword.value ? 'Passwords do not match' : '');
+                };
+
+                password.addEventListener('input', checkMatch);
+                confirmPassword.addEventListener('input', checkMatch);
             }
-            
-            // Handle form submission with loading state
-            function initializeFormHandler(formId, buttonId, loadingText) {
+
+            function initializeFormHandler(formId, buttonId, loadingText, originalText) {
                 const form = document.getElementById(formId);
                 const button = document.getElementById(buttonId);
-                
                 if (!form || !button) return;
-                
-                form.addEventListener('submit', function(e) {
-                    // Prevent double submission
+
+                form.addEventListener('submit', function(event) {
                     if (isSubmitting) {
-                        e.preventDefault();
+                        event.preventDefault();
                         return false;
                     }
-                    
-                    // For registration form, validate password match before submission
+
                     if (formId === 'registerForm') {
                         const password = document.getElementById('registerPassword');
                         const confirmPassword = document.getElementById('registerPasswordConfirmation');
-                        
                         if (password && confirmPassword && password.value !== confirmPassword.value) {
-                            e.preventDefault();
-                            alert('Passwords do not match.');
+                            event.preventDefault();
+                            confirmPassword.reportValidity();
                             return false;
                         }
                     }
-                    
-                    // Set submitting flag and update button
+
                     isSubmitting = true;
                     button.disabled = true;
-                    button.innerHTML = '<span class="spinner"></span> ' + loadingText;
-                    
-                    // Re-enable after 30 seconds (safety measure)
+                    button.innerHTML = '<span class="spinner"></span>' + loadingText;
+
                     setTimeout(function() {
-                        if (isSubmitting) {
-                            isSubmitting = false;
-                            if (button) {
-                                button.disabled = false;
-                                button.innerHTML = '<span>' + loadingText.replace('...', '') + '</span>';
-                            }
-                        }
+                        if (!isSubmitting) return;
+                        isSubmitting = false;
+                        button.disabled = false;
+                        button.innerHTML = '<span>' + originalText + '</span>';
                     }, 30000);
                 });
             }
-            
-            // Event Listeners
-            function initializeEventListeners() {
-                // Toggle buttons
-                toggleButtons.forEach(function(button) {
-                    button.addEventListener('click', function() {
-                        switchForm(this.dataset.form);
-                    });
+
+            toggleButtons.forEach(function(button) {
+                button.addEventListener('click', function() {
+                    switchForm(this.dataset.form);
                 });
-                
-                // Footer switch links
-                document.querySelectorAll('[data-switch]').forEach(function(link) {
-                    link.addEventListener('click', function(event) {
-                        event.preventDefault();
-                        switchForm(this.dataset.switch);
-                    });
+            });
+
+            document.querySelectorAll('[data-switch]').forEach(function(link) {
+                link.addEventListener('click', function(event) {
+                    event.preventDefault();
+                    switchForm(this.dataset.switch);
                 });
-                
-                // Handle Enter key globally - ensure form submission works
-                document.addEventListener('keypress', function(e) {
-                    if (e.key === 'Enter') {
-                        const activeForm = document.querySelector('.auth-form.active');
-                        if (activeForm && (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT')) {
-                            // Let the normal form submission happen
-                            return true;
-                        }
-                    }
-                });
-            }
-            
-            // Initialize everything
-            function init() {
-                initializeEventListeners();
-                initializePasswordToggles();
-                validatePasswordMatch();
-                
-                // Initialize form handlers
-                initializeFormHandler('loginForm', 'loginSubmitBtn', 'Logging in...');
-                initializeFormHandler('otpForm', 'otpSubmitBtn', '{{ session('otp_phone') ? 'Verifying OTP...' : 'Sending OTP...' }}');
-                initializeFormHandler('registerForm', 'registerSubmitBtn', 'Creating account...');
-                
-                // Set initial active form based on server-side variable
-                const initialForm = '{{ $activeForm }}';
-                switchForm(initialForm);
-            }
-            
-            // Run when DOM is ready
-            if (document.readyState === 'loading') {
-                document.addEventListener('DOMContentLoaded', init);
-            } else {
-                init();
-            }
+            });
+
+            validatePasswordMatch();
+            initializeFormHandler('loginForm', 'loginSubmitBtn', 'Logging in...', 'Login');
+            initializeFormHandler('otpForm', 'otpSubmitBtn', @json(session('otp_phone') ? 'Verifying OTP...' : 'Sending OTP...'), @json(session('otp_phone') ? 'Verify OTP' : 'Send OTP'));
+            initializeFormHandler('registerForm', 'registerSubmitBtn', 'Creating account...', 'Create Account');
+            switchForm(@json($activeForm));
         })();
     </script>
-@include('partials.web-visit-tracker', ['panel' => 'auth'])
+    @include('partials.web-visit-tracker', ['panel' => 'auth'])
 </body>
 </html>

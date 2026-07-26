@@ -1,122 +1,101 @@
 // lib/main.dart
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_easyloading/flutter_easyloading.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'firebase_options.dart';
 import 'services/notification_service.dart';
 import 'services/incoming_order_alert_service.dart';
 import 'services/navigation_service.dart';
+import 'services/order_alert_startup_permission_service.dart';
 import 'services/sound_service.dart';
 import 'services/local_cache_service.dart';
 import 'services/app_branding_service.dart';
+import 'services/app_update_service.dart';
 import 'config/app_config.dart';
 import 'models/app_branding.dart';
 import 'theme/foodflow_theme.dart';
+import 'theme/responsive_theme.dart';
 import 'providers/auth_provider.dart';
 import 'providers/cart_provider.dart';
 import 'providers/order_provider.dart';
 import 'providers/restaurant_provider.dart';
 import 'models/order.dart';
-import 'screens/splash_screen.dart';
 import 'screens/auth/login_screen.dart';
 import 'screens/auth/register_screen.dart';
 import 'screens/auth/partner_application_status_screen.dart';
+import 'screens/app_splash_screen.dart';
 import 'screens/driver/driver_dashboard.dart';
 import 'screens/driver/driver_order_chat_screen.dart';
 import 'screens/driver/driver_order_detail_screen.dart';
 import 'screens/driver/privacy_legal_screen.dart';
 import 'screens/driver/driver_support_screen.dart';
+import 'widgets/common/network_image_loader.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
-
+  AppImageCache.configureMemoryCache();
   configLoading();
-  _logStartupStep('runApp');
+
+  final authProvider = AuthProvider();
+  final cartProvider = CartProvider();
+  final startupFuture = _initializeStartup(authProvider, cartProvider);
 
   runApp(
     MultiProvider(
       providers: [
-        ChangeNotifierProvider(create: (_) => AuthProvider()..loadUser()),
-        ChangeNotifierProvider(create: (_) => CartProvider()..loadCart()),
+        ChangeNotifierProvider.value(value: authProvider),
+        ChangeNotifierProvider.value(value: cartProvider),
         ChangeNotifierProvider(create: (_) => OrderProvider()),
         ChangeNotifierProvider(create: (_) => RestaurantProvider()),
       ],
-      child: const FoodDeliveryApp(),
+      child: FoodDeliveryApp(startupFuture: startupFuture),
     ),
   );
 
   WidgetsBinding.instance.addPostFrameCallback((_) {
-    unawaited(_initializeAfterFirstFrame());
+    unawaited(
+      startupFuture.then(
+        (_) => OrderAlertStartupPermissionService.ensureForOrderAlerts(
+          enabled: authProvider.isDriver,
+        ),
+      ),
+    );
+    unawaited(
+      startupFuture.then(
+        (_) => AppUpdateService.checkForLatestRelease(appKey: 'driver'),
+      ),
+    );
   });
 }
 
-Future<void> _initializeAfterFirstFrame() async {
-  await _runStartupStep('local cache', LocalCacheService.initialize);
-  await _runStartupStep(
-    'shared preferences',
-    () async {
-      await SharedPreferences.getInstance();
-    },
-  );
-
-  if (defaultTargetPlatform == TargetPlatform.iOS) {
-    unawaited(
-      Future<void>.delayed(const Duration(seconds: 2)).then(
-        (_) => _runStartupStep('sound deferred', SoundService.init),
-      ),
-    );
-  } else {
-    await _runStartupStep('sound', SoundService.init);
-  }
-
-  await _runStartupStep('firebase core', _ensureFirebaseInitialized);
-  await _runStartupStep(
-    'notifications',
-    FirebaseNotificationService.instance.initialize,
-  );
-  await _runStartupStep(
-    'incoming order alerts',
-    IncomingOrderAlertService.instance.initialize,
-  );
-}
-
-Future<void> _ensureFirebaseInitialized() async {
-  if (Firebase.apps.isNotEmpty) return;
-
-  if (!kIsWeb &&
-      (defaultTargetPlatform == TargetPlatform.iOS ||
-          defaultTargetPlatform == TargetPlatform.android)) {
-    await Firebase.initializeApp();
-    return;
-  }
-
-  await Firebase.initializeApp(
-    options: DefaultFirebaseOptions.currentPlatform,
-  );
-}
-
-Future<void> _runStartupStep(
-  String name,
-  Future<void> Function() action,
+Future<void> _initializeStartup(
+  AuthProvider authProvider,
+  CartProvider cartProvider,
 ) async {
-  _logStartupStep('$name start');
   try {
-    await action();
-    _logStartupStep('$name done');
-  } catch (e, stackTrace) {
-    debugPrint('Startup initiate: $name skipped: $e');
-    debugPrintStack(stackTrace: stackTrace);
+    await LocalCacheService.initialize();
+    await SharedPreferences.getInstance();
+    await SoundService.init();
+    if (Firebase.apps.isEmpty) {
+      await Firebase.initializeApp(
+        options: DefaultFirebaseOptions.currentPlatform,
+      );
+    }
+    await FirebaseNotificationService.instance.initialize();
+    await IncomingOrderAlertService.instance.initialize();
+    await authProvider.loadUser();
+    if (authProvider.isAuthenticated && !authProvider.canUseCurrentApp) {
+      await authProvider.logout();
+    }
+  } catch (e) {
+    debugPrint('Startup initialization failed: $e');
   }
-}
-
-void _logStartupStep(String message) {
-  debugPrint('Startup initiate: $message');
+  unawaited(cartProvider.loadCart());
 }
 
 void configLoading() {
@@ -162,7 +141,12 @@ Route<dynamic> _errorRoute(String message) {
 }
 
 class FoodDeliveryApp extends StatefulWidget {
-  const FoodDeliveryApp({super.key});
+  const FoodDeliveryApp({
+    super.key,
+    required this.startupFuture,
+  });
+
+  final Future<void> startupFuture;
 
   @override
   State<FoodDeliveryApp> createState() => _FoodDeliveryAppState();
@@ -180,7 +164,7 @@ class _FoodDeliveryAppState extends State<FoodDeliveryApp> {
   Future<void> _loadBranding() async {
     final branding = await AppBrandingService.instance.loadBranding();
     if (!mounted) return;
-    FoodFlowTheme.applyBrandColors(
+    foodflow.applyBrandColors(
       primary: _colorFromHex(
         branding.driverPrimaryColorHex,
         AppConfig.primaryColor,
@@ -202,6 +186,7 @@ class _FoodDeliveryAppState extends State<FoodDeliveryApp> {
 
   @override
   Widget build(BuildContext context) {
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
     final primary = _colorFromHex(
       _branding?.driverPrimaryColorHex,
       AppConfig.primaryColor,
@@ -210,7 +195,7 @@ class _FoodDeliveryAppState extends State<FoodDeliveryApp> {
       _branding?.driverSecondaryColorHex,
       AppConfig.secondaryColor,
     );
-    FoodFlowTheme.applyBrandColors(primary: primary, secondary: secondary);
+    foodflow.applyBrandColors(primary: primary, secondary: secondary);
 
     return MaterialApp(
       navigatorKey: appNavigatorKey,
@@ -222,131 +207,55 @@ class _FoodDeliveryAppState extends State<FoodDeliveryApp> {
           primary: primary,
           secondary: secondary,
           surface: Colors.white,
-          error: FoodFlowTheme.danger,
+          error: foodflow.danger,
         ),
         primaryColor: primary,
-        scaffoldBackgroundColor: FoodFlowTheme.canvas,
-        visualDensity: VisualDensity.adaptivePlatformDensity,
+        scaffoldBackgroundColor: foodflow.canvas,
+        visualDensity: const VisualDensity(horizontal: -2, vertical: -2),
+        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
         fontFamily: GoogleFonts.nunitoSans().fontFamily,
         useMaterial3: true,
-        textTheme: GoogleFonts.nunitoSansTextTheme().copyWith(
-          displayLarge: TextStyle(
-            fontSize: 30,
-            fontWeight: FontWeight.w800,
-            color: FoodFlowTheme.ink,
-          ),
-          displayMedium: TextStyle(
-            fontSize: 27,
-            fontWeight: FontWeight.w800,
-            color: FoodFlowTheme.ink,
-          ),
-          headlineLarge: TextStyle(
-            fontSize: 24,
-            fontWeight: FontWeight.w800,
-            color: FoodFlowTheme.ink,
-          ),
-          headlineMedium: TextStyle(
-            fontSize: 21,
-            fontWeight: FontWeight.w800,
-            color: FoodFlowTheme.ink,
-          ),
-          titleLarge: TextStyle(
-            fontSize: 18,
-            fontWeight: FontWeight.w700,
-            color: FoodFlowTheme.ink,
-          ),
-          titleMedium: TextStyle(
-            fontSize: 17,
-            fontWeight: FontWeight.w700,
-            color: FoodFlowTheme.ink,
-          ),
-          bodyLarge: TextStyle(
-            fontSize: 16,
-            fontWeight: FontWeight.w500,
-            color: FoodFlowTheme.inkSoft,
-            height: 1.4,
-          ),
-          bodyMedium: TextStyle(
-            fontSize: 15,
-            fontWeight: FontWeight.w500,
-            color: FoodFlowTheme.inkSoft,
-            height: 1.35,
-          ),
-          bodySmall: TextStyle(
-            fontSize: 14,
-            fontWeight: FontWeight.w500,
-            color: FoodFlowTheme.muted,
-            height: 1.3,
-          ),
-          labelLarge: TextStyle(
-            fontSize: 15,
-            fontWeight: FontWeight.w700,
-            color: FoodFlowTheme.ink,
-          ),
-          labelMedium: TextStyle(
-            fontSize: 13,
-            fontWeight: FontWeight.w700,
-            color: FoodFlowTheme.muted,
-          ),
+        textTheme: AppTypography.material3(
+          base: GoogleFonts.nunitoSansTextTheme(),
+          textColor: foodflow.ink,
+          mutedColor: foodflow.inkSoft,
         ),
         appBarTheme: const AppBarTheme(
           elevation: 0,
           centerTitle: false,
           backgroundColor: Colors.white,
-          foregroundColor: FoodFlowTheme.ink,
-          iconTheme: IconThemeData(color: FoodFlowTheme.ink),
+          foregroundColor: foodflow.ink,
+          iconTheme: IconThemeData(color: foodflow.ink),
           titleTextStyle: TextStyle(
-            color: FoodFlowTheme.ink,
+            color: foodflow.ink,
             fontSize: 18,
-            fontWeight: FontWeight.w900,
+            fontWeight: FontWeight.w800,
           ),
-        ),
-        dialogTheme: DialogThemeData(
-          backgroundColor: Colors.white,
-          surfaceTintColor: Colors.transparent,
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-          titleTextStyle: const TextStyle(
-              color: FoodFlowTheme.ink,
-              fontSize: 18,
-              fontWeight: FontWeight.w800),
-          contentTextStyle: const TextStyle(
-              color: FoodFlowTheme.muted,
-              fontSize: 14,
-              fontWeight: FontWeight.w500),
-        ),
-        bottomSheetTheme: const BottomSheetThemeData(
-          backgroundColor: Colors.white,
-          modalBackgroundColor: Colors.white,
-          surfaceTintColor: Colors.transparent,
-          showDragHandle: true,
-          shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
         ),
         tabBarTheme: TabBarThemeData(
           labelColor: primary,
-          unselectedLabelColor: FoodFlowTheme.muted,
+          unselectedLabelColor: foodflow.muted,
           indicatorColor: primary,
-          labelStyle: const TextStyle(fontWeight: FontWeight.w900),
-          unselectedLabelStyle: const TextStyle(fontWeight: FontWeight.w700),
+          labelStyle: const TextStyle(fontWeight: FontWeight.w800),
+          unselectedLabelStyle: const TextStyle(fontWeight: FontWeight.w400),
         ),
         dividerTheme: const DividerThemeData(
-          color: FoodFlowTheme.line,
+          color: foodflow.line,
           thickness: 1,
           space: 1,
         ),
         listTileTheme: ListTileThemeData(
           iconColor: primary,
-          textColor: FoodFlowTheme.ink,
+          textColor: foodflow.ink,
           titleTextStyle: const TextStyle(
-            color: FoodFlowTheme.ink,
+            color: foodflow.ink,
             fontSize: 15,
             fontWeight: FontWeight.w800,
           ),
           subtitleTextStyle: const TextStyle(
-            color: FoodFlowTheme.muted,
+            color: foodflow.muted,
             fontSize: 12,
-            fontWeight: FontWeight.w600,
+            fontWeight: FontWeight.w400,
           ),
         ),
         chipTheme: ChipThemeData(
@@ -354,19 +263,19 @@ class _FoodDeliveryAppState extends State<FoodDeliveryApp> {
           selectedColor: const Color(0xFFFFF3E8),
           checkmarkColor: primary,
           labelStyle: const TextStyle(
-            color: FoodFlowTheme.ink,
+            color: foodflow.ink,
             fontWeight: FontWeight.w800,
             fontSize: 12,
           ),
-          side: const BorderSide(color: FoodFlowTheme.line),
+          side: const BorderSide(color: foodflow.line),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
         ),
         bottomNavigationBarTheme: BottomNavigationBarThemeData(
           backgroundColor: Colors.white,
           selectedItemColor: primary,
-          unselectedItemColor: FoodFlowTheme.muted,
-          selectedLabelStyle: const TextStyle(fontWeight: FontWeight.w900),
-          unselectedLabelStyle: const TextStyle(fontWeight: FontWeight.w600),
+          unselectedItemColor: foodflow.muted,
+          selectedLabelStyle: const TextStyle(fontWeight: FontWeight.w800),
+          unselectedLabelStyle: const TextStyle(fontWeight: FontWeight.w400),
           type: BottomNavigationBarType.fixed,
           showUnselectedLabels: true,
           elevation: 8,
@@ -378,7 +287,7 @@ class _FoodDeliveryAppState extends State<FoodDeliveryApp> {
           ),
           enabledBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(12),
-            borderSide: const BorderSide(color: FoodFlowTheme.line),
+            borderSide: const BorderSide(color: foodflow.line),
           ),
           focusedBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(12),
@@ -386,20 +295,17 @@ class _FoodDeliveryAppState extends State<FoodDeliveryApp> {
           ),
           filled: true,
           fillColor: Colors.white,
-          contentPadding: const EdgeInsets.symmetric(
-            horizontal: 18,
-            vertical: 17,
-          ),
+          contentPadding: AppSpacing.input,
           prefixIconColor: primary,
-          suffixIconColor: FoodFlowTheme.muted,
+          suffixIconColor: foodflow.muted,
           labelStyle: const TextStyle(
-            color: FoodFlowTheme.muted,
-            fontWeight: FontWeight.w700,
+            color: foodflow.muted,
+            fontWeight: FontWeight.w800,
             fontSize: 15,
           ),
           hintStyle: const TextStyle(
-            color: FoodFlowTheme.faint,
-            fontWeight: FontWeight.w600,
+            color: foodflow.faint,
+            fontWeight: FontWeight.w400,
             fontSize: 15,
           ),
         ),
@@ -408,13 +314,13 @@ class _FoodDeliveryAppState extends State<FoodDeliveryApp> {
             backgroundColor: primary,
             foregroundColor: Colors.white,
             shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(10),
+              borderRadius: BorderRadius.circular(12),
             ),
-            padding: const EdgeInsets.symmetric(vertical: 16),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
             elevation: 0,
             textStyle: const TextStyle(
-              fontSize: 17,
-              fontWeight: FontWeight.w700,
+              fontSize: 15,
+              fontWeight: FontWeight.w800,
             ),
           ),
         ),
@@ -422,9 +328,9 @@ class _FoodDeliveryAppState extends State<FoodDeliveryApp> {
           style: OutlinedButton.styleFrom(
             side: BorderSide(color: primary),
             shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(10),
+              borderRadius: BorderRadius.circular(12),
             ),
-            padding: const EdgeInsets.symmetric(vertical: 14),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
           ),
         ),
         cardTheme: CardThemeData(
@@ -440,26 +346,41 @@ class _FoodDeliveryAppState extends State<FoodDeliveryApp> {
           contentTextStyle: const TextStyle(color: Colors.white),
           behavior: SnackBarBehavior.floating,
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(10),
+            borderRadius: BorderRadius.circular(12),
+          ),
+        ),
+        bottomSheetTheme: const BottomSheetThemeData(
+          backgroundColor: Colors.white,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
           ),
         ),
         floatingActionButtonTheme: FloatingActionButtonThemeData(
           backgroundColor: primary,
           foregroundColor: Colors.white,
           elevation: 5,
-          extendedTextStyle: const TextStyle(fontWeight: FontWeight.w900),
+          extendedTextStyle: const TextStyle(fontWeight: FontWeight.w800),
         ),
         textButtonTheme: TextButtonThemeData(
           style: TextButton.styleFrom(
             foregroundColor: primary,
-            textStyle: const TextStyle(fontWeight: FontWeight.w900),
+            textStyle: const TextStyle(fontWeight: FontWeight.w800),
           ),
         ),
       ),
-      home: const SplashScreen(),
+      home: AppSplashScreen(
+        startupFuture: widget.startupFuture,
+        builder: (_) =>
+            authProvider.isAuthenticated && authProvider.canUseCurrentApp
+                ? const DriverDashboard()
+                : const LoginScreen(),
+      ),
       onGenerateRoute: _generateRoute,
       builder: (context, child) {
-        return EasyLoading.init()(context, child);
+        return ResponsiveMedia.withClampedTextScale(
+          context: context,
+          child: EasyLoading.init()(context, child),
+        );
       },
     );
   }

@@ -16,7 +16,7 @@ Future<ScratchCard?> showScratchCardRevealDialog(
 }) {
   return showDialog<ScratchCard>(
     context: context,
-    barrierDismissible: card.isRevealed,
+    barrierDismissible: card.isRevealed || card.isRevealLocked,
     builder: (_) => _ScratchCardRevealDialog(card: card),
   );
 }
@@ -71,6 +71,13 @@ class _ScratchCardRevealDialogState extends State<_ScratchCardRevealDialog> {
 
   Future<void> _reveal() async {
     if (_card.isRevealed || _revealing) return;
+    if (_card.isRevealLocked) {
+      setState(() {
+        _error = _card.revealLockedReason ??
+            'Scratch card reward can be claimed after delivery.';
+      });
+      return;
+    }
     setState(() {
       _revealing = true;
       _error = null;
@@ -101,6 +108,13 @@ class _ScratchCardRevealDialogState extends State<_ScratchCardRevealDialog> {
   }
 
   void _scratch(Offset localPosition, Size size) {
+    if (_card.isRevealLocked) {
+      setState(() {
+        _error = _card.revealLockedReason ??
+            'Scratch card reward can be claimed after delivery.';
+      });
+      return;
+    }
     if (size.width <= 0 || size.height <= 0) return;
     if (localPosition.dx < 0 ||
         localPosition.dy < 0 ||
@@ -136,7 +150,9 @@ class _ScratchCardRevealDialogState extends State<_ScratchCardRevealDialog> {
       return _ScratchIntroDialog(
         card: _card,
         onClose: () => Navigator.pop(context, _card),
-        onScratch: () => setState(() => _introVisible = false),
+        onScratch: _card.isRevealLocked
+            ? null
+            : () => setState(() => _introVisible = false),
       );
     }
     if (_card.isRevealed && _surfaceHidden) {
@@ -658,7 +674,7 @@ class _ScratchIntroDialog extends StatelessWidget {
 
   final ScratchCard card;
   final VoidCallback onClose;
-  final VoidCallback onScratch;
+  final VoidCallback? onScratch;
 
   @override
   Widget build(BuildContext context) {
@@ -761,6 +777,19 @@ class _ScratchIntroDialog extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(height: 18),
+                  if (card.isRevealLocked) ...[
+                    Text(
+                      card.revealLockedReason ??
+                          'Scratch card reward can be claimed after delivery.',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        color: FoodFlowTheme.muted,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                  ],
                   SizedBox(
                     width: double.infinity,
                     child: ElevatedButton(
@@ -768,6 +797,8 @@ class _ScratchIntroDialog extends StatelessWidget {
                       style: ElevatedButton.styleFrom(
                         backgroundColor: FoodFlowTheme.tagOrange,
                         foregroundColor: Colors.white,
+                        disabledBackgroundColor: FoodFlowTheme.disabledFill,
+                        disabledForegroundColor: FoodFlowTheme.muted,
                         elevation: 8,
                         shadowColor: FoodFlowTheme.tagOrange.withOpacity(0.28),
                         padding: const EdgeInsets.symmetric(vertical: 15),
@@ -775,8 +806,8 @@ class _ScratchIntroDialog extends StatelessWidget {
                           borderRadius: BorderRadius.circular(16),
                         ),
                       ),
-                      child: const Text(
-                        'Scratch Now',
+                      child: Text(
+                        card.isRevealLocked ? 'After Delivery' : 'Scratch Now',
                         style: TextStyle(
                             fontSize: 15, fontWeight: FontWeight.w900),
                       ),
@@ -785,8 +816,8 @@ class _ScratchIntroDialog extends StatelessWidget {
                   const SizedBox(height: 8),
                   TextButton(
                     onPressed: onClose,
-                    child: const Text(
-                      'Maybe Later',
+                    child: Text(
+                      card.isRevealLocked ? 'Close' : 'Maybe Later',
                       style: TextStyle(
                         color: FoodFlowTheme.muted,
                         fontWeight: FontWeight.w800,

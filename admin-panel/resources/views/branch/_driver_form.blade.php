@@ -50,20 +50,12 @@
 
     <div class="col-12">
         <label class="form-label fw-semibold">Operating Address</label>
-        <textarea name="address" rows="2" class="form-control @error('address') is-invalid @enderror" placeholder="Address, area, city, state, pincode">{{ old('address', $driver?->address) }}</textarea>
-        <div class="form-text">Must match one of this branch's active delivery zones.</div>
+        <textarea name="address" rows="2" class="form-control @error('address') is-invalid @enderror" placeholder="Optional. Defaults to this branch's active delivery zone.">{{ old('address', $driver?->address) }}</textarea>
+        <div class="form-text">Drivers are assigned to this branch's active delivery zone automatically.</div>
         @error('address') <div class="invalid-feedback">{{ $message }}</div> @enderror
     </div>
-    <div class="col-md-6">
-        <label class="form-label fw-semibold">Latitude</label>
-        <input type="number" step="0.000001" name="latitude" class="form-control @error('latitude') is-invalid @enderror" value="{{ old('latitude', $driver?->latitude) }}">
-        @error('latitude') <div class="invalid-feedback">{{ $message }}</div> @enderror
-    </div>
-    <div class="col-md-6">
-        <label class="form-label fw-semibold">Longitude</label>
-        <input type="number" step="0.000001" name="longitude" class="form-control @error('longitude') is-invalid @enderror" value="{{ old('longitude', $driver?->longitude) }}">
-        @error('longitude') <div class="invalid-feedback">{{ $message }}</div> @enderror
-    </div>
+    @error('latitude') <div class="text-danger small">{{ $message }}</div> @enderror
+    @error('longitude') <div class="text-danger small">{{ $message }}</div> @enderror
 
     @if($driver)
         <div class="col-12">

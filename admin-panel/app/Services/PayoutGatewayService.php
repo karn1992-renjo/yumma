@@ -35,6 +35,7 @@ class PayoutGatewayService
             'stripe' => app(StripeConnectPayoutService::class),
             'cashfree' => app(CashfreePayoutService::class),
             'paystack' => app(PaystackPayoutService::class),
+            'cash',
             'sslcommerz',
             'mollie',
             'senangpay',
@@ -99,6 +100,14 @@ class PayoutGatewayService
                 'success' => true,
                 'message' => 'RazorpayX balance is available in the RazorpayX dashboard.',
                 'account_number' => AppSetting::getValue('razorpay_x_account_number'),
+            ];
+        }
+
+        if ($provider === 'cash') {
+            return [
+                'success' => true,
+                'message' => 'Cash payouts do not have a gateway balance. Pay manually and use Mark as Cash Paid to complete the payout.',
+                'mode' => 'cash_manual_settlement',
             ];
         }
 

@@ -26,6 +26,16 @@ class OrderAlertPermissionManager {
     } catch (_) {}
   }
 
+  static Future<bool> isBatteryOptimizationDisabled() async {
+    try {
+      return await _channel
+              .invokeMethod<bool>('isIgnoringBatteryOptimizations') ??
+          true;
+    } catch (_) {
+      return true;
+    }
+  }
+
   static Future<void> requestForegroundServicePermission() async {
     try {
       await _channel.invokeMethod<void>('openAppNotificationSettings');

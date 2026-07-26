@@ -164,6 +164,76 @@ class PayoutController extends Controller
             : 'Payout submitted to the gateway and is awaiting final confirmation.');
     }
 
+    public function markCashPaid(Request $request, Payout $payout, PayoutSettlementService $settlementService)
+    {
+        $validated = $request->validate([
+            'transaction_reference' => ['nullable', 'string', 'max:255'],
+            'notes' => ['nullable', 'string', 'max:500'],
+        ]);
+
+        $isCompletedCashPayout = $payout->status === 'completed'
+            && strtolower((string) $payout->gateway) === 'cash';
+
+        if (! $isCompletedCashPayout && ! in_array($payout->status, ['pending', 'processing', 'queued', 'failed'], true)) {
+            return $this->payoutResponse(false, 'Only pending, processing, or failed payouts can be marked as cash paid.');
+        }
+
+        if ($payout->status === 'pending' && ! $settlementService->ensureFundsReserved(
+            $payout->loadMissing(['restaurant.owner', 'driver'])
+        )) {
+            return $this->payoutResponse(false, 'Insufficient wallet balance to reserve this payout.');
+        }
+
+        if ($payout->status === 'failed' && ! $settlementService->reserveFundsForRetry(
+            $payout->loadMissing(['restaurant.owner', 'driver'])
+        )) {
+            return $this->payoutResponse(false, 'Insufficient wallet balance to settle this failed payout.');
+        }
+
+        $reference = trim((string) ($validated['transaction_reference'] ?? ''));
+        if ($reference === '') {
+            $reference = 'CASH_PAYOUT_' . $payout->id . '_' . now()->format('YmdHis');
+        }
+
+        try {
+            $status = $settlementService->settleFromGatewayResult(
+                $payout->loadMissing(['restaurant.owner', 'driver']),
+                [
+                    'gateway' => 'cash',
+                    'transaction_id' => $reference,
+                    'gateway_reference_id' => $reference,
+                    'gateway_status' => 'paid',
+                    'response' => [
+                        'mode' => 'cash',
+                        'reference' => $reference,
+                        'notes' => $validated['notes'] ?? null,
+                        'marked_by' => auth()->id(),
+                        'marked_at' => now()->toIso8601String(),
+                    ],
+                ],
+                auth()->id()
+            );
+        } catch (\Throwable $e) {
+            return $this->payoutResponse(false, 'Cash payout settlement failed: ' . $e->getMessage());
+        }
+
+        \App\Models\PayoutAuditLog::create([
+            'payout_id' => $payout->id,
+            'user_id' => auth()->id(),
+            'action' => 'cash_paid',
+            'ip_address' => $request->ip(),
+            'user_agent' => $request->userAgent(),
+            'new_values' => [
+                'transaction_id' => $reference,
+                'status' => $status,
+                'notes' => $validated['notes'] ?? null,
+            ],
+            'meta' => ['mode' => 'cash'],
+        ]);
+
+        return $this->payoutResponse(true, 'Payout marked as cash paid successfully.');
+    }
+
     public function bulkProcess(Request $request, BulkPayoutService $bulkPayoutService)
     {
         $validated = $request->validate([

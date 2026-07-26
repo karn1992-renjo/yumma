@@ -48,7 +48,7 @@ class LoadingButton extends StatelessWidget {
                 text,
                 style: TextStyle(
                   fontSize: 16,
-                  fontWeight: FontWeight.bold,
+                  fontWeight: FontWeight.w800,
                   color: textColor,
                 ),
               ),

@@ -4,14 +4,20 @@
 @section('header', 'Notification Settings')
 
 @section('content')
-<div class="page-header">
-    <div class="d-flex justify-content-between align-items-center">
+@include('admin.settings._style')
+
+<div class="settings-shell">
+<div class="settings-hero">
+    <div>
+        <span class="settings-eyebrow"><i class="fas fa-bell"></i> Realtime & Push</span>
         <div>
             <h1>Notification Settings</h1>
-            <p>Configure SMS and push notification providers.</p>
+            <p>Configure Firebase push, Pusher realtime broadcasting, Twilio call/SMS settings, and live test notification delivery.</p>
         </div>
     </div>
 </div>
+
+@include('admin.settings._tabs')
 
 <div class="row g-4">
     <div class="col-12">
@@ -81,7 +87,7 @@
                     <span class="badge bg-light text-dark border fs-6 px-3 py-2">Customer / Restaurant / Driver</span>
                 </div>
 
-                <form action="{{ route('admin.settings.notifications.test-push') }}" method="POST">
+                <form action="{{ route('admin.settings.notifications.test-push') }}" method="POST" enctype="multipart/form-data">
                     @csrf
                     <div class="row gy-3">
                         <div class="col-md-3">
@@ -99,7 +105,7 @@
                                 name="phone"
                                 class="form-control"
                                 value="{{ old('phone') }}"
-                                placeholder="{{ $settings['default_mobile_country_code'] ?? '+91' }}9876543210"
+                                placeholder="{{ $settings['default_mobile_country_code'] ?? '+91' }}XXXXXXXXXX"
                                 required
                             >
                         </div>
@@ -133,6 +139,27 @@
                                 maxlength="500"
                                 required
                             >{{ old('body', 'This is a live push test from admin settings.') }}</textarea>
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label fw-semibold">Upload Pic</label>
+                            <input
+                                type="file"
+                                name="image"
+                                accept="image/jpeg,image/png,image/webp"
+                                class="form-control form-control-sm @error('image') is-invalid @enderror"
+                            >
+                            @error('image')<div class="invalid-feedback">{{ $message }}</div>@enderror
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label fw-semibold">Image URL</label>
+                            <input
+                                type="url"
+                                name="image_url"
+                                class="form-control form-control-sm @error('image_url') is-invalid @enderror"
+                                value="{{ old('image_url') }}"
+                                placeholder="https://..."
+                            >
+                            @error('image_url')<div class="invalid-feedback">{{ $message }}</div>@enderror
                         </div>
                         <div class="col-md-3 d-flex align-items-end">
                             <button type="submit" class="btn btn-success w-100">
@@ -300,5 +327,6 @@
             </div>
         </div>
     </div>
+</div>
 </div>
 @endsection

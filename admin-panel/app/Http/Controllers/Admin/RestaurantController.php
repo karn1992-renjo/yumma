@@ -8,6 +8,7 @@ use App\Models\CommissionSetting;
 use App\Models\Restaurant;
 use App\Models\User;
 use App\Models\Cuisine;
+use App\Rules\UniqueUserContactForRole;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Storage;
@@ -156,8 +157,8 @@ class RestaurantController extends Controller
             
             // Owner Information
             'owner_name' => 'required|string|max:255',
-            'owner_email' => 'required|email|unique:users,email',
-            'owner_phone' => 'required|string|max:20|unique:users,phone',
+            'owner_email' => ['required', 'email', UniqueUserContactForRole::email('restaurant_owner')],
+            'owner_phone' => ['required', 'string', 'max:20', UniqueUserContactForRole::phone('restaurant_owner')],
             'owner_password' => 'required|string|min:8|confirmed',
         ]);
         
@@ -428,8 +429,8 @@ class RestaurantController extends Controller
                 'delivery_fee' => 'nullable|numeric|min:0',
                 'cuisine' => 'nullable|string|max:1000',
                 'owner_name' => 'required|string|max:255',
-                'owner_email' => 'required|email|unique:users,email',
-                'owner_phone' => 'required|string|max:20|unique:users,phone',
+                'owner_email' => ['required', 'email', UniqueUserContactForRole::email('restaurant_owner')],
+                'owner_phone' => ['required', 'string', 'max:20', UniqueUserContactForRole::phone('restaurant_owner')],
                 'owner_password' => 'required|string|min:8',
                 'verified' => 'nullable|string',
                 'open' => 'nullable|string',

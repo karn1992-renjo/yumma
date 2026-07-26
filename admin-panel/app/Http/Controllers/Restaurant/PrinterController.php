@@ -26,8 +26,44 @@ class PrinterController extends Controller
     {
         $restaurant = $this->getCurrentRestaurant();
         $printers = $restaurant->printerSettings()->orderBy('is_default', 'desc')->orderBy('created_at', 'desc')->get();
-        
-        return view('restaurant.printers.index', compact('printers'));
+
+        $printerRows = $printers->map(function ($printer) {
+            $type = strtolower((string) $printer->printer_type);
+            $typeLabels = [
+                'network' => 'Network',
+                'bluetooth' => 'Bluetooth',
+                'usb' => 'USB',
+            ];
+
+            if ($type === 'network') {
+                $connection = trim(($printer->ip_address ?: 'Not set') . ':' . ($printer->port ?: '9100'));
+            } elseif ($type === 'bluetooth') {
+                $connection = $printer->bluetooth_mac ?: 'Bluetooth address not set';
+            } else {
+                $connection = $printer->usb_path ?: '/dev/usb/lp0';
+            }
+
+            return [
+                'id' => $printer->id,
+                'name' => $printer->printer_name,
+                'type' => $type,
+                'type_label' => $typeLabels[$type] ?? ucfirst($type ?: 'Printer'),
+                'connection' => $connection,
+                'paper_size' => $printer->paper_size ?: 80,
+                'is_active' => (bool) $printer->is_active,
+                'is_default' => (bool) $printer->is_default,
+                'created_at' => $printer->created_at ? $printer->created_at->format('d M Y') : 'Recently',
+            ];
+        });
+
+        $printerStats = [
+            'total' => $printers->count(),
+            'active' => $printers->where('is_active', true)->count(),
+            'default' => $printers->where('is_default', true)->count(),
+            'network' => $printers->where('printer_type', 'network')->count(),
+        ];
+
+        return view('restaurant.printers.index', compact('printers', 'printerRows', 'printerStats'));
     }
     
     public function create()

@@ -17,7 +17,7 @@ class NetworkErrorScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: FoodFlowTheme.canvas,
+      backgroundColor: foodflow.canvas,
       body: NetworkErrorView(
         onRetry: onRetry,
         message: message,
@@ -98,10 +98,10 @@ class _NetworkErrorViewState extends State<NetworkErrorView>
                   decoration: BoxDecoration(
                     color: Colors.white,
                     borderRadius: BorderRadius.circular(28),
-                    border: Border.all(color: FoodFlowTheme.line),
+                    border: Border.all(color: foodflow.line),
                     boxShadow: [
                       BoxShadow(
-                        color: FoodFlowTheme.crimson.withOpacity(0.10),
+                        color: foodflow.crimson.withOpacity(0.10),
                         blurRadius: 28,
                         offset: const Offset(0, 14),
                       ),
@@ -114,14 +114,14 @@ class _NetworkErrorViewState extends State<NetworkErrorView>
                         width: 72,
                         height: 72,
                         decoration: BoxDecoration(
-                          color: FoodFlowTheme.crimson.withOpacity(0.08),
+                          color: foodflow.crimson.withOpacity(0.08),
                           shape: BoxShape.circle,
                         ),
                       ),
                       const Icon(
                         Icons.wifi_off_rounded,
                         size: 48,
-                        color: FoodFlowTheme.crimson,
+                        color: foodflow.crimson,
                       ),
                     ],
                   ),
@@ -132,9 +132,9 @@ class _NetworkErrorViewState extends State<NetworkErrorView>
                 widget.title,
                 textAlign: TextAlign.center,
                 style: const TextStyle(
-                  color: FoodFlowTheme.ink,
+                  color: foodflow.ink,
                   fontSize: 24,
-                  fontWeight: FontWeight.w900,
+                  fontWeight: FontWeight.w800,
                 ),
               ),
               const SizedBox(height: 10),
@@ -144,10 +144,10 @@ class _NetworkErrorViewState extends State<NetworkErrorView>
                     : 'Please check your internet connection and try again.',
                 textAlign: TextAlign.center,
                 style: const TextStyle(
-                  color: FoodFlowTheme.muted,
+                  color: foodflow.muted,
                   fontSize: 14,
                   height: 1.45,
-                  fontWeight: FontWeight.w600,
+                  fontWeight: FontWeight.w400,
                 ),
               ),
               const SizedBox(height: 24),
@@ -157,7 +157,7 @@ class _NetworkErrorViewState extends State<NetworkErrorView>
                 child: ElevatedButton.icon(
                   onPressed: _isRetrying ? null : _retry,
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: FoodFlowTheme.crimson,
+                    backgroundColor: foodflow.crimson,
                     foregroundColor: Colors.white,
                     elevation: 0,
                     shape: RoundedRectangleBorder(

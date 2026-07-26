@@ -29,6 +29,7 @@ import 'providers/order_provider.dart';
 import 'providers/restaurant_provider.dart';
 import 'providers/dining_provider.dart';
 import 'models/order.dart';
+import 'models/scratch_card.dart';
 import 'models/address.dart' as app_address;
 import 'screens/onboarding/onboarding_screen.dart';
 import 'screens/auth/login_screen.dart';
@@ -199,6 +200,22 @@ int? _parseOrderId(dynamic args) {
   if (args is String) return int.tryParse(args);
   if (args is double) return args.toInt();
   return null;
+}
+
+List<ScratchCard> _parseScratchCardsArgument(dynamic value) {
+  if (value is! List) return const [];
+
+  return value
+      .map((item) {
+        if (item is ScratchCard) return item;
+        if (item is Map) {
+          return ScratchCard.fromJson(Map<String, dynamic>.from(item));
+        }
+        return null;
+      })
+      .whereType<ScratchCard>()
+      .where((card) => card.id > 0)
+      .toList(growable: false);
 }
 
 int? _parseRestaurantId(dynamic args) {
@@ -711,6 +728,8 @@ class _FoodDeliveryAppState extends State<FoodDeliveryApp> {
               scheduledTime: args['scheduledTime'] != null
                   ? DateTime.tryParse(args['scheduledTime'].toString())
                   : null,
+              initialScratchCards:
+                  _parseScratchCardsArgument(args['scratchCards']),
             ),
           );
         }

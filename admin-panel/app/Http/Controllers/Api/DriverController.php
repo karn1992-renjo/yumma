@@ -6,14 +6,18 @@ use App\Http\Controllers\Controller;
 use App\Events\OrderStatusUpdatedEvent;
 use App\Models\Order;
 use App\Models\DriverGig;
+use App\Models\DriverGigBooking;
 use App\Models\AppSetting;
+use App\Rules\UniqueUserContactForRole;
 use App\Services\AutoAssignDriverService;
 use App\Services\GoogleMapsEtaService;
+use App\Services\OrderPaymentService;
 use App\Services\OrderStatusPushService;
 use App\Support\GatewayRegistry;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Carbon\Carbon;
 
 class DriverController extends Controller
@@ -40,10 +44,15 @@ class DriverController extends Controller
         $driverId = auth()->id();
         
         Cache::put("driver_location_{$driverId}", [
-            'lat' => $request->lat,
-            'lng' => $request->lng,
+            'lat' => (float) $request->lat,
+            'lng' => (float) $request->lng,
             'updated_at' => now()
         ], 300); // Cache for 5 minutes
+
+        $request->user()?->forceFill([
+            'latitude' => (float) $request->lat,
+            'longitude' => (float) $request->lng,
+        ])->save();
         
         return response()->json([
             'success' => true,
@@ -119,35 +128,82 @@ class DriverController extends Controller
     public function getMyGigs(Request $request)
     {
         $driverId = auth()->id();
-        $query = DriverGig::with('area');
-
-        if ($request->date) {
-            $query->whereDate('date', $request->date);
-        } else {
-            $query->whereDate('date', '>=', today());
-        }
-
-        if ($request->filled('status')) {
-            $statuses = collect(explode(',', $request->status))
+        $statuses = $request->filled('status')
+            ? collect(explode(',', $request->status))
                 ->map(fn ($status) => trim($status))
                 ->filter()
                 ->values()
-                ->all();
+                ->all()
+            : [];
 
-            if (!empty($statuses)) {
-                $query->whereIn('status', $statuses);
+        $applyDateFilter = function ($query) use ($request) {
+            if ($request->date) {
+                $query->whereDate('date', $request->date);
+            } else {
+                $query->whereDate('date', '>=', today());
             }
+        };
+
+        $gigs = collect();
+        $includeAvailable = empty($statuses) || in_array('available', $statuses, true);
+        $driverBookingStatuses = empty($statuses)
+            ? ['booked', 'completed', 'cancelled']
+            : array_values(array_intersect($statuses, ['booked', 'completed', 'cancelled']));
+
+        if ($includeAvailable) {
+            $availableGigs = DriverGig::with('area')
+                ->withCount(['activeBookings as active_bookings_count'])
+                ->whereIn('status', ['available', 'booked'])
+                ->whereDoesntHave('bookings', function ($bookingQuery) use ($driverId) {
+                    $bookingQuery->where('driver_id', $driverId)
+                        ->whereIn('status', ['booked', 'completed']);
+                })
+                ->where($applyDateFilter)
+                ->orderBy('date')
+                ->orderBy('start_time')
+                ->get()
+                ->filter(fn (DriverGig $gig) => $gig->available_seats > 0)
+                ->values()
+                ->map(function (DriverGig $gig) {
+                    $gig->setAttribute('status', 'available');
+                    return $gig;
+                });
+
+            $gigs = $gigs->merge($availableGigs);
         }
 
-        $query->where(function ($gigQuery) use ($driverId) {
-            $gigQuery->where('driver_id', $driverId)
-                ->orWhere(function ($availableQuery) {
-                    $availableQuery->where('status', 'available')
-                        ->whereNull('driver_id');
+        if (!empty($driverBookingStatuses)) {
+            $bookedGigs = DriverGig::with([
+                    'area',
+                    'bookings' => fn ($query) => $query->where('driver_id', $driverId),
+                ])
+                ->withCount(['activeBookings as active_bookings_count'])
+                ->whereHas('bookings', function ($bookingQuery) use ($driverId, $driverBookingStatuses) {
+                    $bookingQuery->where('driver_id', $driverId)
+                        ->whereIn('status', $driverBookingStatuses);
+                })
+                ->where($applyDateFilter)
+                ->orderBy('date')
+                ->orderBy('start_time')
+                ->get()
+                ->map(function (DriverGig $gig) {
+                    $booking = $gig->bookings->first();
+                    if ($booking) {
+                        $gig->setAttribute('driver_booking_id', $booking->id);
+                        $gig->setAttribute('driver_booking_status', $booking->status);
+                        $gig->setAttribute('booked_at', $booking->booked_at);
+                        $gig->setAttribute('status', $booking->status);
+                    }
+
+                    return $gig;
                 });
-        });
-        
-        $gigs = $query->orderBy('date')->orderBy('start_time')->get();
+
+            $gigs = $gigs->merge($bookedGigs);
+        }
+
+        $gigs = $gigs
+            ->sortBy(fn (DriverGig $gig) => ($gig->date?->format('Y-m-d') ?? '') . ' ' . ($gig->start_time?->format('H:i:s') ?? ''))
+            ->values();
         
         return response()->json([
             'success' => true,
@@ -157,49 +213,82 @@ class DriverController extends Controller
     
     public function bookGig($gigId)
     {
-        $gig = DriverGig::where('id', $gigId)
-            ->where('status', 'available')
-            ->whereNull('driver_id')
-            ->first();
-            
-        if (!$gig) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Gig not available'
-            ], 400);
-        }
-
         $driverId = auth()->id();
-        $hasConflict = DriverGig::where('driver_id', $driverId)
-            ->whereDate('date', $gig->date)
-            ->whereIn('status', ['booked', 'completed'])
-            ->where(function ($query) use ($gig) {
-                $query->whereBetween('start_time', [$gig->start_time, $gig->end_time])
-                    ->orWhereBetween('end_time', [$gig->start_time, $gig->end_time])
-                    ->orWhere(function ($inner) use ($gig) {
-                        $inner->where('start_time', '<=', $gig->start_time)
-                            ->where('end_time', '>=', $gig->end_time);
-                    });
-            })
-            ->exists();
 
-        if ($hasConflict) {
-            return response()->json([
-                'success' => false,
-                'message' => 'You already have another gig booked for this time range.',
-            ], 422);
-        }
-        
-        $gig->update([
-            'driver_id' => $driverId,
-            'status' => 'booked',
-            'booked_at' => now(),
-        ]);
-        
-        return response()->json([
-            'success' => true,
-            'message' => 'Gig booked successfully'
-        ]);
+        [$payload, $statusCode] = DB::transaction(function () use ($gigId, $driverId) {
+            $gig = DriverGig::where('id', $gigId)->lockForUpdate()->first();
+
+            if (! $gig || ! in_array($gig->status, ['available', 'booked'], true)) {
+                return [[
+                    'success' => false,
+                    'message' => 'Gig not available',
+                ], 400];
+            }
+
+            if ($gig->bookings()
+                ->where('driver_id', $driverId)
+                ->whereIn('status', ['booked', 'completed'])
+                ->exists()) {
+                return [[
+                    'success' => false,
+                    'message' => 'You have already booked this gig.',
+                ], 422];
+            }
+
+            $activeBookingsCount = $gig->activeBookings()->lockForUpdate()->count();
+            if ($activeBookingsCount >= max(1, (int) $gig->capacity)) {
+                $gig->update(['status' => 'booked']);
+
+                return [[
+                    'success' => false,
+                    'message' => 'Gig is full',
+                ], 400];
+            }
+
+            $hasConflict = DriverGigBooking::where('driver_id', $driverId)
+                ->whereIn('status', ['booked', 'completed'])
+                ->whereHas('gig', function ($query) use ($gig) {
+                    $query->whereDate('date', $gig->date)
+                        ->where(function ($timeQuery) use ($gig) {
+                            $timeQuery->whereBetween('start_time', [$gig->start_time, $gig->end_time])
+                                ->orWhereBetween('end_time', [$gig->start_time, $gig->end_time])
+                                ->orWhere(function ($inner) use ($gig) {
+                                    $inner->where('start_time', '<=', $gig->start_time)
+                                        ->where('end_time', '>=', $gig->end_time);
+                                });
+                        });
+                })
+                ->exists();
+
+            if ($hasConflict) {
+                return [[
+                    'success' => false,
+                    'message' => 'You already have another gig booked for this time range.',
+                ], 422];
+            }
+
+            DriverGigBooking::create([
+                'driver_gig_id' => $gig->id,
+                'driver_id' => $driverId,
+                'status' => 'booked',
+                'booked_at' => now(),
+            ]);
+
+            $bookedCount = $activeBookingsCount + 1;
+            $gig->update([
+                'driver_id' => $gig->driver_id ?: $driverId,
+                'booked_at' => $gig->booked_at ?: now(),
+                'status' => $bookedCount >= max(1, (int) $gig->capacity) ? 'booked' : 'available',
+            ]);
+
+            return [[
+                'success' => true,
+                'message' => 'Gig booked successfully',
+                'data' => $gig->fresh('area')->loadCount(['activeBookings as active_bookings_count']),
+            ], 200];
+        });
+
+        return response()->json($payload, $statusCode);
     }
     
     public function getEarnings(Request $request)
@@ -286,6 +375,8 @@ class DriverController extends Controller
             $order->driver_accepted_at = now();
             $order->save();
         }
+
+        $this->warmAcceptedRouteEta($order->fresh(['restaurant', 'driver']));
 
         broadcast(new OrderStatusUpdatedEvent($order, $order->restaurant_id));
 
@@ -377,7 +468,7 @@ class DriverController extends Controller
     {
         $request->validate([
             'name' => 'required|string|max:255',
-            'phone' => 'required|string|max:20|unique:users,phone,' . $request->user()->id,
+            'phone' => ['required', 'string', 'max:20', UniqueUserContactForRole::phone('delivery_partner', $request->user()->id)],
             'vehicle_type' => 'nullable|string|max:100',
             'vehicle_number' => 'nullable|string|max:100',
             'license_number' => 'nullable|string|max:100',
@@ -527,8 +618,12 @@ class DriverController extends Controller
     private function activeBookedGig(int $driverId): ?DriverGig
     {
         return DriverGig::with('area')
-            ->where('driver_id', $driverId)
-            ->where('status', 'booked')
+            ->withCount(['activeBookings as active_bookings_count'])
+            ->whereIn('status', ['available', 'booked'])
+            ->whereHas('bookings', function ($query) use ($driverId) {
+                $query->where('driver_id', $driverId)
+                    ->where('status', 'booked');
+            })
             ->whereDate('date', today())
             ->orderBy('start_time')
             ->first();
@@ -573,22 +668,24 @@ class DriverController extends Controller
             ? json_decode($order->items, true)
             : $order->items;
         $routeBatch = $this->routeBatchSummary($order);
+        $driverLocation = $this->driverLocationPayload($order);
         $eta = app(GoogleMapsEtaService::class)->estimateDelivery(
             $order->restaurant?->latitude !== null ? (float) $order->restaurant->latitude : null,
             $order->restaurant?->longitude !== null ? (float) $order->restaurant->longitude : null,
             $order->delivery_lat !== null ? (float) $order->delivery_lat : null,
             $order->delivery_lng !== null ? (float) $order->delivery_lng : null,
-            (int) ($order->preparation_time_minutes ?? $order->restaurant?->order_lead_time ?? 20),
-            $order->driver?->latitude !== null ? (float) $order->driver->latitude : null,
-            $order->driver?->longitude !== null ? (float) $order->driver->longitude : null,
+            $order->remainingPreparationMinutes(),
+            $driverLocation['lat'] ?? ($order->driver?->latitude !== null ? (float) $order->driver->latitude : null),
+            $driverLocation['lng'] ?? ($order->driver?->longitude !== null ? (float) $order->driver->longitude : null),
         );
 
-        return [
+        return array_merge([
             'id' => $order->id,
             'order_number' => $order->order_number,
             'restaurant_id' => $order->restaurant_id,
             'customer_id' => $order->customer_id,
             'driver_id' => $order->driver_id,
+            'driver_location' => $driverLocation,
             'branch_id' => $order->branch_id,
             'branch' => $order->branch ? [
                 'id' => $order->branch->id,
@@ -622,6 +719,12 @@ class DriverController extends Controller
             'cash_collected_amount' => $order->cash_collected_amount !== null ? (float) $order->cash_collected_amount : null,
             'cash_collected_at' => $order->cash_collected_at ? $order->cash_collected_at->toIso8601String() : null,
             'online_payment_verified_at' => $order->online_payment_verified_at ? $order->online_payment_verified_at->toIso8601String() : null,
+            'payment_source' => $order->payment_source,
+            'payment_gateway' => $order->payment_gateway,
+            'payment_link_id' => $order->payment_link_id,
+            'paid_at' => $order->paid_at ? $order->paid_at->toIso8601String() : null,
+            'payment_summary' => app(OrderPaymentService::class)->statusPayload($order),
+            'active_payment_attempt' => app(OrderPaymentService::class)->statusPayload($order)['active_attempt'] ?? null,
             'cancellation_reason' => $order->cancellation_reason,
             'refund_status' => $order->refund_status,
             'refund_amount' => $order->refund_amount !== null ? (float) $order->refund_amount : null,
@@ -669,7 +772,56 @@ class DriverController extends Controller
             'eta' => $eta,
             'estimated_delivery_minutes' => $eta['eta_minutes'] ?? null,
             'estimated_delivery_label' => $eta['eta_range'] ?? null,
+        ], $order->preparationTimingPayload());
+    }
+
+    private function driverLocationPayload(Order $order): ?array
+    {
+        if (! $order->driver_id) {
+            return null;
+        }
+
+        $cached = Cache::get("driver_location_{$order->driver_id}", []);
+        $lat = $cached['lat'] ?? $order->driver?->latitude;
+        $lng = $cached['lng'] ?? $order->driver?->longitude;
+
+        if ($lat === null || $lng === null || $lat === '' || $lng === '') {
+            return null;
+        }
+
+        return [
+            'lat' => (float) $lat,
+            'lng' => (float) $lng,
+            'updated_at' => isset($cached['updated_at'])
+                ? (string) $cached['updated_at']
+                : $order->driver?->updated_at?->toIso8601String(),
         ];
+    }
+
+
+    private function warmAcceptedRouteEta(Order $order): void
+    {
+        if (($order->order_type ?? 'delivery') === 'takeaway') {
+            return;
+        }
+
+        try {
+            app(GoogleMapsEtaService::class)->estimateDelivery(
+                $order->restaurant?->latitude !== null ? (float) $order->restaurant->latitude : null,
+                $order->restaurant?->longitude !== null ? (float) $order->restaurant->longitude : null,
+                $order->delivery_lat !== null ? (float) $order->delivery_lat : null,
+                $order->delivery_lng !== null ? (float) $order->delivery_lng : null,
+                $order->remainingPreparationMinutes(),
+                $order->driver?->latitude !== null ? (float) $order->driver->latitude : null,
+                $order->driver?->longitude !== null ? (float) $order->driver->longitude : null,
+                true
+            );
+        } catch (\Throwable $exception) {
+            Log::warning('Accepted delivery route ETA warmup failed: ' . $exception->getMessage(), [
+                'order_id' => $order->id,
+                'driver_id' => $order->driver_id,
+            ]);
+        }
     }
 
     private function routeBatchSummary(Order $order): ?array

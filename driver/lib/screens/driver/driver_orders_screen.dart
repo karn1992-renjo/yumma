@@ -197,6 +197,14 @@ class _DriverOrdersScreenState extends State<DriverOrdersScreen>
     );
   }
 
+  String _driverEarningText(Order order) {
+    final earning = formatCurrency(context, order.driverEarningAmount);
+    if (order.driverIncentiveAmount > 0) {
+      return '$earning + ${formatCurrency(context, order.driverIncentiveAmount)} incentive';
+    }
+    return earning;
+  }
+
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
@@ -231,11 +239,11 @@ class _DriverOrdersScreenState extends State<DriverOrdersScreen>
                     .toList();
 
     return Scaffold(
-      backgroundColor: FoodFlowTheme.canvas,
+      backgroundColor: foodflow.canvas,
       appBar: AppBar(
         title: const Text('Orders'),
         backgroundColor: Colors.white,
-        foregroundColor: FoodFlowTheme.ink,
+        foregroundColor: foodflow.ink,
         elevation: 0,
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(50),
@@ -269,7 +277,7 @@ class _DriverOrdersScreenState extends State<DriverOrdersScreen>
                   onRetry: _loadOrders,
                 )
           : filteredOrders.isEmpty
-              ? FoodFlowTheme.emptyState(
+              ? foodflow.emptyState(
                   icon: Icons.delivery_dining_outlined,
                   title: 'No deliveries found',
                   subtitle: 'Assigned delivery orders will appear here.',
@@ -291,7 +299,7 @@ class _DriverOrdersScreenState extends State<DriverOrdersScreen>
                       borderRadius: BorderRadius.circular(12),
                       child: Container(
                       margin: const EdgeInsets.only(bottom: 14),
-                      decoration: FoodFlowTheme.surface(radius: 12),
+                      decoration: foodflow.surface(radius: 12),
                       clipBehavior: Clip.antiAlias,
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -315,24 +323,24 @@ class _DriverOrdersScreenState extends State<DriverOrdersScreen>
                                 children: [
                                   const Icon(
                                     Icons.notifications_active,
-                                    color: FoodFlowTheme.success,
+                                    color: foodflow.success,
                                     size: 18,
                                   ),
                                   const SizedBox(width: 8),
                                   Expanded(
                                     child: Text(
-                                      'New Order Incoming',
+                                      'New Delivery Request',
                                       style: const TextStyle(
                                         color: Colors.white,
-                                        fontWeight: FontWeight.w900,
+                                        fontWeight: FontWeight.w800,
                                       ),
                                     ),
                                   ),
                                   Text(
-                                    formatCurrency(context, order.deliveryFee),
+                                    _driverEarningText(order),
                                     style: const TextStyle(
-                                      color: FoodFlowTheme.success,
-                                      fontWeight: FontWeight.w900,
+                                      color: foodflow.success,
+                                      fontWeight: FontWeight.w800,
                                       fontSize: 18,
                                     ),
                                   ),
@@ -350,8 +358,8 @@ class _DriverOrdersScreenState extends State<DriverOrdersScreen>
                               Text(
                                 'Order #${order.orderNumber}',
                                 style: const TextStyle(
-                                  color: FoodFlowTheme.ink,
-                                  fontWeight: FontWeight.w900,
+                                  color: foodflow.ink,
+                                  fontWeight: FontWeight.w800,
                                   fontSize: 16,
                                 ),
                               ),
@@ -369,7 +377,7 @@ class _DriverOrdersScreenState extends State<DriverOrdersScreen>
                                   style: TextStyle(
                                     color: order.statusColor,
                                     fontSize: 12,
-                                    fontWeight: FontWeight.w900,
+                                    fontWeight: FontWeight.w800,
                                   ),
                                 ),
                               ),
@@ -414,16 +422,16 @@ class _DriverOrdersScreenState extends State<DriverOrdersScreen>
                           const SizedBox(height: 8),
                           _buildLocationLine(
                             Icons.storefront_outlined,
-                            order.restaurant?.name ?? 'Restaurant',
+                            order.restaurant?.name ?? 'Store',
                             order.restaurant?.address ?? 'Pickup location',
-                            FoodFlowTheme.crimson,
+                            foodflow.crimson,
                           ),
                           const SizedBox(height: 12),
                           _buildLocationLine(
                             Icons.person_pin_circle_outlined,
                             order.customerName,
                             order.deliveryAddress,
-                            FoodFlowTheme.success,
+                            foodflow.success,
                           ),
                           const SizedBox(height: 14),
                           Row(
@@ -443,10 +451,10 @@ class _DriverOrdersScreenState extends State<DriverOrdersScreen>
                               ],
                               const Spacer(),
                               Text(
-                                formatCurrency(context, order.deliveryFee),
+                                _driverEarningText(order),
                                 style: const TextStyle(
-                                  color: FoodFlowTheme.success,
-                                  fontWeight: FontWeight.w900,
+                                  color: foodflow.success,
+                                  fontWeight: FontWeight.w800,
                                   fontSize: 16,
                                 ),
                               ),
@@ -461,9 +469,9 @@ class _DriverOrdersScreenState extends State<DriverOrdersScreen>
                                     onPressed: () =>
                                         _rejectAssignment(order.id),
                                     style: OutlinedButton.styleFrom(
-                                      foregroundColor: FoodFlowTheme.ink,
+                                      foregroundColor: foodflow.ink,
                                       side: const BorderSide(
-                                        color: FoodFlowTheme.line,
+                                        color: foodflow.line,
                                       ),
                                       shape: RoundedRectangleBorder(
                                         borderRadius: BorderRadius.circular(8),
@@ -478,7 +486,7 @@ class _DriverOrdersScreenState extends State<DriverOrdersScreen>
                                     onPressed: () =>
                                         _acceptAssignment(order.id),
                                     style: ElevatedButton.styleFrom(
-                                      backgroundColor: FoodFlowTheme.success,
+                                      backgroundColor: foodflow.success,
                                       foregroundColor: Colors.white,
                                       elevation: 0,
                                       shape: RoundedRectangleBorder(
@@ -505,7 +513,7 @@ class _DriverOrdersScreenState extends State<DriverOrdersScreen>
                                     icon: const Icon(Icons.navigation),
                                     label: const Text('Open Delivery'),
                                     style: ElevatedButton.styleFrom(
-                                      backgroundColor: FoodFlowTheme.crimson,
+                                      backgroundColor: foodflow.crimson,
                                       foregroundColor: Colors.white,
                                       elevation: 0,
                                       shape: RoundedRectangleBorder(
@@ -554,8 +562,8 @@ class _DriverOrdersScreenState extends State<DriverOrdersScreen>
               Text(
                 title,
                 style: const TextStyle(
-                  fontWeight: FontWeight.w900,
-                  color: FoodFlowTheme.ink,
+                  fontWeight: FontWeight.w800,
+                  color: foodflow.ink,
                 ),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
@@ -565,8 +573,8 @@ class _DriverOrdersScreenState extends State<DriverOrdersScreen>
                 subtitle,
                 style: const TextStyle(
                   fontSize: 12,
-                  color: FoodFlowTheme.muted,
-                  fontWeight: FontWeight.w600,
+                  color: foodflow.muted,
+                  fontWeight: FontWeight.w400,
                 ),
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
@@ -582,12 +590,12 @@ class _DriverOrdersScreenState extends State<DriverOrdersScreen>
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Icon(icon, size: 15, color: FoodFlowTheme.faint),
+        Icon(icon, size: 15, color: foodflow.faint),
         const SizedBox(width: 4),
         Text(
           label,
           style: const TextStyle(
-            color: FoodFlowTheme.muted,
+            color: foodflow.muted,
             fontSize: 12,
             fontWeight: FontWeight.w800,
           ),
@@ -608,14 +616,14 @@ class _DriverOrdersScreenState extends State<DriverOrdersScreen>
         _loadOrders();
       },
       backgroundColor: Colors.white,
-      selectedColor: FoodFlowTheme.crimson.withOpacity(0.1),
-      checkmarkColor: FoodFlowTheme.crimson,
+      selectedColor: foodflow.crimson.withOpacity(0.1),
+      checkmarkColor: foodflow.crimson,
       side: BorderSide(
-        color: isSelected ? FoodFlowTheme.crimson : FoodFlowTheme.line,
+        color: isSelected ? foodflow.crimson : foodflow.line,
       ),
       labelStyle: TextStyle(
-        color: isSelected ? FoodFlowTheme.crimson : FoodFlowTheme.ink,
-        fontWeight: FontWeight.w900,
+        color: isSelected ? foodflow.crimson : foodflow.ink,
+        fontWeight: FontWeight.w800,
       ),
     );
   }

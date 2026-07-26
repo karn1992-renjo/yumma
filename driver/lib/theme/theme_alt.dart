@@ -98,7 +98,7 @@ class ThemeAlt {
             style: TextStyle(
               color: Colors.white,
               fontSize: compact ? 11 : 12,
-              fontWeight: FontWeight.w900,
+              fontWeight: FontWeight.w800,
             ),
           ),
           const SizedBox(width: 3),
@@ -135,7 +135,7 @@ class ThemeAlt {
               style: const TextStyle(
                 color: ink,
                 fontSize: 18,
-                fontWeight: FontWeight.w900,
+                fontWeight: FontWeight.w800,
               ),
             ),
             if (subtitle != null) ...[
@@ -146,7 +146,7 @@ class ThemeAlt {
                 style: const TextStyle(
                   color: muted,
                   fontSize: 13,
-                  fontWeight: FontWeight.w600,
+                  fontWeight: FontWeight.w400,
                 ),
               ),
             ],
@@ -167,7 +167,7 @@ class ThemeAlt {
               style: const TextStyle(
                 color: ink,
                 fontSize: 18,
-                fontWeight: FontWeight.w900,
+                fontWeight: FontWeight.w800,
               ),
             ),
           ),
@@ -177,7 +177,7 @@ class ThemeAlt {
               style: const TextStyle(
                 color: muted,
                 fontSize: 12,
-                fontWeight: FontWeight.w700,
+                fontWeight: FontWeight.w800,
               ),
             ),
         ],

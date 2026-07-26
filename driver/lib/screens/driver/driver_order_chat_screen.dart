@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -9,6 +10,8 @@ import '../../config/app_config.dart';
 import '../../services/api_service.dart';
 import '../../services/location_service.dart';
 import '../../services/websocket_service.dart';
+import '../../widgets/common/network_image_loader.dart';
+import 'background_location_disclosure_screen.dart';
 
 class DriverOrderChatScreen extends StatefulWidget {
   const DriverOrderChatScreen({
@@ -67,7 +70,8 @@ class _DriverOrderChatScreenState extends State<DriverOrderChatScreen> {
 
   Future<void> _loadChat() async {
     try {
-      final response = await _api.get(ApiConstants.driverOrderChat(widget.orderId));
+      final response =
+          await _api.get(ApiConstants.driverOrderChat(widget.orderId));
       final data = Map<String, dynamic>.from(response['data'] as Map);
       final messages = (data['messages'] as List? ?? const [])
           .whereType<Map>()
@@ -98,8 +102,8 @@ class _DriverOrderChatScreenState extends State<DriverOrderChatScreen> {
 
   Future<void> _markRead() async {
     try {
-      final response =
-          await _api.post('${ApiConstants.driverOrderChat(widget.orderId)}/read');
+      final response = await _api
+          .post('${ApiConstants.driverOrderChat(widget.orderId)}/read');
       final data = response['data'];
       if (data is! Map) return;
       final ids = (data['message_ids'] as List? ?? const [])
@@ -149,7 +153,8 @@ class _DriverOrderChatScreenState extends State<DriverOrderChatScreen> {
       return;
     }
 
-    final nextMessage = payload.map((key, value) => MapEntry(key.toString(), value));
+    final nextMessage =
+        payload.map((key, value) => MapEntry(key.toString(), value));
     if (!mounted) return;
     setState(() {
       final exists = _messages.any(
@@ -257,6 +262,11 @@ class _DriverOrderChatScreenState extends State<DriverOrderChatScreen> {
     if (_isSending) return;
     setState(() => _isSending = true);
     try {
+      if (!await _ensureLocationDisclosureBeforeRequest()) {
+        throw Exception(
+            'Location consent is required before sharing location.');
+      }
+
       final position = await _locationService.getCurrentLocation();
       if (position == null) {
         throw Exception('Location unavailable right now.');
@@ -292,6 +302,17 @@ class _DriverOrderChatScreenState extends State<DriverOrderChatScreen> {
     }
   }
 
+  Future<bool> _ensureLocationDisclosureBeforeRequest() async {
+    final permission = await _locationService.checkLocationPermission();
+    if (permission != LocationPermission.denied) return true;
+    if (!mounted) return false;
+
+    return BackgroundLocationDisclosureScreen.ensureAccepted(
+      context,
+      forceDisclosure: true,
+    );
+  }
+
   Future<void> _openAttachment(Map<String, dynamic> message) async {
     final url = message['attachment_url']?.toString();
     if (url == null || url.isEmpty) return;
@@ -316,10 +337,11 @@ class _DriverOrderChatScreenState extends State<DriverOrderChatScreen> {
 
   String _participantName(String role) {
     final participant = _participants[role];
-    if (participant is Map && (participant['name']?.toString().isNotEmpty ?? false)) {
+    if (participant is Map &&
+        (participant['name']?.toString().isNotEmpty ?? false)) {
       return participant['name'].toString();
     }
-    return role == 'customer' ? 'Customer' : 'Restaurant';
+    return role == 'customer' ? 'Customer' : 'Store';
   }
 
   void _scrollToBottom() {
@@ -336,7 +358,8 @@ class _DriverOrderChatScreenState extends State<DriverOrderChatScreen> {
   String _formatTime(String? raw) {
     final date = raw == null ? null : DateTime.tryParse(raw)?.toLocal();
     if (date == null) return '';
-    final hour = date.hour > 12 ? date.hour - 12 : (date.hour == 0 ? 12 : date.hour);
+    final hour =
+        date.hour > 12 ? date.hour - 12 : (date.hour == 0 ? 12 : date.hour);
     final minute = date.minute.toString().padLeft(2, '0');
     final suffix = date.hour >= 12 ? 'PM' : 'AM';
     return '$hour:$minute $suffix';
@@ -366,7 +389,7 @@ class _DriverOrderChatScreenState extends State<DriverOrderChatScreen> {
               style: const TextStyle(
                 color: _muted,
                 fontSize: 12,
-                fontWeight: FontWeight.w600,
+                fontWeight: FontWeight.w400,
               ),
             ),
           ],
@@ -391,7 +414,7 @@ class _DriverOrderChatScreenState extends State<DriverOrderChatScreen> {
                   child: SegmentedButton<String>(
                     segments: const [
                       ButtonSegment(value: 'customer', label: Text('Customer')),
-                      ButtonSegment(value: 'restaurant', label: Text('Restaurant')),
+                      ButtonSegment(value: 'restaurant', label: Text('Store')),
                     ],
                     selected: {_recipientRole},
                     onSelectionChanged: (selection) {
@@ -453,7 +476,7 @@ class _DriverOrderChatScreenState extends State<DriverOrderChatScreen> {
                               'Typing...',
                               style: TextStyle(
                                 color: _muted,
-                                fontWeight: FontWeight.w700,
+                                fontWeight: FontWeight.w800,
                               ),
                             ),
                           ),
@@ -491,7 +514,8 @@ class _DriverOrderChatScreenState extends State<DriverOrderChatScreen> {
                         minLines: 1,
                         maxLines: 4,
                         decoration: InputDecoration(
-                          hintText: 'Message ${_participantName(_recipientRole)}',
+                          hintText:
+                              'Message ${_participantName(_recipientRole)}',
                           border: InputBorder.none,
                         ),
                       ),
@@ -546,7 +570,7 @@ class _DriverOrderChatScreenState extends State<DriverOrderChatScreen> {
             'Order #${_summary['order_number'] ?? widget.orderId}',
             style: const TextStyle(
               color: Colors.white70,
-              fontWeight: FontWeight.w700,
+              fontWeight: FontWeight.w800,
               fontSize: 12,
             ),
           ),
@@ -562,9 +586,12 @@ class _DriverOrderChatScreenState extends State<DriverOrderChatScreen> {
           const SizedBox(height: 14),
           Row(
             children: [
-              Expanded(child: _summaryPill('Customer', _participantName('customer'))),
+              Expanded(
+                  child:
+                      _summaryPill('Customer', _participantName('customer'))),
               const SizedBox(width: 10),
-              Expanded(child: _summaryPill('Restaurant', _participantName('restaurant'))),
+              Expanded(
+                  child: _summaryPill('Store', _participantName('restaurant'))),
             ],
           ),
         ],
@@ -587,7 +614,7 @@ class _DriverOrderChatScreenState extends State<DriverOrderChatScreen> {
             style: const TextStyle(
               color: Colors.white70,
               fontSize: 11,
-              fontWeight: FontWeight.w700,
+              fontWeight: FontWeight.w800,
             ),
           ),
           const SizedBox(height: 4),
@@ -597,7 +624,7 @@ class _DriverOrderChatScreenState extends State<DriverOrderChatScreen> {
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(
               color: Colors.white,
-              fontWeight: FontWeight.w700,
+              fontWeight: FontWeight.w800,
             ),
           ),
         ],
@@ -608,8 +635,8 @@ class _DriverOrderChatScreenState extends State<DriverOrderChatScreen> {
   Widget _messageBubble(Map<String, dynamic> message) {
     final senderRole = message['sender_role']?.toString() ?? '';
     final isMine = senderRole == 'driver';
-    final isSystem =
-        senderRole == 'system' || message['message_type']?.toString() == 'system';
+    final isSystem = senderRole == 'system' ||
+        message['message_type']?.toString() == 'system';
     final bubbleColor = isMine ? _primary : Colors.white;
 
     if (isSystem) {
@@ -626,7 +653,7 @@ class _DriverOrderChatScreenState extends State<DriverOrderChatScreen> {
             style: const TextStyle(
               color: _muted,
               fontSize: 12,
-              fontWeight: FontWeight.w700,
+              fontWeight: FontWeight.w800,
             ),
           ),
         ),
@@ -652,7 +679,7 @@ class _DriverOrderChatScreenState extends State<DriverOrderChatScreen> {
               style: TextStyle(
                 color: isMine ? Colors.white70 : _muted,
                 fontSize: 11,
-                fontWeight: FontWeight.w700,
+                fontWeight: FontWeight.w800,
               ),
             ),
             const SizedBox(height: 6),
@@ -666,7 +693,7 @@ class _DriverOrderChatScreenState extends State<DriverOrderChatScreen> {
                   style: TextStyle(
                     color: isMine ? Colors.white70 : _muted,
                     fontSize: 10,
-                    fontWeight: FontWeight.w700,
+                    fontWeight: FontWeight.w800,
                   ),
                 ),
                 if (isMine) ...[
@@ -701,11 +728,17 @@ class _DriverOrderChatScreenState extends State<DriverOrderChatScreen> {
             onTap: () => _openAttachment(message),
             child: ClipRRect(
               borderRadius: BorderRadius.circular(18),
-              child: Image.network(
-                message['attachment_url'].toString(),
+              child: NetworkImageLoader(
+                imageUrl: message['attachment_url'].toString(),
                 width: 180,
                 height: 180,
                 fit: BoxFit.cover,
+                errorWidget: Container(
+                  width: 180,
+                  height: 180,
+                  color: _line,
+                  child: const Icon(Icons.broken_image_outlined),
+                ),
               ),
             ),
           ),
@@ -715,7 +748,7 @@ class _DriverOrderChatScreenState extends State<DriverOrderChatScreen> {
               message['message'].toString(),
               style: TextStyle(
                 color: textColor,
-                fontWeight: FontWeight.w600,
+                fontWeight: FontWeight.w400,
                 height: 1.4,
               ),
             ),
@@ -725,13 +758,16 @@ class _DriverOrderChatScreenState extends State<DriverOrderChatScreen> {
     }
 
     if (type == 'location') {
-      final meta = Map<String, dynamic>.from(message['meta'] as Map? ?? const {});
+      final meta =
+          Map<String, dynamic>.from(message['meta'] as Map? ?? const {});
       return InkWell(
         onTap: () => _openSharedLocation(message),
         child: Container(
           padding: const EdgeInsets.all(14),
           decoration: BoxDecoration(
-            color: isMine ? Colors.white.withOpacity(0.14) : const Color(0xFFF3F4F6),
+            color: isMine
+                ? Colors.white.withOpacity(0.14)
+                : const Color(0xFFF3F4F6),
             borderRadius: BorderRadius.circular(18),
           ),
           child: Row(
@@ -748,7 +784,7 @@ class _DriverOrderChatScreenState extends State<DriverOrderChatScreen> {
                           'Shared location',
                       style: TextStyle(
                         color: textColor,
-                        fontWeight: FontWeight.w700,
+                        fontWeight: FontWeight.w800,
                       ),
                     ),
                     const SizedBox(height: 4),
@@ -757,7 +793,7 @@ class _DriverOrderChatScreenState extends State<DriverOrderChatScreen> {
                       style: TextStyle(
                         color: mutedColor,
                         fontSize: 12,
-                        fontWeight: FontWeight.w600,
+                        fontWeight: FontWeight.w400,
                       ),
                     ),
                   ],
@@ -773,7 +809,7 @@ class _DriverOrderChatScreenState extends State<DriverOrderChatScreen> {
       message['message']?.toString() ?? '',
       style: TextStyle(
         color: textColor,
-        fontWeight: FontWeight.w600,
+        fontWeight: FontWeight.w400,
         height: 1.45,
       ),
     );

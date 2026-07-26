@@ -14,6 +14,7 @@ use App\Http\Controllers\Restaurant\StoreController;
 use App\Http\Controllers\Restaurant\PrinterController;
 use App\Http\Controllers\Restaurant\StaffController;
 use App\Http\Controllers\Restaurant\WalletController;
+use App\Http\Controllers\Restaurant\PosController;
 
 Route::middleware(['auth', 'role:restaurant_owner|restaurant_staff'])->prefix('restaurant')->name('restaurant.')->group(function () {
     
@@ -26,12 +27,16 @@ Route::middleware(['auth', 'role:restaurant_owner|restaurant_staff'])->prefix('r
     // Orders Management
     Route::middleware('restaurant.permission:view_orders,manage_orders')->group(function () {
         Route::get('/orders', [OrderController::class, 'index'])->name('orders.index');
+        Route::get('/pos', [PosController::class, 'index'])->name('pos.index');
+        Route::get('/pos-terminal', [PosController::class, 'terminal'])->name('pos.terminal');
+        Route::get('/pos-terminal/data', [PosController::class, 'terminalData'])->name('pos.terminal.data');
         Route::get('/orders/check-new', [OrderController::class, 'checkNewOrders'])->name('orders.check-new');
         Route::get('/orders/counts', [OrderController::class, 'getOrderCounts'])->name('orders.counts');
         Route::get('/orders/{id}', [OrderController::class, 'show'])->name('orders.show');
         Route::get('/orders/export', [OrderController::class, 'export'])->name('orders.export');
     });
     Route::middleware('restaurant.permission:manage_orders,update_order_status')->group(function () {
+        Route::post('/pos', [PosController::class, 'store'])->name('pos.store');
         Route::post('/orders/{id}/update-status', [OrderController::class, 'updateStatus'])->name('orders.update-status');
         Route::post('/orders/{id}/accept', [OrderController::class, 'acceptOrder'])->name('orders.accept');
         Route::post('/orders/{id}/reject', [OrderController::class, 'rejectOrder'])->name('orders.reject');
@@ -128,6 +133,7 @@ Route::middleware(['auth', 'role:restaurant_owner|restaurant_staff'])->prefix('r
         });
         Route::resource('printers', PrinterController::class)->names('printers');
         Route::post('/printers/{id}/test', [PrinterController::class, 'test'])->name('printers.test');
+        Route::post('/printers/{id}/set-default', [PrinterController::class, 'setDefault'])->name('printers.set-default');
         Route::post('/printers/kot/{orderId}', [PrinterController::class, 'printKOT'])->name('printers.kot');
         Route::post('/printers/invoice/{orderId}', [PrinterController::class, 'printInvoice'])->name('printers.invoice');
     });

@@ -73,23 +73,23 @@ class OrderStatusPushService
         return (bool) ($results['customer'] ?? false);
     }
 
-    public function notifyParticipants(Order $order, ?string $customerMessage = null, array $roles = ['customer', 'restaurant', 'driver']): array
+    public function notifyParticipants(Order $order, ?string $customerMessage = null, array $roles = ['customer', 'restaurant', 'driver'], ?string $cancellationSource = null): array
     {
         $order->loadMissing(['customer', 'restaurant.owner', 'driver']);
         $roles = collect($roles)->map(fn ($role) => strtolower((string) $role))->all();
 
         return [
             'customer' => in_array('customer', $roles, true) ? $this->notifyCustomer($order, $customerMessage) : false,
-            'restaurant' => in_array('restaurant', $roles, true) ? $this->notifyRestaurant($order) : [
+            'restaurant' => in_array('restaurant', $roles, true) ? $this->notifyRestaurant($order, null, $cancellationSource) : [
                 'success' => 0,
                 'failure' => 0,
                 'failure_reason' => null,
             ],
-            'driver' => in_array('driver', $roles, true) ? $this->notifyDriver($order) : false,
+            'driver' => in_array('driver', $roles, true) ? $this->notifyDriver($order, null, $cancellationSource) : false,
         ];
     }
 
-    public function notifyRestaurant(Order $order, ?string $message = null): array
+    public function notifyRestaurant(Order $order, ?string $message = null, ?string $cancellationSource = null): array
     {
         $order->loadMissing(['restaurant.owner']);
 
@@ -105,11 +105,11 @@ class OrderStatusPushService
             $tokens,
             $title,
             $message,
-            $this->statusPayload($order, 'restaurant', $title, $message, '/restaurant/order'),
+            $this->statusPayload($order, 'restaurant', $title, $message, '/restaurant/order', $cancellationSource),
         );
     }
 
-    public function notifyDriver(Order $order, ?string $message = null): bool
+    public function notifyDriver(Order $order, ?string $message = null, ?string $cancellationSource = null): bool
     {
         $order->loadMissing('driver');
 
@@ -134,7 +134,7 @@ class OrderStatusPushService
             $token,
             $title,
             $message,
-            $this->statusPayload($order, 'driver', $title, $message, '/driver/order'),
+            $this->statusPayload($order, 'driver', $title, $message, '/driver/order', $cancellationSource),
         );
     }
 
@@ -162,14 +162,27 @@ class OrderStatusPushService
         };
     }
 
-    private function statusPayload(Order $order, string $role, string $title, string $message, string $deepLink): array
+    private function statusPayload(Order $order, string $role, string $title, string $message, string $deepLink, ?string $cancellationSource = null): array
     {
+        $isCancelled = (string) $order->status === 'cancelled';
+        $source = strtolower((string) ($cancellationSource ?? ''));
+        $shouldCancelIncomingAlert = $isCancelled
+            && $source === 'customer'
+            && in_array($role, ['restaurant', 'driver'], true);
+
         return [
-            'type' => $role === 'customer' ? 'customer_order_status' : 'order_status_updated',
+            'type' => $role === 'customer'
+                ? 'customer_order_status'
+                : ($shouldCancelIncomingAlert ? 'order_cancelled_alert' : 'order_status_updated'),
+            'event' => $shouldCancelIncomingAlert ? 'order_cancelled' : 'order_status_updated',
             'role' => $role,
             'order_id' => (string) $order->id,
             'order_number' => (string) $order->order_number,
             'status' => (string) $order->status,
+            'alert_variant' => $isCancelled ? 'danger' : 'status',
+            'timer_seconds' => $shouldCancelIncomingAlert ? '45' : '',
+            'cancellation_reason' => (string) ($order->cancellation_reason ?? ''),
+            'cancellation_source' => $source,
             'restaurant_id' => (string) $order->restaurant_id,
             'driver_id' => (string) ($order->driver_id ?? ''),
             'restaurant_name' => (string) optional($order->restaurant)->name,

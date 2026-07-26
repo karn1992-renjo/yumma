@@ -7,14 +7,14 @@
     $cuisines = $cuisines ?? collect();
     $globalCategories = $globalCategories ?? collect();
     $menuItems = $menuItems ?? collect();
-    $promoCodes = $promoCodes ?? collect();
+    $promotions = $promotions ?? collect();
     $configuration = $homeSection->configuration ?? [];
     $selectedBannerIds = old('banner_ids', $configuration['banner_ids'] ?? []);
     $selectedRestaurantIds = old('restaurant_ids', $configuration['restaurant_ids'] ?? []);
     $selectedCuisineIds = old('cuisine_ids', $configuration['cuisine_ids'] ?? []);
     $selectedGlobalCategoryIds = old('global_category_ids', $configuration['global_category_ids'] ?? []);
     $selectedMenuItemIds = old('menu_item_ids', $configuration['menu_item_ids'] ?? []);
-    $selectedPromoCodeIds = old('promo_code_ids', $configuration['promo_code_ids'] ?? []);
+    $selectedPromotionIds = old('promotion_ids', $configuration['promotion_ids'] ?? []);
     $selectedType = old('section_type', $homeSection->section_type);
     $selectedSource = old('data_source', $homeSection->data_source);
     $selectedScope = old('restaurant_scope', $configuration['restaurant_scope'] ?? 'featured');
@@ -287,18 +287,18 @@
                 </select>
                 <div class="form-text">Used only when popular dishes uses manual selection.</div>
             </div>
-            <div class="col-12 d-none" data-config-block="promo_code_ids">
-                <label class="form-label fw-semibold">Select Admin Offers</label>
-                <select name="promo_code_ids[]" class="form-select" multiple size="10">
-                    @forelse($promoCodes as $promoCode)
-                        <option value="{{ $promoCode->id }}" @selected(in_array($promoCode->id, $selectedPromoCodeIds))>
-                            {{ $promoCode->title ?: $promoCode->code }} ({{ $promoCode->code }})
+            <div class="col-12 d-none" data-config-block="promotion_ids">
+                <label class="form-label fw-semibold">Select Promotion Engine Offers</label>
+                <select name="promotion_ids[]" class="form-select" multiple size="10">
+                    @forelse($promotions as $promotion)
+                        <option value="{{ $promotion->id }}" @selected(in_array($promotion->id, $selectedPromotionIds))>
+                            {{ $promotion->title }} ({{ ucwords(str_replace('_', ' ', $promotion->promotion_type)) }})
                         </option>
                     @empty
-                        <option value="" disabled>No active admin offers found.</option>
+                        <option value="" disabled>No active promotion-engine offers found.</option>
                     @endforelse
                 </select>
-                <div class="form-text">Used only when admin offers uses manual selection.</div>
+                <div class="form-text">Only active Promotion Engine offers appear on the customer homepage.</div>
             </div>
         </div>
     </div>
@@ -362,10 +362,6 @@ document.addEventListener('DOMContentLoaded', function () {
         popular_dishes: {
             auto: [],
             manual: ['menu_item_ids'],
-        },
-        admin_offers: {
-            auto: [],
-            manual: ['promo_code_ids'],
         },
         shop_by_brand: {
             auto: ['restaurant_scope'],

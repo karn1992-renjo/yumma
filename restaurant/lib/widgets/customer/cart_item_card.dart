@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../providers/cart_provider.dart';
 import '../../theme/foodflow_theme.dart';
 import '../../utils/currency_utils.dart';
+import '../common/network_image_loader.dart';
 
 class CartItemCard extends StatelessWidget {
   final CartItem item;
@@ -41,10 +42,10 @@ class CartItemCard extends StatelessWidget {
                 bottomLeft: Radius.circular(14),
               ),
               child: item.menuItem.imageUrl.isNotEmpty
-                  ? Image.network(
-                      item.menuItem.imageUrl,
+                  ? NetworkImageLoader(
+                      imageUrl: item.menuItem.imageUrl,
                       fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) => _buildPlaceholder(),
+                      errorWidget: _buildPlaceholder(),
                     )
                   : _buildPlaceholder(),
             ),

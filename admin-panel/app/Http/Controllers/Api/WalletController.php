@@ -6,11 +6,13 @@ use App\Http\Controllers\Controller;
 use App\Models\AppSetting;
 use App\Models\GiftCard;
 use App\Models\GiftCardRedemption;
+use App\Models\Order;
 use App\Models\Payout;
 use App\Models\Restaurant;
 use App\Models\Wallet;
 use App\Models\WalletRecharge;
 use App\Models\WalletTransaction;
+use App\Services\MediaStorage;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
@@ -32,6 +34,54 @@ class WalletController extends Controller
                     ->latest()
                     ->limit(30)
                     ->get(),
+            ],
+        ]);
+    }
+
+    public function payoutDetails(Request $request, Payout $payout)
+    {
+        $wallet = $this->walletFor($request->user());
+        $transaction = $wallet->transactions()
+            ->where('reference_type', 'payout')
+            ->where('reference_id', $payout->id)
+            ->latest()
+            ->first();
+
+        if (! $transaction) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Payout not found for this wallet.',
+            ], 404);
+        }
+
+        $orderIds = collect($payout->order_ids ?? [])
+            ->map(fn ($id) => (int) $id)
+            ->filter()
+            ->values()
+            ->all();
+
+        $orders = collect();
+        if ($orderIds !== [] || $payout->restaurant_id || $payout->driver_id) {
+            $payoutColumn = $payout->driver_id ? 'driver_payout_id' : 'restaurant_payout_id';
+            $orders = Order::query()
+                ->with(['orderItems.menuItem'])
+                ->where(function ($query) use ($payout, $orderIds, $payoutColumn) {
+                    $query->where($payoutColumn, $payout->id);
+                    if ($orderIds !== []) {
+                        $query->orWhereIn('id', $orderIds);
+                    }
+                })
+                ->when($payout->restaurant_id, fn ($query) => $query->where('restaurant_id', $payout->restaurant_id))
+                ->when($payout->driver_id, fn ($query) => $query->where('driver_id', $payout->driver_id))
+                ->latest('delivered_at')
+                ->get();
+        }
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'payout' => $this->formatPayoutForApi($payout, $transaction, $orders->count()),
+                'orders' => $orders->map(fn (Order $order) => $this->formatPayoutOrderForApi($order))->values(),
             ],
         ]);
     }
@@ -562,6 +612,98 @@ class WalletController extends Controller
                 'message' => $e->getMessage(),
             ], $e->getStatusCode());
         }
+    }
+
+    private function formatPayoutForApi(Payout $payout, WalletTransaction $transaction, int $orderCount): array
+    {
+        return [
+            'id' => $payout->id,
+            'uuid' => $payout->uuid,
+            'status' => $payout->status,
+            'gateway' => $payout->gateway,
+            'currency' => $payout->currency,
+            'amount' => (float) $payout->amount,
+            'gross_amount' => (float) ($payout->gross_amount ?? 0),
+            'platform_commission' => (float) ($payout->platform_commission ?? 0),
+            'gst_on_commission' => (float) ($payout->gst_on_commission ?? 0),
+            'payment_gateway_fee' => (float) ($payout->payment_gateway_fee ?? 0),
+            'delivery_fee' => (float) ($payout->delivery_fee ?? 0),
+            'deduction_amount' => (float) ($payout->deduction_amount ?? 0),
+            'net_amount' => (float) ($payout->net_amount ?? $payout->amount),
+            'period_start' => optional($payout->period_start)->toIso8601String(),
+            'period_end' => optional($payout->period_end)->toIso8601String(),
+            'processed_at' => optional($payout->processed_at)->toIso8601String(),
+            'created_at' => optional($payout->created_at)->toIso8601String(),
+            'order_count' => $orderCount ?: (int) data_get($payout->breakdown, 'order_count', 0),
+            'breakdown' => $payout->breakdown ?? [],
+            'transaction' => [
+                'id' => $transaction->id,
+                'amount' => (float) $transaction->amount,
+                'balance_after' => (float) $transaction->balance_after,
+                'description' => $transaction->description,
+                'created_at' => optional($transaction->created_at)->toIso8601String(),
+            ],
+        ];
+    }
+
+    private function formatPayoutOrderForApi(Order $order): array
+    {
+        return [
+            'id' => $order->id,
+            'order_number' => $order->order_number,
+            'status' => $order->status,
+            'customer_name' => $order->customer_name,
+            'delivered_at' => optional($order->delivered_at)->toIso8601String(),
+            'created_at' => optional($order->created_at)->toIso8601String(),
+            'subtotal' => (float) ($order->subtotal ?? 0),
+            'discount' => (float) ($order->discount ?? 0),
+            'platform_commission' => (float) ($order->platform_commission ?? 0),
+            'gst_on_commission' => (float) ($order->gst_on_commission ?? 0),
+            'payment_gateway_fee' => (float) ($order->payment_gateway_fee ?? 0),
+            'restaurant_earning' => (float) ($order->restaurant_earning ?? 0),
+            'payment_method' => $order->payment_method,
+            'items' => $this->formatPayoutOrderItemsForApi($order),
+        ];
+    }
+
+    private function formatPayoutOrderItemsForApi(Order $order): array
+    {
+        $relationItems = $order->orderItems->keyBy(fn ($item) => (int) $item->menu_item_id);
+        $items = is_array($order->items) ? $order->items : [];
+
+        if ($items === [] && $order->orderItems->isNotEmpty()) {
+            $items = $order->orderItems->map(fn ($item) => [
+                'menu_item_id' => $item->menu_item_id,
+                'name' => $item->menuItem?->name ?? 'Menu item',
+                'quantity' => $item->quantity,
+                'price' => $item->unit_price,
+                'total_price' => $item->total_price,
+            ])->all();
+        }
+
+        return collect($items)->map(function ($item) use ($relationItems) {
+            $row = is_array($item) ? $item : [];
+            $menuItemId = (int) ($row['menu_item_id'] ?? $row['id'] ?? 0);
+            $orderItem = $menuItemId ? $relationItems->get($menuItemId) : null;
+            $menuItem = $orderItem?->menuItem;
+            $images = is_array($menuItem?->images) ? $menuItem->images : [];
+            $image = $menuItem?->image ?? ($images[0] ?? ($row['image'] ?? null));
+            if (is_array($image)) {
+                $image = $image[0] ?? null;
+            }
+            $imageUrl = $menuItem?->image_url ?? MediaStorage::url($image);
+
+            return [
+                'menu_item_id' => $menuItemId ?: null,
+                'name' => $row['name'] ?? $menuItem?->name ?? 'Menu item',
+                'quantity' => (int) ($row['quantity'] ?? $orderItem?->quantity ?? 1),
+                'price' => (float) ($row['price'] ?? $row['unit_price'] ?? $orderItem?->unit_price ?? 0),
+                'total_price' => (float) ($row['total_price'] ?? $orderItem?->total_price ?? 0),
+                'image' => $image,
+                'image_url' => $imageUrl,
+                'images' => collect($images)->map(fn ($path) => MediaStorage::url($path))->values()->all(),
+            ];
+        })->values()->all();
     }
 
     private function walletFor($user, bool $lock = false): Wallet

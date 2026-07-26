@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Cuisine extends Model
@@ -50,7 +51,14 @@ class Cuisine extends Model
         return $this->hasMany(Restaurant::class, 'cuisine_id');
     }
     
-    /**
+    
+    public function globalMenuCategories(): BelongsToMany
+    {
+        return $this->belongsToMany(GlobalMenuCategory::class, 'global_menu_category_cuisine')
+            ->withTimestamps();
+    }
+
+/**
      * Scope for active cuisines
      */
     public function scopeActive($query)

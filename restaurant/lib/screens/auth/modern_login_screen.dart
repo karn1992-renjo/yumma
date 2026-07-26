@@ -78,7 +78,8 @@ class _ModernLoginScreenState extends State<ModernLoginScreen>
 
   Future<void> _requestOtp() async {
     if (_isLoading) return;
-    if (_phoneController.text.trim().length < 10) {
+    final digits = _phoneController.text.replaceAll(RegExp(r'\D'), '');
+    if (digits.length < 8) {
       _showError('Please enter a valid mobile number');
       return;
     }
@@ -94,6 +95,26 @@ class _ModernLoginScreenState extends State<ModernLoginScreen>
       if (!mounted) return;
 
       if (success) {
+        if (authProvider.hasCompletedMsg91WidgetVerification(
+          phone: _phoneController.text.trim(),
+          flow: 'login',
+          role: _selectedRole,
+        )) {
+          final verified = await authProvider.verifyLoginOtp(
+            phone: _phoneController.text.trim(),
+            otp: '0000',
+            role: _selectedRole,
+          );
+          if (!mounted) return;
+          if (verified) {
+            _showSuccess('Login successful!');
+            Navigator.of(context).pushReplacementNamed('/home');
+            return;
+          }
+          _showError(authProvider.error ?? 'Login failed');
+          return;
+        }
+
         setState(() => _otpSent = true);
         _showSuccess('OTP sent to your mobile number');
       } else {
@@ -347,15 +368,17 @@ class _ModernLoginScreenState extends State<ModernLoginScreen>
                           _buildInputField(
                             controller: _phoneController,
                             label: 'Mobile Number',
-                            hint: 'Enter your 10-digit mobile number',
+                            hint: 'Enter your mobile number',
                             keyboardType: TextInputType.phone,
                             prefixIcon: Icons.phone,
                             validator: (value) {
-                              if (value?.isEmpty ?? true) {
+                              final digits =
+                                  (value ?? '').replaceAll(RegExp(r'\D'), '');
+                              if (digits.isEmpty) {
                                 return 'Mobile number is required';
                               }
-                              if (value!.length < 10) {
-                                return 'Mobile number must be at least 10 digits';
+                              if (digits.length < 8) {
+                                return 'Enter a valid mobile number';
                               }
                               return null;
                             },

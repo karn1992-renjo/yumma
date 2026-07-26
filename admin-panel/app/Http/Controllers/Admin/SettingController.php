@@ -6,6 +6,7 @@ use App\Helpers\FirebaseHelper;
 use App\Http\Controllers\Controller;
 use App\Models\AppSetting;
 use App\Support\GatewayRegistry;
+use App\Support\PhoneNumber;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\File;
@@ -74,6 +75,13 @@ class SettingController extends Controller
         return view('admin.settings.payment', compact('settings', 'paymentProviders', 'payoutProviders', 'customerGatewayProviders'));
     }
 
+    public function rewards()
+    {
+        $settings = AppSetting::all()->pluck('value', 'key')->toArray();
+
+        return view('admin.settings.rewards', compact('settings'));
+    }
+
     public function cron()
     {
         $settings = AppSetting::all()->pluck('value', 'key')->toArray();
@@ -109,6 +117,30 @@ class SettingController extends Controller
         Cache::forget('app_settings');
 
         return back()->with('success', $message);
+    }
+
+    public function updateCronTasks(Request $request)
+    {
+        $validated = $request->validate([
+            'enabled_cron_tasks' => 'nullable|array',
+            'enabled_cron_tasks.*' => 'string|max:120',
+        ]);
+
+        $taskKeys = collect($this->scheduledTasks([]))->pluck('key')->filter()->values()->all();
+        $enabledKeys = array_values(array_intersect($validated['enabled_cron_tasks'] ?? [], $taskKeys));
+        $disabledKeys = array_values(array_diff($taskKeys, $enabledKeys));
+
+        AppSetting::updateOrCreate(
+            ['key' => 'disabled_cron_tasks'],
+            [
+                'value' => json_encode($disabledKeys),
+                'type' => 'json',
+                'description' => 'Scheduler task keys disabled from admin cron settings.',
+            ]
+        );
+        Cache::forget('app_settings');
+
+        return back()->with('success', 'Cron task status updated successfully.');
     }
 
     private function installWindowsScheduler(): string
@@ -200,8 +232,16 @@ class SettingController extends Controller
             'max_active_orders_per_driver' => 'nullable|integer|min:1|max:50',
             'driver_route_match_radius_km' => 'nullable|numeric|min:0.5|max:25',
             'driver_minimum_wallet_balance' => 'nullable|numeric|min:0|max:1000000',
-            'message_service' => 'nullable|in:twilio,firebase',
-            'otp_service_provider' => 'required_if:redirect_to,admin.settings.communication|in:twilio,firebase',
+            'google_maps_api_key' => 'nullable|string|max:512',
+            'google_maps_distance_matrix_enabled' => 'nullable|in:0,1',
+            'google_maps_distance_matrix_cache_minutes' => 'nullable|integer|min:1|max:43200',
+            'haversine_eta_cache_minutes' => 'nullable|integer|min:1|max:1440',
+            'estimated_delivery_speed_kmph' => 'nullable|numeric|min:5|max:120',
+            'estimated_delivery_traffic_multiplier' => 'nullable|numeric|min:1|max:3',
+            'estimated_delivery_min_minutes' => 'nullable|integer|min:1|max:60',
+            'default_delivery_radius' => 'nullable|numeric|min:0|max:500',
+            'message_service' => 'nullable|in:twilio,firebase,msg91',
+            'otp_service_provider' => 'required_if:redirect_to,admin.settings.communication|in:twilio,firebase,msg91',
             'default_mobile_country_code' => 'nullable|string|max:8',
             'mail_driver' => 'nullable|in:smtp,log,array',
             'mail_from_address' => 'nullable|email|max:255',
@@ -218,6 +258,13 @@ class SettingController extends Controller
             'twilio_auth_token' => 'nullable|string|max:255',
             'twilio_phone_number' => 'nullable|string|max:25',
             'twilio_call_enabled' => 'nullable|in:0,1',
+            'msg91_authkey' => 'nullable|string|max:255',
+            'msg91_otp_mode' => 'nullable|in:api,widget',
+            'msg91_widget_id' => 'nullable|string|max:255',
+            'msg91_widget_token' => 'nullable|string|max:255',
+            'msg91_otp_template_id' => 'nullable|string|max:255',
+            'msg91_order_confirmation_template_id' => 'nullable|string|max:255',
+            'msg91_delivery_update_template_id' => 'nullable|string|max:255',
             'firebase_enabled' => 'nullable|in:0,1',
             'firebase_api_key' => 'nullable|string|max:255',
             'firebase_project_id' => 'nullable|string|max:255',
@@ -274,6 +321,14 @@ class SettingController extends Controller
             'collection_section_subtitle' => 'nullable|string|max:255',
             'restaurants_section_title' => 'nullable|string|max:255',
             'restaurants_section_subtitle' => 'nullable|string|max:255',
+            'home_menu_price_filter_label' => 'nullable|string|max:120',
+            'home_menu_price_filter_title' => 'nullable|string|max:160',
+            'home_menu_price_filter_subtitle' => 'nullable|string|max:220',
+            'home_menu_price_filter_min_price' => 'nullable|numeric|min:0|max:1000000',
+            'home_menu_price_filter_max_price' => 'nullable|numeric|min:0|max:1000000',
+            'reward_points_redemption_enabled' => 'nullable|in:0,1',
+            'reward_points_per_currency' => 'required_if:redirect_to,admin.settings.rewards|numeric|min:0.0001|max:1000000',
+            'reward_points_min_redeem' => 'required_if:redirect_to,admin.settings.rewards|integer|min:1|max:100000000',
         ]);
 
         $redirectRoute = $request->input('redirect_to', 'admin.settings.index');
@@ -284,6 +339,8 @@ class SettingController extends Controller
             'admin.settings.driver_assignment',
             'admin.settings.communication',
             'admin.settings.notifications',
+            'admin.settings.map',
+            'admin.settings.rewards',
         ];
 
         if (! in_array($redirectRoute, $allowedRoutes)) {
@@ -327,9 +384,13 @@ class SettingController extends Controller
             ]);
         }
 
-        $settings = $request->except(['_token', 'firebase_service_account_json', 'redirect_to']);
+        $settings = $request->except([
+            '_token',
+            'firebase_service_account_json',
+            'redirect_to',
+        ]);
 
-        foreach (['mail_password', 'twilio_auth_token', 'firebase_api_key', 'firebase_project_id', 'firebase_database_url', 'firebase_storage_bucket', 'firebase_messaging_sender_id', 'firebase_app_id', 'firebase_server_key', 'pusher_app_secret', 'media_s3_secret'] as $sensitiveField) {
+        foreach (['mail_password', 'twilio_auth_token', 'msg91_authkey', 'msg91_widget_token', 'firebase_api_key', 'firebase_project_id', 'firebase_database_url', 'firebase_storage_bucket', 'firebase_messaging_sender_id', 'firebase_app_id', 'firebase_server_key', 'pusher_app_secret', 'media_s3_secret'] as $sensitiveField) {
             if (array_key_exists($sensitiveField, $settings) && $settings[$sensitiveField] === '') {
                 unset($settings[$sensitiveField]);
             }
@@ -338,7 +399,13 @@ class SettingController extends Controller
         if (array_key_exists('currency_decimals', $settings)) {
             $settings['currency_decimals'] = max(2, min(5, (int) $settings['currency_decimals']));
         }
-        
+
+        if (array_key_exists('default_mobile_country_code', $settings)) {
+            $settings['default_mobile_country_code'] = PhoneNumber::normalizeCountryCode(
+                $settings['default_mobile_country_code']
+            );
+        }
+
         foreach ($settings as $key => $value) {
             AppSetting::updateOrCreate(
                 ['key' => $key],
@@ -368,7 +435,7 @@ class SettingController extends Controller
     {
         return $value === null ? '' : $value;
     }
-    
+
     public function updateAppBranding(Request $request)
     {
         $request->validate([
@@ -385,6 +452,27 @@ class SettingController extends Controller
             'driver_primary_color' => 'nullable|string|max:7',
             'driver_secondary_color' => 'nullable|string|max:7',
             'customer_play_store_url' => 'nullable|url|max:500',
+            'customer_latest_version' => 'nullable|string|max:40',
+            'customer_latest_build_number' => 'nullable|integer|min:0|max:2147483647',
+            'customer_min_supported_build_number' => 'nullable|integer|min:0|max:2147483647',
+            'customer_force_update' => 'nullable|in:0,1',
+            'customer_android_update_url' => 'nullable|url|max:500',
+            'customer_ios_update_url' => 'nullable|url|max:500',
+            'customer_release_notes' => 'nullable|string|max:1000',
+            'restaurant_latest_version' => 'nullable|string|max:40',
+            'restaurant_latest_build_number' => 'nullable|integer|min:0|max:2147483647',
+            'restaurant_min_supported_build_number' => 'nullable|integer|min:0|max:2147483647',
+            'restaurant_force_update' => 'nullable|in:0,1',
+            'restaurant_android_update_url' => 'nullable|url|max:500',
+            'restaurant_ios_update_url' => 'nullable|url|max:500',
+            'restaurant_release_notes' => 'nullable|string|max:1000',
+            'driver_latest_version' => 'nullable|string|max:40',
+            'driver_latest_build_number' => 'nullable|integer|min:0|max:2147483647',
+            'driver_min_supported_build_number' => 'nullable|integer|min:0|max:2147483647',
+            'driver_force_update' => 'nullable|in:0,1',
+            'driver_android_update_url' => 'nullable|url|max:500',
+            'driver_ios_update_url' => 'nullable|url|max:500',
+            'driver_release_notes' => 'nullable|string|max:1000',
             'customer_deeplink_scheme' => 'nullable|string|max:80',
             'customer_deeplink_base_url' => 'nullable|url|max:500',
             'customer_order_deeplink_template' => 'nullable|string|max:500',
@@ -432,6 +520,22 @@ class SettingController extends Controller
         AppSetting::updateOrCreate(['key' => 'driver_primary_color'], ['value' => $request->driver_primary_color ?? ($request->primary_color ?? '#0A9443'), 'type' => 'string']);
         AppSetting::updateOrCreate(['key' => 'driver_secondary_color'], ['value' => $request->driver_secondary_color ?? ($request->secondary_color ?? '#0C7038'), 'type' => 'string']);
         AppSetting::updateOrCreate(['key' => 'customer_play_store_url'], ['value' => $request->customer_play_store_url ?? '', 'type' => 'string']);
+        foreach (['customer', 'restaurant', 'driver'] as $app) {
+            foreach ([
+                "{$app}_latest_version" => 'string',
+                "{$app}_latest_build_number" => 'number',
+                "{$app}_min_supported_build_number" => 'number',
+                "{$app}_force_update" => 'boolean',
+                "{$app}_android_update_url" => 'string',
+                "{$app}_ios_update_url" => 'string',
+                "{$app}_release_notes" => 'string',
+            ] as $key => $type) {
+                AppSetting::updateOrCreate(
+                    ['key' => $key],
+                    ['value' => $request->input($key, $type === 'boolean' ? '0' : ''), 'type' => $type]
+                );
+            }
+        }
         AppSetting::updateOrCreate(['key' => 'customer_deeplink_scheme'], ['value' => $request->customer_deeplink_scheme ?? 'foodflow', 'type' => 'string']);
         AppSetting::updateOrCreate(['key' => 'customer_deeplink_base_url'], ['value' => $request->customer_deeplink_base_url ?? '', 'type' => 'string']);
         AppSetting::updateOrCreate(['key' => 'customer_order_deeplink_template'], ['value' => $request->customer_order_deeplink_template ?? 'foodflow://orders/{order_id}', 'type' => 'string']);
@@ -689,7 +793,14 @@ class SettingController extends Controller
         return is_file($binary) ? $binary : (PHP_OS_FAMILY === 'Windows' ? PHP_BINARY : '/usr/bin/php');
     }
 
-    private function scheduledTasks(): array
+    private function disabledCronTasks(): array
+    {
+        $disabled = json_decode((string) AppSetting::getValue('disabled_cron_tasks', '[]'), true);
+
+        return is_array($disabled) ? array_values(array_filter($disabled, 'is_string')) : [];
+    }
+
+    private function scheduledTasks(?array $disabledTasks = null): array
     {
         $path = base_path('routes/console.php');
         if (!File::exists($path)) {
@@ -699,6 +810,7 @@ class SettingController extends Controller
         $lines = preg_split('/\R/', File::get($path));
         $tasks = [];
         $comment = null;
+        $disabledTasks ??= $this->disabledCronTasks();
 
         foreach ($lines as $index => $line) {
             $trimmed = trim($line);
@@ -713,9 +825,16 @@ class SettingController extends Controller
 
             $statement = $trimmed;
             if (!str_ends_with($trimmed, ';')) {
+                $isCallback = str_contains($trimmed, 'Schedule::call');
                 for ($next = $index + 1; $next < count($lines); $next++) {
-                    $statement .= ' ' . trim($lines[$next]);
-                    if (str_ends_with(trim($lines[$next]), ';')) {
+                    $nextLine = trim($lines[$next]);
+                    $statement .= ' ' . $nextLine;
+
+                    if ($isCallback && preg_match('/^\}\)->.*;\s*$/', $nextLine)) {
+                        break;
+                    }
+
+                    if (!$isCallback && str_ends_with($nextLine, ';')) {
                         break;
                     }
                 }
@@ -723,14 +842,19 @@ class SettingController extends Controller
 
             preg_match_all('/->([a-zA-Z0-9_]+)\((.*?)\)/', $statement, $methodMatches, PREG_SET_ORDER);
             preg_match("/Schedule::command\\('([^']+)'\\)/", $statement, $commandMatch);
+            preg_match("/cronTaskEnabled\\('([^']+)'\\)/", $statement, $keyMatch);
             $frequencyMatch = end($methodMatches) ?: [];
+            $key = $keyMatch[1] ?? strtolower(preg_replace('/[^a-z0-9]+/i', '_', $commandMatch[1] ?? ($comment ?: 'scheduled_callback_' . $index)));
+            $key = trim($key, '_');
 
             $tasks[] = [
+                'key' => $key,
                 'name' => $comment ?: ($commandMatch[1] ?? 'Scheduled callback'),
                 'type' => str_contains($statement, 'Schedule::command') ? 'Command' : 'Callback',
                 'command' => $commandMatch[1] ?? 'Closure / service callback',
                 'frequency' => $frequencyMatch[1] ?? 'custom',
                 'expression' => $frequencyMatch[2] ?? '',
+                'enabled' => !in_array($key, $disabledTasks, true),
             ];
 
             $comment = null;

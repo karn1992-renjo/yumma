@@ -7,6 +7,10 @@ class ScratchCard {
     this.orderNumber,
     this.restaurantName,
     this.restaurantLogoUrl,
+    this.orderStatus,
+    this.paymentMethod,
+    this.canReveal = true,
+    this.revealLockedReason,
     this.rewardTitle,
     this.rewardType,
     this.reward,
@@ -25,6 +29,10 @@ class ScratchCard {
   final String? orderNumber;
   final String? restaurantName;
   final String? restaurantLogoUrl;
+  final String? orderStatus;
+  final String? paymentMethod;
+  final bool canReveal;
+  final String? revealLockedReason;
   final String title;
   final String status;
   final String? rewardTitle;
@@ -42,6 +50,7 @@ class ScratchCard {
   bool get isRevealed => status == 'revealed' || revealedAt != null;
   bool get isExpired =>
       status == 'expired' || (expiresAt?.isBefore(DateTime.now()) ?? false);
+  bool get isRevealLocked => !canReveal && !isRevealed && !isExpired;
 
   factory ScratchCard.fromJson(Map<String, dynamic> json) {
     return ScratchCard(
@@ -50,6 +59,10 @@ class ScratchCard {
       orderNumber: json['order_number']?.toString(),
       restaurantName: json['restaurant_name']?.toString(),
       restaurantLogoUrl: json['restaurant_logo_url']?.toString(),
+      orderStatus: json['order_status']?.toString(),
+      paymentMethod: json['payment_method']?.toString(),
+      canReveal: json['can_reveal'] == false ? false : true,
+      revealLockedReason: json['reveal_locked_reason']?.toString(),
       title: json['title']?.toString() ?? 'Scratch & Win',
       status: json['status']?.toString() ?? 'issued',
       rewardTitle: json['reward_title']?.toString(),

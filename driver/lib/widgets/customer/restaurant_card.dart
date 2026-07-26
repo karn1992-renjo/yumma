@@ -1,6 +1,7 @@
 // lib/widgets/customer/restaurant_card.dart
 import 'package:flutter/material.dart';
 import '../../utils/currency_utils.dart';
+import '../common/network_image_loader.dart';
 import '../../config/app_config.dart';
 import '../../theme/foodflow_theme.dart';
 
@@ -103,7 +104,8 @@ class RestaurantCard extends StatelessWidget {
     final hasVisibleRating = _hasVisibleRating(restaurant);
     final rating = _parseDouble(restaurant['rating'], fallback: 0.0);
     final deliveryTime = _parseInt(restaurant['delivery_time'], fallback: 30);
-    final minOrderAmount = _parseDouble(restaurant['min_order_amount'], fallback: 99.0);
+    final minOrderAmount =
+        _parseDouble(restaurant['min_order_amount'], fallback: 99.0);
     final cuisineText = _resolveCuisineText(restaurant);
     final imageUrl = _resolveImageUrl(restaurant, [
       'image_url',
@@ -112,7 +114,9 @@ class RestaurantCard extends StatelessWidget {
       'image',
       'photo',
     ]);
-    final isOpen = restaurant['is_open'] is bool ? restaurant['is_open'] as bool : restaurant['is_open']?.toString().toLowerCase() != 'false';
+    final isOpen = restaurant['is_open'] is bool
+        ? restaurant['is_open'] as bool
+        : restaurant['is_open']?.toString().toLowerCase() != 'false';
     final discount = restaurant['discount']?.toString() ?? '';
 
     return InkWell(
@@ -128,12 +132,12 @@ class RestaurantCard extends StatelessWidget {
                 ClipRRect(
                   borderRadius: BorderRadius.circular(14),
                   child: imageUrl.isNotEmpty
-                      ? Image.network(
-                          imageUrl,
+                      ? NetworkImageLoader(
+                          imageUrl: imageUrl,
                           height: 124,
                           width: 124,
                           fit: BoxFit.cover,
-                          errorBuilder: (_, __, ___) => _imageFallback(),
+                          errorWidget: _imageFallback(),
                         )
                       : _imageFallback(),
                 ),
@@ -144,7 +148,10 @@ class RestaurantCard extends StatelessWidget {
                       gradient: LinearGradient(
                         begin: Alignment.topCenter,
                         end: Alignment.bottomCenter,
-                        colors: [Colors.transparent, Colors.black.withOpacity(0.58)],
+                        colors: [
+                          Colors.transparent,
+                          Colors.black.withOpacity(0.58)
+                        ],
                       ),
                     ),
                   ),
@@ -176,7 +183,8 @@ class RestaurantCard extends StatelessWidget {
                       alignment: Alignment.center,
                       child: const Text(
                         'CLOSED',
-                        style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800),
+                        style: TextStyle(
+                            color: Colors.white, fontWeight: FontWeight.w800),
                       ),
                     ),
                   ),
@@ -194,7 +202,7 @@ class RestaurantCard extends StatelessWidget {
                       style: const TextStyle(
                         fontSize: 17,
                         fontWeight: FontWeight.w800,
-                        color: FoodFlowTheme.ink,
+                        color: foodflow.ink,
                       ),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
@@ -205,8 +213,10 @@ class RestaurantCard extends StatelessWidget {
                         Container(
                           width: 18,
                           height: 18,
-                          decoration: const BoxDecoration(color: Color(0xFF48C479), shape: BoxShape.circle),
-                          child: const Icon(Icons.star, size: 12, color: Colors.white),
+                          decoration: const BoxDecoration(
+                              color: Color(0xFF48C479), shape: BoxShape.circle),
+                          child: const Icon(Icons.star,
+                              size: 12, color: Colors.white),
                         ),
                         const SizedBox(width: 5),
                         Text(
@@ -214,37 +224,44 @@ class RestaurantCard extends StatelessWidget {
                           style: const TextStyle(
                             fontSize: 13,
                             fontWeight: FontWeight.w800,
-                          color: FoodFlowTheme.ink,
+                            color: foodflow.ink,
                           ),
                         ),
                       ],
                     ),
                     const SizedBox(height: 7),
                     Text(
-                      cuisineText.isEmpty ? 'North Indian, Fast Food' : cuisineText,
-                      style: const TextStyle(fontSize: 13, color: FoodFlowTheme.muted),
+                      cuisineText.isEmpty
+                          ? 'North Indian, Fast Food'
+                          : cuisineText,
+                      style:
+                          const TextStyle(fontSize: 13, color: foodflow.muted),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),
                     const SizedBox(height: 4),
                     Text(
                       '${restaurant['area'] ?? 'Nearby'} - Min ${formatCurrency(context, minOrderAmount)}',
-                      style: const TextStyle(fontSize: 12, color: FoodFlowTheme.faint),
+                      style:
+                          const TextStyle(fontSize: 12, color: foodflow.faint),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),
                     const Spacer(),
                     Row(
                       children: [
-                        Icon(Icons.local_offer, size: 15, color: FoodFlowTheme.orange),
+                        Icon(Icons.local_offer,
+                            size: 15, color: foodflow.orange),
                         const SizedBox(width: 5),
                         Expanded(
                           child: Text(
-                            discount.isNotEmpty ? discount : 'Free delivery on select orders',
+                            discount.isNotEmpty
+                                ? discount
+                                : 'Free delivery on select orders',
                             style: TextStyle(
                               fontSize: 12,
-                              color: FoodFlowTheme.orange,
-                              fontWeight: FontWeight.w700,
+                              color: foodflow.orange,
+                              fontWeight: FontWeight.w800,
                             ),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
@@ -267,7 +284,8 @@ class RestaurantCard extends StatelessWidget {
       height: 124,
       width: 124,
       color: const Color(0xFFF2F2F2),
-      child: const Icon(Icons.restaurant, size: 42, color: AppConfig.primaryColor),
+      child:
+          const Icon(Icons.restaurant, size: 42, color: AppConfig.primaryColor),
     );
   }
 }

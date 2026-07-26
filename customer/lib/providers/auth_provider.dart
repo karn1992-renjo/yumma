@@ -398,6 +398,22 @@ class AuthProvider extends ChangeNotifier {
     }
   }
 
+  Future<bool> deleteAccount() async {
+    _setLoading(true);
+    _clearError();
+
+    try {
+      await _authService.deleteAccount();
+      _setCurrentUser(null);
+      _setLoading(false);
+      return true;
+    } catch (e) {
+      _error = e.toString();
+      _setLoading(false);
+      return false;
+    }
+  }
+
   void _setLoading(bool loading) {
     _isLoading = loading;
     notifyListeners();

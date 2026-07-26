@@ -812,6 +812,8 @@
         @include('partials.home-sections.restaurant-featured', ['section' => $section])
     @elseif($section['type'] === 'shop_by_brand')
         @include('partials.home-sections.brand-grid', ['section' => $section])
+    @elseif($section['type'] === 'promotion_type_section')
+        @include('partials.home-sections.promotion-section', ['section' => $section])
     @elseif($section['type'] === 'restaurant_discovery')
         <section class="restaurants-section" id="restaurantsSection">
             <div class="container">

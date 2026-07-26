@@ -4,13 +4,14 @@ namespace App\Services;
 
 use App\Models\AppSetting;
 use App\Models\Banner;
+use App\Models\Category;
 use App\Models\Cuisine;
 use App\Models\DeliveryChargeSetting;
 use App\Models\GlobalMenuCategory;
 use App\Models\HomeSection;
 use App\Models\MasterMenuItem;
 use App\Models\MenuItem;
-use App\Models\PromoCode;
+use App\Models\Promotion;
 use App\Models\Restaurant;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Collection;
@@ -18,6 +19,8 @@ use Illuminate\Support\Str;
 
 class HomeSectionService
 {
+    private const HIDDEN_BUILT_IN_SETTING = 'homepage_hidden_built_in_sections';
+
     private ?float $customerLatitude = null;
     private ?float $customerLongitude = null;
     private float $deliveryRadius = 15.0;
@@ -29,19 +32,20 @@ class HomeSectionService
             ->orderBy('display_order')
             ->orderBy('id')
             ->get();
+        $hiddenBuiltIns = $this->hiddenBuiltInTokens();
 
         return collect($this->resolveRuntimeOrder($sections))
-            ->map(function (string $token, int $index) use ($sections): ?array {
+            ->map(function (string $token, int $index) use ($sections, $hiddenBuiltIns): ?array {
                 $builtIn = $this->builtInDefinitions()[$token] ?? null;
                 if ($builtIn !== null) {
                     return [
                         'token' => $token,
                         'sort_order' => $index + 1,
-                        'title' => $builtIn['title'],
-                        'subtitle' => $builtIn['subtitle'],
+                        'title' => $this->builtInTitle($token, $builtIn),
+                        'subtitle' => $this->builtInSubtitle($token, $builtIn),
                         'type' => $builtIn['type'],
                         'source' => 'built_in',
-                        'is_active' => true,
+                        'is_active' => ! in_array($token, $hiddenBuiltIns, true),
                         'model' => null,
                     ];
                 }
@@ -84,11 +88,16 @@ class HomeSectionService
             ->orderBy('display_order')
             ->orderBy('id')
             ->get();
+        $hiddenBuiltIns = $this->hiddenBuiltInTokens();
 
         return collect($this->resolveRuntimeOrder($sections))
-            ->map(function (string $token) use ($sections): ?array {
+            ->map(function (string $token) use ($sections, $hiddenBuiltIns): ?array {
                 $builtIn = $this->builtInDefinitions()[$token] ?? null;
                 if ($builtIn !== null) {
+                    if (in_array($token, $hiddenBuiltIns, true)) {
+                        return null;
+                    }
+
                     return $this->resolveBuiltInSection($token, $builtIn);
                 }
 
@@ -126,6 +135,37 @@ class HomeSectionService
         }
     }
 
+    public function toggleBuiltInVisibility(string $token): bool
+    {
+        if (! array_key_exists($token, $this->builtInDefinitions())) {
+            abort(404);
+        }
+
+        $hidden = $this->hiddenBuiltInTokens();
+        $wasHidden = in_array($token, $hidden, true);
+
+        if ($wasHidden) {
+            $hidden = array_values(array_diff($hidden, [$token]));
+        } else {
+            $hidden[] = $token;
+            $hidden = array_values(array_unique($hidden));
+        }
+
+        AppSetting::setValue(self::HIDDEN_BUILT_IN_SETTING, json_encode($hidden));
+
+        return ! $wasHidden;
+    }
+
+    public function updateBuiltInContent(string $token, ?string $title, ?string $subtitle): void
+    {
+        if (! array_key_exists($token, $this->builtInDefinitions())) {
+            abort(404);
+        }
+
+        AppSetting::setValue($this->builtInTitleKey($token), trim((string) $title));
+        AppSetting::setValue($this->builtInSubtitleKey($token), trim((string) $subtitle));
+    }
+
     public function builtInDefinitions(): array
     {
         return [
@@ -134,6 +174,7 @@ class HomeSectionService
                 'subtitle' => 'Discover food by cuisines & categories',
                 'type' => 'categories',
             ],
+            ...$this->promotionBuiltInDefinitions(),
             'restaurant_discovery' => [
                 'title' => 'Restaurants Near You',
                 'subtitle' => 'Discover the best restaurants in your area',
@@ -162,6 +203,7 @@ class HomeSectionService
 
         return [
             'categories',
+            ...array_keys($this->promotionBuiltInDefinitions()),
             ...$dynamicTokens,
             'restaurant_discovery',
         ];
@@ -193,6 +235,7 @@ class HomeSectionService
     {
         if ($token === 'categories') {
             $items = GlobalMenuCategory::query()
+                ->with('cuisines:id,name')
                 ->active()
                 ->parents()
                 ->orderBy('display_order')
@@ -217,8 +260,8 @@ class HomeSectionService
             return [
                 'token' => $token,
                 'type' => 'categories',
-                'title' => AppSetting::getValue('category_section_title', $definition['title']),
-                'subtitle' => AppSetting::getValue('category_section_subtitle', $definition['subtitle']),
+                'title' => $this->builtInTitle($token, $definition),
+                'subtitle' => $this->builtInSubtitle($token, $definition),
                 'enabled' => $items->isNotEmpty(),
                 'items' => $items,
             ];
@@ -228,10 +271,36 @@ class HomeSectionService
             return [
                 'token' => $token,
                 'type' => 'restaurant_discovery',
-                'title' => AppSetting::getValue('restaurants_section_title', $definition['title']),
-                'subtitle' => AppSetting::getValue('restaurants_section_subtitle', $definition['subtitle']),
+                'title' => $this->builtInTitle($token, $definition),
+                'subtitle' => $this->builtInSubtitle($token, $definition),
                 'enabled' => true,
                 'items' => collect(),
+            ];
+        }
+
+        if (($definition['source'] ?? null) === 'promotions') {
+            $items = $this->activePromotionDeals(
+                (int) ($definition['limit'] ?? 24),
+                (array) ($definition['promotion_types'] ?? [])
+            );
+            $cardMode = $this->promotionSectionCardMode($token);
+
+            if ($token === 'combo_deals') {
+                $items = $this->comboGroupPromotionCards($items);
+            }
+
+            return [
+                'token' => $token,
+                'type' => $definition['type'],
+                'promotion_type' => $definition['promotion_type'] ?? null,
+                'promotion_types' => $definition['promotion_types'] ?? [],
+                'card_mode' => $cardMode,
+                'display_mode' => $cardMode,
+                'title' => $this->builtInTitle($token, $definition),
+                'subtitle' => $this->builtInSubtitle($token, $definition),
+                'enabled' => $items->isNotEmpty(),
+                'strict_items' => true,
+                'items' => $items->all(),
             ];
         }
 
@@ -253,7 +322,7 @@ class HomeSectionService
             'new_arrivals' => $this->resolveRestaurantSectionWithDefaultScope($section, 'new_arrivals', 'latest'),
             'trending_near_you' => $this->resolveRestaurantSectionWithDefaultScope($section, 'trending_near_you', 'most_ordered'),
             'popular_dishes' => $this->resolvePopularDishesSection($section),
-            'admin_offers' => $this->resolveAdminOffersSection($section),
+            'admin_offers' => null,
             'shop_by_brand' => $this->resolveBrandSection($section),
             default => $this->resolveGenericSection($section),
         };
@@ -706,21 +775,23 @@ class HomeSectionService
     private function resolveAdminOffersSection(HomeSection $section): ?array
     {
         $configuration = $section->configuration ?? [];
-        $ids = collect($configuration['promo_code_ids'] ?? [])->map(fn ($id) => (int) $id)->filter()->values();
+        $promotionIds = collect($configuration['promotion_ids'] ?? [])->map(fn ($id) => (int) $id)->filter()->values();
 
-        if ($section->data_source !== 'manual' || $ids->isEmpty()) {
+        if ($section->data_source !== 'manual' || $promotionIds->isEmpty()) {
             return $this->resolveClientFeedSection($section, 'admin_offers');
         }
 
-        $items = PromoCode::query()
-            ->where('is_active', true)
-            ->whereNull('restaurant_id')
-            ->where('created_by_type', 'admin')
-            ->whereIn('id', $ids->all())
+        $promotions = Promotion::query()
+            ->active()
+            ->whereIn('id', $promotionIds->all())
             ->get()
             ->keyBy('id');
 
-        $ordered = $ids->map(fn (int $id) => $items->get($id))->filter()->values();
+        $orderedPromotions = $promotionIds
+            ->map(fn (int $id) => $promotions->get($id))
+            ->filter()
+            ->map(fn (Promotion $promotion) => $this->promotionPayload($promotion));
+        $ordered = $orderedPromotions->values();
 
         return [
             'token' => 'home_section:'.$section->id,
@@ -728,21 +799,368 @@ class HomeSectionService
             'title' => $section->title,
             'subtitle' => $section->subtitle,
             'enabled' => $ordered->isNotEmpty(),
-            'items' => $ordered->map(fn (PromoCode $promo) => [
-                'id' => $promo->id,
-                'code' => $promo->code,
-                'title' => $promo->title ?: $promo->code,
-                'subtitle' => $promo->description ?? 'Special offer',
-                'description' => $promo->description ?? 'Special offer',
-                'image' => $promo->promo_image_url,
-                'promo_image' => $promo->promo_image_url,
-                'discount_type' => $promo->discount_type ?? 'percentage',
-                'discount_value' => $promo->discount_value ?? 0,
-                'min_order_value' => $promo->min_order_amount,
-                'max_discount' => $promo->max_discount_amount,
-            ])->values()->all(),
+            'items' => $ordered->all(),
             'style' => $this->sectionStyle($section),
         ];
+    }
+
+    private function activePromotionDeals(int $limit = 24, array $promotionTypes = []): Collection
+    {
+        $normalizedTypes = collect($promotionTypes)
+            ->map(fn ($type) => strtolower(trim((string) $type)))
+            ->filter()
+            ->values();
+
+        return app(PromotionEngineService::class)
+            ->list([
+                'limit' => $normalizedTypes->isNotEmpty() ? max($limit * 4, 40) : $limit,
+                'user_id' => auth()->id(),
+                'platform' => 'customer_app',
+            ])
+            ->reject(fn (array $offer) => $this->isScratchOnlyDeal($offer))
+            ->when($normalizedTypes->isNotEmpty(), fn (Collection $offers) => $offers
+                ->filter(fn (array $offer) => $normalizedTypes->contains(
+                    strtolower((string) ($offer['promotion_type'] ?? $offer['reward_type'] ?? ''))
+                )))
+            ->unique(fn (array $offer) => $offer['display_id'] ?? ('promotion:'.($offer['id'] ?? '0')))
+            ->take($limit)
+            ->values();
+    }
+
+    private function isScratchOnlyDeal(array $offer): bool
+    {
+        $type = strtolower((string) ($offer['promotion_type'] ?? $offer['reward_type'] ?? data_get($offer, 'rewards.type', '')));
+        $title = strtolower((string) ($offer['title'] ?? ''));
+
+        return $type === 'scratch_card'
+            || str_contains($type, 'scratch_card')
+            || str_starts_with($title, 'scratch reward');
+    }
+
+    private function promotionSectionCardMode(string $token): string
+    {
+        return in_array($token, ['bogo_deals', 'combo_deals'], true)
+            ? 'menu_cards'
+            : 'promo_cards';
+    }
+
+    private function comboGroupPromotionCards(Collection $promotions): Collection
+    {
+        return $promotions
+            ->flatMap(function (array $offer): array {
+                $groups = collect(data_get($offer, 'reward_config.combo_groups', data_get($offer, 'rewards.combo_groups', [])))
+                    ->filter(fn ($group) => is_array($group))
+                    ->values();
+
+                if ($groups->isEmpty()) {
+                    return [$offer];
+                }
+
+                $menuItems = collect((array) ($offer['menu_items'] ?? []))
+                    ->filter(fn ($item) => is_array($item))
+                    ->map(fn (array $item) => $item)
+                    ->values();
+                $itemsById = $menuItems->keyBy(fn (array $item) => (int) ($item['menu_item_id'] ?? $item['id'] ?? 0));
+                $cards = [];
+
+                foreach ($groups as $index => $group) {
+                    $itemIds = collect((array) ($group['item_ids'] ?? []))
+                        ->map(fn ($id) => (int) $id)
+                        ->filter()
+                        ->unique()
+                        ->values();
+                    $groupItems = $itemIds
+                        ->map(fn (int $id) => $itemsById->get($id))
+                        ->filter()
+                        ->values();
+
+                    if ($groupItems->count() < 2) {
+                        continue;
+                    }
+
+                    $actualPrice = (float) ($group['actual_price'] ?? $groupItems->sum(
+                        fn (array $item) => (float) ($item['discounted_price'] ?? $item['price'] ?? 0)
+                    ));
+                    $effectivePrice = (float) ($group['price'] ?? $group['effective_price'] ?? data_get($offer, 'discount_value', 0));
+                    if ($effectivePrice <= 0) {
+                        $effectivePrice = $actualPrice;
+                    }
+                    $discountPercent = (float) ($group['discount_percent'] ?? (
+                        $actualPrice > 0 ? round((($actualPrice - $effectivePrice) / $actualPrice) * 100, 2) : 0
+                    ));
+                    $title = trim((string) ($group['name'] ?? '')) ?: ($offer['title'] ?? 'Combo Deal');
+                    $subtitle = $groupItems
+                        ->map(fn (array $item) => trim((string) ($item['name'] ?? $item['title'] ?? '')))
+                        ->filter()
+                        ->implode(' + ');
+                    $firstImage = $groupItems
+                        ->map(fn (array $item) => $item['image_url'] ?? $item['image'] ?? null)
+                        ->first(fn ($url) => filled($url));
+                    $rewardConfig = (array) ($offer['reward_config'] ?? $offer['rewards'] ?? []);
+                    $rewardConfig['value'] = $effectivePrice;
+                    $rewardConfig['actual_price'] = $actualPrice;
+                    $rewardConfig['discount_percent'] = $discountPercent;
+                    $rewardConfig['combo_group'] = $group;
+                    $rewardConfig['combo_groups'] = [$group];
+
+                    $cards[] = array_merge($offer, [
+                        'source_type' => 'promotion',
+                        'card_type' => 'combo_group',
+                        'display_id' => ($offer['display_id'] ?? ('promotion:'.($offer['id'] ?? '0'))).':combo_group:'.$index,
+                        'title' => $title,
+                        'name' => $title,
+                        'subtitle' => $subtitle,
+                        'description' => $subtitle,
+                        'image' => $firstImage ?: ($offer['image'] ?? null),
+                        'image_url' => $firstImage ?: ($offer['image_url'] ?? null),
+                        'promo_image' => $firstImage ?: ($offer['promo_image'] ?? null),
+                        'actual_price' => $actualPrice,
+                        'original_price' => $actualPrice,
+                        'price' => $effectivePrice,
+                        'effective_price' => $effectivePrice,
+                        'discount_value' => $effectivePrice,
+                        'discount_percent' => $discountPercent,
+                        'combo_group_index' => $index,
+                        'combo_group' => $group,
+                        'reward_config' => $rewardConfig,
+                        'rewards' => $rewardConfig,
+                        'menu_items' => $groupItems->all(),
+                    ]);
+                }
+
+                return $cards ?: [$offer];
+            })
+            ->unique(fn (array $offer) => $offer['display_id'] ?? ('promotion:'.($offer['id'] ?? '0')))
+            ->values();
+    }
+
+    private function promotionBuiltInDefinitions(): array
+    {
+        return [
+            'bogo_deals' => [
+                'title' => 'BOGO Deals',
+                'subtitle' => 'Buy more and unlock free items',
+                'type' => 'promotion_type_section',
+                'source' => 'promotions',
+                'promotion_type' => 'bogo',
+                'promotion_types' => ['bogo', 'buy_x_get_y', 'buy_2_get_1', 'buy_3_get_1', 'buy_3_get_2'],
+                'limit' => 12,
+            ],
+            'combo_deals' => [
+                'title' => 'Combo Deals',
+                'subtitle' => 'Best combos at better prices',
+                'type' => 'promotion_type_section',
+                'source' => 'promotions',
+                'promotion_type' => 'combo_deal',
+                'promotion_types' => ['combo_deal', 'meal_deal'],
+                'limit' => 12,
+            ],
+            'free_item_offers' => [
+                'title' => 'Free Item Offers',
+                'subtitle' => 'Order eligible items and get rewards',
+                'type' => 'promotion_type_section',
+                'source' => 'promotions',
+                'promotion_type' => 'free_item',
+                'promotion_types' => ['free_item'],
+                'limit' => 12,
+            ],
+            'flash_sale_offers' => [
+                'title' => 'Flash Sale',
+                'subtitle' => 'Limited-time offers on selected items',
+                'type' => 'promotion_type_section',
+                'source' => 'promotions',
+                'promotion_type' => 'flash_sale',
+                'promotion_types' => ['flash_sale'],
+                'limit' => 12,
+            ],
+            'festival_offers' => [
+                'title' => 'Festival Offers',
+                'subtitle' => 'Seasonal savings and special campaigns',
+                'type' => 'promotion_type_section',
+                'source' => 'promotions',
+                'promotion_type' => 'festival_offer',
+                'promotion_types' => ['festival_offer'],
+                'limit' => 12,
+            ],
+            'deals_for_you' => [
+                'title' => 'Deals for You',
+                'subtitle' => 'All active offers and promotions in one place',
+                'type' => 'deals_for_you',
+                'source' => 'promotions',
+                'limit' => 24,
+            ],
+        ];
+    }
+
+    private function promotionPayload(Promotion $promotion): array
+    {
+        $reward = $promotion->rewards ?? [];
+        $coupon = $promotion->relationLoaded('couponCodes')
+            ? $promotion->couponCodes->first()
+            : $promotion->couponCodes()->where('is_active', true)->first();
+
+        $type = (string) $promotion->promotion_type;
+
+        return [
+            'id' => $promotion->id,
+            'source_type' => 'promotion',
+            'display_id' => 'promotion:'.$promotion->id,
+            'display_mode' => $this->promotionDisplayMode($type),
+            'code' => $coupon?->code,
+            'coupon_code' => $coupon?->code,
+            'title' => $promotion->title,
+            'subtitle' => $promotion->description ?? 'Special offer',
+            'description' => $promotion->description ?? 'Special offer',
+            'image' => $promotion->image_url,
+            'promo_image' => $promotion->image_url,
+            'promotion_type' => $promotion->promotion_type,
+            'reward_type' => $reward['type'] ?? $promotion->promotion_type,
+            'reward_config' => $reward,
+            'discount_type' => $reward['type'] ?? null,
+            'discount_value' => $reward['value'] ?? null,
+            'min_order_value' => data_get($promotion->conditions, 'min_order_amount'),
+            'min_order_amount' => data_get($promotion->conditions, 'min_order_amount'),
+            'max_discount' => $reward['max_discount'] ?? null,
+            'usage_limit' => $promotion->total_usage_limit,
+            'valid_from' => $promotion->starts_at,
+            'valid_to' => $promotion->ends_at,
+            'start_date' => $promotion->starts_at,
+            'end_date' => $promotion->ends_at,
+            'rewards' => $reward,
+            'menu_items' => $this->promotionMenuItems($promotion),
+            'promotion_categories' => $this->promotionCategories($promotion),
+        ];
+    }
+
+    private function promotionCategories(Promotion $promotion): array
+    {
+        $reward = $promotion->rewards ?? [];
+        $targets = $promotion->targets ?? [];
+        $conditions = $promotion->conditions ?? [];
+        $ids = collect([
+            ...((array) data_get($reward, 'category_ids', [])),
+            ...((array) data_get($reward, 'menu_category_ids', [])),
+            ...((array) data_get($targets, 'category_ids', [])),
+            ...((array) data_get($targets, 'menu_category_ids', [])),
+            ...((array) data_get($conditions, 'contains_category_ids', [])),
+            ...((array) data_get($conditions, 'buy_rule.category_ids', [])),
+            ...((array) data_get($conditions, 'buy_rule.menu_category_ids', [])),
+            ...((array) data_get($reward, 'reward_rule.category_ids', [])),
+            ...((array) data_get($reward, 'reward_rule.menu_category_ids', [])),
+        ])
+            ->map(fn ($id) => (int) $id)
+            ->filter()
+            ->unique()
+            ->values();
+
+        if ($ids->isEmpty()) {
+            return [];
+        }
+
+        $categories = Category::query()
+            ->whereIn('id', $ids->all())
+            ->get()
+            ->keyBy('id');
+        $fallbackImages = MenuItem::query()
+            ->whereIn('category_id', $ids->all())
+            ->whereNotNull('images')
+            ->orderByDesc('is_bestseller')
+            ->orderByDesc('is_recommended')
+            ->get(['id', 'category_id', 'images'])
+            ->groupBy('category_id')
+            ->map(fn (Collection $items) => $items
+                ->map(fn (MenuItem $item) => $item->image_url)
+                ->first(fn (?string $url) => filled($url)));
+
+        return $ids
+            ->map(fn (int $id) => $categories->get($id))
+            ->filter()
+            ->map(fn (Category $category) => [
+                'id' => $category->id,
+                'category_id' => $category->id,
+                'name' => $category->name,
+                'title' => $category->name,
+                'image' => $this->resolveStoredOrAbsoluteImage($category->image) ?: $fallbackImages->get($category->id),
+                'image_url' => $this->resolveStoredOrAbsoluteImage($category->image) ?: $fallbackImages->get($category->id),
+                'restaurant_id' => $category->restaurant_id,
+            ])
+            ->values()
+            ->all();
+    }
+
+    private function promotionMenuItems(Promotion $promotion): array
+    {
+        $reward = $promotion->rewards ?? [];
+        $targets = $promotion->targets ?? [];
+        $conditions = $promotion->conditions ?? [];
+        $ids = collect([
+            ...((array) data_get($reward, 'item_ids', [])),
+            ...((array) data_get($reward, 'menu_item_ids', [])),
+            ...((array) data_get($targets, 'item_ids', [])),
+            ...((array) data_get($targets, 'menu_item_ids', [])),
+            ...((array) data_get($conditions, 'contains_item_ids', [])),
+            ...((array) data_get($conditions, 'buy_rule.item_ids', [])),
+            ...((array) data_get($conditions, 'buy_rule.menu_item_ids', [])),
+            ...((array) data_get($reward, 'reward_rule.item_ids', [])),
+            ...((array) data_get($reward, 'reward_rule.menu_item_ids', [])),
+            data_get($reward, 'free_item_id'),
+            data_get($reward, 'item_id'),
+            data_get($reward, 'reward_rule.free_item_id'),
+            data_get($reward, 'reward_rule.item_id'),
+        ])
+            ->map(fn ($id) => (int) $id)
+            ->filter()
+            ->unique()
+            ->values();
+
+        if ($ids->isEmpty()) {
+            return [];
+        }
+
+        $items = MenuItem::query()
+            ->with('restaurant:id,name')
+            ->whereIn('id', $ids->all())
+            ->get()
+            ->keyBy('id');
+
+        return $ids
+            ->map(fn (int $id) => $items->get($id))
+            ->filter()
+            ->map(fn (MenuItem $item) => [
+                'id' => $item->id,
+                'menu_item_id' => $item->id,
+                'name' => $item->name,
+                'description' => $item->description,
+                'image' => $item->image_url,
+                'image_url' => $item->image_url,
+                'price' => (float) $item->price,
+                'discounted_price' => $item->discounted_price !== null ? (float) $item->discounted_price : null,
+                'restaurant_id' => $item->restaurant_id,
+                'restaurant_name' => $item->restaurant?->name,
+                'is_veg' => (bool) $item->is_veg,
+                'is_combo' => (bool) $item->is_combo,
+                'is_reward_item' => (int) data_get($reward, 'free_item_id') === (int) $item->id,
+            ])
+            ->values()
+            ->all();
+    }
+
+    private function promotionDisplayMode(string $type): string
+    {
+        $type = strtolower($type);
+        if (str_contains($type, 'combo') || str_contains($type, 'meal')) {
+            return 'bundle';
+        }
+
+        if ($type === 'bogo' || str_starts_with($type, 'buy_') || str_starts_with($type, 'free_')) {
+            return 'item_reward';
+        }
+
+        if (str_contains($type, 'item') || str_contains($type, 'category')) {
+            return 'item_offer';
+        }
+
+        return 'order_offer';
     }
 
     private function resolveBannerSection(HomeSection $section): ?array
@@ -1028,7 +1446,7 @@ class HomeSectionService
         if ($globalCategoryIds->isNotEmpty() || $section->data_source === 'auto') {
             $globalQuery = GlobalMenuCategory::query()
                 ->active()
-                ->with('parent')
+                ->with(['parent', 'cuisines:id,name'])
                 ->orderBy('display_order')
                 ->orderBy('name');
 
@@ -1284,5 +1702,78 @@ class HomeSectionService
                 ? MediaStorage::url($backgroundImage)
                 : null,
         ];
+    }
+
+    private function hiddenBuiltInTokens(): array
+    {
+        $stored = json_decode((string) AppSetting::getValue(self::HIDDEN_BUILT_IN_SETTING, '[]'), true);
+        if (! is_array($stored)) {
+            return [];
+        }
+
+        $knownTokens = array_keys($this->builtInDefinitions());
+
+        return array_values(array_filter(
+            array_map('strval', $stored),
+            static fn (string $token) => in_array($token, $knownTokens, true)
+        ));
+    }
+
+    private function builtInTitle(string $token, array $definition): string
+    {
+        $stored = trim((string) AppSetting::getValue($this->builtInTitleKey($token), ''));
+
+        if ($stored !== '') {
+            return $stored;
+        }
+
+        $legacyKey = match ($token) {
+            'categories' => 'category_section_title',
+            'restaurant_discovery' => 'restaurants_section_title',
+            default => null,
+        };
+
+        if ($legacyKey !== null) {
+            $legacy = trim((string) AppSetting::getValue($legacyKey, ''));
+            if ($legacy !== '') {
+                return $legacy;
+            }
+        }
+
+        return $definition['title'];
+    }
+
+    private function builtInSubtitle(string $token, array $definition): string
+    {
+        $stored = trim((string) AppSetting::getValue($this->builtInSubtitleKey($token), ''));
+
+        if ($stored !== '') {
+            return $stored;
+        }
+
+        $legacyKey = match ($token) {
+            'categories' => 'category_section_subtitle',
+            'restaurant_discovery' => 'restaurants_section_subtitle',
+            default => null,
+        };
+
+        if ($legacyKey !== null) {
+            $legacy = trim((string) AppSetting::getValue($legacyKey, ''));
+            if ($legacy !== '') {
+                return $legacy;
+            }
+        }
+
+        return $definition['subtitle'];
+    }
+
+    private function builtInTitleKey(string $token): string
+    {
+        return 'homepage_built_in_'.$token.'_title';
+    }
+
+    private function builtInSubtitleKey(string $token): string
+    {
+        return 'homepage_built_in_'.$token.'_subtitle';
     }
 }

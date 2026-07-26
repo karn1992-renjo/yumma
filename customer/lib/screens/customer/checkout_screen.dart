@@ -4380,6 +4380,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     final restaurantLogoUrl =
         cart.restaurant?.logoUrl ?? order.restaurant?.logoUrl ?? '';
     final user = context.read<AuthProvider>().currentUser;
+    final scratchCards = context.read<OrderProvider>().lastCreatedScratchCards;
     cart.clearCart();
 
     Navigator.pushReplacementNamed(
@@ -4405,6 +4406,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         'tax': order.tax,
         'taxLabel': _summaryTaxLabel,
         'total': order.total,
+        'scratchCards': scratchCards,
       },
     );
   }

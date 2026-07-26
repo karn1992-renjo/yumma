@@ -5,7 +5,7 @@ import '../utils/currency_utils.dart';
 
 class NewOrderNotificationDialog extends StatefulWidget {
   final Order order;
-  final VoidCallback onAccept;
+  final ValueChanged<int> onAccept;
   final VoidCallback onReject;
 
   const NewOrderNotificationDialog({
@@ -22,7 +22,12 @@ class NewOrderNotificationDialog extends StatefulWidget {
 
 class _NewOrderNotificationDialogState extends State<NewOrderNotificationDialog>
     with SingleTickerProviderStateMixin {
+  static const int _minPrepMinutes = 5;
+  static const int _maxPrepMinutes = 60;
+  static const int _prepStep = 5;
+
   late AnimationController _animationController;
+  int _preparationMinutes = 20;
 
   @override
   void initState() {
@@ -32,6 +37,9 @@ class _NewOrderNotificationDialogState extends State<NewOrderNotificationDialog>
       duration: const Duration(milliseconds: 600),
     );
     _animationController.forward();
+    _preparationMinutes = (widget.order.preparationTimeMinutes ?? 20)
+        .clamp(_minPrepMinutes, _maxPrepMinutes)
+        .toInt();
   }
 
   @override
@@ -106,7 +114,7 @@ class _NewOrderNotificationDialogState extends State<NewOrderNotificationDialog>
 
                     // Header
                     const Text(
-                      'New Order Received! 🎉',
+                      'New Order Received',
                       style: TextStyle(
                         fontSize: 24,
                         fontWeight: FontWeight.w900,
@@ -245,6 +253,9 @@ class _NewOrderNotificationDialogState extends State<NewOrderNotificationDialog>
                     ),
                     const SizedBox(height: 24),
 
+                    _buildPreparationSelector(),
+                    const SizedBox(height: 24),
+
                     // Action Buttons
                     Row(
                       children: [
@@ -278,7 +289,7 @@ class _NewOrderNotificationDialogState extends State<NewOrderNotificationDialog>
                           child: ElevatedButton.icon(
                             onPressed: () {
                               Navigator.pop(context);
-                              widget.onAccept();
+                              widget.onAccept(_preparationMinutes);
                             },
                             icon: const Icon(Icons.check, size: 20),
                             label: const Text(
@@ -319,6 +330,117 @@ class _NewOrderNotificationDialogState extends State<NewOrderNotificationDialog>
         ),
       ),
     );
+  }
+
+  Widget _buildPreparationSelector() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF7ED),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFFFD7B8)),
+      ),
+      child: Column(
+        children: [
+          const Row(
+            children: [
+              Icon(Icons.timer_outlined, color: Color(0xFF2E7D32), size: 18),
+              SizedBox(width: 8),
+              Text(
+                'Preparation estimate',
+                style: TextStyle(
+                  fontWeight: FontWeight.w900,
+                  color: Color(0xFF1C1C1C),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              _timeButton(
+                Icons.remove,
+                enabled: _preparationMinutes > _minPrepMinutes,
+                onTap: () => _changePreparation(-_prepStep),
+              ),
+              Expanded(
+                child: Column(
+                  children: [
+                    Text(
+                      '$_preparationMinutes',
+                      style: const TextStyle(
+                        fontSize: 34,
+                        height: 1,
+                        fontWeight: FontWeight.w900,
+                        color: Color(0xFF1C1C1C),
+                      ),
+                    ),
+                    const Text(
+                      'minutes',
+                      style: TextStyle(
+                        color: Color(0xFF666666),
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              _timeButton(
+                Icons.add,
+                enabled: _preparationMinutes < _maxPrepMinutes,
+                onTap: () => _changePreparation(_prepStep),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'Shared with customer and driver after acceptance.',
+            style: TextStyle(
+              color: Color(0xFF666666),
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _timeButton(
+    IconData icon, {
+    required bool enabled,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: enabled ? onTap : null,
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        width: 44,
+        height: 44,
+        decoration: BoxDecoration(
+          color: enabled ? Colors.white : Colors.grey.shade100,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: enabled
+                ? const Color(0xFF2E7D32).withOpacity(0.28)
+                : Colors.grey.shade200,
+          ),
+        ),
+        child: Icon(
+          icon,
+          color: enabled ? const Color(0xFF2E7D32) : Colors.grey.shade400,
+        ),
+      ),
+    );
+  }
+
+  void _changePreparation(int delta) {
+    setState(() {
+      _preparationMinutes = (_preparationMinutes + delta)
+          .clamp(_minPrepMinutes, _maxPrepMinutes)
+          .toInt();
+    });
   }
 
   Widget _buildDetailRow({

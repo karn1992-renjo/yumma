@@ -30,6 +30,18 @@ class PayoutGatewayProfile
         $normalizedProvider = self::normalizeProvider($provider, $normalizedCountry);
 
         return match ($normalizedProvider) {
+            'cash' => new self(
+                provider: 'cash',
+                displayName: 'Cash',
+                countryCode: 'GLOBAL',
+                routingCodeLabel: 'Cash Reference',
+                routingCodeHint: 'Optional receipt or handover reference',
+                accountIdLabel: 'Cash Collection Reference',
+                accountIdHint: 'Optional receipt number',
+                helperText: 'Cash payouts do not require bank details. Pay the vendor outside the gateway and mark the payout as cash paid from the admin payout screen.',
+                showBankDetails: false,
+                bankDetailsRequired: false,
+            ),
             'razorpay' => new self(
                 provider: 'razorpay',
                 displayName: 'Razorpay',

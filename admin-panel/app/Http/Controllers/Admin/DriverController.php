@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\AppSetting;
 use App\Models\DeliveryArea;
 use App\Models\User;
+use App\Rules\UniqueUserContactForRole;
 use App\Models\Order;
 use App\Models\DriverGig;
 use App\Models\Wallet;
@@ -82,8 +83,8 @@ class DriverController extends Controller
     {
         $validated = $request->validate([
             'name' => 'required|string|max:255',
-            'email' => 'required|email|unique:users',
-            'phone' => 'required|string|max:20|unique:users',
+            'email' => ['required', 'email', UniqueUserContactForRole::email('delivery_partner')],
+            'phone' => ['required', 'string', 'max:20', UniqueUserContactForRole::phone('delivery_partner')],
             'password' => 'required|string|min:6',
             'vehicle_type' => 'required|string',
             'vehicle_number' => 'required|string',
@@ -178,8 +179,8 @@ class DriverController extends Controller
         
         $validated = $request->validate([
             'name' => 'required|string|max:255',
-            'email' => 'required|email|unique:users,email,' . $driver->id,
-            'phone' => 'required|string|max:20|unique:users,phone,' . $driver->id,
+            'email' => ['required', 'email', UniqueUserContactForRole::email('delivery_partner', $driver->id)],
+            'phone' => ['required', 'string', 'max:20', UniqueUserContactForRole::phone('delivery_partner', $driver->id)],
             'vehicle_type' => 'required|string',
             'vehicle_number' => 'required|string',
             'license_number' => 'required|string',

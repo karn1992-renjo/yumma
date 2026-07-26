@@ -48,7 +48,7 @@ class _DriverProfileScreenState extends State<DriverProfileScreen> {
     }
 
     return Scaffold(
-      backgroundColor: FoodFlowTheme.canvas,
+      backgroundColor: foodflow.canvas,
       body: RefreshIndicator(
         onRefresh: _loadDriverData,
         child: ListView(
@@ -76,7 +76,7 @@ class _DriverProfileScreenState extends State<DriverProfileScreen> {
                       style: const TextStyle(
                         color: Colors.white,
                         fontSize: 24,
-                        fontWeight: FontWeight.w900,
+                        fontWeight: FontWeight.w800,
                       ),
                     ),
                   ),
@@ -92,7 +92,7 @@ class _DriverProfileScreenState extends State<DriverProfileScreen> {
                           style: const TextStyle(
                             color: Colors.white,
                             fontSize: 20,
-                            fontWeight: FontWeight.w900,
+                            fontWeight: FontWeight.w800,
                           ),
                         ),
                         const SizedBox(height: 4),
@@ -100,7 +100,7 @@ class _DriverProfileScreenState extends State<DriverProfileScreen> {
                           _driverData['phone'] ?? user?.phone ?? '',
                           style: TextStyle(
                             color: Colors.white.withOpacity(0.82),
-                            fontWeight: FontWeight.w700,
+                            fontWeight: FontWeight.w800,
                           ),
                         ),
                         const SizedBox(height: 6),
@@ -109,7 +109,7 @@ class _DriverProfileScreenState extends State<DriverProfileScreen> {
                           style: TextStyle(
                             color: Colors.white.withOpacity(0.72),
                             fontSize: 12,
-                            fontWeight: FontWeight.w600,
+                            fontWeight: FontWeight.w400,
                           ),
                         ),
                       ],
@@ -308,7 +308,7 @@ class _DriverProfileEditorScreenState extends State<DriverProfileEditorScreen> {
   Widget build(BuildContext context) {
     final authUser = context.watch<AuthProvider>().currentUser;
     return Scaffold(
-      backgroundColor: FoodFlowTheme.canvas,
+      backgroundColor: foodflow.canvas,
       appBar: AppBar(
         title: Text(_title),
         actions: [
@@ -317,8 +317,8 @@ class _DriverProfileEditorScreenState extends State<DriverProfileEditorScreen> {
             child: Text(
               'Save',
               style: TextStyle(
-                color: _isSaving ? Colors.grey : FoodFlowTheme.crimson,
-                fontWeight: FontWeight.w900,
+                color: _isSaving ? Colors.grey : foodflow.crimson,
+                fontWeight: FontWeight.w800,
               ),
             ),
           ),
@@ -414,9 +414,9 @@ class _DriverProfileEditorScreenState extends State<DriverProfileEditorScreen> {
           Text(
             profile.helperText,
             style: const TextStyle(
-              color: FoodFlowTheme.muted,
+              color: foodflow.muted,
               fontSize: 12,
-              fontWeight: FontWeight.w600,
+              fontWeight: FontWeight.w400,
             ),
           ),
         ];
@@ -526,7 +526,7 @@ class _DriverSecurityScreenState extends State<DriverSecurityScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: FoodFlowTheme.canvas,
+      backgroundColor: foodflow.canvas,
       appBar: AppBar(title: const Text('Security')),
       body: Form(
         key: _formKey,
@@ -619,7 +619,7 @@ class _ProfileMenuItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = iconColor ?? FoodFlowTheme.crimson;
+    final color = iconColor ?? foodflow.crimson;
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: Material(
@@ -649,24 +649,24 @@ class _ProfileMenuItem extends StatelessWidget {
                       Text(
                         title,
                         style: const TextStyle(
-                          color: FoodFlowTheme.ink,
+                          color: foodflow.ink,
                           fontSize: 15,
-                          fontWeight: FontWeight.w900,
+                          fontWeight: FontWeight.w800,
                         ),
                       ),
                       const SizedBox(height: 4),
                       Text(
                         subtitle,
                         style: const TextStyle(
-                          color: FoodFlowTheme.muted,
+                          color: foodflow.muted,
                           fontSize: 12,
-                          fontWeight: FontWeight.w600,
+                          fontWeight: FontWeight.w400,
                         ),
                       ),
                     ],
                   ),
                 ),
-                const Icon(Icons.chevron_right, color: FoodFlowTheme.faint),
+                const Icon(Icons.chevron_right, color: foodflow.faint),
               ],
             ),
           ),

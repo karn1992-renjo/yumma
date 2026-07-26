@@ -47,15 +47,34 @@ class DeliveryChargeController extends Controller
             'base_charge' => 'required|numeric|min:0',
             'per_km_charge' => 'required_if:charge_type,per_km|numeric|min:0',
             'platform_fee' => 'nullable|numeric|min:0',
-            'free_delivery_threshold' => 'nullable|numeric|min:0',
-            'free_delivery_global' => 'boolean',
-            'free_delivery_days' => 'nullable|array',
-            'free_delivery_days.*' => 'in:Monday,Tuesday,Wednesday,Thursday,Friday,Saturday,Sunday',
-            'free_delivery_area_ids' => 'nullable|array',
-            'free_delivery_area_ids.*' => 'integer|exists:delivery_areas,id',
+            'order_acceptance_timeout_seconds' => 'required|integer|min:30|max:600',
+            'zone_free_delivery' => 'nullable|array',
+            'zone_free_delivery.*.enabled' => 'nullable|boolean',
+            'zone_free_delivery.*.threshold' => 'nullable|numeric|min:0',
             'admin_contribution_percent' => 'required|numeric|min:0|max:100',
             'restaurant_contribution_percent' => 'required|numeric|min:0|max:100',
         ]);
+
+        foreach ($validated['zone_free_delivery'] ?? [] as $areaId => $freeDelivery) {
+            if (filter_var($freeDelivery['enabled'] ?? false, FILTER_VALIDATE_BOOLEAN)
+                && (($freeDelivery['threshold'] ?? null) === null || ($freeDelivery['threshold'] ?? '') === '')) {
+                throw \Illuminate\Validation\ValidationException::withMessages([
+                    "zone_free_delivery.$areaId.threshold" => 'Enter the free delivery amount for enabled zones.',
+                ]);
+            }
+        }
+
+        $contributionTotal = round(
+            (float) $validated['admin_contribution_percent']
+            + (float) $validated['restaurant_contribution_percent'],
+            2
+        );
+        if ($contributionTotal !== 100.0) {
+            throw \Illuminate\Validation\ValidationException::withMessages([
+                'admin_contribution_percent' => 'Admin and restaurant contribution must total 100%.',
+                'restaurant_contribution_percent' => 'Admin and restaurant contribution must total 100%.',
+            ]);
+        }
         
         DB::transaction(function () use ($request, $validated) {
             $settings = DeliveryChargeSetting::query()->oldest('id')->lockForUpdate()->first()
@@ -66,15 +85,25 @@ class DeliveryChargeController extends Controller
                 'base_charge' => $validated['base_charge'],
                 'per_km_charge' => $validated['per_km_charge'] ?? 0,
                 'platform_fee' => $validated['platform_fee'] ?? 0,
-                'free_delivery_threshold' => $validated['free_delivery_threshold'] ?? null,
-                'free_delivery_global' => $request->boolean('free_delivery_global'),
-                'free_delivery_days' => array_values($validated['free_delivery_days'] ?? []),
-                'free_delivery_area_ids' => array_values($validated['free_delivery_area_ids'] ?? []),
+                'order_acceptance_timeout_seconds' => $validated['order_acceptance_timeout_seconds'],
+                'free_delivery_threshold' => null,
+                'free_delivery_global' => false,
+                'free_delivery_days' => [],
+                'free_delivery_area_ids' => [],
                 'admin_contribution_percent' => $validated['admin_contribution_percent'],
                 'restaurant_contribution_percent' => $validated['restaurant_contribution_percent'],
             ])->save();
 
             DeliveryChargeSetting::query()->whereKeyNot($settings->getKey())->delete();
+
+            foreach ($validated['zone_free_delivery'] ?? [] as $areaId => $freeDelivery) {
+                DeliveryArea::whereKey($areaId)->update([
+                    'free_delivery_enabled' => filter_var($freeDelivery['enabled'] ?? false, FILTER_VALIDATE_BOOLEAN),
+                    'free_delivery_threshold' => ($freeDelivery['threshold'] ?? null) === null || ($freeDelivery['threshold'] ?? '') === ''
+                        ? null
+                        : $freeDelivery['threshold'],
+                ]);
+            }
         });
 
         return redirect()->back()->with('success', 'Delivery charges updated successfully!');

@@ -8,6 +8,13 @@
     $canOrders = $user->hasRestaurantPermission('view_orders') || $user->hasRestaurantPermission('manage_orders');
     $canMenu = $user->hasRestaurantPermission('view_menu_items') || $user->hasRestaurantPermission('manage_menu');
     $canReports = $user->hasRestaurantPermission('view_reports');
+    $appName = App\Models\AppSetting::getValue('app_name', config('app.name', 'FoodFlow'));
+    $appLogo = App\Models\AppSetting::getValue('app_logo');
+    $headerBrandingType = App\Models\AppSetting::getValue('header_branding_type', 'text');
+    $headerBrandingType = in_array($headerBrandingType, ['text', 'logo', 'logo_text'], true) ? $headerBrandingType : 'text';
+    $appLogoUrl = $appLogo && str_starts_with($appLogo, 'branding/')
+        ? route('media.branding', ['file' => basename($appLogo)])
+        : ($appLogo ? \Illuminate\Support\Facades\Storage::disk('public')->url($appLogo) : null);
     
     // Count pending orders for badge
     $pendingCount = 0;
@@ -30,10 +37,14 @@
     <!-- Logo Section -->
     <div class="sidebar-logo-section">
         <div class="sidebar-logo-icon">
-            <i class="fas fa-utensils"></i>
+            @if(($headerBrandingType === 'logo' || $headerBrandingType === 'logo_text') && $appLogoUrl)
+                <img src="{{ $appLogoUrl }}" alt="{{ $appName }}" class="sidebar-logo-image">
+            @else
+                <i class="fas fa-utensils"></i>
+            @endif
         </div>
         <div class="sidebar-logo-text">
-            <h2>Food<span>Flow</span></h2>
+            <h2>{{ $appName }} <span>Partner</span></h2>
             <small>Restaurant Panel</small>
         </div>
     </div>
@@ -59,6 +70,13 @@
                     @if($pendingCount > 0)
                         <span class="sidebar-badge">{{ $pendingCount > 99 ? '99+' : $pendingCount }}</span>
                     @endif
+                </a>
+            </li>
+            <li class="sidebar-nav-item">
+                <a href="{{ route('restaurant.pos.terminal') }}"
+                   class="sidebar-nav-link {{ request()->routeIs('restaurant.pos.*') ? 'active' : '' }}">
+                    <i class="fas fa-cash-register"></i>
+                    <span>POS</span>
                 </a>
             </li>
             @endif
@@ -111,8 +129,15 @@
             <li class="sidebar-nav-item">
                 <a href="{{ route('restaurant.promos.index') }}" 
                    class="sidebar-nav-link {{ request()->routeIs('restaurant.promos.*') ? 'active' : '' }}">
-                    <i class="fas fa-ticket-alt"></i>
-                    <span>Promo Codes</span>
+                    <i class="fas fa-tags"></i>
+                    <span>Promotions</span>
+                </a>
+            </li>
+            <li class="sidebar-nav-item">
+                <a href="{{ route('restaurant.promos.create') }}" 
+                   class="sidebar-nav-link {{ request()->routeIs('restaurant.promos.create') ? 'active' : '' }}">
+                    <i class="fas fa-plus-circle"></i>
+                    <span>Create Promotion</span>
                 </a>
             </li>
         </ul>
@@ -221,24 +246,25 @@
     /* Additional sidebar styles */
     .sidebar-footer {
         border-top: 1px solid var(--border);
-        padding: 24px 20px 26px;
+        padding: 12px 16px 14px;
         margin-top: auto;
+        flex: 0 0 auto;
     }
     
     .sidebar-restaurant-card {
         background: #F8FAFC;
-        border-radius: 12px;
-        padding: 16px;
+        border-radius: 14px;
+        padding: 12px;
         display: flex;
         align-items: center;
         gap: 12px;
     }
     
     .sidebar-restaurant-avatar {
-        width: 40px;
-        height: 40px;
+        width: 38px;
+        height: 38px;
         background: linear-gradient(135deg, var(--primary), var(--primary-dark));
-        border-radius: 10px;
+        border-radius: 12px;
         display: flex;
         align-items: center;
         justify-content: center;

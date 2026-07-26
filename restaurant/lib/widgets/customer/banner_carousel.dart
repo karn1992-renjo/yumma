@@ -1,7 +1,10 @@
 // lib/widgets/customer/banner_carousel.dart
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import '../../config/app_config.dart';
 import '../../theme/foodflow_theme.dart';
+import '../common/network_image_loader.dart';
 
 class BannerCarousel extends StatefulWidget {
   final List<dynamic> banners;
@@ -22,6 +25,9 @@ class _BannerCarouselState extends State<BannerCarousel> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _precacheAround(_currentPage);
+    });
     // Auto-scroll timer
     if (widget.banners.length > 1) {
       Future.delayed(const Duration(seconds: 3), _startAutoScroll);
@@ -48,6 +54,16 @@ class _BannerCarouselState extends State<BannerCarousel> {
   }
 
   @override
+  void didUpdateWidget(covariant BannerCarousel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.banners != widget.banners) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _precacheAround(_currentPage);
+      });
+    }
+  }
+
+  @override
   void dispose() {
     _pageController.dispose();
     super.dispose();
@@ -66,6 +82,27 @@ class _BannerCarouselState extends State<BannerCarousel> {
     return '';
   }
 
+  String _bannerImageUrl(dynamic banner) {
+    return _resolveImageUrl(banner, const [
+      'image_url',
+      'banner_url',
+      'banner_image',
+      'image',
+    ]);
+  }
+
+  void _precacheAround(int page) {
+    if (!mounted || widget.banners.isEmpty) return;
+    final urls = <String>[];
+    final count = widget.banners.length < 10 ? widget.banners.length : 10;
+    for (var offset = 0; offset < count; offset++) {
+      final index = (page + offset) % widget.banners.length;
+      final url = _bannerImageUrl(widget.banners[index]);
+      if (url.isNotEmpty) urls.add(url);
+    }
+    unawaited(AppImageCache.precacheVisible(context, urls, limit: 10));
+  }
+
   @override
   Widget build(BuildContext context) {
     if (widget.banners.isEmpty) {
@@ -82,16 +119,12 @@ class _BannerCarouselState extends State<BannerCarousel> {
               setState(() {
                 _currentPage = page;
               });
+              _precacheAround(page);
             },
             itemCount: widget.banners.length,
             itemBuilder: (context, index) {
               final banner = widget.banners[index];
-              final imageUrl = _resolveImageUrl(banner, [
-                'image_url',
-                'banner_url',
-                'banner_image',
-                'image',
-              ]);
+              final imageUrl = _bannerImageUrl(banner);
 
               return Padding(
                 padding:
@@ -104,14 +137,12 @@ class _BannerCarouselState extends State<BannerCarousel> {
                       fit: StackFit.expand,
                       children: [
                         imageUrl.isNotEmpty
-                            ? Image.network(
-                                imageUrl,
+                            ? NetworkImageLoader(
+                                imageUrl: imageUrl,
                                 width: double.infinity,
                                 height: 166,
                                 fit: BoxFit.cover,
-                                errorBuilder: (context, error, stackTrace) {
-                                  return _fallbackBanner();
-                                },
+                                errorWidget: _fallbackBanner(),
                               )
                             : _fallbackBanner(),
                         DecoratedBox(

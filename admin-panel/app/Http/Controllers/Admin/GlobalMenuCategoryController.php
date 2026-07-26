@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
+use App\Models\Cuisine;
 use App\Models\GlobalMenuCategory;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
@@ -12,7 +13,7 @@ class GlobalMenuCategoryController extends Controller
 {
     public function index()
     {
-        $categories = GlobalMenuCategory::with('children')
+        $categories = GlobalMenuCategory::with(['children', 'cuisines'])
             ->parents()
             ->orderBy('display_order')
             ->orderBy('name')
@@ -26,12 +27,16 @@ class GlobalMenuCategoryController extends Controller
         return view('admin.global-menu-categories.form', [
             'category' => new GlobalMenuCategory(),
             'parents' => $this->parentOptions(),
+            'cuisines' => $this->cuisineOptions(),
         ]);
     }
 
     public function store(Request $request)
     {
-        GlobalMenuCategory::create($this->validatedData($request));
+        [$data, $cuisineIds] = $this->validatedData($request);
+
+        $category = GlobalMenuCategory::create($data);
+        $category->cuisines()->sync($cuisineIds);
 
         return redirect()->route('admin.global-menu-categories.index')
             ->with('success', 'Global category created successfully.');
@@ -40,14 +45,18 @@ class GlobalMenuCategoryController extends Controller
     public function edit(GlobalMenuCategory $globalMenuCategory)
     {
         return view('admin.global-menu-categories.form', [
-            'category' => $globalMenuCategory,
+            'category' => $globalMenuCategory->load('cuisines'),
             'parents' => $this->parentOptions($globalMenuCategory->id),
+            'cuisines' => $this->cuisineOptions(),
         ]);
     }
 
     public function update(Request $request, GlobalMenuCategory $globalMenuCategory)
     {
-        $globalMenuCategory->update($this->validatedData($request, $globalMenuCategory));
+        [$data, $cuisineIds] = $this->validatedData($request, $globalMenuCategory);
+
+        $globalMenuCategory->update($data);
+        $globalMenuCategory->cuisines()->sync($cuisineIds);
 
         return redirect()->route('admin.global-menu-categories.index')
             ->with('success', 'Global category updated successfully.');
@@ -72,7 +81,16 @@ class GlobalMenuCategoryController extends Controller
             'image' => 'nullable|image|mimes:jpeg,png,jpg,webp|max:2048',
             'display_order' => 'nullable|integer|min:0|max:9999',
             'is_active' => 'nullable|boolean',
+            'cuisine_ids' => 'nullable|array',
+            'cuisine_ids.*' => 'integer|exists:cuisines,id',
         ]);
+
+        $cuisineIds = collect($validated['cuisine_ids'] ?? [])
+            ->map(fn ($id) => (int) $id)
+            ->filter()
+            ->unique()
+            ->values()
+            ->all();
 
         if (($validated['parent_id'] ?? null) && $category && (int) $validated['parent_id'] === (int) $category->id) {
             abort(422, 'A category cannot be its own parent.');
@@ -82,7 +100,7 @@ class GlobalMenuCategoryController extends Controller
         $validated['display_order'] = $validated['display_order'] ?? 0;
         $validated['is_active'] = $request->has('is_active');
 
-        unset($validated['image']);
+        unset($validated['image'], $validated['cuisine_ids']);
 
         if ($request->hasFile('image')) {
             if ($category) {
@@ -92,7 +110,7 @@ class GlobalMenuCategoryController extends Controller
             $validated['image'] = $request->file('image')->store('global-categories', 'public');
         }
 
-        return $validated;
+        return [$validated, $cuisineIds];
     }
 
     private function deleteCategoryImage(GlobalMenuCategory $category): void
@@ -111,5 +129,14 @@ class GlobalMenuCategoryController extends Controller
             ->orderBy('display_order')
             ->orderBy('name')
             ->get();
+    }
+
+    private function cuisineOptions()
+    {
+        return Cuisine::query()
+            ->where('is_active', true)
+            ->orderBy('display_order')
+            ->orderBy('name')
+            ->get(['id', 'name']);
     }
 }

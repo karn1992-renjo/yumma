@@ -31,7 +31,9 @@ return new class extends Migration
             $table->index(['entity_type', 'is_active']);
             $table->index(['restaurant_id', 'is_active']);
             $table->index(['latitude', 'longitude']);
-            $table->fullText(['title', 'description', 'keywords']);
+            if (DB::connection()->getDriverName() !== 'sqlite') {
+                $table->fullText(['title', 'description', 'keywords']);
+            }
         });
 
         Schema::create('search_logs', function (Blueprint $table) {

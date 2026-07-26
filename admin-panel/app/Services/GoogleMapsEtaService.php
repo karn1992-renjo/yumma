@@ -9,6 +9,12 @@ use Illuminate\Support\Facades\Log;
 
 class GoogleMapsEtaService
 {
+    private const DEFAULT_SPEED_KMPH = 25.0;
+    private const DEFAULT_TRAFFIC_MULTIPLIER = 1.2;
+    private const DEFAULT_MINIMUM_MINUTES = 5;
+    private const DEFAULT_LOCAL_CACHE_MINUTES = 15;
+    private const DEFAULT_ROAD_CACHE_MINUTES = 360;
+
     public function estimateDelivery(
         ?float $originLat,
         ?float $originLng,
@@ -16,14 +22,16 @@ class GoogleMapsEtaService
         ?float $destinationLng,
         ?int $preparationMinutes = null,
         ?float $riderLat = null,
-        ?float $riderLng = null
+        ?float $riderLng = null,
+        bool $allowBillableLookup = false
     ): array {
         $prepMinutes = max(0, (int) ($preparationMinutes ?? 0));
         $travel = $this->distanceMatrix(
             $originLat,
             $originLng,
             $destinationLat,
-            $destinationLng
+            $destinationLng,
+            $allowBillableLookup
         );
 
         $riderTravel = null;
@@ -32,7 +40,8 @@ class GoogleMapsEtaService
                 $riderLat,
                 $riderLng,
                 $originLat,
-                $originLng
+                $originLng,
+                $allowBillableLookup
             );
         }
 
@@ -56,7 +65,8 @@ class GoogleMapsEtaService
         ?float $originLat,
         ?float $originLng,
         ?float $destinationLat,
-        ?float $destinationLng
+        ?float $destinationLng,
+        bool $allowBillableLookup = false
     ): array {
         if (
             $originLat === null || $originLng === null ||
@@ -65,16 +75,29 @@ class GoogleMapsEtaService
             return $this->emptyResult('missing_coordinates');
         }
 
-        $apiKey = trim((string) AppSetting::getValue('google_maps_api_key', AppSetting::getValue('google_maps_key', '')));
-        if ($apiKey === '') {
-            return $this->fallbackResult($originLat, $originLng, $destinationLat, $destinationLng, 'fallback_no_api_key');
+        $roadCacheKey = $this->routeCacheKey('google_route_distance', $originLat, $originLng, $destinationLat, $destinationLng);
+        $cachedRoadResult = Cache::get($roadCacheKey);
+        if (is_array($cachedRoadResult)) {
+            return $cachedRoadResult;
         }
 
-        // Avoid making every restaurant card wait on an unreachable upstream.
-        // The first failed lookup opens this short circuit; subsequent cards use
-        // the local distance estimate immediately while Google recovers.
+        if (! $allowBillableLookup || ! $this->billableDistanceMatrixEnabled()) {
+            return $this->cachedFallbackResult(
+                $originLat,
+                $originLng,
+                $destinationLat,
+                $destinationLng,
+                'haversine_estimate'
+            );
+        }
+
+        $apiKey = trim((string) AppSetting::getValue('google_maps_api_key', AppSetting::getValue('google_maps_key', '')));
+        if ($apiKey === '') {
+            return $this->cachedFallbackResult($originLat, $originLng, $destinationLat, $destinationLng, 'fallback_no_api_key');
+        }
+
         if (Cache::has('google_maps_distance_matrix_circuit_open')) {
-            return $this->fallbackResult(
+            return $this->cachedFallbackResult(
                 $originLat,
                 $originLng,
                 $destinationLat,
@@ -98,7 +121,7 @@ class GoogleMapsEtaService
 
             if (! $response->ok()) {
                 Cache::put('google_maps_distance_matrix_circuit_open', true, now()->addMinutes(2));
-                return $this->fallbackResult($originLat, $originLng, $destinationLat, $destinationLng, 'fallback_http_error');
+                return $this->cachedFallbackResult($originLat, $originLng, $destinationLat, $destinationLng, 'fallback_http_error');
             }
 
             $payload = $response->json();
@@ -106,24 +129,28 @@ class GoogleMapsEtaService
 
             if (($payload['status'] ?? null) !== 'OK' || ! is_array($element) || ($element['status'] ?? null) !== 'OK') {
                 Cache::put('google_maps_distance_matrix_circuit_open', true, now()->addMinutes(2));
-                return $this->fallbackResult($originLat, $originLng, $destinationLat, $destinationLng, 'fallback_api_status');
+                return $this->cachedFallbackResult($originLat, $originLng, $destinationLat, $destinationLng, 'fallback_api_status');
             }
 
             $distanceMeters = (int) ($element['distance']['value'] ?? 0);
             $durationSeconds = (int) ($element['duration']['value'] ?? 0);
             $trafficSeconds = (int) ($element['duration_in_traffic']['value'] ?? $durationSeconds);
 
-            return [
+            $result = [
                 'distance_km' => round($distanceMeters / 1000, 2),
                 'duration_minutes' => (int) ceil($durationSeconds / 60),
                 'duration_in_traffic_minutes' => (int) ceil($trafficSeconds / 60),
                 'source' => 'google_distance_matrix',
             ];
+
+            Cache::put($roadCacheKey, $result, now()->addMinutes($this->roadDistanceCacheMinutes()));
+
+            return $result;
         } catch (\Throwable $e) {
             Cache::put('google_maps_distance_matrix_circuit_open', true, now()->addMinutes(2));
             $this->logDistanceMatrixFailure($e);
 
-            return $this->fallbackResult($originLat, $originLng, $destinationLat, $destinationLng, 'fallback_exception');
+            return $this->cachedFallbackResult($originLat, $originLng, $destinationLat, $destinationLng, 'fallback_exception');
         }
     }
 
@@ -143,6 +170,25 @@ class GoogleMapsEtaService
         return preg_replace('/([?&]key=)[^&\s]+/i', '$1[redacted]', $message) ?? $message;
     }
 
+    private function cachedFallbackResult(
+        float $originLat,
+        float $originLng,
+        float $destinationLat,
+        float $destinationLng,
+        string $source
+    ): array {
+        $cacheKey = $this->routeCacheKey('haversine_route_estimate', $originLat, $originLng, $destinationLat, $destinationLng);
+        $cached = Cache::get($cacheKey);
+        if (is_array($cached)) {
+            return $cached;
+        }
+
+        $result = $this->fallbackResult($originLat, $originLng, $destinationLat, $destinationLng, $source);
+        Cache::put($cacheKey, $result, now()->addMinutes($this->localEstimateCacheMinutes()));
+
+        return $result;
+    }
+
     private function fallbackResult(
         float $originLat,
         float $originLng,
@@ -151,7 +197,10 @@ class GoogleMapsEtaService
         string $source
     ): array {
         $distanceKm = $this->haversineDistance($originLat, $originLng, $destinationLat, $destinationLng);
-        $minutes = max(5, (int) ceil(($distanceKm / 25) * 60));
+        $speedKmph = max(5.0, (float) AppSetting::getValue('estimated_delivery_speed_kmph', self::DEFAULT_SPEED_KMPH));
+        $trafficMultiplier = max(1.0, (float) AppSetting::getValue('estimated_delivery_traffic_multiplier', self::DEFAULT_TRAFFIC_MULTIPLIER));
+        $minimumMinutes = max(1, (int) AppSetting::getValue('estimated_delivery_min_minutes', self::DEFAULT_MINIMUM_MINUTES));
+        $minutes = max($minimumMinutes, (int) ceil(($distanceKm / $speedKmph) * 60 * $trafficMultiplier));
 
         return [
             'distance_km' => round($distanceKm, 2),
@@ -193,5 +242,38 @@ class GoogleMapsEtaService
             * sin($lonDelta / 2) * sin($lonDelta / 2);
 
         return $earthRadius * (2 * atan2(sqrt($angle), sqrt(1 - $angle)));
+    }
+
+    private function billableDistanceMatrixEnabled(): bool
+    {
+        return filter_var(
+            AppSetting::getValue('google_maps_distance_matrix_enabled', '0'),
+            FILTER_VALIDATE_BOOLEAN
+        );
+    }
+
+    private function localEstimateCacheMinutes(): int
+    {
+        return max(1, (int) AppSetting::getValue('haversine_eta_cache_minutes', self::DEFAULT_LOCAL_CACHE_MINUTES));
+    }
+
+    private function roadDistanceCacheMinutes(): int
+    {
+        return max(1, (int) AppSetting::getValue('google_maps_distance_matrix_cache_minutes', self::DEFAULT_ROAD_CACHE_MINUTES));
+    }
+
+    private function routeCacheKey(
+        string $prefix,
+        float $originLat,
+        float $originLng,
+        float $destinationLat,
+        float $destinationLng
+    ): string {
+        $coordinates = array_map(
+            static fn (float $value) => number_format($value, 4, '.', ''),
+            [$originLat, $originLng, $destinationLat, $destinationLng]
+        );
+
+        return $prefix . ':v1:' . implode(':', $coordinates);
     }
 }

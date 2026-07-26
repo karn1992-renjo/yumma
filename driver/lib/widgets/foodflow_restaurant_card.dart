@@ -1,12 +1,12 @@
 import 'package:flutter/material.dart';
 
-class FoodFlowRestaurantCard extends StatelessWidget {
+class RenjoRestaurantCard extends StatelessWidget {
   final String name;
   final String cuisine;
   final String rating;
   final String deliveryTime;
 
-  const FoodFlowRestaurantCard({
+  const RenjoRestaurantCard({
     super.key,
     required this.name,
     required this.cuisine,
@@ -39,7 +39,7 @@ class FoodFlowRestaurantCard extends StatelessWidget {
               children: [
                 Text(
                   name,
-                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
                 ),
                 const SizedBox(height: 4),
                 Row(
@@ -48,10 +48,10 @@ class FoodFlowRestaurantCard extends StatelessWidget {
                     const SizedBox(width: 4),
                     Text(
                       rating,
-                      style: const TextStyle(fontWeight: FontWeight.bold),
+                      style: const TextStyle(fontWeight: FontWeight.w800),
                     ),
                     const SizedBox(width: 8),
-                    Text("• $deliveryTime", style: const TextStyle(fontWeight: FontWeight.bold)),
+                    Text("• $deliveryTime", style: const TextStyle(fontWeight: FontWeight.w800)),
                   ],
                 ),
                 const SizedBox(height: 4),
@@ -70,7 +70,7 @@ class FoodFlowRestaurantCard extends StatelessWidget {
                   ),
                   child: const Text(
                     "FREE DELIVERY",
-                    style: TextStyle(color: Colors.blue, fontSize: 10, fontWeight: FontWeight.bold),
+                    style: TextStyle(color: Colors.blue, fontSize: 10, fontWeight: FontWeight.w800),
                   ),
                 ),
               ],

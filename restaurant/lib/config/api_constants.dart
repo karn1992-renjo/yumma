@@ -24,6 +24,8 @@ class ApiConstants {
   static const String updatePassword = changePassword;
   static const String wallet = '/wallet';
   static const String walletWithdraw = '/wallet/withdraw';
+  static String walletPayoutDetails(int payoutId) =>
+      '/wallet/payouts/$payoutId';
   static const String notifications = '/notifications';
   static const String notificationsRead = '/notifications/read';
   static const String walletTopUp = '/wallet/top-up';
@@ -90,13 +92,17 @@ class ApiConstants {
   static const String restaurantCategories = '/restaurant/categories';
   static const String restaurantMenuItems = '/restaurant/menu';
   static const String restaurantGlobalMenu = '/restaurant/global-menu';
-  static const String restaurantGlobalCategories = '/restaurant/global-categories';
+  static const String restaurantGlobalCategories =
+      '/restaurant/global-categories';
   static const String restaurantSettings = '/restaurant/settings';
-  static const String restaurantLocationChangeRequest = '/restaurant/location-change-request';
+  static const String restaurantLocationChangeRequest =
+      '/restaurant/location-change-request';
   static const String restaurantAnalytics = '/restaurant/analytics';
   static const String restaurantPromos = '/restaurant/promos';
+  static const String restaurantPromoOptions = '/restaurant/promos/options';
   static const String restaurantPrinters = '/restaurant/printers';
-  static const String restaurantPrinterSettings = '/restaurant/printers/settings';
+  static const String restaurantPrinterSettings =
+      '/restaurant/printers/settings';
   static const String restaurantDiningBookings = '/restaurant/dining/bookings';
   static const String restaurantDiningStats = '/restaurant/dining/stats';
   static const String restaurantDiningUpcoming = '/restaurant/dining/upcoming';
@@ -111,6 +117,8 @@ class ApiConstants {
       '$restaurantOrders/$orderId/status';
   static String restaurantOrderReady(int orderId) =>
       '$restaurantOrders/$orderId/ready';
+  static String restaurantExtendPrepTime(int orderId) =>
+      '$restaurantOrders/$orderId/extend-prep-time';
   static String restaurantVerifyTakeawayOtp(int orderId) =>
       '$restaurantOrders/$orderId/takeaway/verify-otp';
   static String restaurantDiningBookingDetails(int bookingId) =>

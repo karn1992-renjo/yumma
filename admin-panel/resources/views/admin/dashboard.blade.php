@@ -6,6 +6,24 @@
 @php
     $currencySymbol = App\Models\AppSetting::getValue('currency_symbol', html_entity_decode('&#8377;', ENT_QUOTES, 'UTF-8'));
     $currencyDecimals = App\Models\AppSetting::currencyDecimals();
+    $totalRevenue = $totalRevenue ?? 0;
+    $totalOrders = $totalOrders ?? 0;
+    $totalRestaurants = $totalRestaurants ?? 0;
+    $activeRestaurants = $activeRestaurants ?? 0;
+    $totalUsers = $totalUsers ?? 0;
+    $totalDrivers = $totalDrivers ?? 0;
+    $deliveredOrdersCount = $deliveredOrdersCount ?? 0;
+    $cancelledOrdersCount = $cancelledOrdersCount ?? 0;
+    $activeOrdersCount = $activeOrdersCount ?? 0;
+    $todayRevenue = $todayRevenue ?? 0;
+    $todayOrders = $todayOrders ?? 0;
+    $successRate = $successRate ?? 0;
+    $cancellationRate = $cancellationRate ?? 0;
+    $avgDeliveryTime = $avgDeliveryTime ?? 0;
+    $dailyRevenue = $dailyRevenue ?? collect();
+    $recentOrders = $recentOrders ?? collect();
+    $topRestaurants = $topRestaurants ?? collect();
+    $topDrivers = $topDrivers ?? collect();
     $avgOrderValue = $totalOrders > 0 ? $totalRevenue / max($deliveredOrdersCount, 1) : 0;
     $activityOrders = $recentOrders->take(4);
     $platformHealth = $successRate >= 80 ? 'Operational' : 'Watch';

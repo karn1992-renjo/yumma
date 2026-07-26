@@ -274,7 +274,7 @@ class _DriverSupportScreenState extends State<DriverSupportScreen> {
         const SizedBox(height: 18),
         const Text(
           'Common Issues',
-          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
+          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
         ),
         const SizedBox(height: 10),
         _buildFaq(
@@ -340,7 +340,7 @@ class _DriverSupportScreenState extends State<DriverSupportScreen> {
                                 ? Colors.white
                                 : Colors.black87,
                             fontSize: 13,
-                            fontWeight: FontWeight.w600,
+                            fontWeight: FontWeight.w400,
                           ),
                         ),
                       ),

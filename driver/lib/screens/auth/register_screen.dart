@@ -2,6 +2,7 @@ import 'dart:io';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 
@@ -12,6 +13,8 @@ import '../../services/app_branding_service.dart';
 import '../../services/firebase_phone_auth_service.dart';
 import '../../services/location_service.dart';
 import '../../services/partner_application_service.dart';
+import '../../utils/phone_number_utils.dart';
+import '../driver/background_location_disclosure_screen.dart';
 import 'otp_verification_screen.dart';
 
 class RegisterScreen extends StatefulWidget {
@@ -156,25 +159,23 @@ class _RegisterScreenState extends State<RegisterScreen> {
   }
 
   String _normalizedPhone() {
-    final raw = _phoneController.text.trim();
-    final digits = raw.replaceAll(RegExp(r'\D'), '');
-    final dialCode = _branding.defaultMobileCountryCode;
-    final dialDigits = dialCode.replaceAll(RegExp(r'\D'), '');
-
-    if (raw.startsWith('+')) return '+$digits';
-    if (digits.startsWith(dialDigits)) return '+$digits';
-    return '$dialCode$digits';
+    return PhoneNumberUtils.normalizeMobile(
+      _phoneController.text,
+      countryCode: _branding.defaultMobileCountryCode,
+      log: true,
+    ).normalizedNumber;
   }
 
   String _stripCountryCode(String phone) {
-    if (phone.isEmpty) return '';
-    final digits = phone.replaceAll(RegExp(r'\D'), '');
-    final dialDigits =
-        _branding.defaultMobileCountryCode.replaceAll(RegExp(r'\D'), '');
-    if (dialDigits.isNotEmpty && digits.startsWith(dialDigits)) {
-      return digits.substring(dialDigits.length);
+    if (phone.trim().isEmpty) return '';
+    try {
+      return PhoneNumberUtils.localMobile(
+        phone,
+        countryCode: _branding.defaultMobileCountryCode,
+      );
+    } on FormatException {
+      return PhoneNumberUtils.sanitizedDigits(phone);
     }
-    return digits;
   }
 
   Future<void> _pickFile(ValueChanged<File> onPicked) async {
@@ -190,6 +191,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
   Future<void> _useCurrentLocation() async {
     setState(() => _isLocating = true);
     try {
+      if (!await _ensureLocationDisclosureBeforeRequest()) {
+        _showMessage('Location consent is required before using your location.',
+            isError: true);
+        return;
+      }
+
       final position = await _locationService.getCurrentLocation();
       if (position == null) {
         _showMessage('Location unavailable. Please enter address manually.',
@@ -224,6 +231,17 @@ class _RegisterScreenState extends State<RegisterScreen> {
         setState(() => _isLocating = false);
       }
     }
+  }
+
+  Future<bool> _ensureLocationDisclosureBeforeRequest() async {
+    final permission = await _locationService.checkLocationPermission();
+    if (permission != LocationPermission.denied) return true;
+    if (!mounted) return false;
+
+    return BackgroundLocationDisclosureScreen.ensureAccepted(
+      context,
+      forceDisclosure: true,
+    );
   }
 
   Future<void> _searchLocationManually() async {
@@ -287,7 +305,13 @@ class _RegisterScreenState extends State<RegisterScreen> {
     setState(() => _isSendingOtp = true);
     try {
       final authProvider = context.read<AuthProvider>();
-      final phone = _normalizedPhone();
+      late final String phone;
+      try {
+        phone = _normalizedPhone();
+      } on FormatException catch (error) {
+        _showMessage(error.message, isError: true);
+        return;
+      }
       final status = await authProvider.getPhoneStatus(
         phone: phone,
         role: 'driver',
@@ -362,6 +386,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
             role: 'driver',
             flow: 'signup',
             useFirebasePhoneAuth: _branding.usesFirebasePhoneAuth,
+            otpServiceProvider: _branding.resolvedOtpServiceProvider,
             initialFirebaseVerificationId: firebaseVerificationId,
           ),
         ),
@@ -482,7 +507,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       hintText: hint,
       hintStyle: const TextStyle(
         fontSize: 16,
-        fontWeight: FontWeight.w500,
+        fontWeight: FontWeight.w400,
         color: Color(0xFF9CA3AF),
       ),
       prefixIcon: prefixIcon,
@@ -590,12 +615,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
                               ),
                             ),
                             validator: (value) {
-                              final digits =
-                                  (value ?? '').replaceAll(RegExp(r'\D'), '');
-                              if (digits.length < 8) {
-                                return 'Enter a valid mobile number';
-                              }
-                              return null;
+                              return PhoneNumberUtils.validateMobile(
+                                value,
+                                countryCode: _branding.defaultMobileCountryCode,
+                              );
                             },
                           ),
                           const SizedBox(height: 12),
@@ -781,7 +804,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                         style: TextStyle(
                                           color: _subtext,
                                           fontSize: 12,
-                                          fontWeight: FontWeight.w700,
+                                          fontWeight: FontWeight.w800,
                                         ),
                                       ),
                                       const SizedBox(height: 4),
@@ -790,7 +813,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                         style: const TextStyle(
                                           color: _text,
                                           fontSize: 16,
-                                          fontWeight: FontWeight.w700,
+                                          fontWeight: FontWeight.w800,
                                         ),
                                       ),
                                     ],
@@ -991,11 +1014,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
                               'Background location enabled',
                               style: TextStyle(
                                 color: _text,
-                                fontWeight: FontWeight.w700,
+                                fontWeight: FontWeight.w800,
                               ),
                             ),
                             subtitle: const Text(
-                              'Required for live delivery assignment after approval.',
+                              'Required after approval so live delivery tracking can work when you are online, including when the app is closed or not in use.',
                               style: TextStyle(color: _subtext),
                             ),
                             value: _backgroundLocationEnabled,
@@ -1010,7 +1033,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                               'Notifications enabled',
                               style: TextStyle(
                                 color: _text,
-                                fontWeight: FontWeight.w700,
+                                fontWeight: FontWeight.w800,
                               ),
                             ),
                             subtitle: const Text(
@@ -1039,7 +1062,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                         style: TextStyle(
                           color: _subtext,
                           fontSize: 13,
-                          fontWeight: FontWeight.w600,
+                          fontWeight: FontWeight.w400,
                         ),
                       ),
                     ),
@@ -1086,7 +1109,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                     : 'Verify Mobile & Submit',
                             style: const TextStyle(
                               fontSize: 18,
-                              fontWeight: FontWeight.w600,
+                              fontWeight: FontWeight.w400,
                               color: Colors.black,
                             ),
                           ),
@@ -1146,7 +1169,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   style: TextStyle(
                     color: Colors.white,
                     fontSize: 15,
-                    fontWeight: FontWeight.w500,
+                    fontWeight: FontWeight.w400,
                     height: 1.45,
                   ),
                 ),
@@ -1201,7 +1224,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
             style: const TextStyle(
               color: _subtext,
               fontSize: 14,
-              fontWeight: FontWeight.w500,
+              fontWeight: FontWeight.w400,
               height: 1.45,
             ),
           ),
@@ -1233,7 +1256,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
               text,
               style: const TextStyle(
                 color: _text,
-                fontWeight: FontWeight.w500,
+                fontWeight: FontWeight.w400,
                 height: 1.4,
               ),
             ),
@@ -1271,7 +1294,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   title,
                   style: const TextStyle(
                     color: _text,
-                    fontWeight: FontWeight.w600,
+                    fontWeight: FontWeight.w400,
                   ),
                 ),
               ),
@@ -1279,7 +1302,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 file == null ? 'Upload' : 'Ready',
                 style: TextStyle(
                   color: file == null ? _subtext : _primary,
-                  fontWeight: FontWeight.w700,
+                  fontWeight: FontWeight.w800,
                 ),
               ),
             ],

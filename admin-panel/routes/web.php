@@ -27,11 +27,14 @@ use App\Http\Controllers\Admin\GiftCardController;
 use App\Http\Controllers\Admin\RefundController;
 use App\Http\Controllers\Admin\BannerController;
 use App\Http\Controllers\Admin\PromoController as AdminPromoController;
+use App\Http\Controllers\Admin\PromotionEngineController;
+use App\Http\Controllers\Admin\PosController;
 use App\Http\Controllers\Admin\PartnerApplicationController;
 use App\Http\Controllers\Admin\SettingController;
 use App\Http\Controllers\Admin\CuisineController;
 use App\Http\Controllers\Admin\GlobalMenuCategoryController;
 use App\Http\Controllers\Admin\MasterMenuItemController;
+use App\Http\Controllers\Admin\ListedMenuController;
 use App\Http\Controllers\Admin\CampaignController;
 use App\Http\Controllers\Admin\CommissionController;
 use App\Http\Controllers\Admin\PushNotificationController;
@@ -52,6 +55,7 @@ use App\Http\Controllers\Webhook\CashfreeWebhookController;
 use App\Http\Controllers\Webhook\PaystackWebhookController;
 use App\Http\Controllers\Webhook\RazorpayWebhookController;
 use App\Http\Controllers\Webhook\StripeWebhookController;
+use App\Http\Controllers\Webhook\OrderPaymentWebhookController;
 use App\Http\Controllers\WebVisitTrackController;
 use App\Http\Controllers\InstallController;
 use App\Http\Controllers\DirectChatController;
@@ -149,6 +153,9 @@ Route::get('/partner/status/{applicationNumber}', [PartnerController::class, 'ge
 
 Route::post('/webhooks/razorpay/payout', RazorpayWebhookController::class)->name('webhooks.razorpay.payout');
 Route::post('/webhooks/stripe/payout', StripeWebhookController::class)->name('webhooks.stripe.payout');
+Route::post('/webhook/{gateway}', OrderPaymentWebhookController::class)
+    ->whereIn('gateway', ['razorpay', 'cashfree', 'stripe'])
+    ->name('webhooks.order-payments');
 Route::post('/webhooks/cashfree/payout', CashfreeWebhookController::class)->name('webhooks.cashfree.payout');
 Route::post('/webhooks/paystack/payout', PaystackWebhookController::class)->name('webhooks.paystack.payout');
 
@@ -287,10 +294,13 @@ Route::middleware(['auth', 'role:super_admin|admin'])->prefix('admin')->name('ad
     Route::post('/restaurants/{restaurant}/toggle-status', [RestaurantController::class, 'toggleStatus'])->name('restaurants.toggle-status');
     
     // Orders Management
+    Route::get('/pos', [PosController::class, 'index'])->name('pos.index');
+    Route::redirect('/pos-terminal', '/admin/pos')->name('pos-terminal.index');
     Route::get('/orders/statistics', [OrderController::class, 'statistics'])->name('orders.statistics');
     Route::get('/orders/export', [OrderController::class, 'export'])->name('orders.export');
     Route::post('/orders/bulk-status', [OrderController::class, 'bulkUpdateStatus'])->name('orders.bulk-status');
     Route::resource('orders', OrderController::class);
+    Route::get('/analytics', [ReportController::class, 'index'])->name('analytics');
     Route::resource('reports', ReportController::class);
     Route::get('/web-tracking', [AdminWebVisitTrackController::class, 'index'])->name('web-tracking.index');
     Route::put('/orders/{order}/status', [OrderController::class, 'updateStatus'])->name('orders.update-status');
@@ -316,6 +326,7 @@ Route::middleware(['auth', 'role:super_admin|admin'])->prefix('admin')->name('ad
 
     // Fleet Management
     Route::get('/fleet', [FleetController::class, 'dashboard'])->name('fleet.dashboard');
+    Route::get('/fleet/markers', [FleetController::class, 'markers'])->name('fleet.markers');
     
     // Gigs Management
     Route::resource('gigs', GigController::class);
@@ -336,6 +347,7 @@ Route::middleware(['auth', 'role:super_admin|admin'])->prefix('admin')->name('ad
     Route::post('/payouts/generate-driver', [PayoutController::class, 'generateDriverPayouts']);
     Route::post('/payouts/{payout}/process', [PayoutController::class, 'process'])->name('payouts.process');
     Route::post('/payouts/process/{payout}', [PayoutController::class, 'process']);
+    Route::post('/payouts/{payout}/cash-paid', [PayoutController::class, 'markCashPaid'])->name('payouts.cash-paid');
     Route::post('/payouts/retry/{payout}', [PayoutController::class, 'retry'])->name('payouts.retry');
     Route::get('/payouts/{payout}/status', [PayoutController::class, 'status'])->name('payouts.status');
     Route::post('/payouts/{payout}/deduction/revoke', [PayoutController::class, 'revokeDeduction'])->name('payouts.deductions.revoke');
@@ -361,12 +373,26 @@ Route::middleware(['auth', 'role:super_admin|admin'])->prefix('admin')->name('ad
     Route::post('/refunds', [RefundController::class, 'store'])->name('refunds.store');
     
     // Banners Management
+    Route::post('/banners/settings', [BannerController::class, 'updateSettings'])->name('banners.settings');
     Route::resource('banners', BannerController::class);
     Route::post('/banners/reorder', [BannerController::class, 'reorder'])->name('banners.reorder');
 
     // Admin Promo Management
     Route::resource('promos', AdminPromoController::class)->names('promos');
     Route::post('/promos/{promo}/toggle', [AdminPromoController::class, 'toggle'])->name('promos.toggle');
+
+    Route::prefix('promotion-engine')->name('promotion-engine.')->group(function () {
+        Route::get('/', [PromotionEngineController::class, 'index'])->name('index');
+        Route::get('/create', [PromotionEngineController::class, 'create'])->name('create');
+        Route::post('/', [PromotionEngineController::class, 'store'])->name('store');
+        Route::get('/analytics', [PromotionEngineController::class, 'analytics'])->name('analytics');
+        Route::get('/coupons', [PromotionEngineController::class, 'coupons'])->name('coupons');
+        Route::get('/logs', [PromotionEngineController::class, 'logs'])->name('logs');
+        Route::get('/{promotion}/edit', [PromotionEngineController::class, 'edit'])->name('edit');
+        Route::put('/{promotion}', [PromotionEngineController::class, 'update'])->name('update');
+        Route::post('/{promotion}/toggle', [PromotionEngineController::class, 'toggle'])->name('toggle');
+        Route::delete('/{promotion}', [PromotionEngineController::class, 'destroy'])->name('destroy');
+    });
     
     // Partner Applications
     Route::get('/partner-applications', [PartnerApplicationController::class, 'index'])->name('partner-applications.index');
@@ -403,6 +429,17 @@ Route::middleware(['auth', 'role:super_admin|admin'])->prefix('admin')->name('ad
         Route::get('/export', [CuisineController::class, 'export'])->name('export');
     });
     Route::resource('global-menu-categories', GlobalMenuCategoryController::class);
+    Route::prefix('listed-menu')->name('listed-menu.')->group(function () {
+        Route::post('/from-global', [ListedMenuController::class, 'storeFromGlobal'])->name('from-global');
+        Route::post('/{listedMenu}/toggle-availability', [ListedMenuController::class, 'toggleAvailability'])->name('toggle-availability');
+        Route::get('/', [ListedMenuController::class, 'index'])->name('index');
+        Route::get('/create', [ListedMenuController::class, 'create'])->name('create');
+        Route::post('/', [ListedMenuController::class, 'store'])->name('store');
+        Route::get('/{listedMenu}', [ListedMenuController::class, 'show'])->name('show');
+        Route::get('/{listedMenu}/edit', [ListedMenuController::class, 'edit'])->name('edit');
+        Route::put('/{listedMenu}', [ListedMenuController::class, 'update'])->name('update');
+        Route::delete('/{listedMenu}', [ListedMenuController::class, 'destroy'])->name('destroy');
+    });
     Route::prefix('master-menu-items')->name('master-menu-items.')->group(function () {
         Route::get('/template', [MasterMenuItemController::class, 'downloadTemplate'])->name('template');
         Route::post('/bulk-upload', [MasterMenuItemController::class, 'bulkUpload'])->name('bulk-upload');
@@ -440,6 +477,12 @@ Route::middleware(['auth', 'role:super_admin|admin'])->prefix('admin')->name('ad
         Route::get('/', [HomeSectionController::class, 'index'])->name('index');
         Route::get('/create', [HomeSectionController::class, 'create'])->name('create');
         Route::post('/', [HomeSectionController::class, 'store'])->name('store');
+        Route::post('/built-in/{token}/content', [HomeSectionController::class, 'updateBuiltIn'])
+            ->where('token', '[A-Za-z0-9_-]+')
+            ->name('built-in.content');
+        Route::post('/built-in/{token}/toggle', [HomeSectionController::class, 'toggleBuiltIn'])
+            ->where('token', '[A-Za-z0-9_-]+')
+            ->name('built-in.toggle');
         Route::get('/{homeSection}/edit', [HomeSectionController::class, 'edit'])->name('edit');
         Route::put('/{homeSection}', [HomeSectionController::class, 'update'])->name('update');
         Route::delete('/{homeSection}', [HomeSectionController::class, 'destroy'])->name('destroy');
@@ -487,6 +530,7 @@ Route::middleware(['auth', 'role:super_admin|admin'])->prefix('admin')->name('ad
     Route::get('/settings', [SettingController::class, 'index'])->name('settings.index');
     Route::get('/settings/branding', [SettingController::class, 'branding'])->name('settings.branding');
     Route::get('/settings/payment', [SettingController::class, 'payment'])->name('settings.payment');
+    Route::get('/settings/rewards', [SettingController::class, 'rewards'])->name('settings.rewards');
     Route::get('/settings/cron', [SettingController::class, 'cron'])->name('settings.cron');
     Route::get('/settings/homepage', [SettingController::class, 'homepage'])->name('settings.homepage');
     Route::get('/settings/privacy', [SettingController::class, 'privacy'])->name('settings.privacy');
@@ -498,6 +542,7 @@ Route::middleware(['auth', 'role:super_admin|admin'])->prefix('admin')->name('ad
     Route::post('/settings/app-branding', [SettingController::class, 'updateAppBranding'])->name('settings.branding.post');
     Route::post('/settings/payment', [SettingController::class, 'updatePaymentSettings'])->name('settings.payment.post');
     Route::post('/settings/cron/install', [SettingController::class, 'installCron'])->name('settings.cron.install');
+    Route::post('/settings/cron/tasks', [SettingController::class, 'updateCronTasks'])->name('settings.cron.tasks');
 });
 
 

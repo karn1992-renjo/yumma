@@ -34,6 +34,7 @@ class GatewayRegistry
     ];
 
     public const PAYOUT_PROVIDERS = [
+        'cash' => 'Cash',
         'razorpay' => 'RazorpayX',
         'stripe' => 'Stripe Connect',
         'cashfree' => 'Cashfree',
@@ -70,6 +71,7 @@ class GatewayRegistry
     public static function defaultCountryCode(?string $provider): string
     {
         return match (strtolower((string) $provider)) {
+            'cash' => 'GLOBAL',
             'razorpay', 'cashfree' => 'IN',
             'paystack' => 'NG',
             'sslcommerz', 'bkash' => 'BD',
@@ -103,6 +105,7 @@ class GatewayRegistry
     public static function usesExternalManualSettlement(?string $provider): bool
     {
         return in_array(strtolower((string) $provider), [
+            'cash',
             'sslcommerz',
             'mollie',
             'senangpay',
@@ -124,6 +127,10 @@ class GatewayRegistry
 
     public static function automatedPayoutUnavailableMessage(?string $provider): string
     {
+        if (strtolower((string) $provider) === 'cash') {
+            return 'Cash payouts are tracked manually. Use the Mark as Cash Paid action after paying the vendor outside the gateway.';
+        }
+
         $label = self::providerLabel($provider, payout: true);
 
         return $label . ' automatic API payouts are not implemented in this app. Use RazorpayX, Stripe Connect, Cashfree, or Paystack for automated payouts, or settle this payout manually outside the system.';
@@ -132,6 +139,13 @@ class GatewayRegistry
     public static function payoutCapabilityMatrix(): array
     {
         return [
+            'cash' => [
+                'label' => self::providerLabel('cash', payout: true),
+                'automated' => false,
+                'balance' => false,
+                'webhook' => false,
+                'requirements' => 'Pay the vendor in cash, then use Mark as Cash Paid to complete and audit the payout.',
+            ],
             'razorpay' => [
                 'label' => self::providerLabel('razorpay', payout: true),
                 'automated' => true,

@@ -20,6 +20,13 @@ class EnsureInstallationCompleted
             return $next($request);
         }
 
+        if ($request->expectsJson() || $request->is('api/*')) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Application installation is not completed.',
+            ], 503);
+        }
+
         return redirect()->route('install.show');
     }
 

@@ -2,6 +2,63 @@
 
 @section('title', 'Global Menu Items')
 
+@section('styles')
+<style>
+    .global-menu-list-row {
+        display: grid;
+        grid-template-columns: 58px minmax(0, 1fr) auto;
+        gap: 14px;
+        padding: 14px 16px;
+        border-bottom: 1px solid rgba(148, 163, 184, 0.18);
+        align-items: center;
+    }
+
+    .global-menu-list-row:last-child {
+        border-bottom: 0;
+    }
+
+    .global-menu-image {
+        width: 58px;
+        height: 58px;
+        border-radius: 12px;
+        overflow: hidden;
+        background: #f8fafc;
+        border: 1px solid rgba(148, 163, 184, 0.24);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+    }
+
+    .global-menu-list-row .min-w-0 {
+        min-width: 0;
+    }
+
+    .global-menu-meta {
+        min-width: 260px;
+    }
+
+    @media (max-width: 767.98px) {
+        .global-menu-list-row {
+            grid-template-columns: 52px minmax(0, 1fr);
+        }
+
+        .global-menu-image {
+            width: 52px;
+            height: 52px;
+            border-radius: 10px;
+        }
+
+        .global-menu-meta {
+            grid-column: 1 / -1;
+            width: 100%;
+            min-width: 0;
+            justify-content: space-between !important;
+        }
+    }
+</style>
+@endsection
+
 @section('content')
 <div class="page-header">
     <div class="d-flex justify-content-between align-items-center flex-wrap gap-3">
@@ -90,72 +147,63 @@
             </div>
         </form>
     </div>
-    <div class="table-responsive">
-        <table class="table align-middle">
-            <thead>
-                <tr>
-                    <th>Item</th>
-                    <th>Category</th>
-                    <th>Cuisine</th>
-                    <th>Food Type</th>
-                    <th>Prep</th>
-                    <th>Used By</th>
-                    <th>Status</th>
-                    <th class="text-end">Actions</th>
-                </tr>
-            </thead>
-            <tbody>
-                @forelse($items as $item)
-                    <tr>
-                        <td>
-                            <div class="d-flex align-items-center gap-3">
-                                <div class="rounded-3 overflow-hidden bg-light border flex-shrink-0 d-flex align-items-center justify-content-center" style="width: 58px; height: 58px;">
-                                    @if($item->image)
-                                        <img src="{{ \App\Services\MediaStorage::url($item->image) }}"
-                                             alt="{{ $item->name }}"
-                                             class="w-100 h-100"
-                                             style="object-fit: cover;">
-                                    @else
-                                        <i class="fas fa-utensils text-muted"></i>
-                                    @endif
-                                </div>
-                                <div>
-                                    <div class="fw-bold">{{ $item->name }}</div>
-                                    <div class="text-muted small">{{ Str::limit($item->description, 70) }}</div>
-                                </div>
-                            </div>
-                        </td>
-                        <td>
-                            {{ $item->category_name ?: 'Uncategorized' }}
-                            @if($item->subcategory_name)
-                                <div class="text-muted small">{{ $item->subcategory_name }}</div>
-                            @endif
-                        </td>
-                        <td>{{ $item->cuisine?->name ?: '-' }}</td>
-                        <td><span class="badge bg-light text-dark">{{ $item->diet_label }}</span></td>
-                        <td>{{ $item->preparation_time ? $item->preparation_time . ' min' : '-' }}</td>
-                        <td>{{ $item->restaurant_menu_items_count }}</td>
-                        <td>
-                            <span class="badge {{ $item->is_active ? 'bg-success' : 'bg-secondary' }}">
-                                {{ $item->is_active ? 'Active' : 'Inactive' }}
-                            </span>
-                        </td>
-                        <td class="text-end">
-                            <a href="{{ route('admin.master-menu-items.edit', $item) }}" class="btn btn-sm btn-outline-primary">Edit</a>
-                            <form action="{{ route('admin.master-menu-items.destroy', $item) }}" method="POST" class="d-inline" onsubmit="return confirm('Delete this global menu item?')">
-                                @csrf
-                                @method('DELETE')
-                                <button class="btn btn-sm btn-outline-danger">Delete</button>
-                            </form>
-                        </td>
-                    </tr>
-                @empty
-                    <tr>
-                        <td colspan="8" class="text-center text-muted py-5">No global menu items yet.</td>
-                    </tr>
-                @endforelse
-            </tbody>
-        </table>
+    <div>
+        @forelse($items as $item)
+            <div class="global-menu-list-row">
+                <div class="global-menu-image">
+                    @if($item->image)
+                        <img src="{{ \App\Services\MediaStorage::url($item->image) }}"
+                             alt="{{ $item->name }}"
+                             class="w-100 h-100"
+                             style="object-fit: cover;">
+                    @else
+                        <i class="fas fa-utensils text-muted"></i>
+                    @endif
+                </div>
+
+                <div class="min-w-0">
+                    <div class="d-flex align-items-center gap-2 flex-wrap mb-1">
+                        <span class="fw-bold text-truncate">{{ $item->name }}</span>
+                        <span class="badge bg-light text-dark border">{{ $item->diet_label }}</span>
+                        <span class="badge {{ $item->is_active ? 'bg-success' : 'bg-secondary' }}">
+                            {{ $item->is_active ? 'Active' : 'Inactive' }}
+                        </span>
+                    </div>
+                    <div class="small text-muted d-flex align-items-center gap-2 flex-wrap">
+                        <span>{{ $item->category_name ?: 'Uncategorized' }}</span>
+                        @if($item->subcategory_name)
+                            <span>{{ $item->subcategory_name }}</span>
+                        @endif
+                        <span>{{ $item->cuisine?->name ?: 'No cuisine' }}</span>
+                        <span>{{ $item->preparation_time ? $item->preparation_time . ' min prep' : 'No prep time' }}</span>
+                    </div>
+                    @if($item->description)
+                        <div class="text-muted small mt-1">{{ Str::limit($item->description, 110) }}</div>
+                    @endif
+                </div>
+
+                <div class="global-menu-meta d-flex align-items-center justify-content-end gap-3">
+                    <div class="text-end">
+                        <div class="fw-semibold">{{ $item->restaurant_menu_items_count }}</div>
+                        <div class="small text-muted">restaurants</div>
+                    </div>
+                    <div class="d-flex align-items-center gap-2">
+                        <a href="{{ route('admin.master-menu-items.edit', $item) }}" class="btn btn-sm btn-outline-primary">
+                            <i class="fas fa-pen me-1"></i> Edit
+                        </a>
+                        <form action="{{ route('admin.master-menu-items.destroy', $item) }}" method="POST" class="d-inline" onsubmit="return confirm('Delete this global menu item?')">
+                            @csrf
+                            @method('DELETE')
+                            <button class="btn btn-sm btn-outline-danger">
+                                <i class="fas fa-trash me-1"></i> Delete
+                            </button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        @empty
+            <div class="text-center text-muted py-5">No global menu items yet.</div>
+        @endforelse
     </div>
     <div class="p-3">{{ $items->links() }}</div>
 </div>

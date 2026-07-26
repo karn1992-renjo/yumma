@@ -22,7 +22,7 @@
                 <h5 class="mb-0 fw-bold">Notification Composer</h5>
             </div>
             <div class="p-4">
-                <form action="{{ route('admin.push-notifications.store') }}" method="POST">
+                <form action="{{ route('admin.push-notifications.store') }}" method="POST" enctype="multipart/form-data">
                     @csrf
 
                     <div class="mb-3">
@@ -59,7 +59,12 @@
                     <div class="row g-3">
                         <div class="col-md-5">
                             <label class="form-label fw-semibold">Audience Type</label>
-                            <select name="audience_type" id="audienceType" class="form-select @error('audience_type') is-invalid @enderror">
+                            <select
+                                name="audience_type"
+                                id="audienceType"
+                                class="form-select @error('audience_type') is-invalid @enderror"
+                                onchange="document.getElementById('roleSelector').hidden = this.value !== 'roles'"
+                            >
                                 <option value="all" {{ old('audience_type', 'all') === 'all' ? 'selected' : '' }}>All App Users</option>
                                 <option value="roles" {{ old('audience_type') === 'roles' ? 'selected' : '' }}>Role-wise</option>
                             </select>
@@ -82,22 +87,38 @@
                         </div>
                     </div>
 
-                    <div class="mt-3">
-                        <label class="form-label fw-semibold">Notification Image URL</label>
-                        <input
-                            type="url"
-                            name="image_url"
-                            class="form-control @error('image_url') is-invalid @enderror"
-                            value="{{ old('image_url') }}"
-                            placeholder="https://example.com/promo-banner.jpg"
-                        >
-                        <small class="text-muted">Optional rich notification image. The URL is sent as `image_url` in the push payload.</small>
-                        @error('image_url')
-                            <div class="invalid-feedback">{{ $message }}</div>
-                        @enderror
+                    <div class="row g-2 mt-2 align-items-end">
+                        <div class="col-md-3">
+                            <label class="form-label fw-semibold">Upload Pic</label>
+                            <input
+                                type="file"
+                                name="image"
+                                accept="image/jpeg,image/png,image/webp"
+                                class="form-control form-control-sm @error('image') is-invalid @enderror"
+                            >
+                            @error('image')
+                                <div class="invalid-feedback">{{ $message }}</div>
+                            @enderror
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label fw-semibold">Image URL</label>
+                            <input
+                                type="url"
+                                name="image_url"
+                                class="form-control form-control-sm @error('image_url') is-invalid @enderror"
+                                value="{{ old('image_url') }}"
+                                placeholder="https://..."
+                            >
+                            @error('image_url')
+                                <div class="invalid-feedback">{{ $message }}</div>
+                            @enderror
+                        </div>
+                        <div class="col-md-6">
+                            <small class="text-muted">Optional. Uploaded pic is used before URL.</small>
+                        </div>
                     </div>
 
-                    <div id="roleSelector" class="mt-3" style="{{ old('audience_type') === 'roles' ? '' : 'display:none;' }}">
+                    <div id="roleSelector" class="mt-3" @if(old('audience_type', 'all') !== 'roles') hidden @endif>
                         <label class="form-label fw-semibold">Select Roles</label>
                         <div class="row g-2">
                             @foreach($roleLabels as $role => $label)
@@ -192,7 +213,7 @@
 </div>
 @endsection
 
-@push('scripts')
+@section('scripts')
 <script>
 document.addEventListener('DOMContentLoaded', function () {
     const audienceType = document.getElementById('audienceType');
@@ -201,13 +222,14 @@ document.addEventListener('DOMContentLoaded', function () {
     const addPayloadRow = document.getElementById('addPayloadRow');
 
     function toggleRoleSelector() {
-        roleSelector.style.display = audienceType.value === 'roles' ? '' : 'none';
+        if (!audienceType || !roleSelector) return;
+        roleSelector.hidden = audienceType.value !== 'roles';
     }
 
-    audienceType.addEventListener('change', toggleRoleSelector);
+    audienceType?.addEventListener('change', toggleRoleSelector);
     toggleRoleSelector();
 
-    addPayloadRow.addEventListener('click', function () {
+    addPayloadRow?.addEventListener('click', function () {
         const row = document.createElement('div');
         row.className = 'row g-2 payload-row mb-2';
         row.innerHTML = `
@@ -226,7 +248,7 @@ document.addEventListener('DOMContentLoaded', function () {
         payloadRows.appendChild(row);
     });
 
-    payloadRows.addEventListener('click', function (event) {
+    payloadRows?.addEventListener('click', function (event) {
         const button = event.target.closest('.remove-payload-row');
         if (!button) {
             return;
@@ -242,4 +264,4 @@ document.addEventListener('DOMContentLoaded', function () {
     });
 });
 </script>
-@endpush
+@endsection

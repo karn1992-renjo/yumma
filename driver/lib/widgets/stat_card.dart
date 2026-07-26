@@ -70,7 +70,7 @@ class StatCard extends StatelessWidget {
                         style: TextStyle(
                           fontSize: 10,
                           color: trend! >= 0 ? Colors.green : Colors.red,
-                          fontWeight: FontWeight.w600,
+                          fontWeight: FontWeight.w400,
                         ),
                       ),
                     ],
@@ -83,7 +83,7 @@ class StatCard extends StatelessWidget {
             value,
             style: GoogleFonts.nunitoSans(
               fontSize: 22,
-              fontWeight: FontWeight.bold,
+              fontWeight: FontWeight.w800,
               color: color,
             ),
             maxLines: 1,

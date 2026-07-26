@@ -13,6 +13,7 @@ import '../../services/location_service.dart';
 import '../../services/api_service.dart';
 import '../../services/foreground_service_manager.dart';
 import '../../services/incoming_order_alert_service.dart';
+import '../../services/order_alert_permission_manager.dart';
 import '../../services/sound_service.dart';
 import '../../services/websocket_service.dart';
 import '../../config/api_constants.dart';
@@ -211,7 +212,7 @@ class _DriverDashboardState extends State<DriverDashboard>
           _activeGig = response['data']?['active_gig'];
           _onlineStartedAt = _isOnline
               ? _parseOnlineStartedAt(response['data']?['online_started_at']) ??
-                    DateTime.now()
+                  DateTime.now()
               : null;
         });
         if (_isOnline) {
@@ -267,6 +268,10 @@ class _DriverDashboardState extends State<DriverDashboard>
       return;
     }
 
+    if (!_isOnline && !await _ensureBatteryOptimizationDisabled()) {
+      return;
+    }
+
     if (!_isOnline && !await _ensureOnlineLocationPermission()) {
       return;
     }
@@ -283,7 +288,7 @@ class _DriverDashboardState extends State<DriverDashboard>
           _activeGig = response['data']?['active_gig'] ?? _activeGig;
           _onlineStartedAt = isOnline
               ? _parseOnlineStartedAt(response['data']?['online_started_at']) ??
-                    DateTime.now()
+                  DateTime.now()
               : null;
         });
 
@@ -340,6 +345,23 @@ class _DriverDashboardState extends State<DriverDashboard>
       return message.substring('Exception: '.length);
     }
     return message;
+  }
+
+  Future<bool> _ensureBatteryOptimizationDisabled() async {
+    final disabled =
+        await OrderAlertPermissionManager.isBatteryOptimizationDisabled();
+    if (disabled) return true;
+
+    if (!mounted) return false;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text(
+          'Allow unrestricted battery usage before going online.',
+        ),
+      ),
+    );
+    await OrderAlertPermissionManager.requestBatteryOptimizationExemption();
+    return false;
   }
 
   Future<bool> _ensureOnlineLocationPermission() async {
@@ -468,8 +490,8 @@ class _DriverDashboardState extends State<DriverDashboard>
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
           : _loadError != null && _stats.isEmpty
-          ? NetworkErrorView(message: _loadError, onRetry: _loadStats)
-          : _buildCurrentBody(),
+              ? NetworkErrorView(message: _loadError, onRetry: _loadStats)
+              : _buildCurrentBody(),
       bottomNavigationBar: _buildBottomNavBar(),
     );
   }
@@ -601,8 +623,8 @@ class _DriverDashboardState extends State<DriverDashboard>
                       _activeGig == null
                           ? 'Book a gig before accepting orders'
                           : _isOnline
-                          ? 'You are receiving orders'
-                          : 'You are offline',
+                              ? 'You are receiving orders'
+                              : 'You are offline',
                       style: GoogleFonts.poppins(
                         fontSize: 12,
                         color: FoodFlowTheme.muted,
@@ -670,14 +692,12 @@ class _DriverDashboardState extends State<DriverDashboard>
                   height: 34,
                   padding: const EdgeInsets.all(4),
                   decoration: BoxDecoration(
-                    color: _isOnline
-                        ? FoodFlowTheme.success
-                        : FoodFlowTheme.line,
+                    color:
+                        _isOnline ? FoodFlowTheme.success : FoodFlowTheme.line,
                     borderRadius: BorderRadius.circular(18),
                   ),
-                  alignment: _isOnline
-                      ? Alignment.centerRight
-                      : Alignment.centerLeft,
+                  alignment:
+                      _isOnline ? Alignment.centerRight : Alignment.centerLeft,
                   child: Container(
                     width: 26,
                     height: 26,
@@ -829,8 +849,8 @@ class _DriverDashboardState extends State<DriverDashboard>
                                   _isOnline
                                       ? 'Stay ready for incoming orders'
                                       : _activeGig == null
-                                      ? 'Book a gig to start receiving orders'
-                                      : 'Go online to start receiving orders',
+                                          ? 'Book a gig to start receiving orders'
+                                          : 'Go online to start receiving orders',
                                   style: GoogleFonts.poppins(
                                     fontSize: 12,
                                     color: FoodFlowTheme.muted,
@@ -857,8 +877,8 @@ class _DriverDashboardState extends State<DriverDashboard>
                               _activeGig == null
                                   ? 'Book Gig'
                                   : _isOnline
-                                  ? 'Online'
-                                  : 'Go Online',
+                                      ? 'Online'
+                                      : 'Go Online',
                             ),
                           ),
                         ],
