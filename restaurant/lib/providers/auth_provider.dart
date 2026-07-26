@@ -7,7 +7,7 @@ import '../utils/currency_utils.dart';
 
 class AuthProvider extends ChangeNotifier {
   final AuthService _authService = AuthService();
-  
+
   User? _currentUser;
   bool _isLoading = false;
   String? _error;
@@ -16,7 +16,7 @@ class AuthProvider extends ChangeNotifier {
   bool get isLoading => _isLoading;
   String? get error => _error;
   bool get isAuthenticated => _currentUser != null;
-  
+
   String? get userRole => _currentUser?.role;
   bool get isCustomer => _currentUser?.isCustomer ?? false;
   bool get isRestaurantOwner => _currentUser?.isRestaurantOwner ?? false;
@@ -43,7 +43,7 @@ class AuthProvider extends ChangeNotifier {
   }) async {
     _setLoading(true);
     _clearError();
-    
+
     try {
       final result = await _authService.register(
         name: name,
@@ -71,7 +71,7 @@ class AuthProvider extends ChangeNotifier {
   }) async {
     _setLoading(true);
     _clearError();
-    
+
     try {
       final result = await _authService.login(
         email: email,
@@ -248,6 +248,22 @@ class AuthProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<bool> deleteAccount() async {
+    _setLoading(true);
+    _clearError();
+
+    try {
+      await _authService.deleteAccount();
+      _currentUser = null;
+      _setLoading(false);
+      return true;
+    } catch (e) {
+      _error = e.toString();
+      _setLoading(false);
+      return false;
+    }
+  }
+
   Future<void> logout() async {
     _setLoading(true);
     try {
@@ -285,7 +301,7 @@ class AuthProvider extends ChangeNotifier {
     String? profileImagePath,
   }) async {
     _setLoading(true);
-    
+
     try {
       final user = await _authService.updateProfile(
         name: name,
@@ -309,7 +325,7 @@ class AuthProvider extends ChangeNotifier {
     required String newPasswordConfirmation,
   }) async {
     _setLoading(true);
-    
+
     try {
       await _authService.updatePassword(
         currentPassword: currentPassword,

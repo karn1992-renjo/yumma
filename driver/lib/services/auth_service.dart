@@ -54,10 +54,7 @@ class AuthService {
       if (role != null && role.isNotEmpty) 'role': role,
     };
 
-    final response = await _api.post(
-      ApiConstants.register,
-      data: data,
-    );
+    final response = await _api.post(ApiConstants.register, data: data);
 
     if (response['success'] == true) {
       final token = response['data']['token'];
@@ -302,6 +299,17 @@ class AuthService {
     }
   }
 
+  Future<void> deleteAccount() async {
+    final response = await _api.delete(ApiConstants.deleteAccount);
+    if (response is Map && response['success'] == false) {
+      throw Exception(response['message'] ?? 'Account deletion failed');
+    }
+
+    await clearStoredUser();
+    await _api.clearToken();
+    await ForegroundServiceManager.stopForegroundService();
+  }
+
   Future<void> _sendMsg91WidgetOtp({
     required String phone,
     required String flow,
@@ -320,8 +328,9 @@ class AuthService {
 
     late final Map<String, dynamic> widgetData;
     try {
-      final widgetResponse =
-          await OTPWidget.sendOTP({'identifier': identifier});
+      final widgetResponse = await OTPWidget.sendOTP({
+        'identifier': identifier,
+      });
       widgetData = _asMap(widgetResponse);
     } catch (error) {
       widgetData = _msg91WidgetDataFromError(error);
@@ -334,7 +343,8 @@ class AuthService {
     }
 
     debugPrint(
-        '[OTP] msg91 widget send response ${_safeMsg91WidgetData(widgetData)}');
+      '[OTP] msg91 widget send response ${_safeMsg91WidgetData(widgetData)}',
+    );
     if (!_msg91WidgetSuccess(widgetData)) {
       throw Exception(_msg91WidgetFailureMessage(widgetData));
     }
@@ -392,7 +402,8 @@ class AuthService {
     }
 
     debugPrint(
-        '[OTP] msg91 widget verify response ${_safeMsg91WidgetData(widgetData)}');
+      '[OTP] msg91 widget verify response ${_safeMsg91WidgetData(widgetData)}',
+    );
     if (!_msg91WidgetSuccess(widgetData)) {
       throw Exception(_msg91WidgetFailureMessage(widgetData));
     }

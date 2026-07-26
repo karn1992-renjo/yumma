@@ -152,10 +152,15 @@ class _DriverProfileScreenState extends State<DriverProfileScreen> {
               subtitle: 'Change your password',
               onTap: () => Navigator.push(
                 context,
-                MaterialPageRoute(
-                  builder: (_) => const DriverSecurityScreen(),
-                ),
+                MaterialPageRoute(builder: (_) => const DriverSecurityScreen()),
               ),
+            ),
+            _ProfileMenuItem(
+              icon: Icons.person_remove_outlined,
+              title: 'Delete Account',
+              subtitle: 'Permanently remove this driver login',
+              iconColor: Colors.red,
+              onTap: _confirmDeleteAccount,
             ),
             _ProfileMenuItem(
               icon: Icons.logout,
@@ -165,13 +170,58 @@ class _DriverProfileScreenState extends State<DriverProfileScreen> {
               onTap: () async {
                 await context.read<AuthProvider>().logout();
                 if (mounted) {
-                  Navigator.of(context, rootNavigator: true)
-                      .pushNamedAndRemoveUntil('/login', (route) => false);
+                  Navigator.of(
+                    context,
+                    rootNavigator: true,
+                  ).pushNamedAndRemoveUntil('/login', (route) => false);
                 }
               },
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Future<void> _confirmDeleteAccount() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Delete account?'),
+        content: const Text(
+          'This will permanently delete or anonymize your driver account data where permitted. Active deliveries, payouts, tax records, disputes, and legal records may be retained as required.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true || !mounted) return;
+
+    final authProvider = context.read<AuthProvider>();
+    final deleted = await authProvider.deleteAccount();
+    if (!mounted) return;
+
+    if (deleted) {
+      Navigator.of(
+        context,
+        rootNavigator: true,
+      ).pushNamedAndRemoveUntil('/login', (route) => false);
+      return;
+    }
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(authProvider.error ?? 'Unable to delete account.'),
       ),
     );
   }
@@ -270,17 +320,22 @@ class _DriverProfileEditorScreenState extends State<DriverProfileEditorScreen> {
     final data = widget.initialData;
     _nameController = TextEditingController(text: data['name'] ?? '');
     _phoneController = TextEditingController(text: data['phone'] ?? '');
-    _vehicleTypeController =
-        TextEditingController(text: data['vehicle_type'] ?? '');
-    _vehicleNumberController =
-        TextEditingController(text: data['vehicle_number'] ?? '');
-    _licenseNumberController =
-        TextEditingController(text: data['license_number'] ?? '');
-    _accountHolderController =
-        TextEditingController(text: data['account_holder_name'] ?? '');
+    _vehicleTypeController = TextEditingController(
+      text: data['vehicle_type'] ?? '',
+    );
+    _vehicleNumberController = TextEditingController(
+      text: data['vehicle_number'] ?? '',
+    );
+    _licenseNumberController = TextEditingController(
+      text: data['license_number'] ?? '',
+    );
+    _accountHolderController = TextEditingController(
+      text: data['account_holder_name'] ?? '',
+    );
     _bankNameController = TextEditingController(text: data['bank_name'] ?? '');
-    _accountNumberController =
-        TextEditingController(text: data['account_number'] ?? '');
+    _accountNumberController = TextEditingController(
+      text: data['account_number'] ?? '',
+    );
     _ifscController = TextEditingController(text: data['ifsc_code'] ?? '');
     _upiIdController = TextEditingController(text: data['upi_id'] ?? '');
     _accountIdController = TextEditingController(
@@ -347,11 +402,13 @@ class _DriverProfileEditorScreenState extends State<DriverProfileEditorScreen> {
 
   List<Widget> _fields(dynamic authUser) {
     final profile = resolvePayoutGatewayProfile(
-      provider: widget.initialData['payout_gateway_provider']?.toString() ??
+      provider:
+          widget.initialData['payout_gateway_provider']?.toString() ??
           widget.initialData['payment_gateway_provider']?.toString() ??
           authUser?.payoutGatewayProvider ??
           authUser?.paymentGatewayProvider,
-      countryCode: widget.initialData['country_code']?.toString() ??
+      countryCode:
+          widget.initialData['country_code']?.toString() ??
           authUser?.countryCode,
     );
 
@@ -491,9 +548,9 @@ class _DriverProfileEditorScreenState extends State<DriverProfileEditorScreen> {
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to update profile: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Failed to update profile: $e')));
       }
     }
 
@@ -555,8 +612,9 @@ class _DriverSecurityScreenState extends State<DriverSecurityScreen> {
             TextFormField(
               controller: _confirmPasswordController,
               obscureText: true,
-              decoration:
-                  const InputDecoration(labelText: 'Confirm New Password'),
+              decoration: const InputDecoration(
+                labelText: 'Confirm New Password',
+              ),
               validator: (value) {
                 if (value != _newPasswordController.text) {
                   return 'Passwords do not match';

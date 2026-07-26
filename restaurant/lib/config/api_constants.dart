@@ -18,6 +18,7 @@ class ApiConstants {
   static const String appBranding = '/app/branding';
   static const String logout = '/logout';
   static const String user = '/user';
+  static const String deleteAccount = '/user/account';
   static const String updateProfile = '/user/profile';
   static const String registerFcmToken = '/user/fcm-token';
   static const String changePassword = '/user/change-password';

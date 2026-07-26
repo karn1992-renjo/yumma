@@ -300,6 +300,17 @@ class AuthService {
     }
   }
 
+  Future<void> deleteAccount() async {
+    final response = await _api.delete(ApiConstants.deleteAccount);
+    if (response is Map && response['success'] == false) {
+      throw Exception(response['message'] ?? 'Account deletion failed');
+    }
+
+    await clearStoredUser();
+    await _api.clearToken();
+    await ForegroundServiceManager.stopForegroundService();
+  }
+
   Future<void> _sendMsg91WidgetOtp({
     required String phone,
     required String flow,

@@ -8,6 +8,48 @@ import '../../../widgets/restaurant/premium_restaurant_widgets.dart';
 
 class RestaurantProfileScreen extends StatelessWidget {
   const RestaurantProfileScreen({Key? key}) : super(key: key);
+  Future<void> _confirmDeleteAccount(BuildContext context) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Delete account?'),
+        content: const Text(
+          'This will permanently delete or anonymize your account data where permitted. Active orders, payouts, tax records, disputes, and legal records may be retained as required.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true || !context.mounted) return;
+
+    final authProvider = context.read<AuthProvider>();
+    final deleted = await authProvider.deleteAccount();
+    if (!context.mounted) return;
+
+    if (deleted) {
+      Navigator.of(context, rootNavigator: true).pushNamedAndRemoveUntil(
+        '/login',
+        (route) => false,
+      );
+      return;
+    }
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(authProvider.error ?? 'Unable to delete account.'),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -117,6 +159,13 @@ class RestaurantProfileScreen extends StatelessWidget {
               subtitle: 'Policies, terms and partnership documents',
               onTap: () =>
                   Navigator.pushNamed(context, '/restaurant/profile/legal'),
+            ),
+            const SizedBox(height: 8),
+            _ProfileMenuItem(
+              icon: Icons.person_remove_outlined,
+              title: 'Delete Account',
+              subtitle: 'Permanently remove this restaurant login',
+              onTap: () => _confirmDeleteAccount(context),
             ),
           ],
         ),

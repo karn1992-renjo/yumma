@@ -16,6 +16,7 @@ class ApiConstants {
   static const String appBranding = '/app/branding';
   static const String logout = '/logout';
   static const String user = '/user';
+  static const String deleteAccount = '/user/account';
   static const String updateProfile = '/user/profile';
   static const String registerFcmToken = '/user/fcm-token';
   static const String changePassword = '/user/change-password';
@@ -128,7 +129,8 @@ class ApiConstants {
   static String driverPaymentLink(int orderId) =>
       '/orders/$orderId/driver/payment-link';
   static String driverCash(int orderId) => '/orders/$orderId/driver/cash';
-  static String orderPaymentStatus(int orderId) => '/orders/$orderId/payment-status';
+  static String orderPaymentStatus(int orderId) =>
+      '/orders/$orderId/payment-status';
 
   // Campaign endpoints
   static const String campaigns = '/campaigns';
