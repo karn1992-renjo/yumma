@@ -18,6 +18,9 @@ use App\Models\User;
 use App\Rules\UniqueUserContactForRole;
 use App\Services\AutoAssignDriverService;
 use App\Services\BranchManagementService;
+use App\Services\OrderStatusPushService;
+use App\Services\RefundService;
+use App\Services\ScratchCardService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
@@ -29,7 +32,10 @@ use Maatwebsite\Excel\Facades\Excel;
 
 class BranchDashboardController extends Controller
 {
-    public function __construct(private BranchManagementService $branches)
+    public function __construct(
+        private BranchManagementService $branches,
+        private RefundService $refundService
+    )
     {
     }
 
@@ -183,8 +189,9 @@ class BranchDashboardController extends Controller
         $order->load(['restaurant', 'customer', 'driver', 'branch']);
         $availableDrivers = $this->availableBranchDrivers($branch, $order);
         $canAssignDriver = $this->branchCan($request, 'branch.orders.assign_driver', ['manage_orders', 'manage_drivers']);
+        $canUpdateStatus = $this->branchCan($request, 'branch.orders.update_status', ['manage_orders']);
 
-        return view('branch.orders-show', compact('branch', 'order', 'availableDrivers', 'canAssignDriver'));
+        return view('branch.orders-show', compact('branch', 'order', 'availableDrivers', 'canAssignDriver', 'canUpdateStatus'));
     }
 
     public function assignOrderDriver(Request $request, Order $order, AutoAssignDriverService $autoAssignService)
@@ -194,12 +201,12 @@ class BranchDashboardController extends Controller
         abort_unless($this->orderBelongsToBranch($order, $branch), 404);
         abort_unless($order->isVisibleToRestaurant(), 404);
 
-        if ($order->driver_id) {
-            return back()->withErrors(['driver_id' => 'This order already has a driver assigned.']);
+        if (($order->order_type ?? 'delivery') === 'takeaway') {
+            return back()->withErrors(['driver_id' => 'Takeaway orders do not need a delivery driver.']);
         }
 
-        if (in_array($order->status, ['delivered', 'cancelled', 'refunded'], true)) {
-            return back()->withErrors(['driver_id' => 'Completed, cancelled, or refunded orders cannot be assigned to a driver.']);
+        if (! in_array($order->status, ['confirmed', 'preparing', 'ready_for_pickup'], true)) {
+            return back()->withErrors(['driver_id' => 'Driver can only be assigned or reassigned before pickup starts.']);
         }
 
         $data = $request->validate([
@@ -209,25 +216,130 @@ class BranchDashboardController extends Controller
         $driver = User::role('delivery_partner')
             ->where('branch_id', $branch->id)
             ->findOrFail($data['driver_id']);
+        $oldDriver = $order->driver;
+
+        if ($oldDriver && (int) $oldDriver->id === (int) $driver->id) {
+            return back()->with('success', "Driver {$driver->name} is already assigned to this order.");
+        }
 
         $eligibility = $autoAssignService->assignmentEligibility($driver, $order, $order->id);
         if (!($eligibility['eligible'] ?? false)) {
             return back()->withErrors(['driver_id' => $eligibility['reason'] ?? 'Selected driver is not available for this order.']);
         }
 
+        $rejectedDriverIds = $order->rejected_driver_ids ?? [];
+        if (! is_array($rejectedDriverIds)) {
+            $rejectedDriverIds = [];
+        }
+        if ($oldDriver) {
+            $rejectedDriverIds[] = (int) $oldDriver->id;
+        }
+        $rejectedDriverIds = array_values(array_unique(array_filter(
+            $rejectedDriverIds,
+            fn ($driverId) => (int) $driverId !== (int) $driver->id
+        )));
+
         $order->forceFill([
             'branch_id' => $branch->id,
             'driver_id' => $driver->id,
             'driver_assigned_at' => now(),
+            'driver_accepted_at' => null,
+            'rejected_driver_ids' => $rejectedDriverIds,
+            'route_batch_id' => $autoAssignService->resolveRouteBatchIdForAssignment($driver, $order, $order->id),
         ])->save();
 
+        $freshOrder = $order->fresh(['customer', 'restaurant', 'driver']);
+        $autoAssignService->notifyDriver($driver, $freshOrder);
+        app(OrderStatusPushService::class)->notifyParticipants(
+            $freshOrder,
+            'Delivery partner has been ' . ($oldDriver ? 'reassigned' : 'assigned') . " for order #{$freshOrder->order_number}.",
+            ['customer', 'restaurant']
+        );
+
         $this->branches->assignDriver($driver, $branch, $request->user());
-        $this->branches->audit($branch, $request->user(), 'order.driver_assigned', $order, null, [
+        $this->branches->audit($branch, $request->user(), $oldDriver ? 'order.driver_reassigned' : 'order.driver_assigned', $freshOrder, null, [
             'order_id' => $order->id,
-            'driver_id' => $driver->id,
+            'old_driver_id' => $oldDriver?->id,
+            'new_driver_id' => $driver->id,
         ]);
 
-        return redirect()->route('branch.orders.show', $order)->with('success', 'Driver assigned to order.');
+        $message = $oldDriver
+            ? "Driver reassigned from {$oldDriver->name} to {$driver->name}."
+            : "Driver {$driver->name} assigned to order.";
+
+        return redirect()->route('branch.orders.show', $order)->with('success', $message);
+    }
+
+    public function updateOrderStatus(Request $request, Order $order)
+    {
+        $branch = $this->currentBranch($request);
+        $this->authorizeBranch($request, 'branch.orders.update_status', ['manage_orders']);
+        abort_unless($this->orderBelongsToBranch($order, $branch), 404);
+        abort_unless($order->isVisibleToRestaurant(), 404);
+
+        $data = $request->validate([
+            'status' => ['required', Rule::in(array_keys(Order::getStatuses()))],
+            'cancellation_reason' => ['required_if:status,cancelled', 'nullable', 'string'],
+        ]);
+
+        $oldStatus = $order->status;
+        if ($oldStatus === $data['status']) {
+            return back()->with('success', 'Order status is already up to date.');
+        }
+
+        DB::beginTransaction();
+
+        try {
+            $order->status = $data['status'];
+            $this->stampOrderStatusTimestamps($order, $data['status'], $data['cancellation_reason'] ?? null);
+
+            if ($data['status'] === 'cancelled' && $order->payment_status === 'success') {
+                $refundResult = $this->refundService->processRefund($order, $data['cancellation_reason']);
+                if (!($refundResult['success'] ?? false)) {
+                    throw new \RuntimeException('Refund processing failed: ' . ($refundResult['message'] ?? 'Unknown error'));
+                }
+            }
+
+            $order->save();
+
+            activity()
+                ->performedOn($order)
+                ->causedBy($request->user())
+                ->withProperties([
+                    'old_status' => $oldStatus,
+                    'new_status' => $data['status'],
+                    'order_number' => $order->order_number,
+                    'branch_id' => $branch->id,
+                ])
+                ->log('Branch order status updated');
+
+            DB::commit();
+        } catch (\Throwable $exception) {
+            DB::rollBack();
+
+            return back()->withErrors(['status' => 'Failed to update order status: ' . $exception->getMessage()]);
+        }
+
+        $freshOrder = $order->fresh(['customer', 'restaurant']);
+
+        if ($data['status'] === 'confirmed') {
+            app(ScratchCardService::class)->issueForRecordedUsage($freshOrder, 'restaurant_accepts');
+        }
+
+        if ($data['status'] === 'delivered') {
+            app(ScratchCardService::class)->issueForRecordedUsage($freshOrder, 'delivery');
+        }
+
+        app(OrderStatusPushService::class)->notifyParticipants($freshOrder);
+
+        $this->branches->audit($branch, $request->user(), 'order.status_updated', $freshOrder, [
+            'status' => $oldStatus,
+        ], [
+            'status' => $data['status'],
+            'order_id' => $order->id,
+        ]);
+
+        return back()->with('success', 'Order status updated.');
     }
 
     public function restaurants(Request $request)
@@ -473,6 +585,26 @@ class BranchDashboardController extends Controller
         $this->branches->assignRestaurant($restaurant, $branch, $request->user(), 'approved');
 
         return back()->with('success', "{$restaurant->name} approved for this branch zone.");
+    }
+
+    public function toggleRestaurantStatus(Request $request, Restaurant $restaurant)
+    {
+        $branch = $this->currentBranch($request);
+        $this->authorizeBranch($request, 'branch.restaurants.update_status', ['manage_restaurants']);
+        abort_unless($this->restaurantBelongsToBranch($restaurant, $branch), 404);
+
+        $oldStatus = (bool) $restaurant->is_open;
+        $restaurant->forceFill(['is_open' => ! $oldStatus])->save();
+
+        $this->branches->assignRestaurant($restaurant, $branch, $request->user(), $restaurant->is_verified ? 'approved' : 'branch_pending');
+        $this->branches->audit($branch, $request->user(), 'restaurant.status_updated', $restaurant, [
+            'is_open' => $oldStatus,
+        ], [
+            'is_open' => (bool) $restaurant->is_open,
+            'restaurant_id' => $restaurant->id,
+        ]);
+
+        return back()->with('success', "{$restaurant->name} is now " . ($restaurant->is_open ? 'online.' : 'offline.'));
     }
 
     public function drivers(Request $request)
@@ -988,6 +1120,7 @@ class BranchDashboardController extends Controller
         return [
             'orders_view' => $this->branchCan($request, 'branch.orders.view', ['view_orders', 'manage_orders']),
             'orders_assign_driver' => $this->branchCan($request, 'branch.orders.assign_driver', ['manage_orders', 'manage_drivers']),
+            'orders_update_status' => $this->branchCan($request, 'branch.orders.update_status', ['manage_orders']),
             'orders_export' => $this->branchCan($request, 'branch.orders.export', ['view_orders', 'manage_orders']),
             'reports_view' => $this->branchCan($request, 'branch.reports.view', ['view_reports']),
             'reports_export' => $this->branchCan($request, 'branch.reports.export', ['view_reports']),
@@ -998,6 +1131,7 @@ class BranchDashboardController extends Controller
             'restaurants_view' => $this->branchCan($request, 'branch.restaurants.view', ['manage_restaurants']),
             'restaurants_create' => $this->branchCan($request, 'branch.restaurants.create', ['manage_restaurants']),
             'restaurants_edit' => $this->branchCan($request, 'branch.restaurants.edit', ['manage_restaurants']),
+            'restaurants_update_status' => $this->branchCan($request, 'branch.restaurants.update_status', ['manage_restaurants']),
             'drivers_view' => $this->branchCan($request, 'branch.drivers.view', ['manage_drivers']),
             'drivers_create' => $this->branchCan($request, 'branch.drivers.create', ['manage_drivers']),
             'drivers_edit' => $this->branchCan($request, 'branch.drivers.edit', ['manage_drivers']),
@@ -1013,10 +1147,12 @@ class BranchDashboardController extends Controller
         return [
             'branch.orders.view' => 'View Orders',
             'branch.orders.assign_driver' => 'Assign Order Drivers',
+            'branch.orders.update_status' => 'Update Order Status',
             'branch.orders.export' => 'Export Orders',
             'branch.restaurants.view' => 'View Restaurants',
             'branch.restaurants.create' => 'Create Restaurants',
             'branch.restaurants.edit' => 'Edit Restaurants',
+            'branch.restaurants.update_status' => 'Update Restaurant Online Status',
             'branch.drivers.view' => 'View Drivers',
             'branch.drivers.create' => 'Create Drivers',
             'branch.drivers.edit' => 'Edit Drivers',
@@ -1136,6 +1272,27 @@ class BranchDashboardController extends Controller
             ->get()
             ->filter(fn (User $driver) => (bool) ($autoAssignService->assignmentEligibility($driver, $order, $order->id)['eligible'] ?? false))
             ->values();
+    }
+
+    private function stampOrderStatusTimestamps(Order $order, string $status, ?string $cancellationReason = null): void
+    {
+        match ($status) {
+            'confirmed' => $order->confirmed_at ??= now(),
+            'preparing' => $order->preparing_at ??= now(),
+            'ready_for_pickup' => $order->ready_at ??= now(),
+            'reached_pickup' => $order->reached_at ??= now(),
+            'delivered' => $order->delivered_at = now(),
+            'cancelled' => $order->cancelled_at = now(),
+            default => null,
+        };
+
+        if ($status === 'delivered') {
+            $order->payment_status = 'success';
+        }
+
+        if ($status === 'cancelled') {
+            $order->cancellation_reason = $cancellationReason;
+        }
     }
 
     private function validateRestaurant(Request $request, ?Restaurant $restaurant = null): array

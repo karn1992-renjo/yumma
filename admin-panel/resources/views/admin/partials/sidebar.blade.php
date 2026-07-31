@@ -99,7 +99,6 @@
                         ['label' => 'Engine Logs', 'url' => route('admin.promotion-engine.logs'), 'active' => ['admin.promotion-engine.logs']],
                     ],
                 ],
-                ['label' => 'Legacy Promo Codes', 'icon' => 'ticket-alt', 'url' => route('admin.promos.index'), 'active' => ['admin.promos.*']],
                 ['label' => 'Campaigns', 'icon' => 'bullhorn', 'url' => route('admin.campaigns.index'), 'active' => ['admin.campaigns*']],
                 ['label' => 'Push Notifications', 'icon' => 'paper-plane', 'url' => route('admin.push-notifications.index'), 'active' => ['admin.push-notifications*']],
                 ['label' => 'Dining Bookings', 'icon' => 'utensils', 'url' => route('admin.dining-bookings.index'), 'active' => ['admin.dining-bookings.*'], 'badge' => $pendingDiningBookings ? $badge($pendingDiningBookings) : null],

@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import '../../widgets/common/app_cached_image.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:lottie/lottie.dart';
@@ -84,6 +86,12 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   String _selectedOrderType = 'delivery';
   String _selectedPaymentMethod = 'online';
   String? _selectedGatewayKey;
+  String _selectedOnlinePaymentMode = 'upi';
+  String? _selectedCashfreeUpiAppId;
+  String? _selectedCashfreeUpiAppName;
+  List<CashfreeUpiApp> _cashfreeUpiApps = const [];
+  bool _isLoadingCashfreeUpiApps = false;
+  bool _hasLoadedCashfreeUpiApps = false;
   String _selectedCouponCode = '';
   DateTime? _scheduledTime;
   double _walletBalance = 0;
@@ -2646,44 +2654,51 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     return switch (_selectedPaymentMethod) {
       'wallet' => AppConfig.walletMoneyLabel,
       'cod' => 'Cash on Delivery',
-      _ => _gatewayDisplayName(user),
+      _ => _selectedCashfreeUpiAppName?.trim().isNotEmpty == true
+          ? _selectedCashfreeUpiAppName!
+          : _onlinePaymentModeTitle(_selectedOnlineModeFor(user)),
     };
   }
 
-  IconData _paymentIcon() {
+  IconData _paymentIcon(User? user) {
     return switch (_selectedPaymentMethod) {
       'wallet' => Icons.account_balance_wallet_outlined,
       'cod' => Icons.payments_outlined,
-      _ => Icons.credit_card_rounded,
+      _ => _onlinePaymentModeIcon(_selectedOnlineModeFor(user)),
     };
   }
 
   Widget _paymentIconWidget(User? user, {required double size}) {
-    if (_selectedPaymentMethod == 'online') {
-      final logoUrl = _gatewayLogoUrl(user);
-      if (logoUrl.isNotEmpty) {
-        return AppCachedImage(
-          imageUrl: logoUrl,
-          width: size + 16,
-          height: size + 16,
-          fit: BoxFit.contain,
-          errorBuilder: (_, __, ___) => Icon(
-            Icons.credit_card_rounded,
-            size: size,
-            color: FoodFlowTheme.brandPrimary(context),
-          ),
-        );
-      }
+    final assetIcon = _paymentAssetForSelection(user);
+    if (assetIcon.isNotEmpty) {
+      return SvgPicture.asset(
+        assetIcon,
+        width: size,
+        height: size,
+        fit: BoxFit.contain,
+      );
     }
 
     return Icon(
-      _paymentIcon(),
+      _paymentIcon(user),
       size: size,
       color: FoodFlowTheme.brandPrimary(context),
     );
   }
 
-  void _showPaymentSelectorSheet(double total) {
+  Future<void> _showPaymentSelectorSheet(double total) async {
+    final authProvider = context.read<AuthProvider>();
+    await authProvider.loadUser(forceRefresh: true);
+    if (!mounted) return;
+    final initialUser = authProvider.currentUser;
+    debugPrint('[PaymentTrace] checkout.settings.refreshed source=sheet default=${initialUser?.paymentGatewayProvider ?? '-'} enabled=${initialUser?.enabledPaymentGatewayKeys.join(',') ?? '-'} gateways=${initialUser?.paymentGateways.map((gateway) => '${gateway.key}:${gateway.enabled}:${gateway.selected}').join('|') ?? '-'}');
+    final initialGateway = _effectiveGatewayProvider(initialUser);
+    debugPrint('[PaymentTrace] checkout.sheet.open selectedMethod=$_selectedPaymentMethod selectedGateway=$_selectedGatewayKey effectiveGateway=$initialGateway enabledGateways=${initialUser?.enabledPaymentGatewayKeys.join(',') ?? '-'} defaultProvider=${initialUser?.paymentGatewayProvider ?? '-'}');
+    if (initialGateway == 'cashfree') {
+      await _loadCashfreeUpiApps();
+      if (!mounted) return;
+    }
+
     showModalBottomSheet<void>(
       context: context,
       backgroundColor: const Color(0xFFF5F6FB),
@@ -2694,88 +2709,195 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       builder: (context) {
         final user =
             Provider.of<AuthProvider>(context, listen: false).currentUser;
+        final activeGateway = _effectiveGatewayProvider(user);
+        debugPrint('[PaymentTrace] checkout.sheet.build activeGateway=$activeGateway selectedGateway=$_selectedGatewayKey selectedMode=$_selectedOnlinePaymentMode cashfreeApps=${_cashfreeUpiApps.length}');
         final availableGateways = _availablePaymentGateways(user);
+        final onlineOptions = activeGateway == null
+            ? const <_OnlinePaymentModeOption>[]
+            : _onlinePaymentModeOptions(activeGateway);
+        final visibleOnlineOptions =
+            activeGateway == 'cashfree' && _cashfreeUpiApps.isNotEmpty
+                ? onlineOptions.where((option) => option.key != 'upi').toList()
+                : onlineOptions;
+        final savings = ((_summaryDiscount ?? 0) +
+                (_summaryEmbeddedItemDiscount ?? 0) +
+                (_summaryDeliveryDiscount ?? 0))
+            .clamp(0.0, double.infinity)
+            .toDouble();
+        final walletCoversTotal = _walletBalance >= total && total > 0;
         return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    IconButton(
-                      onPressed: () => Navigator.pop(context),
-                      icon: const Icon(Icons.arrow_back),
-                      color: FoodFlowTheme.ink,
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      'Bill total: ${formatCurrency(context, total)}',
-                      style: const TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w900,
-                        color: FoodFlowTheme.ink,
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxHeight: MediaQuery.sizeOf(context).height * 0.88,
+            ),
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Center(
+                    child: Container(
+                      width: 42,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFD5DAE4),
+                        borderRadius: BorderRadius.circular(99),
                       ),
                     ),
-                  ],
-                ),
-                const SizedBox(height: 18),
-                const Text(
-                  'Payment Method',
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w900,
-                    color: FoodFlowTheme.muted,
                   ),
-                ),
-                const SizedBox(height: 10),
-                _paymentSheetGroup(
-                  children: [
-                    if (availableGateways.isEmpty)
+                  const SizedBox(height: 14),
+                  Row(
+                    children: [
+                      IconButton(
+                        onPressed: () => Navigator.pop(context),
+                        icon: const Icon(Icons.arrow_back),
+                        color: FoodFlowTheme.ink,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'Choose payment',
+                              style: TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.w900,
+                                color: FoodFlowTheme.ink,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              'Secure payment powered by ${AppConfig.appName}',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w700,
+                                color: FoodFlowTheme.muted,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 14),
+                  _paymentBillCard(total: total, savings: savings),
+                  const SizedBox(height: 18),
+                  if (availableGateways.length > 1) ...[
+                    _paymentSectionTitle('Payment gateway'),
+                    const SizedBox(height: 10),
+                    for (final gateway in availableGateways) ...[
                       _paymentSheetTile(
-                        title: _gatewayDisplayName(user),
-                        subtitle: _gatewaySubtitle(user),
-                        icon: Icons.credit_card_rounded,
-                        logoUrl: _gatewayLogoUrl(user),
-                        selected: _selectedPaymentMethod == 'online',
+                        title: gateway.label,
+                        subtitle: gateway.key == 'cashfree'
+                            ? 'Use Cashfree UPI, cards, wallets and banking.'
+                            : gateway.key == 'stripe'
+                                ? 'Use Stripe card and Google Pay checkout.'
+                                : 'Use Razorpay UPI, cards, wallets and banking.',
+                        icon: Icons.account_balance_wallet_outlined,
+                        assetIcon: _gatewayAssetForKey(gateway.key),
+                        selected: _selectedPaymentMethod == 'online' &&
+                            activeGateway == gateway.key,
+                        trailingText: gateway.key == activeGateway
+                            ? 'Selected'
+                            : 'Use',
                         onTap: () => _selectPaymentMethod(
                           'online',
-                          gatewayKey: _effectiveGatewayProvider(user),
+                          gatewayKey: gateway.key,
+                          onlineMode: _onlinePaymentModeOptions(gateway.key)
+                                  .isNotEmpty
+                              ? _onlinePaymentModeOptions(gateway.key).first.key
+                              : 'upi',
                         ),
-                      )
-                    else
-                      for (final gateway in availableGateways)
+                      ),
+                      const SizedBox(height: 10),
+                    ],
+                    const SizedBox(height: 8),
+                  ],
+                  if (activeGateway != null && onlineOptions.isNotEmpty) ...[
+                    _paymentSectionTitle(
+                      activeGateway == 'cashfree' ? 'UPI apps' : 'Recommended',
+                    ),
+                    const SizedBox(height: 10),
+                    if (activeGateway == 'cashfree' &&
+                        _cashfreeUpiApps.isNotEmpty)
+                      for (final app in _cashfreeUpiApps) ...[
                         _paymentSheetTile(
-                          title: gateway.label,
-                          subtitle: _gatewaySubtitleForKey(gateway.key),
-                          icon: Icons.credit_card_rounded,
-                          logoUrl: gateway.logo,
+                          title: app.displayName,
+                          subtitle: 'Pay directly from ${app.displayName}',
+                          icon: Icons.account_balance_wallet_outlined,
+                          assetIcon: _cashfreeUpiAppAsset(app),
+                          providedIcon: app.icon,
                           selected: _selectedPaymentMethod == 'online' &&
-                              _effectiveGatewayProvider(user) == gateway.key,
+                              _selectedCashfreeUpiAppId == app.id,
+                          badge: _selectedCashfreeUpiAppId == app.id
+                              ? 'Selected'
+                              : null,
+                          trailingText: 'UPI',
                           onTap: () => _selectPaymentMethod(
                             'online',
-                            gatewayKey: gateway.key,
+                            gatewayKey: activeGateway,
+                            onlineMode: 'upi',
+                            cashfreeUpiAppId: app.id,
+                            cashfreeUpiAppName: app.displayName,
                           ),
                         ),
-                    _paymentSheetTile(
-                      title: AppConfig.walletMoneyLabel,
-                      subtitle:
-                          'Available balance: ${formatCurrency(context, _walletBalance)}',
-                      icon: Icons.account_balance_wallet_outlined,
-                      selected: _selectedPaymentMethod == 'wallet',
-                      onTap: () => _selectPaymentMethod('wallet'),
-                    ),
-                    _paymentSheetTile(
-                      title: 'Cash on Delivery',
-                      subtitle: 'Pay when your order arrives',
-                      icon: Icons.payments_outlined,
-                      selected: _selectedPaymentMethod == 'cod',
-                      onTap: () => _selectPaymentMethod('cod'),
-                    ),
+                        const SizedBox(height: 10),
+                      ],
+                    for (final option in visibleOnlineOptions) ...[
+                      _paymentSheetTile(
+                        title: option.title,
+                        subtitle: option.subtitle,
+                        icon: option.icon,
+                        assetIcon: option.assetIcon,
+                        selected: _selectedPaymentMethod == 'online' &&
+                            _selectedOnlineModeFor(user) == option.key &&
+                            _selectedCashfreeUpiAppId == null,
+                        badge: option.key == 'upi' ? 'Recommended' : null,
+                        trailingText: option.trailingText,
+                        onTap: () => _selectPaymentMethod(
+                          'online',
+                          gatewayKey: activeGateway,
+                          onlineMode: option.key,
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                    ],
                   ],
-                ),
-              ],
+                  const SizedBox(height: 8),
+                  _paymentSectionTitle('More ways to pay'),
+                  const SizedBox(height: 10),
+                  _paymentSheetTile(
+                    title: AppConfig.walletMoneyLabel,
+                    subtitle: walletCoversTotal
+                        ? 'Available balance: ${formatCurrency(context, _walletBalance)}'
+                        : 'Balance ${formatCurrency(context, _walletBalance)} is below the bill total',
+                    icon: Icons.account_balance_wallet_outlined,
+                    assetIcon: 'assets/icons/payment/wallet.svg',
+                    selected: _selectedPaymentMethod == 'wallet',
+                    badge: walletCoversTotal ? 'Instant' : null,
+                    trailingText:
+                        walletCoversTotal ? 'No gateway needed' : null,
+                    enabled: walletCoversTotal,
+                    onTap: () => _selectPaymentMethod('wallet'),
+                  ),
+                  const SizedBox(height: 10),
+                  _paymentSheetTile(
+                    title: 'Cash on Delivery',
+                    subtitle: 'Pay when your order arrives',
+                    icon: Icons.payments_outlined,
+                    assetIcon: 'assets/icons/payment/cod.svg',
+                    selected: _selectedPaymentMethod == 'cod',
+                    trailingText: 'Cash',
+                    onTap: () => _selectPaymentMethod('cod'),
+                  ),
+                  const SizedBox(height: 14),
+                  _paymentSafetyStrip(),
+                ],
+              ),
             ),
           ),
         );
@@ -2783,30 +2905,140 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     );
   }
 
-  void _selectPaymentMethod(String method, {String? gatewayKey}) {
+  void _selectPaymentMethod(
+    String method, {
+    String? gatewayKey,
+    String? onlineMode,
+    String? cashfreeUpiAppId,
+    String? cashfreeUpiAppName,
+  }) {
+    debugPrint('[PaymentTrace] checkout.select method=$method gateway=${gatewayKey ?? '-'} mode=${onlineMode ?? '-'} cashfreeUpiApp=${cashfreeUpiAppId ?? '-'} cashfreeUpiName=${cashfreeUpiAppName ?? '-'}');
     setState(() {
       _selectedPaymentMethod = method;
       if (method == 'online') {
         _selectedGatewayKey = gatewayKey;
+        _selectedOnlinePaymentMode = onlineMode ?? _selectedOnlinePaymentMode;
+        _selectedCashfreeUpiAppId = cashfreeUpiAppId;
+        _selectedCashfreeUpiAppName = cashfreeUpiAppName;
+      } else {
+        _selectedCashfreeUpiAppId = null;
+        _selectedCashfreeUpiAppName = null;
       }
     });
     Navigator.pop(context);
   }
 
-  Widget _paymentSheetGroup({required List<Widget> children}) {
+  Widget _paymentBillCard({
+    required double total,
+    required double savings,
+  }) {
     return Container(
+      padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFFE8ECF3)),
       ),
       child: Column(
         children: [
-          for (var index = 0; index < children.length; index++) ...[
-            children[index],
-            if (index != children.length - 1)
-              const Divider(height: 1, indent: 16, endIndent: 16),
+          Row(
+            children: [
+              Container(
+                width: 38,
+                height: 38,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFEFF8F3),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Icon(
+                  Icons.lock_outline_rounded,
+                  color: Color(0xFF168A35),
+                  size: 20,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Payable amount',
+                      style: TextStyle(
+                        color: FoodFlowTheme.muted,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      formatCurrency(context, total),
+                      style: const TextStyle(
+                        color: FoodFlowTheme.ink,
+                        fontSize: 22,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (savings > 0)
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFEFF8F3),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Text(
+                    'Saved ${formatCurrency(context, savings)}',
+                    style: const TextStyle(
+                      color: Color(0xFF168A35),
+                      fontSize: 11,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                ),
+            ],
+          ),
+          if (_cashbackEarned > 0 || _rewardPointsEarned > 0) ...[
+            const SizedBox(height: 12),
+            const Divider(height: 1),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                const Icon(
+                  Icons.local_offer_outlined,
+                  size: 17,
+                  color: FoodFlowTheme.muted,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    _paymentRewardSummary(),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: FoodFlowTheme.inkSoft,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ],
         ],
+      ),
+    );
+  }
+
+  Widget _paymentSectionTitle(String title) {
+    return Text(
+      title.toUpperCase(),
+      style: const TextStyle(
+        color: FoodFlowTheme.muted,
+        fontSize: 11,
+        fontWeight: FontWeight.w900,
       ),
     );
   }
@@ -2818,63 +3050,259 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     required bool selected,
     required VoidCallback onTap,
     String logoUrl = '',
+    String assetIcon = '',
+    String providedIcon = '',
+    String? badge,
+    String? trailingText,
+    bool enabled = true,
   }) {
-    return InkWell(
-      onTap: onTap,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-        child: Row(
-          children: [
-            logoUrl.isNotEmpty
-                ? ClipRRect(
-                    borderRadius: BorderRadius.circular(8),
-                    child: AppCachedImage(
-                      imageUrl: logoUrl,
-                      width: 44,
-                      height: 44,
-                      fit: BoxFit.contain,
-                      errorBuilder: (_, __, ___) => _paymentFallbackIcon(
-                        icon,
-                        selected,
+    final foreground = enabled ? FoodFlowTheme.ink : FoodFlowTheme.muted;
+    return Material(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(18),
+      child: InkWell(
+        onTap: enabled ? onTap : null,
+        borderRadius: BorderRadius.circular(18),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(
+              color: selected
+                  ? FoodFlowTheme.brandPrimary(context).withOpacity(0.42)
+                  : const Color(0xFFE8ECF3),
+              width: selected ? 1.5 : 1,
+            ),
+          ),
+          child: Row(
+            children: [
+              providedIcon.isNotEmpty
+                  ? _paymentProvidedIcon(
+                      providedIcon,
+                      selected,
+                      fallback: assetIcon.isNotEmpty
+                          ? _paymentAssetIcon(assetIcon, selected)
+                          : _paymentFallbackIcon(icon, selected),
+                    )
+                  : assetIcon.isNotEmpty
+                      ? _paymentAssetIcon(assetIcon, selected)
+                      : logoUrl.isNotEmpty
+                          ? ClipRRect(
+                              borderRadius: BorderRadius.circular(8),
+                              child: AppCachedImage(
+                                imageUrl: logoUrl,
+                                width: 44,
+                                height: 44,
+                                fit: BoxFit.contain,
+                                errorBuilder: (_, __, ___) =>
+                                    _paymentFallbackIcon(
+                                  icon,
+                                  selected,
+                                ),
+                              ),
+                            )
+                          : _paymentFallbackIcon(icon, selected),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Flexible(
+                          child: Text(
+                            title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: foreground,
+                              fontSize: 15.5,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                        ),
+                        if (badge != null) ...[
+                          const SizedBox(width: 8),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 7,
+                              vertical: 3,
+                            ),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFEFF8F3),
+                              borderRadius: BorderRadius.circular(999),
+                            ),
+                            child: Text(
+                              badge,
+                              style: const TextStyle(
+                                color: Color(0xFF168A35),
+                                fontSize: 10,
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      subtitle,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color:
+                            enabled ? FoodFlowTheme.muted : FoodFlowTheme.faint,
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w700,
                       ),
                     ),
-                  )
-                : _paymentFallbackIcon(icon, selected),
-            const SizedBox(width: 16),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
-                  Text(
-                    title,
-                    style: const TextStyle(
-                      color: FoodFlowTheme.ink,
-                      fontSize: 16,
-                      fontWeight: FontWeight.w800,
-                    ),
+                  Icon(
+                    selected ? Icons.check_circle : Icons.chevron_right,
+                    color: selected
+                        ? FoodFlowTheme.brandPrimary(context)
+                        : FoodFlowTheme.faint,
                   ),
-                  const SizedBox(height: 3),
-                  Text(
-                    subtitle,
-                    style: const TextStyle(
-                      color: FoodFlowTheme.muted,
-                      fontSize: 12.5,
-                      fontWeight: FontWeight.w600,
+                  if (trailingText != null) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      trailingText,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: FoodFlowTheme.muted,
+                        fontSize: 10.5,
+                        fontWeight: FontWeight.w800,
+                      ),
                     ),
-                  ),
+                  ],
                 ],
               ),
-            ),
-            Icon(
-              selected ? Icons.check_circle : Icons.chevron_right,
-              color: selected
-                  ? FoodFlowTheme.brandPrimary(context)
-                  : FoodFlowTheme.faint,
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
+  }
+
+  Widget _paymentSafetyStrip() {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFEFF3FA),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: const Row(
+        children: [
+          Icon(Icons.verified_user_outlined,
+              size: 18, color: Color(0xFF4D5C73)),
+          SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              'Payments are verified before the order is confirmed. If a gateway fails, choose another method and try again.',
+              style: TextStyle(
+                color: Color(0xFF4D5C73),
+                fontSize: 12,
+                height: 1.3,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _paymentIconContainer(
+    Widget child,
+    bool selected, {
+    double padding = 7,
+  }) {
+    return Container(
+      width: 44,
+      height: 44,
+      padding: EdgeInsets.all(padding),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: selected
+              ? FoodFlowTheme.brandPrimary(context).withOpacity(0.35)
+              : FoodFlowTheme.line,
+        ),
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(6),
+        child: child,
+      ),
+    );
+  }
+
+  Widget _paymentAssetIcon(String assetIcon, bool selected) {
+    return _paymentIconContainer(
+      SvgPicture.asset(assetIcon, fit: BoxFit.contain),
+      selected,
+    );
+  }
+
+  Widget _paymentProvidedIcon(
+    String providedIcon,
+    bool selected, {
+    required Widget fallback,
+  }) {
+    final image = _paymentProvidedIconImage(providedIcon);
+    if (image == null) return fallback;
+    return _paymentIconContainer(image, selected, padding: 5);
+  }
+
+  Widget? _paymentProvidedIconImage(String providedIcon) {
+    final raw = providedIcon.trim();
+    if (raw.isEmpty) return null;
+
+    if (raw.startsWith('<svg')) {
+      return SvgPicture.string(raw, fit: BoxFit.contain);
+    }
+
+    if (raw.startsWith('http://') || raw.startsWith('https://')) {
+      return AppCachedImage(imageUrl: raw, fit: BoxFit.contain);
+    }
+
+    try {
+      final lower = raw.toLowerCase();
+      if (lower.startsWith('data:')) {
+        final commaIndex = raw.indexOf(',');
+        if (commaIndex == -1) return null;
+        final meta = raw.substring(0, commaIndex).toLowerCase();
+        final payload = raw.substring(commaIndex + 1);
+        if (meta.contains('svg')) {
+          final svg = meta.contains('base64')
+              ? utf8.decode(base64Decode(payload))
+              : Uri.decodeComponent(payload);
+          return SvgPicture.string(svg, fit: BoxFit.contain);
+        }
+        return Image.memory(
+          base64Decode(payload),
+          fit: BoxFit.contain,
+          errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+        );
+      }
+
+      final normalized = raw.replaceAll(RegExp(r'\s+'), '');
+      return Image.memory(
+        base64Decode(normalized),
+        fit: BoxFit.contain,
+        errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+      );
+    } catch (_) {
+      return null;
+    }
   }
 
   Widget _paymentFallbackIcon(IconData icon, bool selected) {
@@ -2893,6 +3321,47 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
             : FoodFlowTheme.inkSoft,
       ),
     );
+  }
+
+  Future<void> _loadCashfreeUpiApps() async {
+    if (_isLoadingCashfreeUpiApps || _hasLoadedCashfreeUpiApps) {
+      debugPrint('[PaymentTrace] checkout.cashfreeUpiApps.skip loading=$_isLoadingCashfreeUpiApps loaded=$_hasLoadedCashfreeUpiApps count=${_cashfreeUpiApps.length}');
+      return;
+    }
+    setState(() => _isLoadingCashfreeUpiApps = true);
+    try {
+      final apps = await _paymentService.cashfreeUpiApps();
+      if (!mounted) return;
+      final appSummary = apps
+          .map((app) => '${app.id}:${app.displayName}')
+          .join('|');
+      debugPrint('[PaymentTrace] checkout.cashfreeUpiApps.loaded count=${apps.length} apps=$appSummary');
+      setState(() {
+        _cashfreeUpiApps = apps;
+        _hasLoadedCashfreeUpiApps = true;
+        if (apps.isNotEmpty && _selectedCashfreeUpiAppId == null) {
+          _selectedCashfreeUpiAppId = apps.first.id;
+          _selectedCashfreeUpiAppName = apps.first.displayName;
+        } else if (apps.isEmpty) {
+          _selectedCashfreeUpiAppId = null;
+          _selectedCashfreeUpiAppName = null;
+          _selectedOnlinePaymentMode = 'upi';
+        }
+      });
+    } catch (error) {
+      debugPrint('[PaymentTrace] checkout.cashfreeUpiApps.error $error');
+      debugPrint('Load Cashfree UPI apps error: $error');
+      if (!mounted) return;
+      setState(() {
+        _cashfreeUpiApps = const [];
+        _hasLoadedCashfreeUpiApps = true;
+        _selectedCashfreeUpiAppId = null;
+        _selectedCashfreeUpiAppName = null;
+        _selectedOnlinePaymentMode = 'upi';
+      });
+    } finally {
+      if (mounted) setState(() => _isLoadingCashfreeUpiApps = false);
+    }
   }
 
   Future<void> _loadWalletBalance() async {
@@ -2923,16 +3392,200 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         '';
   }
 
-  String _gatewaySubtitle(User? user) {
-    return _gatewaySubtitleForKey(_effectiveGatewayProvider(user) ?? '');
+  List<_OnlinePaymentModeOption> _onlinePaymentModeOptions(String provider) {
+    if (provider == 'stripe') {
+      return const [
+        _OnlinePaymentModeOption(
+          key: 'card',
+          title: 'Credit / Debit Card',
+          subtitle: 'Pay securely with your saved or new card.',
+          icon: Icons.credit_card_rounded,
+          trailingText: 'Card',
+          assetIcon: 'assets/icons/payment/card.svg',
+        ),
+        _OnlinePaymentModeOption(
+          key: 'google_pay',
+          title: 'Google Pay',
+          subtitle: 'Use Google Pay if it is enabled on your Stripe account.',
+          icon: Icons.account_balance_wallet_outlined,
+          trailingText: 'GPay',
+          assetIcon: 'assets/icons/payment/google_pay.svg',
+        ),
+      ];
+    }
+
+    if (provider == 'cashfree') {
+      return const [
+        _OnlinePaymentModeOption(
+          key: 'upi',
+          title: 'UPI',
+          subtitle: 'Choose an installed UPI app and complete payment here.',
+          icon: Icons.qr_code_2_rounded,
+          trailingText: 'Instant',
+          assetIcon: 'assets/icons/payment/upi.svg',
+        ),
+        _OnlinePaymentModeOption(
+          key: 'card',
+          title: 'Credit / Debit Card',
+          subtitle: 'Pay by card through the secure Cashfree SDK screen.',
+          icon: Icons.credit_card_rounded,
+          trailingText: 'Cards',
+          assetIcon: 'assets/icons/payment/card.svg',
+        ),
+        _OnlinePaymentModeOption(
+          key: 'wallet',
+          title: 'Online Wallets',
+          subtitle: 'Pay using wallets supported by your Cashfree account.',
+          icon: Icons.account_balance_wallet_outlined,
+          trailingText: 'Wallets',
+          assetIcon: 'assets/icons/payment/wallet.svg',
+        ),
+        _OnlinePaymentModeOption(
+          key: 'netbanking',
+          title: 'Net Banking',
+          subtitle: 'Choose a bank on the secure Cashfree SDK screen.',
+          icon: Icons.account_balance_rounded,
+          trailingText: 'Bank',
+          assetIcon: 'assets/icons/payment/netbanking.svg',
+        ),
+        _OnlinePaymentModeOption(
+          key: 'paylater',
+          title: 'Pay Later',
+          subtitle: 'Use pay later providers enabled on Cashfree.',
+          icon: Icons.schedule_rounded,
+          trailingText: 'Later',
+          assetIcon: 'assets/icons/payment/pay_later.svg',
+        ),
+        _OnlinePaymentModeOption(
+          key: 'emi',
+          title: 'EMI',
+          subtitle: 'Pay in installments if available for this order.',
+          icon: Icons.payments_rounded,
+          trailingText: 'EMI',
+          assetIcon: 'assets/icons/payment/emi.svg',
+        ),
+      ];
+    }
+
+    return const [
+      _OnlinePaymentModeOption(
+        key: 'upi',
+        title: 'UPI',
+        subtitle: 'Pay from any UPI app on the secure payment page.',
+        icon: Icons.qr_code_2_rounded,
+        trailingText: 'Instant',
+        assetIcon: 'assets/icons/payment/upi.svg',
+      ),
+      _OnlinePaymentModeOption(
+        key: 'card',
+        title: 'Credit / Debit Card',
+        subtitle: 'Use Visa, Mastercard, RuPay or other supported cards.',
+        icon: Icons.credit_card_rounded,
+        trailingText: 'Cards',
+        assetIcon: 'assets/icons/payment/card.svg',
+      ),
+      _OnlinePaymentModeOption(
+        key: 'wallet',
+        title: 'Online Wallets',
+        subtitle: 'Pay using supported wallet apps on the payment page.',
+        icon: Icons.account_balance_wallet_outlined,
+        trailingText: 'Wallets',
+        assetIcon: 'assets/icons/payment/wallet.svg',
+      ),
+      _OnlinePaymentModeOption(
+        key: 'netbanking',
+        title: 'Net Banking',
+        subtitle: 'Continue to your bank from the secure payment page.',
+        icon: Icons.account_balance_rounded,
+        trailingText: 'Bank',
+        assetIcon: 'assets/icons/payment/netbanking.svg',
+      ),
+    ];
   }
 
-  String _gatewaySubtitleForKey(String provider) {
-    return switch (provider) {
-      'stripe' => 'Secure card checkout based on the admin payment gateway.',
-      'cashfree' => 'UPI, cards and wallets via the admin payment gateway.',
-      _ => 'UPI, cards and wallets via the admin payment gateway.',
+  String _selectedOnlineModeFor(User? user) {
+    final provider = _effectiveGatewayProvider(user);
+    if (provider == null) return _selectedOnlinePaymentMode;
+    final options = _onlinePaymentModeOptions(provider);
+    if (options.any((option) => option.key == _selectedOnlinePaymentMode)) {
+      return _selectedOnlinePaymentMode;
+    }
+    return options.isEmpty ? _selectedOnlinePaymentMode : options.first.key;
+  }
+
+  String _onlinePaymentModeTitle(String mode) {
+    return switch (mode) {
+      'card' => 'Credit / Debit Card',
+      'wallet' => 'Online Wallets',
+      'netbanking' => 'Net Banking',
+      'paylater' => 'Pay Later',
+      'emi' => 'EMI',
+      'google_pay' => 'Google Pay',
+      _ => 'UPI',
     };
+  }
+
+  IconData _onlinePaymentModeIcon(String mode) {
+    return switch (mode) {
+      'card' => Icons.credit_card_rounded,
+      'wallet' => Icons.account_balance_wallet_outlined,
+      'netbanking' => Icons.account_balance_rounded,
+      'paylater' => Icons.schedule_rounded,
+      'emi' => Icons.payments_rounded,
+      'google_pay' => Icons.account_balance_wallet_outlined,
+      _ => Icons.qr_code_2_rounded,
+    };
+  }
+
+  String _paymentAssetForSelection(User? user) {
+    return switch (_selectedPaymentMethod) {
+      'wallet' => 'assets/icons/payment/wallet.svg',
+      'cod' => 'assets/icons/payment/cod.svg',
+      _ => _selectedCashfreeUpiAppName?.trim().isNotEmpty == true
+          ? _cashfreeUpiAppNameAsset(_selectedCashfreeUpiAppName!)
+          : _onlinePaymentModeAsset(_selectedOnlineModeFor(user)),
+    };
+  }
+
+  String _onlinePaymentModeAsset(String mode) {
+    return switch (mode) {
+      'card' => 'assets/icons/payment/card.svg',
+      'wallet' => 'assets/icons/payment/wallet.svg',
+      'netbanking' => 'assets/icons/payment/netbanking.svg',
+      'paylater' => 'assets/icons/payment/pay_later.svg',
+      'emi' => 'assets/icons/payment/emi.svg',
+      'google_pay' => 'assets/icons/payment/google_pay.svg',
+      _ => 'assets/icons/payment/upi.svg',
+    };
+  }
+
+  String _cashfreeUpiAppAsset(CashfreeUpiApp app) {
+    return _cashfreeUpiAppNameAsset(app.displayName);
+  }
+
+  String _cashfreeUpiAppNameAsset(String displayName) {
+    final name = displayName.toLowerCase();
+    if (name.contains('google') || name.contains('gpay')) {
+      return 'assets/icons/payment/google_pay.svg';
+    }
+    if (name.contains('phonepe') || name.contains('phone pe')) {
+      return 'assets/icons/payment/phonepe.svg';
+    }
+    if (name.contains('paytm')) return 'assets/icons/payment/paytm.svg';
+    if (name.contains('bhim')) return 'assets/icons/payment/bhim.svg';
+    if (name.contains('amazon')) return 'assets/icons/payment/amazon_pay.svg';
+    return 'assets/icons/payment/upi.svg';
+  }
+
+  String _paymentRewardSummary() {
+    final parts = <String>[];
+    if (_cashbackEarned > 0) {
+      parts.add('Cashback ${formatCurrency(context, _cashbackEarned)}');
+    }
+    if (_rewardPointsEarned > 0) {
+      parts.add('$_rewardPointsEarned reward points');
+    }
+    return parts.join(' + ');
   }
 
   List<PaymentGatewayOption> _availablePaymentGateways(User? user) {
@@ -2983,10 +3636,18 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     return {'razorpay', 'stripe', 'cashfree'}.contains(provider);
   }
 
+  String _gatewayAssetForKey(String provider) {
+    return switch (provider) {
+      'cashfree' => 'assets/icons/payment/cashfree.svg',
+      'stripe' => 'assets/icons/payment/stripe.svg',
+      _ => 'assets/icons/payment/razorpay.svg',
+    };
+  }
+
   String _gatewayLabelForKey(String provider) {
     return switch (provider) {
       'stripe' => 'Stripe',
-      'cashfree' => 'Cashfree',
+      'cashfree' => 'UPI / Cards / Wallets',
       _ => 'Razorpay',
     };
   }
@@ -3582,7 +4243,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                         'Cashback ${formatCurrency(context, _cashbackEarned)}',
                       if (_rewardPointsEarned > 0)
                         '$_rewardPointsEarned points',
-                    ].join(' • '),
+                    ].join(' â€¢ '),
                     style: const TextStyle(
                       color: Color(0xFF168A35),
                       fontSize: 12,
@@ -4236,7 +4897,12 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       return;
     }
 
-    final paymentMethod = _orderPaymentMethod(user);
+    final authProvider = context.read<AuthProvider>();
+    await authProvider.loadUser(forceRefresh: true);
+    if (!mounted) return;
+    final refreshedUser = authProvider.currentUser;
+    debugPrint('[PaymentTrace] checkout.settings.refreshed source=place default=${refreshedUser?.paymentGatewayProvider ?? '-'} enabled=${refreshedUser?.enabledPaymentGatewayKeys.join(',') ?? '-'} gateways=${refreshedUser?.paymentGateways.map((gateway) => '${gateway.key}:${gateway.enabled}:${gateway.selected}').join('|') ?? '-'}');
+    final paymentMethod = _orderPaymentMethod(refreshedUser);
     if (paymentMethod == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -4283,9 +4949,9 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         'delivery_lng': address.longitude,
       },
       'order_type': orderType,
-      'customer_name': user?.name,
-      'customer_email': user?.email,
-      'email': user?.email,
+      'customer_name': refreshedUser?.name,
+      'customer_email': refreshedUser?.email,
+      'email': refreshedUser?.email,
       'customer_phone': checkoutPhone,
       'phone': checkoutPhone,
       'contact': checkoutPhone,
@@ -4295,6 +4961,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       if (_scheduledTime != null)
         'scheduled_time': _scheduledTime!.toIso8601String(),
     };
+    debugPrint('[PaymentTrace] checkout.place resolvedPayment=$paymentMethod selectedMethod=$_selectedPaymentMethod selectedGateway=$_selectedGatewayKey onlineMode=${_selectedOnlineModeFor(refreshedUser)} cashfreeUpiApp=${_selectedCashfreeUpiAppId ?? '-'} userDefault=${refreshedUser?.paymentGatewayProvider ?? '-'} enabledGateways=${refreshedUser?.enabledPaymentGatewayKeys.join(',') ?? '-'}');
     debugPrint(
       '[SwaadPromoCart] create order request: restaurant=${restaurant.id}, '
       'paidItems=${cart.paidItems.map((item) => '${item.menuItem.id}x${item.quantity}').join(',')}, '
@@ -4302,15 +4969,16 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       'summaryRewards=${_rewardLineDebug(_rewardLines)}, type=$orderType, payment=$paymentMethod',
     );
 
-    var submissionData = Map<String, dynamic>.from(orderData);
     if (_selectedPaymentMethod == 'online') {
-      final paymentProof = await _startCheckoutPayment(
+      final order = await _startOnlineCheckoutPayment(
         orderData: orderData,
         gateway: paymentMethod,
+        paymentMode: _selectedOnlineModeFor(refreshedUser),
+        cashfreeUpiAppId: _selectedCashfreeUpiAppId,
       );
       if (!mounted) return;
 
-      if (paymentProof == null) {
+      if (order == null) {
         setState(() => _isPlacingOrder = false);
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -4320,13 +4988,13 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         return;
       }
 
-      submissionData = {
-        ...submissionData,
-        ...paymentProof,
-      };
+      setState(() => _isPlacingOrder = false);
+      _navigateToCartOrderConfirmation(order, cart);
+      return;
     }
 
-    final order = await orderProvider.createOrder(submissionData);
+    final order = await orderProvider.createOrder(orderData);
+
     if (!mounted) return;
 
     if (order == null) {
@@ -4344,16 +5012,22 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     _navigateToCartOrderConfirmation(order, cart);
   }
 
-  Future<Map<String, dynamic>?> _startCheckoutPayment({
+  Future<Order?> _startOnlineCheckoutPayment({
     required Map<String, dynamic> orderData,
     required String gateway,
+    required String paymentMode,
+    String? cashfreeUpiAppId,
   }) async {
     try {
+      debugPrint('[PaymentTrace] checkout.payForCheckout.call gateway=$gateway mode=$paymentMode cashfreeUpiApp=${cashfreeUpiAppId ?? '-'} orderPaymentMethod=${orderData['payment_method']} itemCount=${orderData['items'] is List ? (orderData['items'] as List).length : '-'}');
       return await _paymentService.payForCheckout(
         orderData: orderData,
         gateway: gateway,
+        paymentMode: paymentMode,
+        cashfreeUpiAppId: cashfreeUpiAppId,
       );
     } catch (error) {
+      debugPrint('[PaymentTrace] checkout.payForCheckout.error $error');
       if (!mounted) return null;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -5285,6 +5959,24 @@ class _PromotionRewardCartCard extends StatelessWidget {
       ),
     );
   }
+}
+
+class _OnlinePaymentModeOption {
+  const _OnlinePaymentModeOption({
+    required this.key,
+    required this.title,
+    required this.subtitle,
+    required this.icon,
+    required this.trailingText,
+    this.assetIcon = '',
+  });
+
+  final String key;
+  final String title;
+  final String subtitle;
+  final IconData icon;
+  final String trailingText;
+  final String assetIcon;
 }
 
 class _RewardLinePreview extends StatelessWidget {

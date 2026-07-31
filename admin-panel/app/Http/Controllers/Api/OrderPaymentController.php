@@ -25,10 +25,11 @@ class OrderPaymentController extends Controller
         ]);
 
         $order = Order::where('customer_id', $request->user()->id)->findOrFail($id);
-        $this->ensureCustomerPaymentsEnabled();
+        $gateway = $validated['gateway'] ?? $this->defaultCustomerGateway();
+        $this->ensureCustomerGatewayEnabled($gateway);
         $attempt = $this->payments->createCustomerPayment(
             $order,
-            $validated['gateway'] ?? $this->defaultCustomerGateway(),
+            $gateway,
             $request->user()->id
         );
 
@@ -45,9 +46,11 @@ class OrderPaymentController extends Controller
         ]);
 
         $order = Order::where('driver_id', $request->user()->id)->findOrFail($id);
+        $gateway = $validated['gateway'] ?? $this->defaultDriverGateway();
+        $this->ensureCustomerGatewayEnabled($gateway);
         $attempt = $this->payments->createDriverPaymentLink(
             $order,
-            $validated['gateway'] ?? $this->defaultDriverGateway(),
+            $gateway,
             $request->user()->id
         );
 
@@ -164,36 +167,101 @@ class OrderPaymentController extends Controller
 
     private function defaultCustomerGateway(): string
     {
-        $this->ensureCustomerPaymentsEnabled();
-
         return $this->defaultConfiguredGateway();
     }
 
-    private function ensureCustomerPaymentsEnabled(): void
+    private function ensureCustomerGatewayEnabled(string $gateway): void
     {
-        $enabled = filter_var(AppSetting::getValue('payment_gateway_enabled', '1'), FILTER_VALIDATE_BOOLEAN);
-        abort_unless($enabled, 422, 'Online payment is not available right now.');
+        abort_unless(
+            $this->isCustomerPaymentGatewayEnabled($gateway),
+            422,
+            $this->customerPaymentGatewayUnavailableMessage($gateway)
+        );
     }
 
     private function defaultConfiguredGateway(): string
     {
-        $supported = array_keys(GatewayRegistry::customerSelectablePaymentProviders());
-        $configured = strtolower(trim((string) AppSetting::getValue('payment_gateway_provider', 'razorpay')));
-
-        if (in_array($configured, $supported, true)) {
-            return $configured;
+        return $this->availableCustomerPaymentGateway() ?? 'razorpay';
+    }
+    private function isCustomerPaymentGatewayEnabled(?string $gateway): bool
+    {
+        if (method_exists(GatewayRegistry::class, 'isCustomerPaymentGatewayEnabled')) {
+            return GatewayRegistry::isCustomerPaymentGatewayEnabled($gateway);
         }
 
+        $gateway = strtolower(trim((string) $gateway));
+        if ($gateway === '' || ! filter_var(AppSetting::getValue('payment_gateway_enabled', '1'), FILTER_VALIDATE_BOOLEAN)) {
+            return false;
+        }
+
+        return in_array($gateway, $this->enabledCustomerPaymentGatewayKeys(), true);
+    }
+
+    private function customerPaymentGatewayUnavailableMessage(?string $gateway = null): string
+    {
+        if (method_exists(GatewayRegistry::class, 'customerPaymentGatewayUnavailableMessage')) {
+            return GatewayRegistry::customerPaymentGatewayUnavailableMessage($gateway);
+        }
+
+        if (! filter_var(AppSetting::getValue('payment_gateway_enabled', '1'), FILTER_VALIDATE_BOOLEAN)) {
+            return 'Online payment is not available right now.';
+        }
+
+        return $this->paymentProviderLabel($gateway) . ' is not enabled for customer payments right now.';
+    }
+    private function availableCustomerPaymentGateway(?string $preferred = null): ?string
+    {
+        if (method_exists(GatewayRegistry::class, 'availableCustomerPaymentGateway')) {
+            return GatewayRegistry::availableCustomerPaymentGateway($preferred);
+        }
+
+        $enabled = $this->enabledCustomerPaymentGatewayKeys();
+        $preferred = strtolower(trim((string) $preferred));
+
+        if ($preferred !== '' && in_array($preferred, $enabled, true)) {
+            return $preferred;
+        }
+
+        return $enabled[0] ?? null;
+    }
+
+    private function enabledCustomerPaymentGatewayKeys(): array
+    {
         $enabled = json_decode((string) AppSetting::getValue('enabled_payment_gateways', '[]'), true);
-        if (is_array($enabled)) {
-            foreach ($enabled as $gateway) {
-                $gateway = strtolower(trim((string) $gateway));
-                if (in_array($gateway, $supported, true)) {
-                    return $gateway;
-                }
-            }
+        $supported = $this->customerSelectablePaymentGatewayKeys();
+
+        if (! is_array($enabled) || $enabled === []) {
+            return $supported;
         }
 
-        return 'razorpay';
+        return array_values(array_filter(
+            array_map(fn ($value) => strtolower(trim((string) $value)), $enabled),
+            fn ($value) => in_array($value, $supported, true)
+        ));
+    }
+
+    private function customerSelectablePaymentGatewayKeys(): array
+    {
+        if (method_exists(GatewayRegistry::class, 'customerSelectablePaymentProviders')) {
+            return array_keys(GatewayRegistry::customerSelectablePaymentProviders());
+        }
+
+        return ['razorpay', 'stripe', 'cashfree'];
+    }
+
+    private function paymentProviderLabel(?string $gateway): string
+    {
+        if (method_exists(GatewayRegistry::class, 'providerLabel')) {
+            return GatewayRegistry::providerLabel($gateway);
+        }
+
+        $labels = [
+            'razorpay' => 'Razorpay',
+            'stripe' => 'Stripe',
+            'cashfree' => 'Cashfree',
+        ];
+        $normalized = strtolower(trim((string) $gateway));
+
+        return $labels[$normalized] ?? ucfirst($normalized ?: 'gateway');
     }
 }

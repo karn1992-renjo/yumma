@@ -2,6 +2,8 @@
 
 namespace App\Support;
 
+use App\Models\AppSetting;
+
 class GatewayRegistry
 {
     public const PAYMENT_PROVIDERS = [
@@ -61,6 +63,65 @@ class GatewayRegistry
     public static function customerSelectablePaymentProviders(): array
     {
         return self::CUSTOMER_SELECTABLE_PAYMENT_PROVIDERS;
+    }
+    public static function customerPaymentsEnabled(): bool
+    {
+        return filter_var(AppSetting::getValue('payment_gateway_enabled', '1'), FILTER_VALIDATE_BOOLEAN);
+    }
+
+    public static function enabledCustomerPaymentGateways(): array
+    {
+        $supported = array_keys(self::customerSelectablePaymentProviders());
+        $stored = AppSetting::getValue('enabled_payment_gateways');
+        $decoded = json_decode((string) $stored, true);
+
+        if (! is_array($decoded) || $decoded === []) {
+            return $supported;
+        }
+
+        $enabled = array_values(array_filter(
+            array_map(fn ($gateway) => strtolower(trim((string) $gateway)), $decoded),
+            fn ($gateway) => in_array($gateway, $supported, true)
+        ));
+
+        $configured = strtolower(trim((string) AppSetting::getValue('payment_gateway_provider', '')));
+        if ($configured !== '' && in_array($configured, $supported, true) && ! in_array($configured, $enabled, true)) {
+            $enabled[] = $configured;
+        }
+
+        return array_values(array_unique($enabled));
+    }
+
+    public static function isCustomerPaymentGatewayEnabled(?string $gateway): bool
+    {
+        $gateway = strtolower(trim((string) $gateway));
+
+        return $gateway !== ''
+            && self::customerPaymentsEnabled()
+            && in_array($gateway, self::enabledCustomerPaymentGateways(), true);
+    }
+
+    public static function availableCustomerPaymentGateway(?string $preferred = null): ?string
+    {
+        $enabled = self::enabledCustomerPaymentGateways();
+        $preferred = strtolower(trim((string) $preferred));
+
+        if ($preferred !== '' && in_array($preferred, $enabled, true)) {
+            return $preferred;
+        }
+
+        return $enabled[0] ?? null;
+    }
+
+    public static function customerPaymentGatewayUnavailableMessage(?string $gateway = null): string
+    {
+        if (! self::customerPaymentsEnabled()) {
+            return 'Online payment is not available right now.';
+        }
+
+        $label = self::providerLabel($gateway);
+
+        return $label . ' is not enabled for customer payments right now.';
     }
 
     public static function payoutProviders(): array

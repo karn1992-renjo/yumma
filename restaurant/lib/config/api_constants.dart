@@ -68,7 +68,7 @@ class ApiConstants {
   static const String setDefaultAddress = '/addresses/default';
 
   // Coupon endpoints
-  static const String validateCoupon = '/coupons/validate';
+  static const String validateCoupon = '/promotions/coupon/validate';
   static const String offers = '/offers';
 
   // Payment endpoints

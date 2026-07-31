@@ -14,6 +14,12 @@
         </a>
     @endif
 </div>
+@if(session('success'))
+    <div class="alert alert-success">{{ session('success') }}</div>
+@endif
+@if($errors->any())
+    <div class="alert alert-danger">{{ $errors->first() }}</div>
+@endif
 <div class="card">
     <div class="card-body border-bottom">
         <form method="GET" action="{{ route('branch.restaurants') }}" class="row g-3 align-items-end">
@@ -64,6 +70,14 @@
                                 @csrf
                                 <button class="btn btn-sm btn-success" title="Approve in branch zone">
                                     <i class="fas fa-check"></i>
+                                </button>
+                            </form>
+                        @endif
+                        @if($capabilities['restaurants_update_status'] ?? false)
+                            <form action="{{ route('branch.restaurants.toggle-status', $restaurant) }}" method="POST" class="d-inline">
+                                @csrf
+                                <button class="btn btn-sm {{ $restaurant->is_open ? 'btn-outline-secondary' : 'btn-outline-success' }}" title="{{ $restaurant->is_open ? 'Set offline' : 'Set online' }}">
+                                    <i class="fas fa-{{ $restaurant->is_open ? 'store-slash' : 'store' }}"></i>
                                 </button>
                             </form>
                         @endif

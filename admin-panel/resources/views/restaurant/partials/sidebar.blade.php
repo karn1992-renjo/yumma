@@ -123,25 +123,6 @@
         </ul>
         @endif
         
-        @if($isOwner)
-        <div class="sidebar-section-title">MARKETING</div>
-        <ul class="sidebar-nav">
-            <li class="sidebar-nav-item">
-                <a href="{{ route('restaurant.promos.index') }}" 
-                   class="sidebar-nav-link {{ request()->routeIs('restaurant.promos.*') ? 'active' : '' }}">
-                    <i class="fas fa-tags"></i>
-                    <span>Promotions</span>
-                </a>
-            </li>
-            <li class="sidebar-nav-item">
-                <a href="{{ route('restaurant.promos.create') }}" 
-                   class="sidebar-nav-link {{ request()->routeIs('restaurant.promos.create') ? 'active' : '' }}">
-                    <i class="fas fa-plus-circle"></i>
-                    <span>Create Promotion</span>
-                </a>
-            </li>
-        </ul>
-        @endif
         
         @if($canReports)
         <div class="sidebar-section-title">INSIGHTS</div>

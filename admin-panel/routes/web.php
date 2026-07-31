@@ -26,7 +26,6 @@ use App\Http\Controllers\Admin\WalletController;
 use App\Http\Controllers\Admin\GiftCardController;
 use App\Http\Controllers\Admin\RefundController;
 use App\Http\Controllers\Admin\BannerController;
-use App\Http\Controllers\Admin\PromoController as AdminPromoController;
 use App\Http\Controllers\Admin\PromotionEngineController;
 use App\Http\Controllers\Admin\PosController;
 use App\Http\Controllers\Admin\PartnerApplicationController;
@@ -192,6 +191,7 @@ Route::middleware(['auth', 'role:branch_owner|branch_manager|branch_staff'])->pr
     Route::get('/orders', [BranchDashboardController::class, 'orders'])->name('orders');
     Route::get('/orders/export', [BranchDashboardController::class, 'exportOrders'])->name('orders.export');
     Route::get('/orders/{order}', [BranchDashboardController::class, 'showOrder'])->name('orders.show');
+    Route::put('/orders/{order}/status', [BranchDashboardController::class, 'updateOrderStatus'])->name('orders.update-status');
     Route::post('/orders/{order}/assign-driver', [BranchDashboardController::class, 'assignOrderDriver'])->name('orders.assign-driver');
     Route::get('/restaurants/create', [BranchDashboardController::class, 'createRestaurant'])->name('restaurants.create');
     Route::post('/restaurants', [BranchDashboardController::class, 'storeRestaurant'])->name('restaurants.store');
@@ -199,6 +199,7 @@ Route::middleware(['auth', 'role:branch_owner|branch_manager|branch_staff'])->pr
     Route::get('/restaurants/{restaurant}/edit', [BranchDashboardController::class, 'editRestaurant'])->name('restaurants.edit');
     Route::put('/restaurants/{restaurant}', [BranchDashboardController::class, 'updateRestaurant'])->name('restaurants.update');
     Route::post('/restaurants/{restaurant}/approve', [BranchDashboardController::class, 'approveRestaurant'])->name('restaurants.approve');
+    Route::post('/restaurants/{restaurant}/toggle-status', [BranchDashboardController::class, 'toggleRestaurantStatus'])->name('restaurants.toggle-status');
     Route::get('/restaurants', [BranchDashboardController::class, 'restaurants'])->name('restaurants');
     Route::get('/drivers/create', [BranchDashboardController::class, 'createDriver'])->name('drivers.create');
     Route::post('/drivers', [BranchDashboardController::class, 'storeDriver'])->name('drivers.store');
@@ -377,9 +378,6 @@ Route::middleware(['auth', 'role:super_admin|admin'])->prefix('admin')->name('ad
     Route::resource('banners', BannerController::class);
     Route::post('/banners/reorder', [BannerController::class, 'reorder'])->name('banners.reorder');
 
-    // Admin Promo Management
-    Route::resource('promos', AdminPromoController::class)->names('promos');
-    Route::post('/promos/{promo}/toggle', [AdminPromoController::class, 'toggle'])->name('promos.toggle');
 
     Route::prefix('promotion-engine')->name('promotion-engine.')->group(function () {
         Route::get('/', [PromotionEngineController::class, 'index'])->name('index');

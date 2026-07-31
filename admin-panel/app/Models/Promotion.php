@@ -5,6 +5,7 @@ namespace App\Models;
 use App\Services\MediaStorage;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Promotion extends Model
@@ -68,6 +69,11 @@ class Promotion extends Model
         return $this->hasMany(PromotionCouponCode::class);
     }
 
+    public function restaurant(): BelongsTo
+    {
+        return $this->belongsTo(Restaurant::class);
+    }
+
     public function targetRows(): HasMany
     {
         return $this->hasMany(PromotionTarget::class);
@@ -112,6 +118,32 @@ class Promotion extends Model
     public function isCouponBased(): bool
     {
         return $this->application_mode === 'coupon';
+    }
+
+    public function getCodeAttribute(): ?string
+    {
+        return $this->relationLoaded('couponCodes')
+            ? $this->couponCodes->first()?->code
+            : $this->couponCodes()->active()->value('code');
+    }
+
+    public function getMinimumOrderAmountAttribute(): ?float
+    {
+        $minimum = data_get($this->conditions, 'min_order_amount');
+
+        return $minimum !== null ? (float) $minimum : null;
+    }
+
+    public function getDiscountTypeAttribute(): ?string
+    {
+        return data_get($this->rewards, 'type');
+    }
+
+    public function getDiscountValueAttribute(): ?float
+    {
+        $value = data_get($this->rewards, 'value');
+
+        return $value !== null ? (float) $value : null;
     }
 
     public function toPublicPayload(): array

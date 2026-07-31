@@ -1,4 +1,4 @@
-﻿{{-- resources/views/restaurant/settings/index.blade.php --}}
+{{-- resources/views/restaurant/settings/index.blade.php --}}
 @extends('layouts.restaurant')
 
 @section('title', 'Restaurant Settings')
@@ -68,7 +68,7 @@
                 @if($restaurant->exists)
                     <span class="badge {{ $restaurant->is_verified ? 'bg-success' : 'bg-warning' }} bg-opacity-10 
                                   text-{{ $restaurant->is_verified ? 'success' : 'warning' }}">
-                        {{ $restaurant->is_verified ? 'âœ“ Verified' : 'Pending Verification' }}
+                        {{ $restaurant->is_verified ? '✓ Verified' : 'Pending Verification' }}
                     </span>
                 @endif
             </div>
@@ -231,9 +231,6 @@
                 </a>
                 <a href="{{ route('restaurant.categories.create') }}" class="btn btn-outline-primary btn-sm rounded-3">
                     <i class="fas fa-folder-plus me-2"></i> Add Category
-                </a>
-                <a href="{{ route('restaurant.promos.create') }}" class="btn btn-outline-primary btn-sm rounded-3">
-                    <i class="fas fa-tag me-2"></i> Create Promo
                 </a>
                 <a href="{{ route('restaurant.analytics.index') }}" class="btn btn-outline-primary btn-sm rounded-3">
                     <i class="fas fa-chart-bar me-2"></i> View Analytics

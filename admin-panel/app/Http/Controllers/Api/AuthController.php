@@ -1148,19 +1148,13 @@ class AuthController extends Controller
 
     protected function getAppSettings(): array
     {
-        $paymentGateway = AppSetting::getValue('payment_gateway_provider', 'razorpay');
+        $configuredPaymentGateway = AppSetting::getValue('payment_gateway_provider', 'razorpay');
+        $paymentGateway = GatewayRegistry::availableCustomerPaymentGateway($configuredPaymentGateway) ?? $configuredPaymentGateway;
         $payoutGateway = AppSetting::getValue('payout_gateway_provider', $paymentGateway);
         $paymentGatewayLogo = AppSetting::getValue('payment_gateway_logo');
-        $enabledGateways = json_decode(AppSetting::getValue('enabled_payment_gateways', '[]'), true);
-        $enabledGateways = is_array($enabledGateways) ? $enabledGateways : [];
-        $enabledGateways = array_values(array_filter(
-            array_map(fn ($gateway) => strtolower((string) $gateway), $enabledGateways),
-            fn ($gateway) => array_key_exists($gateway, GatewayRegistry::customerSelectablePaymentProviders())
-        ));
-
-        if (empty($enabledGateways)) {
-            $enabledGateways = array_keys(GatewayRegistry::customerSelectablePaymentProviders());
-        }
+        $enabledGateways = GatewayRegistry::customerPaymentsEnabled()
+            ? GatewayRegistry::enabledCustomerPaymentGateways()
+            : [];
 
         $gatewayOptions = collect(GatewayRegistry::customerSelectablePaymentProviders())
             ->map(function (string $label, string $key) use ($paymentGateway, $enabledGateways) {

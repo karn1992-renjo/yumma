@@ -14,7 +14,7 @@ use App\Models\MenuItem;
 use App\Models\Order;
 use App\Models\OrderCancellationLimit;
 use App\Models\OrderItem;
-use App\Models\PromoCode;
+use App\Models\PaymentAttempt;
 use App\Models\RefundPolicy;
 use App\Models\Restaurant;
 use App\Models\RestaurantStaff;
@@ -179,53 +179,6 @@ class OrderController extends Controller
             $discount = 0;
             $promo = null;
 
-            if (false && $request->filled('coupon_code')) {
-                $promo = PromoCode::where('code', $request->coupon_code)
-                    ->where(function ($query) use ($request) {
-                        $query->where('restaurant_id', $request->restaurant_id)
-                            ->orWhereNull('restaurant_id');
-                    })
-                    ->where('is_active', true)
-                    ->where(function ($query) {
-                        $query->whereNull('start_date')->orWhereDate('start_date', '<=', now());
-                    })
-                    ->where(function ($query) {
-                        $query->whereNull('end_date')->orWhereDate('end_date', '>=', now());
-                    })
-                    ->first();
-
-                if (! $promo) {
-                    return response()->json([
-                        'success' => false,
-                        'message' => 'Invalid or expired coupon code',
-                    ], 400);
-                }
-
-                if ($promo->usage_limit && $promo->used_count >= $promo->usage_limit) {
-                    return response()->json([
-                        'success' => false,
-                        'message' => 'Coupon usage limit exceeded',
-                    ], 400);
-                }
-
-                if ($subtotal < $promo->min_order_amount) {
-                    return response()->json([
-                        'success' => false,
-                        'message' => 'Minimum order amount of ' . AppSetting::getValue('currency_symbol', '₹') . $promo->min_order_amount . ' required',
-                    ], 400);
-                }
-
-                if (method_exists($promo, 'isEligibleForUser') && ! $promo->isEligibleForUser(auth()->id())) {
-                    return response()->json([
-                        'success' => false,
-                        'message' => 'This coupon is not eligible for your account',
-                    ], 400);
-                }
-
-                $discount = round((float) $promo->calculateDiscount($subtotal), AppSetting::currencyDecimals());
-                $total = max(0, $total - $discount);
-            }
-
             $deliveryAddress = $request->delivery_address;
             $deliveryLat = $request->delivery_lat;
             $deliveryLng = $request->delivery_lng;
@@ -304,12 +257,14 @@ class OrderController extends Controller
                 'longitude' => $deliveryLng,
             ];
 
-            $resolvedPaymentMethod = in_array($request->payment_method, ['card', 'upi'], true)
+            $confirmedOnlinePayment = $request->attributes->get('confirmed_online_payment');
+            $confirmedOnlinePayment = is_array($confirmedOnlinePayment) ? $confirmedOnlinePayment : null;
+            $resolvedPaymentMethod = $confirmedOnlinePayment['payment_method'] ?? (in_array($request->payment_method, ['card', 'upi'], true)
                 ? AppSetting::getValue('payment_gateway_provider', 'razorpay')
-                : $request->payment_method;
+                : $request->payment_method);
             $resolvedPaymentMethod = strtolower((string) $resolvedPaymentMethod);
-            $verifiedOnlinePaymentId = null;
-            if (in_array($resolvedPaymentMethod, ['razorpay', 'stripe', 'cashfree'], true)) {
+            $verifiedOnlinePaymentId = $confirmedOnlinePayment['payment_id'] ?? null;
+            if (! $confirmedOnlinePayment && in_array($resolvedPaymentMethod, ['razorpay', 'stripe', 'cashfree'], true)) {
                 try {
                     $verifiedOnlinePaymentId = app(PaymentController::class)
                         ->verifyCheckoutPaymentForOrder($request, $resolvedPaymentMethod, (float) $total);
@@ -401,6 +356,24 @@ class OrderController extends Controller
                         'payment_method' => $resolvedPaymentMethod,
                     ]
                 );
+                    if ($confirmedOnlinePayment) {
+                        PaymentAttempt::create([
+                            'order_id' => $order->id,
+                            'gateway' => $confirmedOnlinePayment['payment_method'],
+                            'source' => PaymentAttempt::SOURCE_CUSTOMER_APP,
+                            'status' => PaymentAttempt::STATUS_SUCCESS,
+                            'amount' => $order->total,
+                            'currency' => strtoupper(AppSetting::getValue('currency_code', 'INR') ?: 'INR'),
+                            'transaction_id' => $verifiedOnlinePaymentId,
+                            'gateway_reference' => $confirmedOnlinePayment['gateway_reference'] ?? null,
+                            'payment_link_id' => $confirmedOnlinePayment['gateway_reference'] ?? null,
+                            'created_by' => auth()->id(),
+                            'gateway_payload' => $confirmedOnlinePayment['payload'] ?? null,
+                            'paid_at' => now(),
+                            'idempotency_key' => 'checkout_paid_' . $verifiedOnlinePaymentId,
+                        ]);
+                        $order->increment('payment_attempts_count');
+                    }
             }
 
             foreach ($orderItems as $item) {
@@ -1185,42 +1158,6 @@ class OrderController extends Controller
 
         $discount = 0.0;
         $promo = null;
-
-        if (false && $couponCode) {
-            $promo = PromoCode::where('code', $couponCode)
-                ->where(function ($query) use ($restaurant) {
-                    $query->where('restaurant_id', $restaurant->id)
-                        ->orWhereNull('restaurant_id');
-                })
-                ->where('is_active', true)
-                ->where(function ($query) {
-                    $query->whereNull('start_date')->orWhereDate('start_date', '<=', now());
-                })
-                ->where(function ($query) {
-                    $query->whereNull('end_date')->orWhereDate('end_date', '>=', now());
-                })
-                ->first();
-
-            if (! $promo || ! $promo->isValid()) {
-                throw new \InvalidArgumentException('Invalid or expired coupon code');
-            }
-
-            if ($promo->usage_limit && $promo->used_count >= $promo->usage_limit) {
-                throw new \InvalidArgumentException('Coupon usage limit exceeded');
-            }
-
-            if ($subtotal < $promo->min_order_amount) {
-                throw new \InvalidArgumentException(
-                    'Minimum order amount of ' . AppSetting::getValue('currency_symbol', '₹') . $promo->min_order_amount . ' required'
-                );
-            }
-
-            if (method_exists($promo, 'isEligibleForUser') && ! $promo->isEligibleForUser(auth()->id())) {
-                throw new \InvalidArgumentException('This coupon is not eligible for your account');
-            }
-
-            $discount = round((float) $promo->calculateDiscount($subtotal), AppSetting::currencyDecimals());
-        }
 
         $deliveryDistanceKm = null;
         if ($orderType !== 'takeaway'

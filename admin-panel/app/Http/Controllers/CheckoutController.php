@@ -8,8 +8,8 @@ use App\Models\AppSetting;
 use App\Models\Order;
 use App\Models\OrderItem;
 use App\Models\Restaurant;
+use App\Models\Promotion;
 use App\Models\RestaurantStaff;
-use App\Models\PromoCode;
 use App\Models\Address;
 use App\Models\DeliveryChargeSetting;
 use App\Models\MenuItem;
@@ -20,6 +20,7 @@ use App\Models\WalletTransaction;
 use App\Services\PaymentGatewayService;
 use App\Services\OrderReleaseService;
 use App\Services\PrinterService;
+use App\Services\PromotionEngineService;
 use App\Notifications\AppDatabaseNotification;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -110,27 +111,19 @@ class CheckoutController extends Controller
         $gatewayEnabled = filter_var(AppSetting::getValue('payment_gateway_enabled', '1'), FILTER_VALIDATE_BOOLEAN);
         $gatewayProvider = AppSetting::getValue('payment_gateway_provider', 'razorpay');
         $walletBalance = optional(Wallet::where('user_id', Auth::id())->first())->balance ?? 0;
-        $availableCoupons = PromoCode::query()
-            ->where('is_active', true)
+        $availableCoupons = Promotion::query()
+            ->with(['couponCodes' => fn ($query) => $query->active()])
+            ->active()
+            ->where('application_mode', 'coupon')
+            ->whereHas('couponCodes', fn ($query) => $query->active())
             ->where(function ($query) use ($restaurant) {
                 $query->where('restaurant_id', $restaurant->id)
                     ->orWhereNull('restaurant_id');
             })
-            ->where(function ($query) {
-                $query->whereNull('start_date')->orWhereDate('start_date', '<=', now());
-            })
-            ->where(function ($query) {
-                $query->whereNull('end_date')->orWhereDate('end_date', '>=', now());
-            })
-            ->where(function ($query) {
-                $query->whereNull('usage_limit')->orWhereColumn('used_count', '<', 'usage_limit');
-            })
-            ->orderByRaw('COALESCE(min_order_amount, 0) asc')
-            ->orderBy('code')
+            ->orderByDesc('priority')
+            ->latest()
             ->get()
-            ->filter(fn ($promo) => $promo->isEligibleForUser(Auth::id()))
-            ->values();
-        
+            ->values();        
         return view('checkout_fresh', compact(
             'restaurant', 'addresses', 'cartItems', 'subtotal', 
             'deliveryFee', 'platformFee', 'tax', 'total', 'appName',
@@ -242,60 +235,14 @@ class CheckoutController extends Controller
             $discount = 0;
             $promo = null;
 
-            if ($request->filled('coupon_code')) {
-                $promo = PromoCode::where('code', $request->coupon_code)
-                    ->where(function ($query) use ($restaurant) {
-                        $query->where('restaurant_id', $restaurant->id)
-                            ->orWhereNull('restaurant_id');
-                    })
-                    ->where('is_active', true)
-                    ->where(function ($query) {
-                        $query->whereNull('start_date')->orWhereDate('start_date', '<=', now());
-                    })
-                    ->where(function ($query) {
-                        $query->whereNull('end_date')->orWhereDate('end_date', '>=', now());
-                    })
-                    ->first();
-
-                if (!$promo || !$promo->isValid()) {
-                    return response()->json([
-                        'success' => false,
-                        'message' => 'Invalid or expired coupon code'
-                    ], 400);
-                }
-
-                if ($promo->usage_limit && $promo->used_count >= $promo->usage_limit) {
-                    return response()->json([
-                        'success' => false,
-                        'message' => 'Coupon usage limit exceeded'
-                    ], 400);
-                }
-
-                if ($subtotal < $promo->min_order_amount) {
-                    return response()->json([
-                        'success' => false,
-                        'message' => 'Minimum order amount of ' . AppSetting::getValue('currency_symbol', '₹') . $promo->min_order_amount . ' required'
-                    ], 400);
-                }
-
-                if (!$promo->isEligibleForUser(Auth::id())) {
-                    return response()->json([
-                        'success' => false,
-                        'message' => 'This coupon is not eligible for your account'
-                    ], 400);
-                }
-
-                $discount = round((float) $promo->calculateDiscount($subtotal), AppSetting::currencyDecimals());
-                $total = max(0, $total - $discount);
-            }
-            
             $pricing = $this->buildPricingSummary(
                 $restaurant,
                 $subtotal,
                 $address?->latitude,
                 $address?->longitude,
                 $request->coupon_code,
-                $orderType
+                $orderType,
+                $orderItems
             );
             $deliveryFee = $pricing['delivery_fee'];
             $platformFee = $pricing['platform_fee'];
@@ -696,65 +643,40 @@ class CheckoutController extends Controller
         ]);
 
         $restaurantId = $request->restaurant_id ?: session('checkout_restaurant_id');
-        if (!$restaurantId) {
+        if (! $restaurantId) {
             $cart = session('checkout_cart', []);
             $restaurantId = $cart[0]['restaurant_id'] ?? null;
         }
 
-        if (!$restaurantId) {
+        $restaurant = $restaurantId ? Restaurant::find($restaurantId) : null;
+        if (! $restaurant) {
             return response()->json([
                 'success' => false,
-                'message' => 'Unable to validate coupon without restaurant context.'
+                'message' => 'Unable to validate coupon without restaurant context.',
             ], 400);
         }
 
-        $promo = PromoCode::where('code', $request->code)
-            ->where(function ($query) use ($restaurantId) {
-                $query->where('restaurant_id', $restaurantId)
-                    ->orWhereNull('restaurant_id');
-            })
-            ->where('is_active', true)
-            ->where(function ($query) {
-                $query->whereNull('start_date')->orWhereDate('start_date', '<=', now());
-            })
-            ->where(function ($query) {
-                $query->whereNull('end_date')->orWhereDate('end_date', '>=', now());
-            })
-            ->first();
-
-        if (!$promo || !$promo->isValid()) {
+        try {
+            $pricing = $this->buildPricingSummary(
+                $restaurant,
+                (float) $request->subtotal,
+                null,
+                null,
+                (string) $request->code,
+                'delivery'
+            );
+        } catch (\InvalidArgumentException $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Invalid or expired coupon code'
+                'message' => $e->getMessage(),
             ], 400);
         }
 
-        if ($promo->usage_limit && $promo->used_count >= $promo->usage_limit) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Coupon usage limit exceeded'
-            ], 400);
-        }
-
-        if ($request->subtotal < $promo->min_order_amount) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Minimum order amount of ' . AppSetting::getValue('currency_symbol', '₹') . $promo->min_order_amount . ' required'
-            ], 400);
-        }
-
-        if (!$promo->isEligibleForUser(Auth::id())) {
-            return response()->json([
-                'success' => false,
-                'message' => 'This coupon is not eligible for your account'
-            ], 400);
-        }
-
-        $discount = round((float) $promo->calculateDiscount($request->subtotal), AppSetting::currencyDecimals());
+        $discount = round((float) ($pricing['coupon_discount'] ?? $pricing['discount'] ?? 0), AppSetting::currencyDecimals());
         if ($discount <= 0) {
             return response()->json([
                 'success' => false,
-                'message' => 'Coupon does not apply to the current order total'
+                'message' => 'Coupon does not apply to the current order total',
             ], 400);
         }
 
@@ -762,10 +684,9 @@ class CheckoutController extends Controller
             'success' => true,
             'message' => 'Coupon applied successfully',
             'discount' => $discount,
-            'coupon_code' => $promo->code,
+            'coupon_code' => strtoupper((string) $request->code),
         ]);
     }
-    
     public function saveCart(Request $request)
     {
         session(['checkout_cart' => $request->cart]);
@@ -779,7 +700,8 @@ class CheckoutController extends Controller
         $deliveryLat = null,
         $deliveryLng = null,
         ?string $couponCode = null,
-        string $orderType = 'delivery'
+        string $orderType = 'delivery',
+        array $items = []
     ): array {
         $deliveryFee = $this->calculateDeliveryFee($restaurant, $deliveryLat, $deliveryLng, $subtotal, $orderType);
         $platformFee = DeliveryChargeSetting::getPlatformFee();
@@ -797,47 +719,33 @@ class CheckoutController extends Controller
             $taxLabel = 'Taxes & charges';
         }
 
-        $discount = 0.0;
-        $promo = null;
+        $promotionContext = [
+            'user_id' => Auth::id(),
+            'restaurant_id' => $restaurant->id,
+            'zone_id' => null,
+            'subtotal' => $subtotal,
+            'delivery_fee' => $deliveryFee,
+            'platform_fee' => $platformFee,
+            'packaging_fee' => 0,
+            'tax' => $tax,
+            'distance_km' => null,
+            'coupon_code' => $couponCode,
+            'order_type' => $orderType,
+            'items' => $items,
+        ];
+        $promotionResult = app(PromotionEngineService::class)->calculate($promotionContext);
 
-        if ($couponCode) {
-            $promo = PromoCode::where('code', $couponCode)
-                ->where(function ($query) use ($restaurant) {
-                    $query->where('restaurant_id', $restaurant->id)
-                        ->orWhereNull('restaurant_id');
-                })
-                ->where('is_active', true)
-                ->where(function ($query) {
-                    $query->whereNull('start_date')->orWhereDate('start_date', '<=', now());
-                })
-                ->where(function ($query) {
-                    $query->whereNull('end_date')->orWhereDate('end_date', '>=', now());
-                })
-                ->first();
+        if ($couponCode && ! collect($promotionResult['discount_lines'] ?? [])->contains(fn (array $line) => ! empty($line['coupon_code']))) {
+            $reason = collect($promotionResult['invalid_reasons'] ?? [])
+                ->first(fn (array $reason) => strtoupper((string) ($reason['coupon_code'] ?? '')) === strtoupper($couponCode));
 
-            if (!$promo || !$promo->isValid()) {
-                throw new \InvalidArgumentException('Invalid or expired coupon code');
-            }
-
-            if ($promo->usage_limit && $promo->used_count >= $promo->usage_limit) {
-                throw new \InvalidArgumentException('Coupon usage limit exceeded');
-            }
-
-            if ($subtotal < $promo->min_order_amount) {
-                throw new \InvalidArgumentException(
-                    'Minimum order amount of ' . \App\Models\AppSetting::getValue('currency_symbol', '₹') . $promo->min_order_amount . ' required'
-                );
-            }
-
-            if (!$promo->isEligibleForUser(Auth::id())) {
-                throw new \InvalidArgumentException('This coupon is not eligible for your account');
-            }
-
-            $discount = round((float) $promo->calculateDiscount($subtotal), AppSetting::currencyDecimals());
+            throw new \InvalidArgumentException($reason['reason'] ?? 'Invalid or expired coupon code');
         }
 
-        return [
-            'delivery_fee' => round($deliveryFee, 2),
+        $discount = round((float) ($promotionResult['discount'] ?? 0), AppSetting::currencyDecimals());
+        $promo = $promotionResult['promo'] ?? null;
+
+        return [            'delivery_fee' => round($deliveryFee, 2),
             'order_type' => $orderType,
             'platform_fee' => $platformFee,
             'tax' => $tax,
@@ -847,6 +755,8 @@ class CheckoutController extends Controller
             'discount' => $discount,
             'total' => max(0, round($subtotal + $deliveryFee + $platformFee + $tax - $discount, 2)),
             'promo' => $promo,
+            'promotion_result' => $promotionResult,
+            'promotion_context' => $promotionContext,
         ];
     }
 

@@ -575,7 +575,7 @@ class SettingController extends Controller
             'payment_gateway_enabled' => 'nullable|in:0,1',
             'cod_enabled' => 'nullable|in:0,1',
             'payment_gateway_provider' => 'nullable|in:' . implode(',', array_keys(GatewayRegistry::paymentProviders())),
-            'enabled_payment_gateways' => 'nullable|array|min:1',
+            'enabled_payment_gateways' => 'nullable|array',
             'enabled_payment_gateways.*' => 'nullable|in:' . implode(',', array_keys(GatewayRegistry::customerSelectablePaymentProviders())),
             'payout_gateway_provider' => 'nullable|in:' . implode(',', array_keys(GatewayRegistry::payoutProviders())),
             'auto_payout_enabled' => 'nullable|in:0,1',
@@ -677,20 +677,28 @@ class SettingController extends Controller
             'easypaisa_mode',
         ]);
 
+        $customerGatewayProviders = GatewayRegistry::customerSelectablePaymentProviders();
         $enabledGateways = array_values(array_filter(
-            $request->input('enabled_payment_gateways', []),
-            fn ($gateway) => array_key_exists(
-                strtolower((string) $gateway),
-                GatewayRegistry::customerSelectablePaymentProviders()
-            )
+            array_map(fn ($gateway) => strtolower((string) $gateway), $request->input('enabled_payment_gateways', [])),
+            fn ($gateway) => array_key_exists($gateway, $customerGatewayProviders)
         ));
 
-        if (empty($enabledGateways)) {
-            $fallbackGateway = strtolower((string) ($settings['payment_gateway_provider'] ?? 'razorpay'));
-            $enabledGateways = array_key_exists(
-                $fallbackGateway,
-                GatewayRegistry::customerSelectablePaymentProviders()
-            ) ? [$fallbackGateway] : ['razorpay'];
+        $paymentGatewayEnabled = filter_var($settings['payment_gateway_enabled'] ?? '1', FILTER_VALIDATE_BOOLEAN);
+        $activeCustomerGateway = strtolower((string) ($settings['payment_gateway_provider'] ?? 'razorpay'));
+
+        if ($paymentGatewayEnabled && array_key_exists($activeCustomerGateway, $customerGatewayProviders)) {
+            $enabledGateways[] = $activeCustomerGateway;
+            $enabledGateways = array_values(array_unique($enabledGateways));
+        }
+
+        if ($paymentGatewayEnabled && empty($enabledGateways)) {
+            return redirect()->route('admin.settings.payment')
+                ->withInput()
+                ->withErrors(['payment_gateway_provider' => 'Select Razorpay, Stripe, or Cashfree as the payment provider, or disable online payments.']);
+        }
+
+        if (! array_key_exists($activeCustomerGateway, $customerGatewayProviders) && ! empty($enabledGateways)) {
+            $settings['payment_gateway_provider'] = $enabledGateways[0];
         }
 
         $settings['enabled_payment_gateways'] = json_encode($enabledGateways);

@@ -130,12 +130,6 @@
                         </a>
                     </li>
                     @endif
-                    <li>
-                        <a class="dropdown-item rounded-3 py-2" href="{{ route('restaurant.promos.create') }}">
-                            <i class="fas fa-tag me-2 text-success"></i> 
-                            <span>Create Promo Code</span>
-                        </a>
-                    </li>
                     <li><hr class="dropdown-divider"></li>
                     <li>
                         <a class="dropdown-item rounded-3 py-2" href="{{ route('restaurant.printers.create') }}">

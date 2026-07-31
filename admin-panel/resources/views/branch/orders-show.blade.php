@@ -2,6 +2,14 @@
 
 @section('title', 'Branch Order Details')
 
+@php
+    $statusOptions = App\Models\Order::getStatuses();
+    $canManageDriver = $canAssignDriver
+        && ($order->order_type ?? 'delivery') !== 'takeaway'
+        && in_array($order->status, ['confirmed', 'preparing', 'ready_for_pickup'], true);
+    $assignableDrivers = $availableDrivers->reject(fn ($driver) => $order->driver_id && (int) $order->driver_id === (int) $driver->id);
+@endphp
+
 @section('content')
 <div class="page-header d-flex justify-content-between align-items-center flex-wrap gap-3">
     <div>
@@ -80,32 +88,57 @@
             </div>
         </div>
 
+        @if($canUpdateStatus)
+            <div class="card mb-4">
+                <div class="card-header"><h5 class="mb-0">Order Status</h5></div>
+                <div class="card-body">
+                    <form action="{{ route('branch.orders.update-status', $order) }}" method="POST">
+                        @csrf
+                        @method('PUT')
+                        <label class="form-label">Update Status</label>
+                        <select name="status" class="form-select mb-3" required>
+                            @foreach($statusOptions as $value => $label)
+                                <option value="{{ $value }}" @selected($order->status === $value)>{{ $label }}</option>
+                            @endforeach
+                        </select>
+                        <label class="form-label">Cancellation Reason</label>
+                        <textarea name="cancellation_reason" class="form-control mb-3" rows="2">{{ old('cancellation_reason', $order->cancellation_reason) }}</textarea>
+                        <button class="btn btn-primary w-100">
+                            <i class="fas fa-rotate me-1"></i> Update Status
+                        </button>
+                    </form>
+                </div>
+            </div>
+        @endif
+
         <div class="card">
             <div class="card-header"><h5 class="mb-0">Driver</h5></div>
             <div class="card-body">
                 @if($order->driver)
                     <div class="fw-bold">{{ $order->driver->name }}</div>
                     <div class="small">{{ $order->driver->phone }}</div>
-                    <div class="text-muted small mt-2">{{ $order->driver->vehicle_type }} {{ $order->driver->vehicle_number }}</div>
-                @elseif($canAssignDriver)
+                    <div class="text-muted small mt-2 mb-3">{{ $order->driver->vehicle_type }} {{ $order->driver->vehicle_number }}</div>
+                @else
+                    <div class="text-muted mb-3">No driver assigned.</div>
+                @endif
+
+                @if($canManageDriver)
                     <form action="{{ route('branch.orders.assign-driver', $order) }}" method="POST">
                         @csrf
-                        <label class="form-label">Assign Branch Driver</label>
+                        <label class="form-label">{{ $order->driver ? 'Reassign Branch Driver' : 'Assign Branch Driver' }}</label>
                         <select name="driver_id" class="form-select mb-3" required>
                             <option value="">Select available driver</option>
-                            @foreach($availableDrivers as $driver)
+                            @foreach($assignableDrivers as $driver)
                                 <option value="{{ $driver->id }}">{{ $driver->name }} - {{ $driver->phone }}</option>
                             @endforeach
                         </select>
-                        <button class="btn btn-primary w-100" @disabled($availableDrivers->isEmpty())>
-                            <i class="fas fa-user-check me-1"></i> Assign Driver
+                        <button class="btn btn-primary w-100" @disabled($assignableDrivers->isEmpty())>
+                            <i class="fas fa-user-check me-1"></i> {{ $order->driver ? 'Reassign Driver' : 'Assign Driver' }}
                         </button>
-                        @if($availableDrivers->isEmpty())
+                        @if($assignableDrivers->isEmpty())
                             <div class="form-text text-danger">No eligible branch drivers are available right now.</div>
                         @endif
                     </form>
-                @else
-                    <div class="text-muted">No driver assigned.</div>
                 @endif
             </div>
         </div>

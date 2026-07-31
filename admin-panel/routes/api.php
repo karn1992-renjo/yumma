@@ -17,7 +17,6 @@ use App\Http\Controllers\Api\DeliveryController;
 use App\Http\Controllers\Api\ReturnController;
 use App\Http\Controllers\Api\CampaignController;
 use App\Http\Controllers\Api\ContentController;
-use App\Http\Controllers\Api\CouponController;
 use App\Http\Controllers\Api\AddressController;
 use App\Http\Controllers\Api\PaymentController;
 use App\Http\Controllers\Api\OrderPaymentController;
@@ -329,7 +328,7 @@ Route::middleware('auth:sanctum')->group(function () {
     // Orders (Customer)
     Route::post('/orders/summary', [OrderController::class, 'summary'])->middleware('throttle:20,1');
     Route::post('/orders', [OrderController::class, 'store'])->middleware('throttle:10,1');
-    Route::post('/coupons/validate', [CouponController::class, 'validateCoupon']);
+    Route::post('/coupons/validate', [PromotionController::class, 'validateCoupon']);
     Route::post('/promotions/calculate', [PromotionController::class, 'calculate']);
     Route::post('/promotions/coupon/validate', [PromotionController::class, 'validateCoupon']);
     Route::post('/promotions/apply-best', [PromotionController::class, 'applyBest']);
@@ -358,6 +357,7 @@ Route::middleware('auth:sanctum')->group(function () {
     // Payments
     Route::post('/payments/create', [PaymentController::class, 'createPayment']);
     Route::post('/payments/checkout/create', [PaymentController::class, 'createCheckoutPayment'])->middleware('throttle:20,1');
+    Route::post('/payments/checkout/verify', [PaymentController::class, 'verifyCheckoutPayment'])->middleware('throttle:20,1');
     Route::post('/payments/verify', [PaymentController::class, 'verifyPayment']);
     Route::post('/payments/cancel', [PaymentController::class, 'cancelPayment']);
     
@@ -417,3 +417,4 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/toggle-status', [DriverController::class, 'toggleStatus']);
     });
 });
+

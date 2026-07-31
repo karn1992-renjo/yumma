@@ -1,4 +1,4 @@
-// lib/config/api_constants.dart
+﻿// lib/config/api_constants.dart
 
 class ApiConstants {
   // Base URL - Update this with your actual API URL
@@ -106,12 +106,13 @@ class ApiConstants {
   static String deleteAddress(int id) => '/addresses/$id/delete';
 
   // Coupon endpoints
-  static const String validateCoupon = '/coupons/validate';
+  static const String validateCoupon = '/promotions/coupon/validate';
   static const String offers = '/offers';
 
   // Payment endpoints
   static const String createPayment = '/payments/create';
   static const String createCheckoutPayment = '/payments/checkout/create';
+  static const String verifyCheckoutPayment = '/payments/checkout/verify';
   static const String verifyPayment = '/payments/verify';
   static const String cancelPayment = '/payments/cancel';
   static String orderPay(int orderId) => '/orders/$orderId/pay';
@@ -193,3 +194,4 @@ class ApiConstants {
   static String campaignTrackImpression(int campaignId) =>
       '/campaigns/$campaignId/track-impression';
 }
+

@@ -16,7 +16,6 @@ use App\Models\OrderCancellationLimit;
 use App\Models\OrderItem;
 use App\Models\PartnerApplication;
 use App\Models\PrinterSetting;
-use App\Models\PromoCode;
 use App\Models\Promotion;
 use App\Models\PromotionCouponCode;
 use App\Models\Review;
@@ -2360,76 +2359,6 @@ class RestaurantController extends Controller
         ];
     }
 
-    private function restaurantPromoPayload(PromoCode $promo): array
-    {
-        $promo->loadMissing('restaurant:id,name');
-        $promotionType = PromotionTypeRegistry::normalize(
-            $promo->promotion_type ?: (($promo->discount_type ?? 'percentage') === 'percentage' ? 'percentage_discount' : 'flat_discount')
-        );
-        $types = $this->restaurantPromotionTypes();
-        if (! array_key_exists($promotionType, $types)) {
-            $promotionType = (($promo->discount_type ?? 'percentage') === 'fixed' || ($promo->discount_type ?? null) === 'flat')
-                ? 'flat_discount'
-                : 'percentage_discount';
-        }
-        $meta = $types[$promotionType];
-        $rewardType = $meta['reward_type'];
-        $discountType = $meta['discount_type'] ?? $promo->discount_type;
-
-        return [
-            'id' => $promo->id,
-            'legacy_id' => $promo->id,
-            'migrated_from_type' => 'promo_code',
-            'migrated_from_id' => $promo->id,
-            'code' => $promo->code,
-            'coupon_code' => $promo->code,
-            'title' => $promo->title ?: $promo->code,
-            'description' => $promo->description,
-            'promotion_type' => $promotionType,
-            'application_mode' => 'coupon',
-            'owner_type' => 'restaurant',
-            'restaurant_id' => $promo->restaurant_id,
-            'restaurant_name' => $promo->restaurant?->name,
-            'discount_type' => $discountType,
-            'discount_value' => (float) $promo->discount_value,
-            'reward_type' => $rewardType,
-            'reward_config' => $promo->reward_config ?? [],
-            'max_discount_amount' => $promo->max_discount_amount !== null ? (float) $promo->max_discount_amount : null,
-            'min_order_amount' => $promo->min_order_amount !== null ? (float) $promo->min_order_amount : null,
-            'min_order_value' => $promo->min_order_amount !== null ? (float) $promo->min_order_amount : null,
-            'usage_limit' => $promo->usage_limit,
-            'used_count' => (int) $promo->used_count,
-            'audience_type' => $promo->audience_type ?: 'all',
-            'target_type' => $promo->target_type ?: 'restaurant',
-            'target_ids' => $promo->target_ids ?? [],
-            'promotion_for' => $promo->target_type ?: 'restaurant',
-            'coupon_type' => $promo->coupon_type ?: 'public',
-            'assigned_to' => $promo->assigned_to,
-            'is_active' => (bool) $promo->is_active,
-            'status' => $promo->is_active ? 'active' : 'draft',
-            'start_date' => $promo->start_date,
-            'end_date' => $promo->end_date,
-            'valid_from' => $promo->start_date,
-            'valid_to' => $promo->end_date,
-            'promo_image' => $promo->promo_image_url,
-            'promo_image_url' => $promo->promo_image_url,
-            'image' => $promo->promo_image_url,
-            'image_url' => $promo->promo_image_url,
-            'conditions' => [
-                'min_order_amount' => $promo->min_order_amount !== null ? (float) $promo->min_order_amount : null,
-                'audience_type' => $promo->audience_type ?: 'all',
-                'target_type' => $promo->target_type ?: 'restaurant',
-                'target_ids' => $promo->target_ids ?? [],
-            ],
-            'rewards' => [
-                'type' => $rewardType,
-                'value' => (float) $promo->discount_value,
-                'max_discount' => $promo->max_discount_amount !== null ? (float) $promo->max_discount_amount : null,
-                'config' => $promo->reward_config ?? [],
-            ],
-        ];
-    }
-
     /**
      * Get restaurant printers
      */
@@ -2781,18 +2710,16 @@ class RestaurantController extends Controller
         $activePromotions = 0;
         $topPromos = collect();
 
-        if (Schema::hasTable('promo_codes')) {
-            $totalPromotions = PromoCode::where('restaurant_id', $restaurantId)->count();
-            $activePromotions = PromoCode::where('restaurant_id', $restaurantId)
-                ->where('is_active', true)
-                ->where(function ($query) use ($endDate) {
-                    $query->whereNull('start_date')->orWhere('start_date', '<=', $endDate);
-                })
-                ->where(function ($query) use ($startDate) {
-                    $query->whereNull('end_date')->orWhere('end_date', '>=', $startDate);
-                })
-                ->count();
-        }
+        $totalPromotions = Promotion::where('restaurant_id', $restaurantId)->count();
+        $activePromotions = Promotion::where('restaurant_id', $restaurantId)
+            ->active()
+            ->where(function ($query) use ($endDate) {
+                $query->whereNull('starts_at')->orWhere('starts_at', '<=', $endDate);
+            })
+            ->where(function ($query) use ($startDate) {
+                $query->whereNull('ends_at')->orWhere('ends_at', '>=', $startDate);
+            })
+            ->count();
 
         $usageCount = 0;
         $discountGiven = 0.0;
@@ -2821,18 +2748,18 @@ class RestaurantController extends Controller
                 ->whereBetween('created_at', [$startDate, $endDate])
                 ->sum('discount_amount'), 2);
 
-            $legacyNames = Schema::hasTable('promo_codes')
-                ? PromoCode::where('restaurant_id', $restaurantId)
-                    ->get(['code', 'title'])
-                    ->mapWithKeys(fn ($promo) => [strtoupper((string) $promo->code) => $promo->title ?: $promo->code])
-                : collect();
+            $promotionNames = PromotionCouponCode::query()
+                ->whereHas('promotion', fn ($query) => $query->where('restaurant_id', $restaurantId))
+                ->with('promotion:id,title')
+                ->get()
+                ->mapWithKeys(fn ($coupon) => [strtoupper((string) $coupon->code) => $coupon->promotion?->title ?: $coupon->code]);
 
-            $topPromos = $usageRows->map(function ($row) use ($legacyNames) {
+            $topPromos = $usageRows->map(function ($row) use ($promotionNames) {
                 $code = $row->coupon_code ?: 'Auto promotion';
                 $lookup = strtoupper((string) $code);
 
                 return [
-                    'title' => $row->title ?: ($legacyNames[$lookup] ?? $code),
+                    'title' => $row->title ?: ($promotionNames[$lookup] ?? $code),
                     'code' => $row->coupon_code,
                     'usage_count' => (int) $row->usage_count,
                     'discount_given' => round((float) $row->discount_given, 2),
@@ -2846,15 +2773,17 @@ class RestaurantController extends Controller
             $discountGiven = round((float) $discountedOrders->sum('discount'), 2);
         }
 
-        if ($topPromos->isEmpty() && Schema::hasTable('promo_codes')) {
-            $topPromos = PromoCode::where('restaurant_id', $restaurantId)
+        if ($topPromos->isEmpty()) {
+            $topPromos = Promotion::query()
+                ->with(['couponCodes' => fn ($query) => $query->active()])
+                ->where('restaurant_id', $restaurantId)
                 ->orderByDesc('used_count')
                 ->limit(5)
                 ->get()
-                ->map(fn (PromoCode $promo) => [
-                    'title' => $promo->title ?: $promo->code,
-                    'code' => $promo->code,
-                    'usage_count' => (int) ($promo->used_count ?? 0),
+                ->map(fn (Promotion $promotion) => [
+                    'title' => $promotion->title ?: ($promotion->code ?: 'Promotion'),
+                    'code' => $promotion->code,
+                    'usage_count' => (int) ($promotion->used_count ?? 0),
                     'discount_given' => 0.0,
                 ]);
         }

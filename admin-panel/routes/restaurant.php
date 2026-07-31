@@ -7,7 +7,6 @@ use App\Http\Controllers\Restaurant\OrderController;
 use App\Http\Controllers\Restaurant\HelpSupportController;
 use App\Http\Controllers\Restaurant\MenuController;
 use App\Http\Controllers\Restaurant\CategoryController;
-use App\Http\Controllers\Restaurant\PromoController;
 use App\Http\Controllers\Restaurant\AnalyticsController;
 use App\Http\Controllers\Restaurant\SettingsController;
 use App\Http\Controllers\Restaurant\StoreController;
@@ -93,9 +92,6 @@ Route::middleware(['auth', 'role:restaurant_owner|restaurant_staff'])->prefix('r
     Route::middleware('role:restaurant_owner')->group(function () {
         Route::get('/wallet', [WalletController::class, 'index'])->name('wallet.index');
 
-        // Promo Codes Management
-        Route::resource('promos', PromoController::class);
-        Route::post('/promos/{id}/toggle-status', [PromoController::class, 'toggleStatus'])->name('promos.toggle-status');
 
         // Staff Management
         Route::get('/staff', [StaffController::class, 'index'])->name('staff.index');

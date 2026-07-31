@@ -18,6 +18,12 @@
 @section('title', 'Branch Restaurant Details')
 
 @section('content')
+@if(session('success'))
+    <div class="alert alert-success">{{ session('success') }}</div>
+@endif
+@if($errors->any())
+    <div class="alert alert-danger">{{ $errors->first() }}</div>
+@endif
 <div class="restaurant-page-shell">
     <section class="restaurant-page-hero">
         <div>
@@ -34,6 +40,14 @@
                 <form action="{{ route('branch.restaurants.approve', $restaurant) }}" method="POST">
                     @csrf
                     <button class="btn btn-success"><i class="fas fa-check me-2"></i>Approve</button>
+                </form>
+            @endif
+            @if($capabilities['restaurants_update_status'] ?? false)
+                <form action="{{ route('branch.restaurants.toggle-status', $restaurant) }}" method="POST">
+                    @csrf
+                    <button class="btn {{ $restaurant->is_open ? 'btn-outline-secondary' : 'btn-success' }}">
+                        <i class="fas fa-{{ $restaurant->is_open ? 'store-slash' : 'store' }} me-2"></i>{{ $restaurant->is_open ? 'Set Offline' : 'Set Online' }}
+                    </button>
                 </form>
             @endif
             @if($capabilities['restaurants_edit'] ?? false)

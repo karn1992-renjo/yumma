@@ -4,11 +4,12 @@
 @section('header', 'Payment Settings')
 
 @php
-    $currencySymbol = App\Models\AppSetting::getValue('currency_symbol', '₹');
+    $currencySymbol = App\Models\AppSetting::getValue('currency_symbol', 'â‚¹');
+    $paymentGatewayEnabled = filter_var($settings['payment_gateway_enabled'] ?? '1', FILTER_VALIDATE_BOOLEAN);
     $enabledPaymentGateways = json_decode($settings['enabled_payment_gateways'] ?? '[]', true);
     $enabledPaymentGateways = is_array($enabledPaymentGateways) && count($enabledPaymentGateways)
         ? $enabledPaymentGateways
-        : array_keys($customerGatewayProviders ?? []);
+        : ($paymentGatewayEnabled ? array_keys($customerGatewayProviders ?? []) : []);
 @endphp
 
 @section('content')
@@ -20,7 +21,7 @@
         <span class="settings-eyebrow"><i class="fas fa-credit-card"></i> Checkout Money Flow</span>
         <div>
             <h1>Payment Settings</h1>
-            <p>Configure customer checkout gateways, COD visibility, gateway logos, payout routing, currency, and provider credentials.</p>
+            <p>Configure online payment availability, customer checkout gateways, COD visibility, gateway logos, payout routing, currency, and provider credentials.</p>
         </div>
     </div>
 </div>
@@ -52,11 +53,12 @@
                     <div class="row">
                         <div class="col-md-4">
                             <div class="mb-3">
-                                <label class="form-label fw-semibold">Payment Gateway Enabled</label>
-                                <select name="payment_gateway_enabled" class="form-select">
+                                <label class="form-label fw-semibold">Online Payment Service</label>
+                                <select id="paymentGatewayEnabled" name="payment_gateway_enabled" class="form-select">
                                     <option value="1" {{ ($settings['payment_gateway_enabled'] ?? '1') == '1' ? 'selected' : '' }}>Enabled</option>
                                     <option value="0" {{ ($settings['payment_gateway_enabled'] ?? '1') == '0' ? 'selected' : '' }}>Disabled</option>
                                 </select>
+                                <div class="form-text">When disabled, all online gateway options are hidden and payment APIs reject new online sessions.</div>
                             </div>
                         </div>
                         <div class="col-md-4">
@@ -93,7 +95,7 @@
                         </div>
                         <div class="col-12">
                             <div class="mb-3">
-                                <label class="form-label fw-semibold">Customer App Payment Gateways</label>
+                                <label class="form-label fw-semibold">Enabled Customer Payment Gateways</label>
                                 <div class="row g-3">
                                     @foreach($customerGatewayProviders as $gatewayKey => $gatewayLabel)
                                         @php
@@ -111,7 +113,7 @@
                                                     </div>
                                                 @endif
                                                 <input type="file" name="{{ $logoKey }}" class="form-control" accept="image/png,image/jpeg,image/jpg,image/webp,image/svg+xml">
-                                                <div class="form-text">Logo shown beside {{ $gatewayLabel }} in the customer app.</div>
+                                                <div class="form-text">Uncheck to hide and block {{ $gatewayLabel }} in the customer app. Logo shown beside this gateway when enabled.</div>
                                             </div>
                                         </div>
                                     @endforeach
@@ -504,8 +506,20 @@
                         }
                     }
 
+                    const paymentGatewayEnabled = document.getElementById('paymentGatewayEnabled');
+                    const gatewayChecks = document.querySelectorAll('input[name="enabled_payment_gateways[]"]');
+
+                    function toggleGatewayAvailabilityHint() {
+                        const disabled = paymentGatewayEnabled && paymentGatewayEnabled.value === '0';
+                        gatewayChecks.forEach((input) => {
+                            input.closest('.border')?.classList.toggle('opacity-50', disabled);
+                        });
+                    }
+
                     document.getElementById('paymentProvider').addEventListener('change', togglePaymentProviderFields);
+                    paymentGatewayEnabled?.addEventListener('change', toggleGatewayAvailabilityHint);
                     document.addEventListener('DOMContentLoaded', togglePaymentProviderFields);
+                    document.addEventListener('DOMContentLoaded', toggleGatewayAvailabilityHint);
                 </script>
             </div>
         </div>
