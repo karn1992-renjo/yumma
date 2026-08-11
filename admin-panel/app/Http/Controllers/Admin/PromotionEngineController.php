@@ -11,11 +11,13 @@ use App\Models\MenuItem;
 use App\Models\Order;
 use App\Models\Promotion;
 use App\Models\PromotionCouponCode;
+use App\Models\PromotionFraudAttempt;
 use App\Models\PromotionLog;
 use App\Models\PromotionUsage;
 use App\Models\Restaurant;
 use App\Services\MediaStorage;
 use App\Services\PromotionAnalyticsService;
+use App\Services\PromotionFinanceReportService;
 use App\Support\PromotionTypeRegistry;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -145,6 +147,202 @@ class PromotionEngineController extends Controller
         ]);
     }
 
+
+    public function campaignExport(Request $request, PromotionFinanceReportService $reports)
+    {
+        $filters = $request->validate([
+            'promotion_id' => ['nullable', 'integer', 'exists:promotions,id'],
+            'restaurant_id' => ['nullable', 'integer', 'exists:restaurants,id'],
+            'partner_name' => ['nullable', 'string', 'max:255'],
+            'date_from' => ['nullable', 'date'],
+            'date_to' => ['nullable', 'date', 'after_or_equal:date_from'],
+        ]);
+
+        $rows = $reports->campaignRows($filters)->map(fn ($row) => [
+            $row->promotion_id,
+            $row->promotion_title,
+            $row->restaurant_id,
+            $row->restaurant_name,
+            $row->funding_type,
+            $row->partner_name,
+            (int) $row->orders,
+            (int) $row->redemptions,
+            round((float) $row->discount_given, 2),
+            round((float) $row->budget_used, 2),
+            $row->remaining_budget,
+            round((float) $row->platform_burn, 2),
+            round((float) $row->restaurant_burn, 2),
+            round((float) $row->partner_burn, 2),
+        ]);
+
+        return $reports->streamCsv('campaign-performance-' . now()->format('Y-m-d-His') . '.csv', [
+            'promotion_id', 'promotion_title', 'restaurant_id', 'restaurant_name', 'funding_type', 'partner_name',
+            'orders', 'redemptions', 'discount_given', 'budget_used', 'remaining_budget', 'platform_burn',
+            'restaurant_burn', 'partner_burn',
+        ], $rows);
+    }
+
+    public function fraudAttempts(Request $request)
+    {
+        $filters = $request->validate([
+            'promotion_id' => ['nullable', 'integer', 'exists:promotions,id'],
+            'restaurant_id' => ['nullable', 'integer', 'exists:restaurants,id'],
+            'reason_code' => ['nullable', 'string', 'max:120'],
+            'date_from' => ['nullable', 'date'],
+            'date_to' => ['nullable', 'date', 'after_or_equal:date_from'],
+        ]);
+
+        $attempts = $this->fraudAttemptQuery($filters)
+            ->with(['promotion:id,title', 'restaurant:id,name', 'user:id,name,phone,email'])
+            ->latest()
+            ->paginate(50)
+            ->withQueryString();
+
+        $summary = [
+            'attempts' => (clone $this->fraudAttemptQuery($filters))->count(),
+            'users' => (clone $this->fraudAttemptQuery($filters))->whereNotNull('user_id')->distinct('user_id')->count('user_id'),
+            'devices' => (clone $this->fraudAttemptQuery($filters))->whereNotNull('device_id')->distinct('device_id')->count('device_id'),
+            'addresses' => (clone $this->fraudAttemptQuery($filters))->whereNotNull('address_hash')->distinct('address_hash')->count('address_hash'),
+        ];
+
+        return view('admin.promotion-engine.fraud-attempts', [
+            'attempts' => $attempts,
+            'summary' => $summary,
+            'promotions' => Promotion::query()->orderBy('title')->get(['id', 'title']),
+            'restaurants' => Restaurant::query()->orderBy('name')->get(['id', 'name']),
+            'reasonCodes' => PromotionFraudAttempt::query()->select('reason_code')->distinct()->orderBy('reason_code')->pluck('reason_code'),
+            'filters' => $filters,
+        ]);
+    }
+
+    public function fraudAttemptsExport(Request $request, PromotionFinanceReportService $reports)
+    {
+        $filters = $request->validate([
+            'promotion_id' => ['nullable', 'integer', 'exists:promotions,id'],
+            'restaurant_id' => ['nullable', 'integer', 'exists:restaurants,id'],
+            'reason_code' => ['nullable', 'string', 'max:120'],
+            'date_from' => ['nullable', 'date'],
+            'date_to' => ['nullable', 'date', 'after_or_equal:date_from'],
+        ]);
+
+        $rows = $this->fraudAttemptQuery($filters)
+            ->with(['promotion:id,title', 'restaurant:id,name', 'user:id,name,phone,email'])
+            ->latest()
+            ->get()
+            ->map(fn (PromotionFraudAttempt $attempt) => [
+                $attempt->id,
+                $attempt->created_at?->toDateTimeString(),
+                $attempt->promotion_id,
+                $attempt->promotion?->title,
+                $attempt->restaurant_id,
+                $attempt->restaurant?->name,
+                $attempt->user_id,
+                $attempt->user?->phone ?: $attempt->user?->email,
+                $attempt->coupon_code,
+                $attempt->rule_key,
+                $attempt->reason_code,
+                $attempt->reason,
+                $attempt->device_id,
+                $attempt->address_hash,
+                $attempt->payment_instrument_hash,
+            ]);
+
+        return $reports->streamCsv('promotion-fraud-attempts-' . now()->format('Y-m-d-His') . '.csv', [
+            'id', 'created_at', 'promotion_id', 'promotion_title', 'restaurant_id', 'restaurant_name', 'user_id',
+            'user_contact', 'coupon_code', 'rule_key', 'reason_code', 'reason', 'device_id', 'address_hash',
+            'payment_instrument_hash',
+        ], $rows);
+    }
+
+    public function bankPartnerSettlements(Request $request, PromotionFinanceReportService $reports)
+    {
+        $filters = $request->validate([
+            'promotion_id' => ['nullable', 'integer', 'exists:promotions,id'],
+            'restaurant_id' => ['nullable', 'integer', 'exists:restaurants,id'],
+            'partner_name' => ['nullable', 'string', 'max:255'],
+            'settlement_status' => ['nullable', 'string', 'max:80'],
+            'date_from' => ['nullable', 'date'],
+            'date_to' => ['nullable', 'date', 'after_or_equal:date_from'],
+        ]);
+
+        $rows = $reports->bankPartnerRows($filters);
+        $summary = [
+            'orders' => $rows->pluck('order_id')->filter()->unique()->count(),
+            'redemptions' => $rows->count(),
+            'partner_liability' => round((float) $rows->sum('partner_liability_amount'), 2),
+            'discount_given' => round((float) $rows->sum('discount_amount'), 2),
+        ];
+
+        return view('admin.promotion-engine.bank-partner-settlements', [
+            'rows' => $rows,
+            'summary' => $summary,
+            'promotions' => Promotion::query()->orderBy('title')->get(['id', 'title']),
+            'restaurants' => Restaurant::query()->orderBy('name')->get(['id', 'name']),
+            'partners' => DB::table('promotion_settlement_ledgers')->whereNotNull('partner_name')->distinct()->orderBy('partner_name')->pluck('partner_name'),
+            'filters' => $filters,
+        ]);
+    }
+
+    public function bankPartnerSettlementsApi(Request $request, PromotionFinanceReportService $reports)
+    {
+        $filters = $request->validate([
+            'promotion_id' => ['nullable', 'integer', 'exists:promotions,id'],
+            'restaurant_id' => ['nullable', 'integer', 'exists:restaurants,id'],
+            'partner_name' => ['nullable', 'string', 'max:255'],
+            'settlement_status' => ['nullable', 'string', 'max:80'],
+            'date_from' => ['nullable', 'date'],
+            'date_to' => ['nullable', 'date', 'after_or_equal:date_from'],
+        ]);
+        $rows = $reports->bankPartnerRows($filters);
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'summary' => [
+                    'orders' => $rows->pluck('order_id')->filter()->unique()->count(),
+                    'redemptions' => $rows->count(),
+                    'partner_liability' => round((float) $rows->sum('partner_liability_amount'), 2),
+                    'discount_given' => round((float) $rows->sum('discount_amount'), 2),
+                ],
+                'rows' => $rows->values(),
+            ],
+        ]);
+    }
+
+    public function bankPartnerSettlementsExport(Request $request, PromotionFinanceReportService $reports)
+    {
+        $filters = $request->validate([
+            'promotion_id' => ['nullable', 'integer', 'exists:promotions,id'],
+            'restaurant_id' => ['nullable', 'integer', 'exists:restaurants,id'],
+            'partner_name' => ['nullable', 'string', 'max:255'],
+            'settlement_status' => ['nullable', 'string', 'max:80'],
+            'date_from' => ['nullable', 'date'],
+            'date_to' => ['nullable', 'date', 'after_or_equal:date_from'],
+        ]);
+
+        $rows = $reports->bankPartnerRows($filters)->map(fn ($row) => [
+            $row->id,
+            $row->created_at,
+            $row->partner_name,
+            $row->settlement_status,
+            $row->order_id,
+            $row->order_number,
+            $row->promotion_id,
+            $row->promotion_title,
+            $row->restaurant_id,
+            $row->restaurant_name,
+            $row->coupon_code,
+            round((float) $row->discount_amount, 2),
+            round((float) $row->partner_liability_amount, 2),
+        ]);
+
+        return $reports->streamCsv('bank-partner-settlements-' . now()->format('Y-m-d-His') . '.csv', [
+            'ledger_id', 'created_at', 'partner_name', 'settlement_status', 'order_id', 'order_number',
+            'promotion_id', 'promotion_title', 'restaurant_id', 'restaurant_name', 'coupon_code',
+            'discount_amount', 'partner_liability_amount',
+        ], $rows);
+    }
+
     public function coupons(Request $request)
     {
         $filters = $request->validate([
@@ -207,6 +405,17 @@ class PromotionEngineController extends Controller
         ]);
     }
 
+
+    private function fraudAttemptQuery(array $filters)
+    {
+        return PromotionFraudAttempt::query()
+            ->when($filters['promotion_id'] ?? null, fn ($query, $id) => $query->where('promotion_id', $id))
+            ->when($filters['restaurant_id'] ?? null, fn ($query, $id) => $query->where('restaurant_id', $id))
+            ->when($filters['reason_code'] ?? null, fn ($query, $code) => $query->where('reason_code', $code))
+            ->when($filters['date_from'] ?? null, fn ($query, $date) => $query->whereDate('created_at', '>=', $date))
+            ->when($filters['date_to'] ?? null, fn ($query, $date) => $query->whereDate('created_at', '<=', $date));
+    }
+
     private function payload(Request $request, ?Promotion $promotion = null): array
     {
         $this->prepareSelectionArrays($request);
@@ -221,6 +430,18 @@ class PromotionEngineController extends Controller
             'status' => ['required', 'in:draft,active,paused'],
             'priority' => ['nullable', 'integer', 'min:1', 'max:9999'],
             'is_exclusive' => ['nullable', 'boolean'],
+            'funding_type' => ['nullable', 'in:platform,restaurant,shared,bank_partner'],
+            'platform_share_percent' => ['nullable', 'numeric', 'min:0', 'max:100'],
+            'restaurant_share_percent' => ['nullable', 'numeric', 'min:0', 'max:100'],
+            'partner_name' => ['nullable', 'string', 'max:255'],
+            'total_budget' => ['nullable', 'numeric', 'min:0'],
+            'daily_budget' => ['nullable', 'numeric', 'min:0'],
+            'per_restaurant_budget' => ['nullable', 'numeric', 'min:0'],
+            'fraud_one_per_user' => ['nullable', 'boolean'],
+            'fraud_first_order_only' => ['nullable', 'boolean'],
+            'fraud_one_per_device' => ['nullable', 'boolean'],
+            'fraud_one_per_address' => ['nullable', 'boolean'],
+            'fraud_one_per_payment_instrument' => ['nullable', 'boolean'],
             'starts_at' => ['nullable', 'date'],
             'ends_at' => ['nullable', 'date', 'after_or_equal:starts_at'],
             'starts_time' => ['nullable', 'date_format:H:i'],
@@ -335,6 +556,24 @@ class PromotionEngineController extends Controller
             ]);
         }
         $validated['reward_type'] = $allowedTypes[$validated['promotion_type']]['reward_type'] ?? $validated['reward_type'];
+
+        $defaultFundingType = in_array($ownerType, ['restaurant', 'branch'], true) ? 'restaurant' : 'platform';
+        $validated['funding_type'] = $validated['funding_type'] ?? $defaultFundingType;
+        if ($validated['funding_type'] === 'bank_partner' && blank($validated['partner_name'] ?? null)) {
+            throw ValidationException::withMessages([
+                'partner_name' => 'Partner name is required for bank/partner funded promotions.',
+            ]);
+        }
+        if ($validated['funding_type'] === 'shared') {
+            $validated['platform_share_percent'] = isset($validated['platform_share_percent']) ? (float) $validated['platform_share_percent'] : 50.0;
+            $validated['restaurant_share_percent'] = isset($validated['restaurant_share_percent']) ? (float) $validated['restaurant_share_percent'] : 50.0;
+            $shareTotal = round($validated['platform_share_percent'] + $validated['restaurant_share_percent'], 2);
+            if (abs($shareTotal - 100.0) > 0.01) {
+                throw ValidationException::withMessages([
+                    'restaurant_share_percent' => 'Platform share and restaurant share must total 100%. Current total is '.$shareTotal.'%.',
+                ]);
+            }
+        }
 
         $scratchPool = $this->scratchRewardPool($validated);
         if (($validated['reward_type'] ?? null) === 'scratch_card' && $scratchPool === []) {
@@ -489,6 +728,20 @@ class PromotionEngineController extends Controller
             'status' => $validated['status'],
             'priority' => (int) ($validated['priority'] ?? 100),
             'is_exclusive' => $request->boolean('is_exclusive'),
+            'funding_type' => $validated['funding_type'],
+            'platform_share_percent' => $validated['funding_type'] === 'shared' && isset($validated['platform_share_percent']) ? (float) $validated['platform_share_percent'] : null,
+            'restaurant_share_percent' => $validated['funding_type'] === 'shared' && isset($validated['restaurant_share_percent']) ? (float) $validated['restaurant_share_percent'] : null,
+            'partner_name' => $validated['funding_type'] === 'bank_partner' ? ($validated['partner_name'] ?? null) : null,
+            'total_budget' => isset($validated['total_budget']) ? (float) $validated['total_budget'] : (isset($validated['campaign_tab_budget']) ? (float) $validated['campaign_tab_budget'] : null),
+            'daily_budget' => isset($validated['daily_budget']) ? (float) $validated['daily_budget'] : null,
+            'per_restaurant_budget' => isset($validated['per_restaurant_budget']) ? (float) $validated['per_restaurant_budget'] : null,
+            'fraud_rules' => array_filter([
+                'one_per_user' => $request->boolean('fraud_one_per_user'),
+                'first_order_only' => $request->boolean('fraud_first_order_only'),
+                'one_per_device' => $request->boolean('fraud_one_per_device'),
+                'one_per_address' => $request->boolean('fraud_one_per_address'),
+                'one_per_payment_instrument' => $request->boolean('fraud_one_per_payment_instrument'),
+            ]),
             'image_path' => $imagePath,
             'starts_at' => $validated['starts_at'] ?? null,
             'ends_at' => $validated['ends_at'] ?? null,
@@ -1045,3 +1298,4 @@ class PromotionEngineController extends Controller
         );
     }
 }
+

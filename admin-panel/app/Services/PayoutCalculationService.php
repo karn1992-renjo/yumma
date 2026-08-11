@@ -67,8 +67,9 @@ class PayoutCalculationService
             ? $order->total * $this->gatewayFeeRate
             : 0;
         $restaurantDeliverySubsidy = max(0, (float) ($order->restaurant_delivery_subsidy ?? 0));
+        $restaurantPromotionLiability = max(0, (float) ($order->promotion_restaurant_liability ?? 0));
         
-        $restaurantEarning = $commissionBase - $platformCommission - $gstOnCommission - $gatewayFee - $restaurantDeliverySubsidy;
+        $restaurantEarning = $commissionBase - $platformCommission - $gstOnCommission - $gatewayFee - $restaurantDeliverySubsidy - $restaurantPromotionLiability;
         
         return [
             'subtotal' => round($commissionBase, 2),
@@ -78,6 +79,7 @@ class PayoutCalculationService
             'gst_on_commission' => round($gstOnCommission, 2),
             'payment_gateway_fee' => round($gatewayFee, 2),
             'restaurant_delivery_subsidy' => round($restaurantDeliverySubsidy, 2),
+            'promotion_restaurant_liability' => round($restaurantPromotionLiability, 2),
             'restaurant_earning' => max(0, round($restaurantEarning, 2))
         ];
     }
@@ -661,3 +663,4 @@ class PayoutCalculationService
         return rad2deg(acos($dist)) * 60 * 1.1515 * 1.609344;
     }
 }
+

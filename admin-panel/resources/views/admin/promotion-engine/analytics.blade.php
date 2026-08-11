@@ -19,7 +19,16 @@
             <h1>Promotion Analytics</h1>
             <p>Usage, conversion, reward cost, and zone-wise performance from the unified engine.</p>
         </div>
-        <div class="d-flex gap-2">
+        <div class="d-flex gap-2 flex-wrap">
+            <a href="{{ route('admin.promotion-engine.analytics.export', request()->query()) }}" class="btn btn-outline-primary">
+                <i class="fas fa-download me-2"></i>Finance CSV
+            </a>
+            <a href="{{ route('admin.promotion-engine.bank-partner-settlements', request()->query()) }}" class="btn btn-outline-primary">
+                <i class="fas fa-university me-2"></i>Bank Settlements
+            </a>
+            <a href="{{ route('admin.promotion-engine.fraud-attempts', request()->query()) }}" class="btn btn-outline-warning">
+                <i class="fas fa-shield-alt me-2"></i>Fraud Audit
+            </a>
             <a href="{{ route('admin.promotion-engine.coupons') }}" class="btn btn-outline-primary">
                 <i class="fas fa-ticket-alt me-2"></i>Coupon Library
             </a>
@@ -73,6 +82,13 @@
     <div class="col-md-3"><div class="table-card p-4 h-100"><div class="text-muted small">Revenue Tracked</div><div class="fs-3 fw-bold">{{ $currencySymbol }}{{ number_format((float) $summary['revenue'], $currencyDecimals) }}</div></div></div>
     <div class="col-md-3"><div class="table-card p-4 h-100"><div class="text-muted small">Discount Cost</div><div class="fs-3 fw-bold">{{ $currencySymbol }}{{ number_format((float) $summary['discount_given'], $currencyDecimals) }}</div></div></div>
     <div class="col-md-3"><div class="table-card p-4 h-100"><div class="text-muted small">Conversion / ROI</div><div class="fs-3 fw-bold">{{ number_format((float) $summary['conversion'], 1) }}% / {{ $summary['roi'] ?? 'N/A' }}</div></div></div>
+</div>
+
+<div class="row g-4 mb-4">
+    <div class="col-md-3"><div class="table-card p-4 h-100"><div class="text-muted small">Budget Used</div><div class="fs-4 fw-bold">{{ $currencySymbol }}{{ number_format((float) ($summary['budget_used'] ?? 0), $currencyDecimals) }}</div></div></div>
+    <div class="col-md-3"><div class="table-card p-4 h-100"><div class="text-muted small">Platform Burn</div><div class="fs-4 fw-bold">{{ $currencySymbol }}{{ number_format((float) ($summary['platform_burn'] ?? 0), $currencyDecimals) }}</div></div></div>
+    <div class="col-md-3"><div class="table-card p-4 h-100"><div class="text-muted small">Restaurant Burn</div><div class="fs-4 fw-bold">{{ $currencySymbol }}{{ number_format((float) ($summary['restaurant_burn'] ?? 0), $currencyDecimals) }}</div></div></div>
+    <div class="col-md-3"><div class="table-card p-4 h-100"><div class="text-muted small">Partner Burn</div><div class="fs-4 fw-bold">{{ $currencySymbol }}{{ number_format((float) ($summary['partner_burn'] ?? 0), $currencyDecimals) }}</div></div></div>
 </div>
 
 <div class="row g-4 mb-4">
@@ -299,3 +315,4 @@ document.addEventListener('DOMContentLoaded', function () {
 });
 </script>
 @endsection
+

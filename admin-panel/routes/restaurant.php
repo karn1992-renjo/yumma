@@ -77,6 +77,7 @@ Route::middleware(['auth', 'role:restaurant_owner|restaurant_staff'])->prefix('r
     Route::middleware('restaurant.permission:view_reports')->group(function () {
         Route::get('/analytics', [AnalyticsController::class, 'index'])->name('analytics.index');
         Route::get('/analytics/export', [AnalyticsController::class, 'export'])->name('analytics.export');
+        Route::get('/analytics/promo-spend/export', [AnalyticsController::class, 'promoSpendExport'])->name('analytics.promo-spend.export');
     });
 
     // Support

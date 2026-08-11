@@ -33,6 +33,7 @@ use App\Services\OrderStatusPushService;
 use App\Services\PrinterService;
 use App\Services\PromotionEngineService;
 use App\Services\PromotionRewardSettlementService;
+use App\Services\OrderRewardPointService;
 use App\Services\RefundService;
 use App\Services\ScratchCardService;
 use App\Support\PhoneNumber;
@@ -457,6 +458,9 @@ class OrderController extends Controller
                         ->map(fn ($card) => $scratchCardService->payload($card))
                         ->values(),
                     'requires_payment' => $requiresPayment,
+                    'reward_points_earned' => (int) floor((float) $order->total),
+                    'reward_points_balance' => (int) (auth()->user()?->reward_points_balance ?? 0),
+                    'reward_points_message' => 'You will earn '.((int) floor((float) $order->total)).' points after delivery.',
                     'refund_policy' => $this->getRefundPolicySummary(),
                 ],
             ], 201);
@@ -1244,6 +1248,7 @@ class OrderController extends Controller
         }
         $promo = $promotionResult['promo'] ?? null;
         $total = max(0, round($billableSubtotal + $payableDeliveryFee + $platformFee + $tax - $orderDiscount, 2));
+        $orderEarnedPoints = (int) floor($total);
 
         return [
             'delivery_fee' => round($originalDeliveryFee, 2),
@@ -1269,7 +1274,10 @@ class OrderController extends Controller
             'item_discount' => round((float) ($promotionResult['item_discount'] ?? 0), 2),
             'coupon_discount' => round((float) ($promotionResult['coupon_discount'] ?? 0), 2),
             'cashback_earned' => round((float) ($promotionResult['cashback_earned'] ?? 0), 2),
-            'reward_points_earned' => (int) ($promotionResult['reward_points_earned'] ?? 0),
+            'reward_points_earned' => $orderEarnedPoints,
+            'promotion_reward_points_earned' => (int) ($promotionResult['reward_points_earned'] ?? 0),
+            'reward_points_balance' => (int) (auth()->user()?->reward_points_balance ?? 0),
+            'reward_points_message' => $orderEarnedPoints > 0 ? 'You will earn '.$orderEarnedPoints.' points after delivery.' : null,
             'gift_voucher_amount' => round((float) ($promotionResult['gift_voucher_amount'] ?? 0), 2),
             'reward_lines' => $promotionResult['reward_lines'] ?? [],
             'promotion_progress' => $promotionResult['promotion_progress'] ?? [],
@@ -1279,6 +1287,10 @@ class OrderController extends Controller
             'eligible_promotions' => $promotionResult['eligible_promotions'] ?? [],
             'invalid_reasons' => $promotionResult['invalid_reasons'] ?? [],
             'discount_lines' => $promotionResult['discount_lines'] ?? [],
+            'promo_liability_lines' => $promotionResult['promo_liability_lines'] ?? [],
+            'funding_breakdown' => $promotionResult['funding_breakdown'] ?? [],
+            'budget_remaining' => $promotionResult['budget_remaining'] ?? null,
+            'offer_applicability' => $promotionResult['offer_applicability'] ?? [],
             'total' => $total,
             'promo' => $promo,
             'promotion_result' => $promotionResult,
@@ -1740,6 +1752,16 @@ class OrderController extends Controller
         $payload['estimated_delivery_minutes'] = $eta['eta_minutes'] ?? null;
         $payload['payment_summary'] = app(OrderPaymentService::class)->statusPayload($order);
         $payload['active_payment_attempt'] = $payload['payment_summary']['active_attempt'] ?? null;
+        $orderPoints = $order->status === 'delivered'
+            ? app(OrderRewardPointService::class)->earnedPointsForOrder($order)
+            : (int) floor(max(0, (float) $order->total));
+        $payload['reward_points_earned'] = $orderPoints;
+        $payload['reward_points_balance'] = (int) ($order->customer?->reward_points_balance ?? auth()->user()?->reward_points_balance ?? 0);
+        $payload['reward_points_message'] = $orderPoints > 0
+            ? ($order->status === 'delivered'
+                ? 'You earned '.$orderPoints.' points for this order.'
+                : 'You will earn '.$orderPoints.' points after delivery.')
+            : null;
 
         if (isset($payload['restaurant']) && is_array($payload['restaurant'])) {
             if (($eta['eta_minutes'] ?? null) !== null) {

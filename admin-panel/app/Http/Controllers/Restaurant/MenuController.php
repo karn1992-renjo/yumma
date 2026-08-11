@@ -221,9 +221,13 @@ class MenuController extends Controller
         $menuItem = MenuItem::where('restaurant_id', $restaurant->id)->findOrFail($id);
         $categories = Category::where('restaurant_id', $restaurant->id)->orderBy('display_order')->get();
         $cuisines = Cuisine::active()->ordered()->get();
+        $globalMenuItems = MasterMenuItem::where('is_active', true)
+            ->orderBy('category_name')
+            ->orderBy('name')
+            ->get();
         $globalCategories = $this->globalCategoryOptions();
             
-        return view('restaurant.menu.edit', compact('menuItem', 'categories', 'cuisines', 'restaurant', 'globalCategories'));
+        return view('restaurant.menu.edit', compact('menuItem', 'categories', 'cuisines', 'restaurant', 'globalMenuItems', 'globalCategories'));
     }
     
     public function update(Request $request, $id)

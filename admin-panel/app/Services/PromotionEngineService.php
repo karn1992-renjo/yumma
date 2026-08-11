@@ -19,6 +19,7 @@ class PromotionEngineService
         private readonly PromotionCalculator $calculator,
         private readonly PromotionStackService $stacking,
         private readonly PromotionLogger $logger,
+        private readonly PromotionAccountingService $accounting,
     ) {
     }
 
@@ -166,6 +167,21 @@ class PromotionEngineService
                 continue;
             }
 
+            $budgetCheck = $this->accounting->budgetCheck($promotion, $line, $context);
+            if (! ($budgetCheck['eligible'] ?? false)) {
+                $invalidReasons[] = [
+                    'promotion_id' => $promotion->id,
+                    'coupon_code' => $promotionCoupon?->code,
+                    'title' => $promotion->title,
+                    'reason' => $budgetCheck['reason'] ?? 'Promotion budget is exhausted',
+                    'reason_code' => $budgetCheck['reason_code'] ?? 'campaign_budget_exhausted',
+                    'budget_remaining' => $budgetCheck['budget_remaining'] ?? 0,
+                ];
+                continue;
+            }
+
+            $line = $this->accounting->decorateLine($promotion, $line, $context);
+
             $eligible->push([
                 'promotion' => $promotion,
                 'coupon' => $promotionCoupon,
@@ -230,6 +246,10 @@ class PromotionEngineService
                 ->values(),
             'discount_lines' => $discountLines,
             'reward_lines' => $rewardLines,
+            'promo_liability_lines' => $this->liabilityLinesFromLines($discountLines),
+            'funding_breakdown' => $this->fundingSummaryFromLines($discountLines),
+            'budget_remaining' => $this->budgetRemainingFromApplied($applied),
+            'offer_applicability' => $this->offerApplicability($discountLines, $invalidReasons),
             'promotion_progress' => $workflowProgress
                 ->unique(fn (array $item) => ($item['promotion_id'] ?? '').':'.($item['type'] ?? ''))
                 ->values(),
@@ -327,6 +347,11 @@ class PromotionEngineService
                     'source_id' => $line['source_id'] ?? null,
                     'discount_amount' => $line['discount_amount'] ?? 0,
                     'cashback_amount' => $line['cashback_amount'] ?? 0,
+                    'gross_liability_amount' => data_get($line, 'funding_breakdown.gross_liability_amount', 0),
+                    'platform_liability_amount' => data_get($line, 'funding_breakdown.platform_liability_amount', 0),
+                    'restaurant_liability_amount' => data_get($line, 'funding_breakdown.restaurant_liability_amount', 0),
+                    'partner_liability_amount' => data_get($line, 'funding_breakdown.partner_liability_amount', 0),
+                    'funding_breakdown' => $line['funding_breakdown'] ?? null,
                     'discount_lines' => [$line],
                     'context' => $context,
                 ]
@@ -347,6 +372,8 @@ class PromotionEngineService
             if (($line['source_type'] ?? null) === 'promo_code' && ! empty($line['source_id'])) {
                 PromoCode::whereKey($line['source_id'])->lockForUpdate()->increment('used_count');
             }
+
+            $this->accounting->recordLedger($order, $usage->fresh('promotion'), $line);
         }
 
         if ($order->isVisibleToRestaurant()) {
@@ -356,20 +383,42 @@ class PromotionEngineService
 
     public function activeOfferPayloads(array $context = []): Collection
     {
-        return $this->listForViewer(array_merge([
-            'limit' => $context['limit'] ?? 10,
-        ], $context))->map(function (array $promotion) {
-            $code = data_get($promotion, 'coupon_codes.0.code');
+        $limit = $context['limit'] ?? 10;
+        $baseContext = array_merge(['limit' => $limit], $context);
+        $automatic = $this->listForViewer($baseContext);
+        $couponOffers = $this->finder->activeCoupons($baseContext)
+            ->filter(fn (PromotionCouponCode $coupon) => $coupon->promotion !== null)
+            ->map(function (PromotionCouponCode $coupon) use ($baseContext) {
+                $couponContext = array_merge($baseContext, ['coupon_code' => $coupon->code]);
+                $viewer = $this->validator->checkViewer($coupon->promotion, $this->finder->normalizeContext($couponContext), $coupon);
+                $payload = $this->promotionPayload($coupon->promotion, $coupon);
 
-            return array_merge($promotion, [
-                'source_type' => 'promotion',
-                'code' => $code,
-                'coupon_code' => $code,
-                'reward_type' => data_get($promotion, 'rewards.type') ?? ($promotion['promotion_type'] ?? null),
-                'subtitle' => $promotion['description'] ?? 'Special offer',
-            ]);
-        })->flatMap(fn (array $promotion) => $this->promotionDisplayPayloads($promotion))
-            ->take($context['limit'] ?? 10)
+                return array_merge($payload, [
+                    'offer_applicability' => [
+                        'can_apply_now' => (bool) ($viewer['eligible'] ?? false),
+                        'reason' => $viewer['reason'] ?? null,
+                        'reason_code' => $viewer['reason_code'] ?? null,
+                    ],
+                ]);
+            });
+
+        return $automatic
+            ->merge($couponOffers)
+            ->unique(fn (array $promotion) => $promotion['display_id'] ?? ('promotion:' . ($promotion['id'] ?? '0')))
+            ->sortByDesc(fn (array $promotion) => (bool) data_get($promotion, 'offer_applicability.can_apply_now', true))
+            ->map(function (array $promotion) {
+                $code = data_get($promotion, 'coupon_codes.0.code') ?: ($promotion['coupon_code'] ?? null);
+
+                return array_merge($promotion, [
+                    'source_type' => 'promotion',
+                    'code' => $code,
+                    'coupon_code' => $code,
+                    'reward_type' => data_get($promotion, 'rewards.type') ?? ($promotion['promotion_type'] ?? null),
+                    'subtitle' => $promotion['description'] ?? 'Special offer',
+                ]);
+            })
+            ->flatMap(fn (array $promotion) => $this->promotionDisplayPayloads($promotion))
+            ->take($limit)
             ->values();
     }
 
@@ -422,6 +471,62 @@ class PromotionEngineService
             'discount' => $totalSavings,
             'final_total' => max(0, round($grossTotal - $totalSavings, 2)),
             'total' => max(0, round($grossTotal - $totalSavings, 2)),
+        ];
+    }
+
+    private function liabilityLinesFromLines(Collection $lines): Collection
+    {
+        return $lines
+            ->map(function (array $line) {
+                $funding = (array) ($line['funding_breakdown'] ?? []);
+
+                return [
+                    'promotion_id' => $line['promotion_id'] ?? null,
+                    'coupon_code' => $line['coupon_code'] ?? null,
+                    'title' => $line['title'] ?? null,
+                    'funding_type' => $funding['funding_type'] ?? null,
+                    'partner_name' => $funding['partner_name'] ?? null,
+                    'discount_amount' => round((float) ($line['discount_amount'] ?? 0), 2),
+                    'cashback_amount' => round((float) ($line['cashback_amount'] ?? 0), 2),
+                    'gift_voucher_amount' => round((float) ($line['gift_voucher_amount'] ?? 0), 2),
+                    'gross_liability_amount' => round((float) ($funding['gross_liability_amount'] ?? 0), 2),
+                    'platform_liability_amount' => round((float) ($funding['platform_liability_amount'] ?? 0), 2),
+                    'restaurant_liability_amount' => round((float) ($funding['restaurant_liability_amount'] ?? 0), 2),
+                    'partner_liability_amount' => round((float) ($funding['partner_liability_amount'] ?? 0), 2),
+                ];
+            })
+            ->values();
+    }
+
+    private function fundingSummaryFromLines(Collection $lines): array
+    {
+        $liability = $this->liabilityLinesFromLines($lines);
+
+        return [
+            'gross_liability_amount' => round((float) $liability->sum('gross_liability_amount'), 2),
+            'platform_liability_amount' => round((float) $liability->sum('platform_liability_amount'), 2),
+            'restaurant_liability_amount' => round((float) $liability->sum('restaurant_liability_amount'), 2),
+            'partner_liability_amount' => round((float) $liability->sum('partner_liability_amount'), 2),
+        ];
+    }
+
+    private function budgetRemainingFromApplied(Collection $applied): ?float
+    {
+        $remaining = $applied
+            ->map(fn (array $candidate) => $candidate['promotion']->budgetRemaining())
+            ->filter(fn ($value) => $value !== null)
+            ->min();
+
+        return $remaining !== null ? round((float) $remaining, 2) : null;
+    }
+
+    private function offerApplicability(Collection $discountLines, array $invalidReasons): array
+    {
+        return [
+            'can_apply_now' => $discountLines->isNotEmpty(),
+            'reason' => $discountLines->isNotEmpty() ? null : (collect($invalidReasons)->first()['reason'] ?? null),
+            'reason_code' => $discountLines->isNotEmpty() ? null : (collect($invalidReasons)->first()['reason_code'] ?? null),
+            'invalid_reasons' => $invalidReasons,
         ];
     }
 
@@ -845,3 +950,6 @@ class PromotionEngineService
     }
 
 }
+
+
+

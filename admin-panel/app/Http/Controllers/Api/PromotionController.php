@@ -189,6 +189,10 @@ class PromotionController extends Controller
             'order_type' => ['nullable', 'string'],
             'platform' => ['nullable', 'string'],
             'device' => ['nullable', 'string'],
+            'device_id' => ['nullable', 'string', 'max:191'],
+            'address_hash' => ['nullable', 'string', 'max:191'],
+            'delivery_address_hash' => ['nullable', 'string', 'max:191'],
+            'payment_instrument_hash' => ['nullable', 'string', 'max:191'],
             'payment_method' => ['nullable', 'string'],
             'code' => ['nullable', 'string', 'max:100'],
             'coupon_code' => ['nullable', 'string', 'max:100'],
@@ -224,3 +228,4 @@ class PromotionController extends Controller
         return $validated;
     }
 }
+

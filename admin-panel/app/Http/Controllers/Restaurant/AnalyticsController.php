@@ -14,6 +14,7 @@ use Illuminate\Support\Facades\Schema;
 use Maatwebsite\Excel\Facades\Excel;
 use App\Exports\RestaurantSalesExport;
 use App\Models\AppSetting;
+use App\Services\PromotionFinanceReportService;
 
 class AnalyticsController extends Controller
 {
@@ -316,6 +317,44 @@ class AnalyticsController extends Controller
                 ];
             });
         }
+            if (Schema::hasTable('promotion_settlement_ledgers')) {
+                $ledger = DB::table('promotion_settlement_ledgers')
+                    ->where('restaurant_id', $restaurantId)
+                    ->whereBetween('created_at', [$startDate, $endDate]);
+                $restaurantFundedSpend = round((float) (clone $ledger)->sum('restaurant_liability_amount'), 2);
+                $platformFundedSpend = round((float) (clone $ledger)->sum('platform_liability_amount'), 2);
+                $partnerFundedSpend = round((float) (clone $ledger)->sum('partner_liability_amount'), 2);
+
+                $ledgerTopPromos = DB::table('promotion_settlement_ledgers')
+                    ->leftJoin('promotions', 'promotion_settlement_ledgers.promotion_id', '=', 'promotions.id')
+                    ->where('promotion_settlement_ledgers.restaurant_id', $restaurantId)
+                    ->whereBetween('promotion_settlement_ledgers.created_at', [$startDate, $endDate])
+                    ->groupBy('promotion_settlement_ledgers.promotion_id', 'promotion_settlement_ledgers.coupon_code', 'promotions.title')
+                    ->selectRaw('promotion_settlement_ledgers.promotion_id, promotion_settlement_ledgers.coupon_code, promotions.title')
+                    ->selectRaw('COUNT(DISTINCT promotion_settlement_ledgers.order_id) as usage_count')
+                    ->selectRaw('SUM(promotion_settlement_ledgers.discount_amount) as discount_given')
+                    ->selectRaw('SUM(promotion_settlement_ledgers.restaurant_liability_amount) as restaurant_liability')
+                    ->orderByDesc('restaurant_liability')
+                    ->limit(5)
+                    ->get();
+
+                if ($ledgerTopPromos->isNotEmpty()) {
+                    $topPromos = $ledgerTopPromos->map(function ($row) use ($currencySymbol, $currencyDecimals) {
+                        $discount = round((float) $row->discount_given, 2);
+                        $liability = round((float) $row->restaurant_liability, 2);
+
+                        return [
+                            'title' => $row->title ?: ($row->coupon_code ?: 'Auto promotion'),
+                            'code' => $row->coupon_code,
+                            'usage_count' => (int) $row->usage_count,
+                            'discount_given' => $discount,
+                            'discount_label' => $currencySymbol . number_format($discount, $currencyDecimals),
+                            'restaurant_liability' => $liability,
+                            'restaurant_liability_label' => $currencySymbol . number_format($liability, $currencyDecimals),
+                        ];
+                    });
+                }
+            }
 
         if ($usageCount === 0) {
             $discountedOrders = Order::where('restaurant_id', $restaurantId)
@@ -353,11 +392,44 @@ class AnalyticsController extends Controller
             'discount_given_label' => $currencySymbol . number_format($discountGiven, $currencyDecimals),
             'avg_discount' => $avgDiscount,
             'avg_discount_label' => $currencySymbol . number_format($avgDiscount, $currencyDecimals),
+            'restaurant_funded_spend' => $restaurantFundedSpend,
+            'restaurant_funded_spend_label' => $currencySymbol . number_format($restaurantFundedSpend, $currencyDecimals),
+            'platform_funded_spend' => $platformFundedSpend,
+            'platform_funded_spend_label' => $currencySymbol . number_format($platformFundedSpend, $currencyDecimals),
+            'partner_funded_spend' => $partnerFundedSpend,
+            'partner_funded_spend_label' => $currencySymbol . number_format($partnerFundedSpend, $currencyDecimals),
             'top_promos' => $topPromos->values()->all(),
         ];
     }
     
-    private function calculateCancellationRate($restaurantId, $startDate, $endDate)
+
+    public function promoSpendExport(Request $request, PromotionFinanceReportService $reports)
+    {
+        $restaurant = $this->currentRestaurant();
+        $filters = [
+            'restaurant_id' => $restaurant->id,
+            'date_from' => $request->input('start_date'),
+            'date_to' => $request->input('end_date'),
+        ];
+
+        $rows = $reports->campaignRows($filters)->map(fn ($row) => [
+            $row->promotion_id,
+            $row->promotion_title,
+            $row->funding_type,
+            $row->partner_name,
+            (int) $row->orders,
+            (int) $row->redemptions,
+            round((float) $row->discount_given, 2),
+            round((float) $row->restaurant_burn, 2),
+            round((float) $row->platform_burn, 2),
+            round((float) $row->partner_burn, 2),
+        ]);
+
+        return $reports->streamCsv('restaurant-promo-spend-' . now()->format('Y-m-d-His') . '.csv', [
+            'promotion_id', 'promotion_title', 'funding_type', 'partner_name', 'orders', 'redemptions',
+            'discount_given', 'restaurant_funded_spend', 'platform_funded_spend', 'partner_funded_spend',
+        ], $rows);
+    }    private function calculateCancellationRate($restaurantId, $startDate, $endDate)
     {
         $totalOrders = Order::where('restaurant_id', $restaurantId)
             ->whereBetween('created_at', [$startDate, $endDate])

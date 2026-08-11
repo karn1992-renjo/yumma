@@ -5,6 +5,8 @@ namespace App\Services;
 use App\Models\Order;
 use App\Models\Promotion;
 use App\Models\PromotionCouponCode;
+use App\Models\PromotionFraudAttempt;
+use App\Models\PromotionUsage;
 use App\Models\UserReferral;
 
 class PromotionEligibilityService
@@ -87,6 +89,11 @@ class PromotionEligibilityService
 
         if ($userId && ! $this->matchesRollingUsageLimits($promotion, (int) $userId)) {
             return $this->invalid('Promotion usage limit exceeded for this period', 'rolling_usage_limit_exceeded');
+        }
+
+        $fraudCheck = $this->matchesFraudRules($promotion, $context);
+        if (! ($fraudCheck['eligible'] ?? true)) {
+            return $fraudCheck;
         }
 
         return ['eligible' => true, 'reason' => null, 'reason_code' => null];
@@ -294,6 +301,11 @@ class PromotionEligibilityService
 
         if ($userId && ! $this->matchesRollingUsageLimits($promotion, (int) $userId)) {
             return $this->invalid('Promotion usage limit exceeded for this period', 'rolling_usage_limit_exceeded');
+        }
+
+        $fraudCheck = $this->matchesFraudRules($promotion, $context);
+        if (! ($fraudCheck['eligible'] ?? true)) {
+            return $fraudCheck;
         }
 
         return ['eligible' => true, 'reason' => null];
@@ -513,6 +525,81 @@ class PromotionEligibilityService
         return true;
     }
 
+    private function matchesFraudRules(Promotion $promotion, array $context): array
+    {
+        $rules = (array) ($promotion->fraud_rules ?? []);
+        if ($rules === []) {
+            return ['eligible' => true];
+        }
+
+        $userId = (int) ($context['user_id'] ?? 0);
+        if ((bool) ($rules['first_order_only'] ?? false) && $userId > 0 && Order::where('customer_id', $userId)->exists()) {
+            return $this->fraudInvalid($promotion, $context, 'first_order_only', 'Promotion is available only on the first order', 'first_order_only_not_matched');
+        }
+
+        if ((bool) ($rules['one_per_user'] ?? false) && $userId > 0 && $promotion->usages()->where('user_id', $userId)->exists()) {
+            return $this->fraudInvalid($promotion, $context, 'one_per_user', 'Promotion already used by this account', 'one_per_user_exceeded');
+        }
+
+        foreach ([
+            'one_per_device' => ['context' => 'device_id', 'reason' => 'Promotion already used on this device', 'code' => 'one_per_device_exceeded'],
+            'one_per_address' => ['context' => 'address_hash', 'reason' => 'Promotion already used for this address', 'code' => 'one_per_address_exceeded'],
+            'one_per_payment_instrument' => ['context' => 'payment_instrument_hash', 'reason' => 'Promotion already used with this payment instrument', 'code' => 'one_per_payment_instrument_exceeded'],
+        ] as $rule => $config) {
+            if (! (bool) ($rules[$rule] ?? false)) {
+                continue;
+            }
+
+            $value = strtolower(trim((string) ($context[$config['context']] ?? '')));
+            if ($value === '') {
+                continue;
+            }
+
+            $used = PromotionUsage::query()
+                ->where('promotion_id', $promotion->id)
+                ->get(['context'])
+                ->contains(function (PromotionUsage $usage) use ($config, $value) {
+                    return strtolower(trim((string) data_get($usage->context ?? [], $config['context']))) === $value;
+                });
+
+            if ($used) {
+                return $this->fraudInvalid($promotion, $context, $rule, $config['reason'], $config['code']);
+            }
+        }
+
+        return ['eligible' => true];
+    }
+
+    private function fraudInvalid(Promotion $promotion, array $context, string $ruleKey, string $reason, string $reasonCode): array
+    {
+        try {
+            PromotionFraudAttempt::create([
+                'promotion_id' => $promotion->id,
+                'user_id' => $context['user_id'] ?? null,
+                'restaurant_id' => $context['restaurant_id'] ?? null,
+                'coupon_code' => $context['coupon_code'] ?? null,
+                'rule_key' => $ruleKey,
+                'reason_code' => $reasonCode,
+                'reason' => $reason,
+                'device_id' => $context['device_id'] ?? null,
+                'address_hash' => $context['address_hash'] ?? null,
+                'payment_instrument_hash' => $context['payment_instrument_hash'] ?? null,
+                'context' => array_filter([
+                    'subtotal' => $context['subtotal'] ?? null,
+                    'delivery_fee' => $context['delivery_fee'] ?? null,
+                    'platform' => $context['platform'] ?? null,
+                    'device' => $context['device'] ?? null,
+                    'order_type' => $context['order_type'] ?? null,
+                    'payment_method' => $context['payment_method'] ?? null,
+                    'zone_id' => $context['zone_id'] ?? null,
+                ], fn ($value) => $value !== null && $value !== ''),
+            ]);
+        } catch (\Throwable $exception) {
+            report($exception);
+        }
+
+        return $this->invalid($reason, $reasonCode);
+    }
     private function invalid(string $reason, ?string $reasonCode = null): array
     {
         return [
@@ -527,3 +614,4 @@ class PromotionEligibilityService
         return number_format($amount, 2, '.', '');
     }
 }
+

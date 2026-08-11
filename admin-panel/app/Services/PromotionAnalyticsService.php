@@ -8,6 +8,7 @@ use App\Models\PromotionUsage;
 use App\Models\CustomerScratchCard;
 use App\Models\RewardRedemption;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
 class PromotionAnalyticsService
 {
@@ -36,6 +37,12 @@ class PromotionAnalyticsService
         $scratchRevealed = (clone $scratchCards)->where('status', 'revealed')->count();
         $scratchRedemptions = RewardRedemption::query()
             ->when($filters['promotion_id'] ?? null, fn ($query, $id) => $query->where('promotion_id', $id));
+        $ledger = Schema::hasTable('promotion_settlement_ledgers')
+            ? DB::table('promotion_settlement_ledgers')
+                ->when($filters['promotion_id'] ?? null, fn ($query, $id) => $query->where('promotion_id', $id))
+                ->when($filters['restaurant_id'] ?? null, fn ($query, $id) => $query->where('restaurant_id', $id))
+                ->when($filters['order_ids'] ?? null, fn ($query, $ids) => $query->whereIn('order_id', $ids))
+            : null;
 
         return [
             'promotion_count' => Promotion::query()->count(),
@@ -46,6 +53,10 @@ class PromotionAnalyticsService
             'roi' => $discountGiven > 0 ? round($revenue / $discountGiven, 2) : null,
             'discount_given' => $discountGiven,
             'cashback_given' => $cashbackGiven,
+            'budget_used' => $ledger ? round((float) (clone $ledger)->sum('gross_liability_amount'), 2) : $discountGiven,
+            'platform_burn' => $ledger ? round((float) (clone $ledger)->sum('platform_liability_amount'), 2) : 0.0,
+            'restaurant_burn' => $ledger ? round((float) (clone $ledger)->sum('restaurant_liability_amount'), 2) : 0.0,
+            'partner_burn' => $ledger ? round((float) (clone $ledger)->sum('partner_liability_amount'), 2) : 0.0,
             'scratch_cards' => [
                 'issued' => $scratchIssued,
                 'scratched' => $scratchRevealed,
@@ -126,3 +137,4 @@ class PromotionAnalyticsService
             ->get();
     }
 }
+

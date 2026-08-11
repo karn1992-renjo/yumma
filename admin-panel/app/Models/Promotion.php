@@ -27,6 +27,14 @@ class Promotion extends Model
         'status',
         'priority',
         'is_exclusive',
+        'funding_type',
+        'platform_share_percent',
+        'restaurant_share_percent',
+        'partner_name',
+        'total_budget',
+        'daily_budget',
+        'per_restaurant_budget',
+        'budget_used',
         'image_path',
         'starts_at',
         'ends_at',
@@ -37,6 +45,7 @@ class Promotion extends Model
         'conditions',
         'rewards',
         'stacking',
+        'fraud_rules',
         'visibility',
         'total_usage_limit',
         'per_user_usage_limit',
@@ -51,6 +60,12 @@ class Promotion extends Model
         'branch_id' => 'integer',
         'priority' => 'integer',
         'is_exclusive' => 'boolean',
+        'platform_share_percent' => 'decimal:2',
+        'restaurant_share_percent' => 'decimal:2',
+        'total_budget' => 'decimal:2',
+        'daily_budget' => 'decimal:2',
+        'per_restaurant_budget' => 'decimal:2',
+        'budget_used' => 'decimal:2',
         'starts_at' => 'datetime',
         'ends_at' => 'datetime',
         'schedule' => 'array',
@@ -58,6 +73,7 @@ class Promotion extends Model
         'conditions' => 'array',
         'rewards' => 'array',
         'stacking' => 'array',
+        'fraud_rules' => 'array',
         'visibility' => 'array',
         'total_usage_limit' => 'integer',
         'per_user_usage_limit' => 'integer',
@@ -190,5 +206,26 @@ class Promotion extends Model
             'rewards' => $this->rewards,
             'visibility' => $this->visibility,
         ];
+    }
+
+    public function resolvedFundingType(): string
+    {
+        $type = strtolower((string) ($this->funding_type ?: ''));
+
+        if (in_array($type, ['platform', 'restaurant', 'shared', 'bank_partner'], true)) {
+            return $type;
+        }
+
+        return in_array($this->owner_type, ['restaurant', 'branch'], true) ? 'restaurant' : 'platform';
+    }
+
+    public function budgetRemaining(): ?float
+    {
+        $budget = $this->total_budget ?? data_get($this->visibility ?? [], 'campaign_budget');
+        if ($budget === null || $budget === '') {
+            return null;
+        }
+
+        return max(0, round((float) $budget - (float) ($this->budget_used ?? 0), 2));
     }
 }

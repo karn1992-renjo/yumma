@@ -536,7 +536,7 @@
                 </button>
                 <button class="wizard-step-button" type="button" data-wizard-tab="6">
                     <span class="wizard-step-index"><span>7</span></span>
-                    <span><span class="wizard-step-title">Marketing</span><span class="wizard-step-copy">Campaign and stacking</span></span>
+                    <span><span class="wizard-step-title">Funding</span><span class="wizard-step-copy">Budget, fraud, liability</span></span>
                 </button>
                 <button class="wizard-step-button" type="button" data-wizard-tab="7">
                     <span class="wizard-step-index"><span>8</span></span>
@@ -1094,8 +1094,8 @@
 
                 <section class="form-card" data-wizard-panel="6">
                     <div class="form-card-header">
-                        <h5 class="section-title">Marketing & Stacking</h5>
-                        <p class="section-subtitle">Optional campaign content and stacking behavior.</p>
+                        <h5 class="section-title">Funding, Budget & Stacking</h5>
+                        <p class="section-subtitle">Set campaign funding, budgets, fraud limits, and stacking behavior.</p>
                     </div>
                     <div class="form-card-body">
                         <div class="row g-3">
@@ -1105,9 +1105,40 @@
                                     <input class="form-control" name="{{ $field }}" value="{{ old($field, data_get($visibility, $field)) }}">
                                 </div>
                             @endforeach
+                            <div class="col-md-6" data-budget-field="total">
+                                <label class="form-label">Total Campaign Budget</label>
+                                <input class="form-control" type="number" step="0.01" min="0" name="campaign_tab_budget" value="{{ old('campaign_tab_budget', $promotion->total_budget ?? data_get($visibility, 'campaign_budget')) }}" data-total-budget>
+                                <div class="form-text">Promotion stops applying when total discount burn reaches this amount.</div>
+                            </div>
                             <div class="col-md-6">
-                                <label class="form-label">Campaign Budget</label>
-                                <input class="form-control" type="number" step="0.01" min="0" name="campaign_tab_budget" value="{{ old('campaign_tab_budget', data_get($visibility, 'campaign_budget')) }}">
+                                <label class="form-label">Funding Source</label>
+                                <select class="form-select" name="funding_type" data-funding-type data-summary-field="funding">
+                                    @foreach(['platform' => 'Platform funded', 'restaurant' => 'Restaurant funded', 'shared' => 'Shared funding', 'bank_partner' => 'Bank/partner funded'] as $value => $label)
+                                        <option value="{{ $value }}" {{ old('funding_type', $promotion->funding_type ?: $promotion->resolvedFundingType()) === $value ? 'selected' : '' }}>{{ $label }}</option>
+                                    @endforeach
+                                </select>
+                                <div class="form-text" data-funding-help></div>
+                            </div>
+                            <div class="col-md-3" data-funding-field="platform-share">
+                                <label class="form-label">Platform Share %</label>
+                                <input class="form-control" type="number" step="0.01" min="0" max="100" name="platform_share_percent" value="{{ old('platform_share_percent', $promotion->platform_share_percent) }}" data-platform-share>
+                            </div>
+                            <div class="col-md-3" data-funding-field="restaurant-share">
+                                <label class="form-label">Restaurant Share %</label>
+                                <input class="form-control" type="number" step="0.01" min="0" max="100" name="restaurant_share_percent" value="{{ old('restaurant_share_percent', $promotion->restaurant_share_percent) }}" data-restaurant-share>
+                            </div>
+                            <div class="col-md-3" data-budget-field="daily">
+                                <label class="form-label">Daily Budget</label>
+                                <input class="form-control" type="number" step="0.01" min="0" name="daily_budget" value="{{ old('daily_budget', $promotion->daily_budget) }}" data-daily-budget>
+                            </div>
+                            <div class="col-md-3" data-budget-field="restaurant">
+                                <label class="form-label">Per Restaurant Budget</label>
+                                <input class="form-control" type="number" step="0.01" min="0" name="per_restaurant_budget" value="{{ old('per_restaurant_budget', $promotion->per_restaurant_budget) }}" data-per-restaurant-budget>
+                            </div>
+                            <div class="col-md-6" data-funding-field="partner">
+                                <label class="form-label">Partner Name <span class="required-dot d-none" data-partner-required-dot>*</span></label>
+                                <input class="form-control" name="partner_name" value="{{ old('partner_name', $promotion->partner_name) }}" data-partner-name>
+                                <div class="form-text">Required only for bank/partner funded offers.</div>
                             </div>
                             <div class="col-md-6">
                                 @php
@@ -1147,6 +1178,15 @@
                                             <label class="form-check-label fw-bold">Best Offer Only</label>
                                         </div>
                                     </div>
+                                    @php($fraudRules = (array) ($promotion->fraud_rules ?? []))
+                                    @foreach(['fraud_first_order_only' => ['first_order_only', 'First Order Only'], 'fraud_one_per_user' => ['one_per_user', 'One Per User'], 'fraud_one_per_device' => ['one_per_device', 'One Per Device'], 'fraud_one_per_address' => ['one_per_address', 'One Per Address'], 'fraud_one_per_payment_instrument' => ['one_per_payment_instrument', 'One Per Payment']] as $field => [$rule, $label])
+                                        <div class="col-md-3">
+                                            <div class="form-check form-switch">
+                                                <input class="form-check-input" type="checkbox" name="{{ $field }}" value="1" {{ $checked((bool) old($field, $fraudRules[$rule] ?? false)) }}>
+                                                <label class="form-check-label fw-bold">{{ $label }}</label>
+                                            </div>
+                                        </div>
+                                    @endforeach
                                 </div>
                             </div>
                             <div class="col-12">
@@ -1175,6 +1215,8 @@
                                 <div class="summary-row"><span>Reward</span><span data-summary-review="reward">{{ $rewardTypes[$currentRewardType] ?? ucwords(str_replace('_', ' ', $currentRewardType)) }}</span></div>
                                 <div class="summary-row"><span>Value</span><span data-summary-review="value">{{ old('reward_value', $reward['value'] ?? 0) }}</span></div>
                                 <div class="summary-row"><span>Priority</span><span data-summary-review="priority">{{ old('priority', $promotion->priority ?: 100) }}</span></div>
+                                <div class="summary-row"><span>Funding</span><span data-summary-review="funding">{{ ucwords(str_replace('_', ' ', old('funding_type', $promotion->funding_type ?: $promotion->resolvedFundingType()))) }}</span></div>
+                                <div class="summary-row"><span>Budget</span><span data-summary-review="budget">{{ old('campaign_tab_budget', $promotion->total_budget ?? data_get($visibility, 'campaign_budget', 'No limit')) }}</span></div>
                             </div>
                         </div>
                         <div class="alert alert-warning mt-3 mb-0">
@@ -1210,6 +1252,8 @@
                         <div class="summary-row"><span>Status</span><span data-summary="status">{{ ucfirst(old('status', $promotion->status ?: 'draft')) }}</span></div>
                         <div class="summary-row"><span>Value</span><span data-summary="value">{{ old('reward_value', $reward['value'] ?? 0) }}</span></div>
                         <div class="summary-row"><span>Priority</span><span data-summary="priority">{{ old('priority', $promotion->priority ?: 100) }}</span></div>
+                        <div class="summary-row"><span>Funding</span><span data-summary="funding">{{ ucwords(str_replace('_', ' ', old('funding_type', $promotion->funding_type ?: $promotion->resolvedFundingType()))) }}</span></div>
+                        <div class="summary-row"><span>Budget</span><span data-summary="budget">{{ old('campaign_tab_budget', $promotion->total_budget ?? data_get($visibility, 'campaign_budget', 'No limit')) }}</span></div>
                         <div class="small text-muted mt-3">Save as draft while configuring media, targeting, and reward pool.</div>
                     </div>
                 </div>
@@ -1270,6 +1314,16 @@ document.addEventListener('DOMContentLoaded', function () {
     const wizardMobileStep = form.querySelector('[data-wizard-mobile-step]');
     const sideSubmit = form.querySelector('[data-side-submit]');
     const rewardValueInput = form.querySelector('[name="reward_value"]');
+    const fundingType = form.querySelector('[data-funding-type]');
+    const fundingHelp = form.querySelector('[data-funding-help]');
+    const platformShare = form.querySelector('[data-platform-share]');
+    const restaurantShare = form.querySelector('[data-restaurant-share]');
+    const partnerName = form.querySelector('[data-partner-name]');
+    const partnerRequiredDots = form.querySelectorAll('[data-partner-required-dot]');
+    const totalBudget = form.querySelector('[data-total-budget]');
+    const dailyBudget = form.querySelector('[data-daily-budget]');
+    const perRestaurantBudget = form.querySelector('[data-per-restaurant-budget]');
+    let autoFundingFromOwner = @json(! $promotion->exists && old('funding_type') === null);
     const typeCatalog = @json($typeCatalog);
     const typeBucketByPromotion = @json($typeBucketByPromotion);
     const rewardByPromotion = @json($rewardByPromotion);
@@ -1490,6 +1544,7 @@ document.addEventListener('DOMContentLoaded', function () {
         });
         syncPromotionTypeOptions(true);
         updateScopedOptions();
+        syncFundingSettings();
     }
 
     function updateMode() {
@@ -1497,6 +1552,71 @@ document.addEventListener('DOMContentLoaded', function () {
         setVisible(couponSection, couponMode);
         setVisible(couponStacking, couponMode || form.querySelector('[name="allow_multiple"]')?.checked);
         modeHelp.textContent = couponMode ? 'Customer must enter or select a coupon code.' : 'Promotion applies automatically when eligibility matches.';
+    }
+
+    function defaultFundingForOwner() {
+        return ['restaurant', 'branch'].includes(owner?.value) ? 'restaurant' : 'platform';
+    }
+
+    function validateSharedShares() {
+        if (!platformShare || !restaurantShare) return;
+        platformShare.setCustomValidity('');
+        restaurantShare.setCustomValidity('');
+        if (fundingType?.value !== 'shared') return;
+
+        const platform = Number(platformShare.value || 0);
+        const restaurantValue = Number(restaurantShare.value || 0);
+        if (Math.abs(platform + restaurantValue - 100) > 0.01) {
+            restaurantShare.setCustomValidity('Platform share and restaurant share must total 100%.');
+        }
+    }
+
+    function syncFundingSettings() {
+        if (!fundingType) return;
+        if (autoFundingFromOwner) {
+            fundingType.value = defaultFundingForOwner();
+        }
+
+        const funding = fundingType.value || defaultFundingForOwner();
+        const shared = funding === 'shared';
+        const bankPartner = funding === 'bank_partner';
+        form.querySelectorAll('[data-funding-field="platform-share"], [data-funding-field="restaurant-share"]').forEach(section => setVisible(section, shared));
+        setVisible(form.querySelector('[data-funding-field="partner"]'), bankPartner);
+
+        [platformShare, restaurantShare].forEach(input => {
+            if (!input) return;
+            input.required = shared;
+            input.disabled = !shared;
+        });
+        if (shared && !platformShare.value && !restaurantShare.value) {
+            platformShare.value = '50';
+            restaurantShare.value = '50';
+        }
+
+        if (partnerName) {
+            partnerName.required = bankPartner;
+            partnerName.disabled = !bankPartner;
+        }
+        partnerRequiredDots.forEach(dot => dot.classList.toggle('d-none', !bankPartner));
+
+        const help = {
+            platform: 'Platform pays the discount. Restaurant payout is not reduced.',
+            restaurant: 'Restaurant pays the discount. Liability reduces restaurant payout.',
+            shared: 'Platform and restaurant split the discount by the percentages below.',
+            bank_partner: 'Bank/partner pays the discount. Partner name is used for settlement reports.',
+        };
+        if (fundingHelp) fundingHelp.textContent = help[funding] || '';
+
+        validateSharedShares();
+        updateSummary();
+    }
+
+    function formatBudgetSummary() {
+        const parts = [];
+        if (totalBudget?.value) parts.push(`Total ${totalBudget.value}`);
+        if (dailyBudget?.value) parts.push(`Daily ${dailyBudget.value}`);
+        if (perRestaurantBudget?.value) parts.push(`Restaurant ${perRestaurantBudget.value}`);
+        return parts.length ? parts.join(' / ') : 'No limit';
     }
 
     function updateRewardFields() {
@@ -1648,6 +1768,8 @@ document.addEventListener('DOMContentLoaded', function () {
         const priority = form.querySelector('[name="priority"]')?.value || '100';
         const value = form.querySelector('[name="reward_value"]')?.value || '0';
         const restaurantText = restaurant?.selectedOptions?.[0]?.textContent?.trim() || 'Entire platform';
+        const fundingText = fundingType?.selectedOptions?.[0]?.textContent?.trim() || labelize(defaultFundingForOwner());
+        const budgetText = formatBudgetSummary();
         form.querySelector('[data-summary="title"]').textContent = title;
         form.querySelector('[data-summary="owner"]').textContent = labelize(owner?.value);
         form.querySelector('[data-summary="restaurant"]').textContent = restaurantText;
@@ -1655,6 +1777,8 @@ document.addEventListener('DOMContentLoaded', function () {
         form.querySelector('[data-summary="status"]').textContent = labelize(status);
         form.querySelector('[data-summary="priority"]').textContent = priority;
         form.querySelector('[data-summary="value"]').textContent = value;
+        form.querySelector('[data-summary="funding"]').textContent = fundingText;
+        form.querySelector('[data-summary="budget"]').textContent = budgetText;
         form.querySelectorAll('[data-summary-review="title"]').forEach(node => node.textContent = title);
         form.querySelectorAll('[data-summary-review="owner"]').forEach(node => node.textContent = labelize(owner?.value));
         form.querySelectorAll('[data-summary-review="restaurant"]').forEach(node => node.textContent = restaurantText);
@@ -1662,6 +1786,8 @@ document.addEventListener('DOMContentLoaded', function () {
         form.querySelectorAll('[data-summary-review="status"]').forEach(node => node.textContent = labelize(status));
         form.querySelectorAll('[data-summary-review="priority"]').forEach(node => node.textContent = priority);
         form.querySelectorAll('[data-summary-review="value"]').forEach(node => node.textContent = value);
+        form.querySelectorAll('[data-summary-review="funding"]').forEach(node => node.textContent = fundingText);
+        form.querySelectorAll('[data-summary-review="budget"]').forEach(node => node.textContent = budgetText);
     }
 
     function initializeSearches() {
@@ -1834,6 +1960,7 @@ document.addEventListener('DOMContentLoaded', function () {
     owner?.addEventListener('change', updateOwner);
     restaurant?.addEventListener('change', () => {
         updateScopedOptions();
+        syncFundingSettings();
         updateSummary();
     });
     [targetCuisineSelect, targetSubcategorySelect, conditionCategorySelect].forEach(select => {
@@ -1859,9 +1986,16 @@ document.addEventListener('DOMContentLoaded', function () {
         syncOwnerFromPromotionType();
         syncRewardFromType();
         updateScopedOptions();
+        syncFundingSettings();
     });
     form.querySelectorAll('[data-application-mode]').forEach(input => input.addEventListener('change', updateMode));
-    wizardTabs.forEach(tab => tab.addEventListener('click', () => goToStep(Number(tab.dataset.wizardTab), { validate: Number(tab.dataset.wizardTab) > currentStep })));
+    fundingType?.addEventListener('change', () => {
+        autoFundingFromOwner = false;
+        syncFundingSettings();
+    });
+    [platformShare, restaurantShare].forEach(input => input?.addEventListener('input', validateSharedShares));
+    [totalBudget, dailyBudget, perRestaurantBudget].forEach(input => input?.addEventListener('input', updateSummary));
+    wizardTabs.forEach(tab => tab.addEventListener('click', () => goToStep(Number(tab.dataset.wizardTab), { validate: false })));
     wizardPrev?.addEventListener('click', () => goRelative(-1));
     wizardNext?.addEventListener('click', () => goRelative(1));
     form.addEventListener('invalid', event => {
@@ -1888,9 +2022,11 @@ document.addEventListener('DOMContentLoaded', function () {
     initializeComboGroups();
     updateOwner();
     updateMode();
+    syncFundingSettings();
     updateRewardFields();
     updateSummary();
     goToStep(0);
 });
 </script>
 @endsection
+

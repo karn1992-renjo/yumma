@@ -4,8 +4,11 @@ namespace Tests\Unit;
 
 use App\Models\Promotion;
 use App\Models\PromotionCouponCode;
+use App\Models\PromotionFraudAttempt;
+use App\Models\PromotionUsage;
 use App\Models\Restaurant;
 use App\Models\User;
+use App\Services\PayoutCalculationService;
 use App\Services\PromotionEngineService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
@@ -97,7 +100,7 @@ class PromotionEngineServiceTest extends TestCase
             'application_mode' => 'automatic',
             'status' => 'active',
             'conditions' => ['audience_type' => 'all'],
-            'rewards' => ['type' => 'bogo', 'buy_quantity' => 1, 'free_quantity' => 1],
+            'rewards' => ['type' => 'bogo', 'buy_quantity' => 1, 'free_quantity' => 1, 'reward_rule' => ['included_in_cart' => true]],
             'targets' => ['restaurant_ids' => [$restaurant->id]],
         ]);
 
@@ -196,7 +199,121 @@ class PromotionEngineServiceTest extends TestCase
         $this->assertCount(1, $result['applied_promotions']);
     }
 
-    private function restaurant(): Restaurant
+    public function test_shared_funded_discount_returns_liability_breakdown(): void
+    {
+        $restaurant = $this->restaurant();
+
+        Promotion::create([
+            'owner_type' => 'admin',
+            'title' => 'Shared Burn',
+            'promotion_type' => 'flat_discount',
+            'application_mode' => 'automatic',
+            'status' => 'active',
+            'funding_type' => 'shared',
+            'platform_share_percent' => 30,
+            'restaurant_share_percent' => 70,
+            'conditions' => ['audience_type' => 'all'],
+            'rewards' => ['type' => 'flat', 'value' => 100],
+            'targets' => ['restaurant_ids' => [$restaurant->id]],
+        ]);
+
+        $result = app(PromotionEngineService::class)->calculate([
+            'restaurant_id' => $restaurant->id,
+            'subtotal' => 500,
+        ]);
+
+        $this->assertSame(100.0, $result['total_savings']);
+        $this->assertSame(100.0, $result['funding_breakdown']['gross_liability_amount']);
+        $this->assertSame(30.0, $result['funding_breakdown']['platform_liability_amount']);
+        $this->assertSame(70.0, $result['funding_breakdown']['restaurant_liability_amount']);
+        $this->assertSame(70.0, $result['promo_liability_lines'][0]['restaurant_liability_amount']);
+    }
+
+    public function test_exhausted_campaign_budget_blocks_promotion(): void
+    {
+        $restaurant = $this->restaurant();
+
+        Promotion::create([
+            'owner_type' => 'admin',
+            'title' => 'Small Budget',
+            'promotion_type' => 'flat_discount',
+            'application_mode' => 'automatic',
+            'status' => 'active',
+            'funding_type' => 'platform',
+            'total_budget' => 50,
+            'conditions' => ['audience_type' => 'all'],
+            'rewards' => ['type' => 'flat', 'value' => 100],
+            'targets' => ['restaurant_ids' => [$restaurant->id]],
+        ]);
+
+        $result = app(PromotionEngineService::class)->calculate([
+            'restaurant_id' => $restaurant->id,
+            'subtotal' => 500,
+        ]);
+
+        $this->assertSame(0.0, $result['total_savings']);
+        $this->assertSame('campaign_budget_exhausted', $result['invalid_reasons'][0]['reason_code']);
+    }
+
+    public function test_restaurant_promotion_liability_reduces_restaurant_earning(): void
+    {
+        $order = new \App\Models\Order([
+            'subtotal' => 1000,
+            'total' => 1000,
+            'payment_method' => 'cod',
+            'restaurant_delivery_subsidy' => 0,
+            'promotion_restaurant_liability' => 75,
+        ]);
+
+        $withoutLiability = clone $order;
+        $withoutLiability->promotion_restaurant_liability = 0;
+
+        $service = app(PayoutCalculationService::class);
+        $base = $service->calculateRestaurantEarning($withoutLiability);
+        $funded = $service->calculateRestaurantEarning($order);
+
+        $this->assertSame(75.0, $funded['promotion_restaurant_liability']);
+        $this->assertSame(round($base['restaurant_earning'] - 75, 2), $funded['restaurant_earning']);
+    }
+
+    public function test_fraud_rule_blocks_are_logged_for_audit(): void
+    {
+        $restaurant = $this->restaurant();
+        $user = User::factory()->create();
+        $promotion = Promotion::create([
+            'owner_type' => 'admin',
+            'title' => 'One Per User',
+            'promotion_type' => 'flat_discount',
+            'application_mode' => 'automatic',
+            'status' => 'active',
+            'fraud_rules' => ['one_per_user' => true],
+            'conditions' => ['audience_type' => 'all'],
+            'rewards' => ['type' => 'flat', 'value' => 50],
+            'targets' => ['restaurant_ids' => [$restaurant->id]],
+        ]);
+
+        PromotionUsage::create([
+            'promotion_id' => $promotion->id,
+            'user_id' => $user->id,
+            'restaurant_id' => $restaurant->id,
+            'discount_amount' => 50,
+        ]);
+
+        $result = app(PromotionEngineService::class)->calculate([
+            'restaurant_id' => $restaurant->id,
+            'subtotal' => 500,
+            'user_id' => $user->id,
+        ]);
+
+        $this->assertSame(0.0, $result['total_savings']);
+        $this->assertDatabaseHas('promotion_fraud_attempts', [
+            'promotion_id' => $promotion->id,
+            'user_id' => $user->id,
+            'restaurant_id' => $restaurant->id,
+            'rule_key' => 'one_per_user',
+            'reason_code' => 'one_per_user_exceeded',
+        ]);
+    }    private function restaurant(): Restaurant
     {
         return Restaurant::create([
             'owner_id' => User::factory()->create()->id,

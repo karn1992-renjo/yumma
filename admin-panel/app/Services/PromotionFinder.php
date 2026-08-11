@@ -104,6 +104,9 @@ class PromotionFinder
             'order_type' => strtolower((string) ($context['order_type'] ?? 'delivery')),
             'platform' => strtolower((string) ($context['platform'] ?? 'api')),
             'device' => strtolower((string) ($context['device'] ?? '')),
+            'device_id' => strtolower((string) ($context['device_id'] ?? $context['device'] ?? '')),
+            'address_hash' => strtolower((string) ($context['address_hash'] ?? $context['delivery_address_hash'] ?? '')),
+            'payment_instrument_hash' => strtolower((string) ($context['payment_instrument_hash'] ?? '')),
             'items' => $context['items'] ?? [],
             'payment_method' => $context['payment_method'] ?? null,
             'nth_order' => isset($context['nth_order']) ? (int) $context['nth_order'] : null,
@@ -141,3 +144,4 @@ class PromotionFinder
             ->orderByDesc('created_at');
     }
 }
+

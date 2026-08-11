@@ -85,6 +85,7 @@ class RefundService
                 // Reverse earnings if order was delivered
                 if ($wasDelivered) {
                     $this->reverseEarnings($order->fresh(), (float) $refundAmount);
+                    app(OrderRewardPointService::class)->reverseForRefundedOrder($order->fresh());
                 }
 
                 app(BranchManagementService::class)->reverseRefund($order->fresh(), (float) $refundAmount);
@@ -593,3 +594,4 @@ class RefundService
             : 'https://sandbox.cashfree.com';
     }
 }
+

@@ -3583,7 +3583,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       parts.add('Cashback ${formatCurrency(context, _cashbackEarned)}');
     }
     if (_rewardPointsEarned > 0) {
-      parts.add('$_rewardPointsEarned reward points');
+      parts.add('$_rewardPointsEarned points after delivery');
     }
     return parts.join(' + ');
   }
@@ -4242,7 +4242,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                       if (_cashbackEarned > 0)
                         'Cashback ${formatCurrency(context, _cashbackEarned)}',
                       if (_rewardPointsEarned > 0)
-                        '$_rewardPointsEarned points',
+                        '$_rewardPointsEarned points after delivery',
                     ].join(' â€¢ '),
                     style: const TextStyle(
                       color: Color(0xFF168A35),

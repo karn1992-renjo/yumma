@@ -307,13 +307,22 @@
                 <h1>Analytics & Reports</h1>
                 <p>Detailed insights into restaurant performance.</p>
             </div>
-            <form action="{{ route('restaurant.analytics.export') }}" method="GET" class="d-flex gap-2">
-                <input type="hidden" name="start_date" value="{{ $startDateValue }}">
-                <input type="hidden" name="end_date" value="{{ $endDateValue }}">
-                <button type="submit" class="btn btn-outline-primary rounded-3">
-                    <i class="fas fa-download me-2"></i> Export Report
-                </button>
-            </form>
+            <div class="d-flex gap-2 flex-wrap">
+                <form action="{{ route('restaurant.analytics.export') }}" method="GET" class="d-flex gap-2">
+                    <input type="hidden" name="start_date" value="{{ $startDateValue }}">
+                    <input type="hidden" name="end_date" value="{{ $endDateValue }}">
+                    <button type="submit" class="btn btn-outline-primary rounded-3">
+                        <i class="fas fa-download me-2"></i> Export Report
+                    </button>
+                </form>
+                <form action="{{ route('restaurant.analytics.promo-spend.export') }}" method="GET" class="d-flex gap-2">
+                    <input type="hidden" name="start_date" value="{{ $startDateValue }}">
+                    <input type="hidden" name="end_date" value="{{ $endDateValue }}">
+                    <button type="submit" class="btn btn-outline-primary rounded-3">
+                        <i class="fas fa-tags me-2"></i> Promo Spend CSV
+                    </button>
+                </form>
+            </div>
         </div>
     </div>
 
@@ -372,6 +381,18 @@
                 <div class="promotion-performance-label">Avg Discount</div>
                 <div class="promotion-performance-value">{{ $promotionPerformance['avg_discount_label'] ?? ($currencySymbol . number_format(0, $currencyDecimals)) }}</div>
             </div>
+            <div class="promotion-performance-metric">
+                <div class="promotion-performance-label">Restaurant Funded</div>
+                <div class="promotion-performance-value">{{ $promotionPerformance['restaurant_funded_spend_label'] ?? ($currencySymbol . number_format(0, $currencyDecimals)) }}</div>
+            </div>
+            <div class="promotion-performance-metric">
+                <div class="promotion-performance-label">Platform Funded</div>
+                <div class="promotion-performance-value">{{ $promotionPerformance['platform_funded_spend_label'] ?? ($currencySymbol . number_format(0, $currencyDecimals)) }}</div>
+            </div>
+            <div class="promotion-performance-metric">
+                <div class="promotion-performance-label">Partner Funded</div>
+                <div class="promotion-performance-value">{{ $promotionPerformance['partner_funded_spend_label'] ?? ($currencySymbol . number_format(0, $currencyDecimals)) }}</div>
+            </div>
         </div>
         <div class="promotion-performance-list">
             @forelse(($promotionPerformance['top_promos'] ?? []) as $promo)
@@ -385,6 +406,9 @@
                     <div class="text-end">
                         <div class="fw-bold text-success">{{ $promo['discount_label'] ?? ($currencySymbol . number_format($promo['discount_given'] ?? 0, $currencyDecimals)) }}</div>
                         <div class="small text-muted">discount</div>
+                        @if(isset($promo['restaurant_liability_label']))
+                            <div class="small text-danger fw-semibold">{{ $promo['restaurant_liability_label'] }} restaurant funded</div>
+                        @endif
                     </div>
                 </div>
             @empty

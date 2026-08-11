@@ -384,6 +384,12 @@ Route::middleware(['auth', 'role:super_admin|admin'])->prefix('admin')->name('ad
         Route::get('/create', [PromotionEngineController::class, 'create'])->name('create');
         Route::post('/', [PromotionEngineController::class, 'store'])->name('store');
         Route::get('/analytics', [PromotionEngineController::class, 'analytics'])->name('analytics');
+        Route::get('/analytics/export', [PromotionEngineController::class, 'campaignExport'])->name('analytics.export');
+        Route::get('/fraud-attempts', [PromotionEngineController::class, 'fraudAttempts'])->name('fraud-attempts');
+        Route::get('/fraud-attempts/export', [PromotionEngineController::class, 'fraudAttemptsExport'])->name('fraud-attempts.export');
+        Route::get('/bank-partner-settlements', [PromotionEngineController::class, 'bankPartnerSettlements'])->name('bank-partner-settlements');
+        Route::get('/bank-partner-settlements/api', [PromotionEngineController::class, 'bankPartnerSettlementsApi'])->name('bank-partner-settlements.api');
+        Route::get('/bank-partner-settlements/export', [PromotionEngineController::class, 'bankPartnerSettlementsExport'])->name('bank-partner-settlements.export');
         Route::get('/coupons', [PromotionEngineController::class, 'coupons'])->name('coupons');
         Route::get('/logs', [PromotionEngineController::class, 'logs'])->name('logs');
         Route::get('/{promotion}/edit', [PromotionEngineController::class, 'edit'])->name('edit');

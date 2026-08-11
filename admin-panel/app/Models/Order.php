@@ -29,6 +29,10 @@ class Order extends Model
         'delivery_subsidy_source',
         'admin_delivery_subsidy',
         'restaurant_delivery_subsidy',
+        'promotion_platform_liability',
+        'promotion_restaurant_liability',
+        'promotion_partner_liability',
+        'reward_points_earned',
         'platform_fee',
         'tax',
         'discount',
@@ -148,6 +152,10 @@ class Order extends Model
         'delivery_discount' => 'decimal:2',
         'admin_delivery_subsidy' => 'decimal:2',
         'restaurant_delivery_subsidy' => 'decimal:2',
+        'promotion_platform_liability' => 'decimal:2',
+        'promotion_restaurant_liability' => 'decimal:2',
+        'promotion_partner_liability' => 'decimal:2',
+        'reward_points_earned' => 'integer',
         'platform_fee' => 'decimal:2',
         'tax' => 'decimal:2',
         'discount' => 'decimal:2',
@@ -208,6 +216,7 @@ class Order extends Model
                 app(BranchManagementService::class)->stampOrder($order);
                 app(\App\Services\PayoutCalculationService::class)->processOrderEarnings($order->fresh());
                 app(BranchManagementService::class)->creditCompletedOrder($order->fresh());
+                app(\App\Services\OrderRewardPointService::class)->creditForDeliveredOrder($order->fresh());
             }
         });
     }
@@ -752,3 +761,5 @@ class Order extends Model
             ->calculateDriverEarning($this)['driver_earning'];
     }
 }
+
+
