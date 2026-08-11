@@ -6,7 +6,7 @@ workflows:
     instance_type: mac_mini_m2
 
     integrations:
-      app_store_connect: 74M8LUKTU5
+      app_store_connect: yumma
 
     environment:
       flutter: stable
