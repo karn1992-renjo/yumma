@@ -43,7 +43,7 @@ workflows:
             --export-options-plist=/Users/builder/export_options.plist
 
     artifacts:
-      - customer/build/ios/ipa/*.ipa
+      - build/ios/ipa/*.ipa
       - /tmp/xcodebuild_logs/*.log
 
     publishing:
