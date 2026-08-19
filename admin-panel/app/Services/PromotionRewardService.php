@@ -6,9 +6,7 @@ use App\Models\Promotion;
 
 class PromotionRewardService
 {
-    public function __construct(private readonly BuyXGetYPromotionWorkflowService $buyXGetY)
-    {
-    }
+    public function __construct(private readonly BuyXGetYPromotionWorkflowService $buyXGetY) {}
 
     public function preview(Promotion $promotion, array $context): ?array
     {
@@ -31,13 +29,19 @@ class PromotionRewardService
             $type = strtolower((string) ($reward['type'] ?? $promotion->promotion_type));
             $bucket = $promotion->isCouponBased() ? 'coupon_discount' : 'item_discount';
 
+            $maxDiscount = $reward['max_discount'] ?? null;
+            $discountAmount = (float) ($workflow['discount_amount'] ?? 0);
+            if ($maxDiscount !== null && $discountAmount > (float) $maxDiscount) {
+                $discountAmount = (float) $maxDiscount;
+            }
+
             return [
                 'promotion_id' => $promotion->id,
                 'title' => $promotion->title,
                 'bucket' => $bucket,
                 'type' => $type,
                 'value' => (float) ($reward['value'] ?? 0),
-                'discount_amount' => round((float) ($workflow['discount_amount'] ?? 0), 2),
+                'discount_amount' => round($discountAmount, 2),
                 'cashback_amount' => round((float) ($workflow['cashback_amount'] ?? 0), 2),
                 'reward_points' => (int) ($workflow['reward_points'] ?? 0),
                 'free_item_id' => data_get($workflow, 'reward_lines.0.item_id'),
@@ -73,16 +77,12 @@ class PromotionRewardService
             $discount = $deliveryFee;
             $bucket = 'delivery_discount';
         } elseif ($type === 'delivery_discount') {
-            $discount = $value > 0 && $value <= 100
-                ? $deliveryFee * ($value / 100)
-                : min($value, $deliveryFee);
+            $discount = $this->chargeDiscount($deliveryFee, $value, $reward);
             $bucket = 'delivery_discount';
         } elseif (in_array($type, ['packaging_discount', 'free_packaging'], true)) {
             $discount = $type === 'free_packaging'
                 ? $packagingFee
-                : ($value > 0 && $value <= 100
-                    ? $packagingFee * ($value / 100)
-                    : min($value, $packagingFee));
+                : $this->chargeDiscount($packagingFee, $value, $reward);
             $bucket = 'packaging_discount';
         } elseif (in_array($type, ['restaurant_discount', 'branch_discount'], true)) {
             $discount = $value > 0 && $value <= 100
@@ -372,9 +372,7 @@ class PromotionRewardService
             $discount = $deliveryFee;
             $bucket = 'delivery_discount';
         } elseif ($type === 'packaging_discount') {
-            $discount = $value > 0 && $value <= 100
-                ? $packagingFee * ($value / 100)
-                : min($value, $packagingFee);
+            $discount = $this->chargeDiscount($packagingFee, $value, $ruleReward);
             $bucket = 'packaging_discount';
         } elseif (in_array($type, ['cashback', 'wallet_cashback', 'wallet_credit'], true)) {
             $cashback = $type === 'cashback' ? $subtotal * ($value / 100) : $value;
@@ -460,6 +458,25 @@ class PromotionRewardService
             'gift_voucher_amount' => 0.0,
             'reward_payload' => [],
         ];
+    }
+
+    private function chargeDiscount(float $charge, float $value, array $reward): float
+    {
+        $valueType = strtolower((string) ($reward['value_type'] ?? $reward['discount_type'] ?? ''));
+
+        if ($valueType === 'percentage') {
+            return $charge * (min(100, max(0, $value)) / 100);
+        }
+
+        if (in_array($valueType, ['fixed', 'flat'], true)) {
+            return min(max(0, $value), $charge);
+        }
+
+        // Existing promotions did not store a mode. Preserve their historical
+        // interpretation until they are edited and saved with an explicit mode.
+        return $value > 0 && $value <= 100
+            ? $charge * ($value / 100)
+            : min(max(0, $value), $charge);
     }
 
     private function emptyLine(Promotion $promotion, array $workflow): array

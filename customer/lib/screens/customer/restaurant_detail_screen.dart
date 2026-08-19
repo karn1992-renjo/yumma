@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import '../../widgets/common/app_cached_image.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -19,6 +21,7 @@ import '../../theme/foodflow_theme.dart';
 import '../../utils/currency_utils.dart';
 import '../../utils/promotion_display_utils.dart';
 import '../../widgets/common/network_error_screen.dart';
+import '../../widgets/common/app_skeleton.dart';
 import '../../widgets/customer/menu_item_card.dart';
 import '../../widgets/customer/account_chrome.dart';
 import 'dining_booking_screen.dart';
@@ -57,6 +60,19 @@ class _RestaurantDetailScreenState extends State<RestaurantDetailScreen> {
   final ScrollController _scrollController = ScrollController();
   final TextEditingController _searchController = TextEditingController();
 
+  TextTheme? _cachedBaseTextTheme;
+  TextTheme? _cachedPlusJakartaTextTheme;
+
+  TextTheme _plusJakartaTextTheme(TextTheme base) {
+    if (identical(_cachedBaseTextTheme, base) &&
+        _cachedPlusJakartaTextTheme != null) {
+      return _cachedPlusJakartaTextTheme!;
+    }
+    _cachedBaseTextTheme = base;
+    _cachedPlusJakartaTextTheme = GoogleFonts.plusJakartaSansTextTheme(base);
+    return _cachedPlusJakartaTextTheme!;
+  }
+
   Restaurant? _restaurant;
   Map<String, List<MenuItem>> _itemsByCategory = <String, List<MenuItem>>{};
   List<Map<String, dynamic>> _restaurantPromos = <Map<String, dynamic>>[];
@@ -74,6 +90,8 @@ class _RestaurantDetailScreenState extends State<RestaurantDetailScreen> {
   String _searchQuery = '';
   _MenuSort _sort = _MenuSort.recommended;
   final Set<_MenuFilter> _activeFilters = <_MenuFilter>{};
+  final Set<String> _collapsedCategories = <String>{};
+  bool _isScrolledPastHero = false;
 
   @override
   void initState() {
@@ -88,6 +106,15 @@ class _RestaurantDetailScreenState extends State<RestaurantDetailScreen> {
       });
       _ensureSelectedCategory();
     });
+    _scrollController.addListener(_handleScroll);
+  }
+
+  void _handleScroll() {
+    final scrolledPastHero =
+        _scrollController.hasClients && _scrollController.offset > 140;
+    if (scrolledPastHero != _isScrolledPastHero) {
+      setState(() => _isScrolledPastHero = scrolledPastHero);
+    }
   }
 
   @override
@@ -165,9 +192,9 @@ class _RestaurantDetailScreenState extends State<RestaurantDetailScreen> {
         _restaurant = Restaurant.fromJson(response['data']);
         await _loadDistanceToRestaurant();
         await _loadMenuItems(forceRefresh: forceRefresh);
-        await _loadRestaurantPromos();
+        unawaited(_loadRestaurantPromos());
         if (mounted) {
-          await AppImageCache.precacheVisible(
+          unawaited(AppImageCache.precacheVisible(
             context,
             <String>[
               _restaurant!.logoUrl,
@@ -176,7 +203,7 @@ class _RestaurantDetailScreenState extends State<RestaurantDetailScreen> {
                   .expand((items) => items)
                   .map((item) => item.imageUrl),
             ],
-          );
+          ));
         }
       } else {
         throw Exception(response['message'] ?? 'Failed to load restaurant');
@@ -277,6 +304,7 @@ class _RestaurantDetailScreenState extends State<RestaurantDetailScreen> {
     } catch (_) {
     } finally {
       _isLoadingPromos = false;
+      if (mounted) setState(() {});
     }
   }
 
@@ -481,15 +509,21 @@ class _RestaurantDetailScreenState extends State<RestaurantDetailScreen> {
       barrierColor: Colors.black.withOpacity(0.58),
       transitionDuration: const Duration(milliseconds: 180),
       pageBuilder: (dialogContext, animation, secondaryAnimation) {
-        return _FloatingMenuDialog(
-          categories: categoryCounts,
-          totalCount: totalCount,
-          selectedCategory: _selectedCategory,
-          onSelect: (category) {
-            Navigator.of(dialogContext).pop();
-            _selectCategory(category);
-          },
-          onClose: () => Navigator.of(dialogContext).pop(),
+        return Theme(
+          data: Theme.of(dialogContext).copyWith(
+            textTheme: GoogleFonts.plusJakartaSansTextTheme(
+                Theme.of(dialogContext).textTheme),
+          ),
+          child: _FloatingMenuDialog(
+            categories: categoryCounts,
+            totalCount: totalCount,
+            selectedCategory: _selectedCategory,
+            onSelect: (category) {
+              Navigator.of(dialogContext).pop();
+              _selectCategory(category);
+            },
+            onClose: () => Navigator.of(dialogContext).pop(),
+          ),
         );
       },
       transitionBuilder: (context, animation, secondaryAnimation, child) {
@@ -679,29 +713,35 @@ class _RestaurantDetailScreenState extends State<RestaurantDetailScreen> {
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
       ),
-      builder: (_) => MenuCustomizationSheet(
-        item: item,
-        isSaved: _savedMenuItemIds.contains(item.id),
-        onSave: () => _toggleSavedMenuItem(item),
-        onShare: () => _shareMenuItem(item),
-        onAdd: (result) {
-          final cart = Provider.of<CartProvider>(context, listen: false);
-          if (_restaurant == null) return;
-          if (!_restaurant!.isOpen) {
-            _showMessage(_restaurantClosedMessage(_restaurant!));
-            return;
-          }
-          for (var i = 0; i < result.quantity; i++) {
-            cart.addItem(
-              item,
-              _restaurant!,
-              selectedVariant: result.variant,
-              selectedAddOns: result.addOns,
-            );
-          }
-          Navigator.of(context).pop();
-          _showMessage('${item.name} added to cart');
-        },
+      builder: (sheetContext) => Theme(
+        data: Theme.of(sheetContext).copyWith(
+          textTheme: GoogleFonts.plusJakartaSansTextTheme(
+              Theme.of(sheetContext).textTheme),
+        ),
+        child: MenuCustomizationSheet(
+          item: item,
+          isSaved: _savedMenuItemIds.contains(item.id),
+          onSave: () => _toggleSavedMenuItem(item),
+          onShare: () => _shareMenuItem(item),
+          onAdd: (result) {
+            final cart = Provider.of<CartProvider>(context, listen: false);
+            if (_restaurant == null) return;
+            if (!_restaurant!.isOpen) {
+              _showMessage(_restaurantClosedMessage(_restaurant!));
+              return;
+            }
+            for (var i = 0; i < result.quantity; i++) {
+              cart.addItem(
+                item,
+                _restaurant!,
+                selectedVariant: result.variant,
+                selectedAddOns: result.addOns,
+              );
+            }
+            Navigator.of(context).pop();
+            _showMessage('${item.name} added to cart');
+          },
+        ),
       ),
     );
   }
@@ -859,16 +899,23 @@ class _RestaurantDetailScreenState extends State<RestaurantDetailScreen> {
     }
 
     try {
-      await _api.post(
-        ApiConstants.supportTickets,
+      final created = await _api.post(
+        ApiConstants.supportConversations,
         data: {
           'restaurant_id': _restaurant!.id,
-          'subject': 'Menu issue at ${_restaurant!.name}',
-          'message': message,
           'category': 'menu_issue',
-          'priority': 'medium',
         },
       );
+      final conversationId = created['data']?['id'];
+      if (conversationId is int) {
+        await _api.post(
+          ApiConstants.supportConversationMessages(conversationId),
+          data: {
+            'message': 'Menu issue at ${_restaurant!.name}: $message',
+            'category': 'menu_issue',
+          },
+        );
+      }
       _showMessage('Issue reported to support');
     } catch (_) {
       _showMessage('Unable to report issue right now');
@@ -921,211 +968,221 @@ class _RestaurantDetailScreenState extends State<RestaurantDetailScreen> {
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(30)),
       ),
-      builder: (context) {
-        return StatefulBuilder(
-          builder: (context, setSheetState) {
-            Widget toggleChip({
-              required String label,
-              required bool selected,
-              required VoidCallback onTap,
-            }) {
-              return Padding(
-                padding: const EdgeInsets.only(right: 10, bottom: 10),
-                child: InkWell(
-                  onTap: onTap,
-                  borderRadius: BorderRadius.circular(14),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 14,
-                      vertical: 12,
-                    ),
-                    decoration: BoxDecoration(
-                      color: selected ? const Color(0xFFEDFAF2) : Colors.white,
-                      borderRadius: BorderRadius.circular(14),
-                      border: Border.all(
-                        color: selected
-                            ? const Color(0xFF83D4A5)
-                            : const Color(0xFFE7EAF0),
+      builder: (sheetContext) {
+        return Theme(
+          data: Theme.of(sheetContext).copyWith(
+            textTheme: GoogleFonts.plusJakartaSansTextTheme(
+                Theme.of(sheetContext).textTheme),
+          ),
+          child: StatefulBuilder(
+            builder: (context, setSheetState) {
+              Widget toggleChip({
+                required String label,
+                required bool selected,
+                required VoidCallback onTap,
+              }) {
+                return Padding(
+                  padding: const EdgeInsets.only(right: 10, bottom: 10),
+                  child: InkWell(
+                    onTap: onTap,
+                    borderRadius: BorderRadius.circular(14),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 12,
                       ),
-                    ),
-                    child: Text(
-                      label,
-                      style: TextStyle(
-                        color: selected
-                            ? const Color(0xFF0A9443)
-                            : FoodFlowTheme.ink,
-                        fontWeight: FontWeight.w600,
+                      decoration: BoxDecoration(
+                        color:
+                            selected ? const Color(0xFFEDFAF2) : Colors.white,
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(
+                          color: selected
+                              ? const Color(0xFF83D4A5)
+                              : const Color(0xFFE7EAF0),
+                        ),
+                      ),
+                      child: Text(
+                        label,
+                        style: TextStyle(
+                          color: selected
+                              ? const Color(0xFF0A9443)
+                              : FoodFlowTheme.ink,
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
                     ),
                   ),
-                ),
-              );
-            }
+                );
+              }
 
-            return SafeArea(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(16, 16, 16, 18),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        const Expanded(
-                          child: Text(
-                            'Filters and Sorting',
-                            style: TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.w800,
-                            ),
-                          ),
-                        ),
-                        IconButton(
-                          onPressed: () => Navigator.pop(context),
-                          icon: const Icon(Icons.close_rounded, size: 20),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 10),
-                    _FilterSection(
-                      title: 'Sort by',
-                      child: Wrap(
+              return SafeArea(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 18),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
                         children: [
-                          toggleChip(
-                            label: 'Recommended',
-                            selected: nextSort == _MenuSort.recommended,
-                            onTap: () => setSheetState(
-                              () => nextSort = _MenuSort.recommended,
-                            ),
-                          ),
-                          toggleChip(
-                            label: 'Price - low to high',
-                            selected: nextSort == _MenuSort.priceLowToHigh,
-                            onTap: () => setSheetState(
-                              () => nextSort = _MenuSort.priceLowToHigh,
-                            ),
-                          ),
-                          toggleChip(
-                            label: 'Price - high to low',
-                            selected: nextSort == _MenuSort.priceHighToLow,
-                            onTap: () => setSheetState(
-                              () => nextSort = _MenuSort.priceHighToLow,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 14),
-                    _FilterSection(
-                      title: 'Top picks',
-                      child: Wrap(
-                        children: [
-                          toggleChip(
-                            label: 'Best seller',
-                            selected:
-                                nextFilters.contains(_MenuFilter.bestSeller),
-                            onTap: () => setSheetState(() {
-                              if (!nextFilters.remove(_MenuFilter.bestSeller)) {
-                                nextFilters.add(_MenuFilter.bestSeller);
-                              }
-                            }),
-                          ),
-                          toggleChip(
-                            label: 'Highly ordered',
-                            selected: nextFilters
-                                .contains(_MenuFilter.highlyReordered),
-                            onTap: () => setSheetState(() {
-                              if (!nextFilters.remove(
-                                _MenuFilter.highlyReordered,
-                              )) {
-                                nextFilters.add(_MenuFilter.highlyReordered);
-                              }
-                            }),
-                          ),
-                          toggleChip(
-                            label: 'Kid\'s choice',
-                            selected:
-                                nextFilters.contains(_MenuFilter.kidsChoice),
-                            onTap: () => setSheetState(() {
-                              if (!nextFilters.remove(_MenuFilter.kidsChoice)) {
-                                nextFilters.add(_MenuFilter.kidsChoice);
-                              }
-                            }),
-                          ),
-                          toggleChip(
-                            label: 'Pure veg',
-                            selected: nextFilters.contains(_MenuFilter.pureVeg),
-                            onTap: () => setSheetState(() {
-                              if (!nextFilters.remove(_MenuFilter.pureVeg)) {
-                                nextFilters.add(_MenuFilter.pureVeg);
-                              }
-                            }),
-                          ),
-                          toggleChip(
-                            label: 'Customisable',
-                            selected:
-                                nextFilters.contains(_MenuFilter.customisable),
-                            onTap: () => setSheetState(() {
-                              if (!nextFilters.remove(
-                                _MenuFilter.customisable,
-                              )) {
-                                nextFilters.add(_MenuFilter.customisable);
-                              }
-                            }),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 18),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: TextButton(
-                            onPressed: () {
-                              setSheetState(() {
-                                nextFilters.clear();
-                                nextSort = _MenuSort.recommended;
-                              });
-                            },
-                            child: const Text(
-                              'Clear all',
+                          const Expanded(
+                            child: Text(
+                              'Filters and Sorting',
                               style: TextStyle(
-                                color: Color(0xFF0A9443),
-                                fontWeight: FontWeight.w700,
+                                fontSize: 18,
+                                fontWeight: FontWeight.w800,
                               ),
                             ),
                           ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: FilledButton(
-                            onPressed: () {
-                              setState(() {
-                                _activeFilters
-                                  ..clear()
-                                  ..addAll(nextFilters);
-                                _sort = nextSort;
-                              });
-                              _ensureSelectedCategory();
-                              Navigator.pop(context);
-                            },
-                            style: FilledButton.styleFrom(
-                              backgroundColor: const Color(0xFF0A9443),
+                          IconButton(
+                            onPressed: () => Navigator.pop(context),
+                            icon: const Icon(Icons.close_rounded, size: 20),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 10),
+                      _FilterSection(
+                        title: 'Sort by',
+                        child: Wrap(
+                          children: [
+                            toggleChip(
+                              label: 'Recommended',
+                              selected: nextSort == _MenuSort.recommended,
+                              onTap: () => setSheetState(
+                                () => nextSort = _MenuSort.recommended,
+                              ),
                             ),
-                            child: Text(
-                              'Apply (${nextFilters.length + 1})',
-                              style:
-                                  const TextStyle(fontWeight: FontWeight.w700),
+                            toggleChip(
+                              label: 'Price - low to high',
+                              selected: nextSort == _MenuSort.priceLowToHigh,
+                              onTap: () => setSheetState(
+                                () => nextSort = _MenuSort.priceLowToHigh,
+                              ),
+                            ),
+                            toggleChip(
+                              label: 'Price - high to low',
+                              selected: nextSort == _MenuSort.priceHighToLow,
+                              onTap: () => setSheetState(
+                                () => nextSort = _MenuSort.priceHighToLow,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 14),
+                      _FilterSection(
+                        title: 'Top picks',
+                        child: Wrap(
+                          children: [
+                            toggleChip(
+                              label: 'Best seller',
+                              selected:
+                                  nextFilters.contains(_MenuFilter.bestSeller),
+                              onTap: () => setSheetState(() {
+                                if (!nextFilters
+                                    .remove(_MenuFilter.bestSeller)) {
+                                  nextFilters.add(_MenuFilter.bestSeller);
+                                }
+                              }),
+                            ),
+                            toggleChip(
+                              label: 'Highly ordered',
+                              selected: nextFilters
+                                  .contains(_MenuFilter.highlyReordered),
+                              onTap: () => setSheetState(() {
+                                if (!nextFilters.remove(
+                                  _MenuFilter.highlyReordered,
+                                )) {
+                                  nextFilters.add(_MenuFilter.highlyReordered);
+                                }
+                              }),
+                            ),
+                            toggleChip(
+                              label: 'Kid\'s choice',
+                              selected:
+                                  nextFilters.contains(_MenuFilter.kidsChoice),
+                              onTap: () => setSheetState(() {
+                                if (!nextFilters
+                                    .remove(_MenuFilter.kidsChoice)) {
+                                  nextFilters.add(_MenuFilter.kidsChoice);
+                                }
+                              }),
+                            ),
+                            toggleChip(
+                              label: 'Pure veg',
+                              selected:
+                                  nextFilters.contains(_MenuFilter.pureVeg),
+                              onTap: () => setSheetState(() {
+                                if (!nextFilters.remove(_MenuFilter.pureVeg)) {
+                                  nextFilters.add(_MenuFilter.pureVeg);
+                                }
+                              }),
+                            ),
+                            toggleChip(
+                              label: 'Customisable',
+                              selected: nextFilters
+                                  .contains(_MenuFilter.customisable),
+                              onTap: () => setSheetState(() {
+                                if (!nextFilters.remove(
+                                  _MenuFilter.customisable,
+                                )) {
+                                  nextFilters.add(_MenuFilter.customisable);
+                                }
+                              }),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 18),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: TextButton(
+                              onPressed: () {
+                                setSheetState(() {
+                                  nextFilters.clear();
+                                  nextSort = _MenuSort.recommended;
+                                });
+                              },
+                              child: const Text(
+                                'Clear all',
+                                style: TextStyle(
+                                  color: Color(0xFF0A9443),
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
                             ),
                           ),
-                        ),
-                      ],
-                    ),
-                  ],
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: FilledButton(
+                              onPressed: () {
+                                setState(() {
+                                  _activeFilters
+                                    ..clear()
+                                    ..addAll(nextFilters);
+                                  _sort = nextSort;
+                                });
+                                _ensureSelectedCategory();
+                                Navigator.pop(context);
+                              },
+                              style: FilledButton.styleFrom(
+                                backgroundColor: const Color(0xFF0A9443),
+                              ),
+                              child: Text(
+                                'Apply (${nextFilters.length + 1})',
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.w700),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-            );
-          },
+              );
+            },
+          ),
         );
       },
     );
@@ -1135,7 +1192,7 @@ class _RestaurantDetailScreenState extends State<RestaurantDetailScreen> {
   Widget build(BuildContext context) {
     if (_isLoading) {
       return const Scaffold(
-        body: Center(child: CircularProgressIndicator()),
+        body: SafeArea(child: AppDetailSkeleton(cardCount: 4)),
       );
     }
 
@@ -1159,195 +1216,255 @@ class _RestaurantDetailScreenState extends State<RestaurantDetailScreen> {
       _categoryKeys.putIfAbsent(category, () => GlobalKey());
     }
 
-    return Scaffold(
-      backgroundColor: accountCanvas,
-      body: SafeArea(
-        bottom: false,
-        child: CustomScrollView(
-          controller: _scrollController,
-          slivers: [
-            SliverToBoxAdapter(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(10, 4, 10, 6),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
+    return Theme(
+      data: Theme.of(context).copyWith(
+        textTheme: _plusJakartaTextTheme(Theme.of(context).textTheme),
+      ),
+      child: Scaffold(
+        backgroundColor: accountCanvas,
+        body: SafeArea(
+          bottom: false,
+          child: CustomScrollView(
+            controller: _scrollController,
+            slivers: [
+              if (restaurant.bannerUrl.isNotEmpty)
+                SliverToBoxAdapter(
+                  child: SizedBox(
+                    height: 180,
+                    child: Stack(
+                      fit: StackFit.expand,
                       children: [
-                        _CircleIconButton(
-                          icon: Icons.arrow_back_rounded,
-                          onTap: () => Navigator.of(context).maybePop(),
+                        AppCachedImage(
+                          imageUrl: restaurant.bannerUrl,
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) => const SizedBox.shrink(),
                         ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: _SearchPill(
-                            controller: _searchController,
-                            hintText: 'Search menu',
+                        Positioned(
+                          left: 10,
+                          top: 10,
+                          child: _CircleIconButton(
+                            icon: Icons.arrow_back_rounded,
+                            background: Colors.black.withOpacity(0.45),
+                            iconColor: Colors.white,
+                            onTap: () => Navigator.of(context).maybePop(),
                           ),
                         ),
-                        const SizedBox(width: 6),
-                        _CircleIconButton(
-                          icon: Icons.share_outlined,
-                          onTap: _shareRestaurant,
-                        ),
-                        const SizedBox(width: 6),
-                        _CircleIconButton(
-                          icon: _isFavorite
-                              ? Icons.favorite_rounded
-                              : Icons.favorite_border_rounded,
-                          iconColor: _isFavorite
-                              ? const Color(0xFFE34949)
-                              : FoodFlowTheme.ink,
-                          onTap: _toggleFavorite,
+                        Positioned(
+                          right: 10,
+                          top: 10,
+                          child: _CircleIconButton(
+                            icon: Icons.share_outlined,
+                            background: Colors.black.withOpacity(0.45),
+                            iconColor: Colors.white,
+                            onTap: _shareRestaurant,
+                          ),
                         ),
                       ],
                     ),
-                    const SizedBox(height: 8),
-                    if (restaurant.isPureVeg)
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 4,
-                        ),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFE9F8EE),
-                          borderRadius: BorderRadius.circular(999),
-                        ),
-                        child: const Text(
-                          'Pure Veg',
-                          style: TextStyle(
-                            color: Color(0xFF189B50),
-                            fontSize: 10,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                      ),
-                    if (restaurant.isPureVeg) const SizedBox(height: 6),
-                    _RestaurantStatusChip(isOpen: restaurant.isOpen),
-                    if (!restaurant.isOpen) ...[
-                      const SizedBox(height: 8),
-                      _ClosedRestaurantBanner(restaurant: restaurant),
-                    ],
-                    const SizedBox(height: 8),
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                restaurant.name,
-                                style: const TextStyle(
-                                  fontSize: 16,
-                                  height: 1.05,
-                                  fontWeight: FontWeight.w800,
-                                  color: FoodFlowTheme.ink,
-                                ),
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                [
-                                  '${restaurant.deliveryTime}-${restaurant.deliveryTime + 5} mins',
-                                  if (_distanceLabel().isNotEmpty)
-                                    _distanceLabel(),
-                                  restaurant.city.isEmpty
-                                      ? restaurant.address
-                                      : restaurant.city,
-                                ].join(' · '),
-                                style: const TextStyle(
-                                  fontSize: 11,
-                                  color: FoodFlowTheme.inkSoft,
-                                  fontWeight: FontWeight.w500,
-                                ),
-                              ),
-                              const SizedBox(height: 6),
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 8,
-                                  vertical: 5,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: Colors.white,
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                                child: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Icon(
-                                      Icons.check_rounded,
-                                      color: Color(0xFF0A9443),
-                                      size: 15,
-                                    ),
-                                    const SizedBox(width: 6),
-                                    Text(
-                                      'Min order ${formatCurrency(context, restaurant.minOrderAmount)}',
-                                      style: TextStyle(
-                                        fontSize: 11,
-                                        fontWeight: FontWeight.w500,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        InkWell(
-                          onTap: _openReviews,
-                          borderRadius: BorderRadius.circular(14),
-                          child: Container(
-                            constraints: const BoxConstraints(minWidth: 68),
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 8,
-                              vertical: 8,
-                            ),
-                            decoration: BoxDecoration(
-                              color: Colors.white,
-                              borderRadius: BorderRadius.circular(14),
-                            ),
+                  ),
+                ),
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(10, 4, 10, 6),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (!restaurant.isOpen) ...[
+                        _ClosedOutletBanner(restaurant: restaurant),
+                        const SizedBox(height: 10),
+                      ],
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(
                             child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
+                                Text(
+                                  restaurant.name,
+                                  style: const TextStyle(
+                                    fontSize: 22,
+                                    height: 1.05,
+                                    fontWeight: FontWeight.w800,
+                                    color: FoodFlowTheme.ink,
+                                  ),
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  [
+                                    '${restaurant.deliveryTime}-${restaurant.deliveryTime + 5} mins',
+                                    if (_distanceLabel().isNotEmpty)
+                                      _distanceLabel(),
+                                    restaurant.city.isEmpty
+                                        ? restaurant.address
+                                        : restaurant.city,
+                                  ].join(' · '),
+                                  style: const TextStyle(
+                                    fontSize: 11,
+                                    color: FoodFlowTheme.inkSoft,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                                const SizedBox(height: 6),
                                 Container(
                                   padding: const EdgeInsets.symmetric(
-                                    horizontal: 7,
-                                    vertical: 4,
+                                    horizontal: 8,
+                                    vertical: 5,
                                   ),
                                   decoration: BoxDecoration(
-                                    color: const Color(0xFF0A9443),
-                                    borderRadius: BorderRadius.circular(999),
+                                    color: Colors.white,
+                                    borderRadius: BorderRadius.circular(12),
                                   ),
                                   child: Row(
                                     mainAxisSize: MainAxisSize.min,
                                     children: [
-                                      const Icon(
-                                        Icons.star_rounded,
-                                        size: 12,
-                                        color: Colors.white,
+                                      Icon(
+                                        Icons.check_rounded,
+                                        color: Color(0xFF0A9443),
+                                        size: 15,
                                       ),
-                                      const SizedBox(width: 4),
+                                      const SizedBox(width: 6),
                                       Text(
-                                        restaurant.visibleRating
-                                                ?.toStringAsFixed(1) ??
-                                            'New',
-                                        style: const TextStyle(
-                                          color: Colors.white,
-                                          fontWeight: FontWeight.w700,
+                                        'Min order ${formatCurrency(context, restaurant.minOrderAmount)}',
+                                        style: TextStyle(
+                                          fontSize: 11,
+                                          fontWeight: FontWeight.w500,
                                         ),
                                       ),
                                     ],
                                   ),
                                 ),
-                                const SizedBox(height: 4),
-                                Text(
-                                  restaurant.reviewCount > 0
-                                      ? 'By ${_reviewText()}+'
-                                      : 'New restaurant',
-                                  style: const TextStyle(
-                                    color: FoodFlowTheme.inkSoft,
-                                    fontSize: 10,
-                                    fontWeight: FontWeight.w500,
+                              ],
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          InkWell(
+                            onTap: _openReviews,
+                            borderRadius: BorderRadius.circular(14),
+                            child: Container(
+                              constraints: const BoxConstraints(minWidth: 68),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 8,
+                              ),
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                borderRadius: BorderRadius.circular(14),
+                              ),
+                              child: Column(
+                                children: [
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 7,
+                                      vertical: 4,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFF0A9443),
+                                      borderRadius: BorderRadius.circular(999),
+                                    ),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        const Icon(
+                                          Icons.star_rounded,
+                                          size: 12,
+                                          color: Colors.white,
+                                        ),
+                                        const SizedBox(width: 4),
+                                        Text(
+                                          restaurant.visibleRating
+                                                  ?.toStringAsFixed(1) ??
+                                              'New',
+                                          style: const TextStyle(
+                                            color: Colors.white,
+                                            fontWeight: FontWeight.w700,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    restaurant.reviewCount > 0
+                                        ? 'By ${_reviewText()}+'
+                                        : 'New restaurant',
+                                    style: const TextStyle(
+                                      color: FoodFlowTheme.inkSoft,
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 10),
+                      if (restaurant.isPureVeg)
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 4,
+                          ),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFE9F8EE),
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                          child: const Text(
+                            'Pure Veg',
+                            style: TextStyle(
+                              color: Color(0xFF189B50),
+                              fontSize: 10,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                      if (restaurant.isPureVeg) const SizedBox(height: 6),
+                      if (_restaurantPromos.isNotEmpty) ...[
+                        const SizedBox(height: 8),
+                        _OfferBanner(offer: _restaurantPromos.first),
+                      ],
+                      if (restaurant.isDining ||
+                          (restaurant.diningCharge ?? 0) > 0) ...[
+                        const SizedBox(height: 10),
+                        InkWell(
+                          onTap: _openDiningBooking,
+                          borderRadius: BorderRadius.circular(16),
+                          child: Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFFFF3E8),
+                              borderRadius: BorderRadius.circular(16),
+                            ),
+                            child: Row(
+                              children: [
+                                Container(
+                                  width: 34,
+                                  height: 34,
+                                  decoration: BoxDecoration(
+                                    color: Colors.white,
+                                    borderRadius: BorderRadius.circular(10),
+                                  ),
+                                  child: const Icon(
+                                    Icons.event_seat_rounded,
+                                    color: FoodFlowTheme.orange,
+                                    size: 18,
+                                  ),
+                                ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: Text(
+                                    restaurant.diningCharge != null &&
+                                            restaurant.diningCharge! > 0
+                                        ? 'Book a table from ${formatCurrency(context, restaurant.diningCharge!)} per cover'
+                                        : 'Reserve a table at this restaurant',
+                                    style: const TextStyle(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w600,
+                                      color: FoodFlowTheme.ink,
+                                    ),
                                   ),
                                 ),
                               ],
@@ -1355,415 +1472,478 @@ class _RestaurantDetailScreenState extends State<RestaurantDetailScreen> {
                           ),
                         ),
                       ],
-                    ),
-                    if (_restaurantPromos.isNotEmpty) ...[
-                      const SizedBox(height: 8),
-                      _OfferBanner(offer: _restaurantPromos.first),
-                    ],
-                    if (restaurant.isDining ||
-                        (restaurant.diningCharge ?? 0) > 0) ...[
-                      const SizedBox(height: 10),
-                      InkWell(
-                        onTap: _openDiningBooking,
-                        borderRadius: BorderRadius.circular(16),
-                        child: Container(
-                          width: double.infinity,
-                          padding: const EdgeInsets.all(12),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFFFFF3E8),
-                            borderRadius: BorderRadius.circular(16),
-                          ),
-                          child: Row(
-                            children: [
-                              Container(
-                                width: 34,
-                                height: 34,
-                                decoration: BoxDecoration(
-                                  color: Colors.white,
-                                  borderRadius: BorderRadius.circular(10),
-                                ),
-                                child: const Icon(
-                                  Icons.event_seat_rounded,
-                                  color: FoodFlowTheme.orange,
-                                  size: 18,
-                                ),
-                              ),
-                              const SizedBox(width: 10),
-                              Expanded(
-                                child: Text(
-                                  restaurant.diningCharge != null &&
-                                          restaurant.diningCharge! > 0
-                                      ? 'Book a table from ${formatCurrency(context, restaurant.diningCharge!)} per cover'
-                                      : 'Reserve a table at this restaurant',
-                                  style: const TextStyle(
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w600,
-                                    color: FoodFlowTheme.ink,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-            ),
-            SliverToBoxAdapter(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
-                child: SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: Row(
-                    children: [
-                      _QuickChip(
-                        label: 'Filters',
-                        icon: Icons.tune_rounded,
-                        selected: _selectedTag != null ||
-                            _activeFilters.isNotEmpty ||
-                            _sort != _MenuSort.recommended,
-                        onTap: _showFilterSheet,
-                      ),
-                      const SizedBox(width: 10),
-                      _QuickChip(
-                        label: 'Best seller',
-                        icon: Icons.local_fire_department_rounded,
-                        selected:
-                            _activeFilters.contains(_MenuFilter.bestSeller),
-                        onTap: () {
-                          setState(() {
-                            if (!_activeFilters
-                                .remove(_MenuFilter.bestSeller)) {
-                              _activeFilters.add(_MenuFilter.bestSeller);
-                            }
-                          });
-                        },
-                      ),
-                      const SizedBox(width: 10),
-                      _QuickChip(
-                        label: 'Highly ordered',
-                        icon: Icons.refresh_rounded,
-                        selected: _activeFilters.contains(
-                          _MenuFilter.highlyReordered,
-                        ),
-                        onTap: () {
-                          setState(() {
-                            if (!_activeFilters.remove(
-                              _MenuFilter.highlyReordered,
-                            )) {
-                              _activeFilters.add(_MenuFilter.highlyReordered);
-                            }
-                          });
-                        },
-                      ),
-                      const SizedBox(width: 10),
-                      _QuickChip(
-                        label: 'Pure veg',
-                        icon: Icons.eco_rounded,
-                        selected: _activeFilters.contains(_MenuFilter.pureVeg),
-                        onTap: () {
-                          setState(() {
-                            if (!_activeFilters.remove(_MenuFilter.pureVeg)) {
-                              _activeFilters.add(_MenuFilter.pureVeg);
-                            }
-                          });
-                        },
-                      ),
-                      const SizedBox(width: 10),
-                      _QuickChip(
-                        label: 'Kid\'s choice',
-                        icon: Icons.face_retouching_natural_rounded,
-                        selected:
-                            _activeFilters.contains(_MenuFilter.kidsChoice),
-                        onTap: () {
-                          setState(() {
-                            if (!_activeFilters
-                                .remove(_MenuFilter.kidsChoice)) {
-                              _activeFilters.add(_MenuFilter.kidsChoice);
-                            }
-                          });
-                        },
-                      ),
                     ],
                   ),
                 ),
               ),
-            ),
-            if (tagOptions.isNotEmpty)
-              SliverToBoxAdapter(
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
-                  child: SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    child: Row(
+              SliverPersistentHeader(
+                pinned: true,
+                delegate: _StickyMenuHeaderDelegate(
+                  height: 122,
+                  child: Container(
+                    color: accountCanvas,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Padding(
-                          padding: const EdgeInsets.only(right: 10),
-                          child: _QuickChip(
-                            label: 'All tags',
-                            icon: Icons.sell_outlined,
-                            selected: _selectedTag == null,
-                            onTap: () => _selectTag(null),
+                          padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
+                          child: Row(
+                            children: [
+                              if (restaurant.bannerUrl.isEmpty ||
+                                  _isScrolledPastHero)
+                                _CircleIconButton(
+                                  icon: Icons.arrow_back_rounded,
+                                  onTap: () => Navigator.of(context).maybePop(),
+                                ),
+                              if (restaurant.bannerUrl.isEmpty ||
+                                  _isScrolledPastHero)
+                                const SizedBox(width: 8),
+                              Expanded(
+                                child: _SearchPill(
+                                  controller: _searchController,
+                                  hintText: 'Search in ${restaurant.name}',
+                                  iconOnRight: _isScrolledPastHero,
+                                ),
+                              ),
+                              if (restaurant.bannerUrl.isEmpty) ...[
+                                const SizedBox(width: 6),
+                                _CircleIconButton(
+                                  icon: Icons.share_outlined,
+                                  onTap: _shareRestaurant,
+                                ),
+                              ],
+                              const SizedBox(width: 6),
+                              _CircleIconButton(
+                                icon: _isFavorite
+                                    ? Icons.favorite_rounded
+                                    : Icons.favorite_border_rounded,
+                                iconColor: _isFavorite
+                                    ? const Color(0xFFE34949)
+                                    : FoodFlowTheme.ink,
+                                onTap: _toggleFavorite,
+                              ),
+                            ],
                           ),
                         ),
-                        ...tagOptions.map((tag) {
-                          return Padding(
-                            padding: const EdgeInsets.only(right: 10),
-                            child: _QuickChip(
-                              label: tag,
-                              icon: Icons.local_offer_outlined,
-                              selected: _selectedTag == tag,
-                              onTap: () => _selectTag(tag),
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+                          child: SingleChildScrollView(
+                            scrollDirection: Axis.horizontal,
+                            child: Row(
+                              children: [
+                                Switch(
+                                  value: _activeFilters
+                                      .contains(_MenuFilter.pureVeg),
+                                  activeTrackColor: const Color(0xFF0A9443),
+                                  onChanged: (value) {
+                                    setState(() {
+                                      if (value) {
+                                        _activeFilters.add(_MenuFilter.pureVeg);
+                                      } else {
+                                        _activeFilters
+                                            .remove(_MenuFilter.pureVeg);
+                                      }
+                                    });
+                                    _ensureSelectedCategory();
+                                  },
+                                ),
+                                Text(
+                                  _activeFilters.contains(_MenuFilter.pureVeg)
+                                      ? 'Veg'
+                                      : 'Non-Veg',
+                                  style: const TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w700,
+                                    color: FoodFlowTheme.ink,
+                                  ),
+                                ),
+                                const SizedBox(width: 10),
+                                _QuickChip(
+                                  label: 'Filters',
+                                  icon: Icons.tune_rounded,
+                                  selected: _selectedTag != null ||
+                                      _activeFilters.isNotEmpty ||
+                                      _sort != _MenuSort.recommended,
+                                  onTap: _showFilterSheet,
+                                ),
+                                const SizedBox(width: 10),
+                                _QuickChip(
+                                  label: 'Best seller',
+                                  icon: Icons.local_fire_department_rounded,
+                                  selected: _activeFilters
+                                      .contains(_MenuFilter.bestSeller),
+                                  onTap: () {
+                                    setState(() {
+                                      if (!_activeFilters
+                                          .remove(_MenuFilter.bestSeller)) {
+                                        _activeFilters
+                                            .add(_MenuFilter.bestSeller);
+                                      }
+                                    });
+                                  },
+                                ),
+                                const SizedBox(width: 10),
+                                _QuickChip(
+                                  label: 'Highly ordered',
+                                  icon: Icons.refresh_rounded,
+                                  selected: _activeFilters.contains(
+                                    _MenuFilter.highlyReordered,
+                                  ),
+                                  onTap: () {
+                                    setState(() {
+                                      if (!_activeFilters.remove(
+                                        _MenuFilter.highlyReordered,
+                                      )) {
+                                        _activeFilters
+                                            .add(_MenuFilter.highlyReordered);
+                                      }
+                                    });
+                                  },
+                                ),
+                                const SizedBox(width: 10),
+                                _QuickChip(
+                                  label: 'Kid\'s choice',
+                                  icon: Icons.face_retouching_natural_rounded,
+                                  selected: _activeFilters
+                                      .contains(_MenuFilter.kidsChoice),
+                                  onTap: () {
+                                    setState(() {
+                                      if (!_activeFilters
+                                          .remove(_MenuFilter.kidsChoice)) {
+                                        _activeFilters
+                                            .add(_MenuFilter.kidsChoice);
+                                      }
+                                    });
+                                  },
+                                ),
+                              ],
                             ),
-                          );
-                        }),
+                          ),
+                        ),
                       ],
                     ),
                   ),
                 ),
               ),
-            if (filtered.isEmpty)
-              const SliverFillRemaining(
-                child: Center(
+              if (tagOptions.isNotEmpty)
+                SliverToBoxAdapter(
                   child: Padding(
-                    padding: EdgeInsets.all(24),
-                    child: Text('No menu items match your current filters.'),
-                  ),
-                ),
-              )
-            else
-              SliverList(
-                delegate: SliverChildListDelegate(
-                  [
-                    ...categories.map((category) {
-                      final items = filtered[category] ?? <MenuItem>[];
-                      return Container(
-                        key: _categoryKeys[category],
-                        margin: const EdgeInsets.only(bottom: 8),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Padding(
-                              padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
-                              child: Text(
-                                category,
-                                style: const TextStyle(
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.w700,
-                                  color: FoodFlowTheme.ink,
-                                ),
-                              ),
+                    padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
+                    child: SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: Row(
+                        children: [
+                          Padding(
+                            padding: const EdgeInsets.only(right: 10),
+                            child: _QuickChip(
+                              label: 'All tags',
+                              icon: Icons.sell_outlined,
+                              selected: _selectedTag == null,
+                              onTap: () => _selectTag(null),
                             ),
-                            ...items.map(
-                              (item) => Consumer<CartProvider>(
-                                builder: (context, cart, _) => MenuItemCard(
-                                  item: item,
-                                  isSaved: _savedMenuItemIds.contains(item.id),
-                                  quantity: cart.quantityForItem(item),
-                                  onTap: () => _openItemDetails(item),
-                                  onSave: () => _toggleSavedMenuItem(item),
-                                  onShare: () => _shareMenuItem(item),
-                                  orderingEnabled: restaurant.isOpen,
-                                  promotionTag:
-                                      PromotionDisplayUtils.tagForMenuItem(
-                                    item,
-                                    _restaurantPromos,
-                                    currencySymbol: getCurrencySymbol(context),
-                                  ),
-                                  onQuantityChanged: item.hasCustomizations
-                                      ? (_) => _openItemDetails(item)
-                                      : (quantity) {
-                                          _setCartQuantity(item, quantity);
-                                        },
-                                ),
+                          ),
+                          ...tagOptions.map((tag) {
+                            return Padding(
+                              padding: const EdgeInsets.only(right: 10),
+                              child: _QuickChip(
+                                label: tag,
+                                icon: Icons.local_offer_outlined,
+                                selected: _selectedTag == tag,
+                                onTap: () => _selectTag(tag),
                               ),
-                            ),
-                          ],
-                        ),
-                      );
-                    }),
-                    if (restaurant.similarRestaurants.isNotEmpty)
-                      _RestaurantDetailsSection(
-                        child: _SimilarRestaurantsSection(
-                          restaurants: restaurant.similarRestaurants,
-                          onTap: _openSimilarRestaurant,
-                        ),
-                      ),
-                    _RestaurantDetailsSection(
-                      child: _RestaurantInfoSection(
-                        fssaiLicenseNumber: restaurant.fssaiLicenseNumber,
-                        onReportIssue: _openMenuIssueSheet,
+                            );
+                          }),
+                        ],
                       ),
                     ),
-                    if (restaurant.reviewHighlights.isNotEmpty)
+                  ),
+                ),
+              if (filtered.isEmpty)
+                const SliverFillRemaining(
+                  child: Center(
+                    child: Padding(
+                      padding: EdgeInsets.all(24),
+                      child: Text('No menu items match your current filters.'),
+                    ),
+                  ),
+                )
+              else
+                SliverList(
+                  delegate: SliverChildListDelegate(
+                    [
+                      ...categories.map((category) {
+                        final items = filtered[category] ?? <MenuItem>[];
+                        final isCollapsed =
+                            _collapsedCategories.contains(category);
+                        return Container(
+                          key: _categoryKeys[category],
+                          margin: const EdgeInsets.only(bottom: 8),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              InkWell(
+                                onTap: () {
+                                  setState(() {
+                                    if (!_collapsedCategories
+                                        .remove(category)) {
+                                      _collapsedCategories.add(category);
+                                    }
+                                  });
+                                },
+                                child: Padding(
+                                  padding:
+                                      const EdgeInsets.fromLTRB(12, 10, 12, 10),
+                                  child: Row(
+                                    children: [
+                                      Expanded(
+                                        child: Text(
+                                          '$category (${items.length})',
+                                          style: const TextStyle(
+                                            fontSize: 20,
+                                            fontWeight: FontWeight.w700,
+                                            color: FoodFlowTheme.ink,
+                                          ),
+                                        ),
+                                      ),
+                                      Icon(
+                                        isCollapsed
+                                            ? Icons.keyboard_arrow_down_rounded
+                                            : Icons.keyboard_arrow_up_rounded,
+                                        color: FoodFlowTheme.inkSoft,
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                              if (!isCollapsed)
+                                Padding(
+                                  padding:
+                                      const EdgeInsets.fromLTRB(12, 2, 12, 0),
+                                  child: Wrap(
+                                    spacing: 12,
+                                    runSpacing: 18,
+                                    children: items.map((item) {
+                                      final cardWidth =
+                                          (MediaQuery.sizeOf(context).width -
+                                                  24 -
+                                                  12) /
+                                              2;
+                                      return SizedBox(
+                                        width: cardWidth,
+                                        child: Consumer<CartProvider>(
+                                          builder: (context, cart, _) =>
+                                              RestaurantMenuGridCard(
+                                            item: item,
+                                            quantity:
+                                                cart.quantityForItem(item),
+                                            orderingEnabled: restaurant.isOpen,
+                                            onTap: () => _openItemDetails(item),
+                                            promotionTag: PromotionDisplayUtils
+                                                .tagForMenuItem(
+                                              item,
+                                              _restaurantPromos,
+                                              currencySymbol:
+                                                  getCurrencySymbol(context),
+                                            ),
+                                            onQuantityChanged: item
+                                                    .hasCustomizations
+                                                ? (_) => _openItemDetails(item)
+                                                : (quantity) {
+                                                    _setCartQuantity(
+                                                        item, quantity);
+                                                  },
+                                          ),
+                                        ),
+                                      );
+                                    }).toList(),
+                                  ),
+                                ),
+                            ],
+                          ),
+                        );
+                      }),
+                      if (restaurant.similarRestaurants.isNotEmpty)
+                        _RestaurantDetailsSection(
+                          child: _SimilarRestaurantsSection(
+                            restaurants: restaurant.similarRestaurants,
+                            onTap: _openSimilarRestaurant,
+                          ),
+                        ),
                       _RestaurantDetailsSection(
-                        child: _ReviewHighlightsSection(
-                          rating: restaurant.visibleRating ?? restaurant.rating,
-                          reviewCount: restaurant.reviewCount,
-                          commentText: _reviewCommentText(),
-                          reviews: restaurant.reviewHighlights,
-                          onViewAll: _openReviews,
+                        child: _RestaurantInfoSection(
+                          fssaiLicenseNumber: restaurant.fssaiLicenseNumber,
+                          onReportIssue: _openMenuIssueSheet,
                         ),
                       ),
-                  ],
-                ),
-              ),
-            const SliverPadding(padding: EdgeInsets.only(bottom: 120)),
-          ],
-        ),
-      ),
-      bottomNavigationBar: Consumer<CartProvider>(
-        builder: (context, cart, _) {
-          if (cart.isEmpty || cart.restaurant?.id != restaurant.id) {
-            return const SizedBox.shrink();
-          }
-
-          return SafeArea(
-            top: false,
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(10, 0, 10, 8),
-              child: InkWell(
-                onTap: () => Navigator.pushNamed(context, '/cart'),
-                borderRadius: BorderRadius.circular(22),
-                child: Container(
-                  padding: const EdgeInsets.fromLTRB(10, 10, 10, 10),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(22),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.08),
-                        blurRadius: 16,
-                        offset: const Offset(0, 4),
-                      ),
+                      if (restaurant.reviewHighlights.isNotEmpty)
+                        _RestaurantDetailsSection(
+                          child: _ReviewHighlightsSection(
+                            rating:
+                                restaurant.visibleRating ?? restaurant.rating,
+                            reviewCount: restaurant.reviewCount,
+                            commentText: _reviewCommentText(),
+                            reviews: restaurant.reviewHighlights,
+                            onViewAll: _openReviews,
+                          ),
+                        ),
                     ],
                   ),
-                  child: Row(
-                    children: [
-                      Container(
-                        width: 48,
-                        height: 48,
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFF8EFE7),
-                          borderRadius: BorderRadius.circular(16),
+                ),
+              const SliverPadding(padding: EdgeInsets.only(bottom: 120)),
+            ],
+          ),
+        ),
+        bottomNavigationBar: Consumer<CartProvider>(
+          builder: (context, cart, _) {
+            if (cart.isEmpty || cart.restaurant?.id != restaurant.id) {
+              return const SizedBox.shrink();
+            }
+
+            return SafeArea(
+              top: false,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(10, 0, 10, 8),
+                child: InkWell(
+                  onTap: () => Navigator.pushNamed(context, '/cart'),
+                  borderRadius: BorderRadius.circular(22),
+                  child: Container(
+                    padding: const EdgeInsets.fromLTRB(10, 10, 10, 10),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(22),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.08),
+                          blurRadius: 16,
+                          offset: const Offset(0, 4),
                         ),
-                        clipBehavior: Clip.antiAlias,
-                        child: restaurant.logoUrl.isNotEmpty
-                            ? AppCachedImage(
-                                imageUrl: restaurant.logoUrl,
-                                fit: BoxFit.cover,
-                                errorBuilder: (_, __, ___) => const Icon(
+                      ],
+                    ),
+                    child: Row(
+                      children: [
+                        Container(
+                          width: 48,
+                          height: 48,
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFF8EFE7),
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                          clipBehavior: Clip.antiAlias,
+                          child: restaurant.logoUrl.isNotEmpty
+                              ? AppCachedImage(
+                                  imageUrl: restaurant.logoUrl,
+                                  fit: BoxFit.cover,
+                                  errorBuilder: (_, __, ___) => const Icon(
+                                    Icons.restaurant_rounded,
+                                    color: FoodFlowTheme.orange,
+                                  ),
+                                )
+                              : const Icon(
                                   Icons.restaurant_rounded,
                                   color: FoodFlowTheme.orange,
                                 ),
-                              )
-                            : const Icon(
-                                Icons.restaurant_rounded,
-                                color: FoodFlowTheme.orange,
-                              ),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text(
-                              restaurant.name,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                fontSize: 14,
-                                fontWeight: FontWeight.w800,
-                                color: FoodFlowTheme.ink,
-                              ),
-                            ),
-                            const SizedBox(height: 2),
-                            Text(
-                              '${cart.itemCount} item${cart.itemCount == 1 ? '' : 's'} · ${formatCurrency(context, cart.displayTotal)}',
-                              style: const TextStyle(
-                                color: FoodFlowTheme.muted,
-                                fontSize: 11,
-                                fontWeight: FontWeight.w500,
-                              ),
-                            ),
-                          ],
                         ),
-                      ),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 14,
-                          vertical: 10,
-                        ),
-                        decoration: BoxDecoration(
-                          gradient: LinearGradient(
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
-                            colors: [
-                              Theme.of(context).colorScheme.primary,
-                              Color.lerp(
-                                    Theme.of(context).colorScheme.primary,
-                                    Colors.black,
-                                    0.14,
-                                  ) ??
-                                  Theme.of(context).colorScheme.primary,
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                restaurant.name,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w800,
+                                  color: FoodFlowTheme.ink,
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                '${cart.itemCount} item${cart.itemCount == 1 ? '' : 's'} · ${formatCurrency(context, cart.displayTotal)}',
+                                style: const TextStyle(
+                                  color: FoodFlowTheme.muted,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
                             ],
                           ),
-                          borderRadius: BorderRadius.circular(16),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Theme.of(context)
-                                  .colorScheme
-                                  .primary
-                                  .withOpacity(0.22),
-                              blurRadius: 12,
-                              offset: const Offset(0, 4),
-                            ),
-                          ],
                         ),
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text(
-                              'View Cart',
-                              style: GoogleFonts.nunitoSans(
-                                color: Colors.white,
-                                fontWeight: FontWeight.w800,
-                                fontSize: 14,
-                                letterSpacing: 0.1,
-                              ),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 14,
+                            vertical: 10,
+                          ),
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
+                              colors: [
+                                Theme.of(context).colorScheme.primary,
+                                Color.lerp(
+                                      Theme.of(context).colorScheme.primary,
+                                      Colors.black,
+                                      0.14,
+                                    ) ??
+                                    Theme.of(context).colorScheme.primary,
+                              ],
                             ),
-                            const SizedBox(height: 2),
-                            Text(
-                              '${cart.itemCount} item${cart.itemCount == 1 ? '' : 's'}',
-                              style: TextStyle(
-                                color: Colors.white.withOpacity(0.86),
-                                fontSize: 10,
-                                fontWeight: FontWeight.w500,
+                            borderRadius: BorderRadius.circular(16),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Theme.of(context)
+                                    .colorScheme
+                                    .primary
+                                    .withOpacity(0.22),
+                                blurRadius: 12,
+                                offset: const Offset(0, 4),
                               ),
-                            ),
-                          ],
+                            ],
+                          ),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                'View Cart',
+                                style: GoogleFonts.plusJakartaSans(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.w800,
+                                  fontSize: 14,
+                                  letterSpacing: 0.1,
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                '${cart.itemCount} item${cart.itemCount == 1 ? '' : 's'}',
+                                style: TextStyle(
+                                  color: Colors.white.withOpacity(0.86),
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
               ),
-            ),
-          );
-        },
+            );
+          },
+        ),
+        floatingActionButton: categoryOptions.isEmpty
+            ? null
+            : _FloatingMenuButton(
+                onTap: _showFloatingMenuSheet,
+                activeLabel: _selectedCategory == _allMenuCategoriesLabel ||
+                        _selectedCategory.isEmpty
+                    ? 'Menu'
+                    : _selectedCategory,
+              ),
       ),
-      floatingActionButton: categoryOptions.isEmpty
-          ? null
-          : _FloatingMenuButton(
-              onTap: _showFloatingMenuSheet,
-              activeLabel: _selectedCategory == _allMenuCategoriesLabel ||
-                      _selectedCategory.isEmpty
-                  ? 'Menu'
-                  : _selectedCategory,
-            ),
     );
   }
 }
@@ -1818,7 +1998,7 @@ class _FloatingMenuButton extends StatelessWidget {
                   style: const TextStyle(
                     color: Colors.white,
                     fontSize: 14,
-                    fontWeight: FontWeight.w800,
+                    fontWeight: FontWeight.w600,
                   ),
                 ),
               ),
@@ -2488,49 +2668,10 @@ class _ReviewHighlightsSection extends StatelessWidget {
   }
 }
 
-class _RestaurantStatusChip extends StatelessWidget {
-  final bool isOpen;
-
-  const _RestaurantStatusChip({required this.isOpen});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(
-        color: isOpen ? const Color(0xFFE9F8EE) : const Color(0xFFFFEDED),
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(
-          color: isOpen ? const Color(0xFF9AD9B4) : const Color(0xFFFFB9B9),
-        ),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(
-            isOpen ? Icons.check_circle_rounded : Icons.lock_clock_rounded,
-            size: 15,
-            color: isOpen ? const Color(0xFF0A9443) : const Color(0xFFD14343),
-          ),
-          const SizedBox(width: 5),
-          Text(
-            isOpen ? 'Open' : 'Closed',
-            style: TextStyle(
-              color: isOpen ? const Color(0xFF0A9443) : const Color(0xFFD14343),
-              fontSize: 12,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _ClosedRestaurantBanner extends StatelessWidget {
+class _ClosedOutletBanner extends StatelessWidget {
   final Restaurant restaurant;
 
-  const _ClosedRestaurantBanner({required this.restaurant});
+  const _ClosedOutletBanner({required this.restaurant});
 
   @override
   Widget build(BuildContext context) {
@@ -2539,9 +2680,9 @@ class _ClosedRestaurantBanner extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: const Color(0xFFFFF1F1),
+        color: const Color(0xFFE9F8EE),
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFFFFD0D0)),
+        border: Border.all(color: const Color(0xFF9AD9B4)),
       ),
       child: Row(
         children: [
@@ -2556,7 +2697,7 @@ class _ClosedRestaurantBanner extends StatelessWidget {
             child: Text(
               message,
               style: const TextStyle(
-                color: Color(0xFFD14343),
+                color: Color(0xFF0A9443),
                 fontSize: 12,
                 fontWeight: FontWeight.w700,
               ),
@@ -2569,22 +2710,52 @@ class _ClosedRestaurantBanner extends StatelessWidget {
 }
 
 String _restaurantClosedMessage(Restaurant restaurant) {
+  const prefix = 'Uh-oh! Outlet is not accepting orders at the moment.';
   final nextOpening = restaurant.nextOpeningLabel?.trim();
   if (nextOpening != null && nextOpening.isNotEmpty) {
-    return nextOpening;
+    return '$prefix $nextOpening';
   }
-  return 'Ordering is unavailable until this restaurant reopens.';
+  return '$prefix Ordering is unavailable until this restaurant reopens.';
+}
+
+class _StickyMenuHeaderDelegate extends SliverPersistentHeaderDelegate {
+  const _StickyMenuHeaderDelegate({
+    required this.child,
+    required this.height,
+  });
+
+  final Widget child;
+  final double height;
+
+  @override
+  double get minExtent => height;
+
+  @override
+  double get maxExtent => height;
+
+  @override
+  Widget build(
+      BuildContext context, double shrinkOffset, bool overlapsContent) {
+    return child;
+  }
+
+  @override
+  bool shouldRebuild(covariant _StickyMenuHeaderDelegate oldDelegate) {
+    return oldDelegate.child != child || oldDelegate.height != height;
+  }
 }
 
 class _CircleIconButton extends StatelessWidget {
   final IconData icon;
   final VoidCallback onTap;
   final Color? iconColor;
+  final Color? background;
 
   const _CircleIconButton({
     required this.icon,
     required this.onTap,
     this.iconColor,
+    this.background,
   });
 
   @override
@@ -2595,8 +2766,8 @@ class _CircleIconButton extends StatelessWidget {
       child: Container(
         width: 32,
         height: 32,
-        decoration: const BoxDecoration(
-          color: Colors.white,
+        decoration: BoxDecoration(
+          color: background ?? Colors.white,
           shape: BoxShape.circle,
         ),
         child: Icon(
@@ -2612,31 +2783,61 @@ class _CircleIconButton extends StatelessWidget {
 class _SearchPill extends StatelessWidget {
   final TextEditingController controller;
   final String hintText;
+  final bool iconOnRight;
 
   const _SearchPill({
     required this.controller,
     required this.hintText,
+    this.iconOnRight = false,
   });
 
   @override
   Widget build(BuildContext context) {
+    const icon = Icon(
+      Icons.search_rounded,
+      size: 22,
+      color: FoodFlowTheme.muted,
+    );
+    const iconConstraints = BoxConstraints(minWidth: 44, minHeight: 22);
+
     return Container(
-      height: 34,
+      height: 48,
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(18),
+        color: const Color(0xFFF2F3F5),
+        borderRadius: BorderRadius.circular(999),
       ),
+      alignment: Alignment.center,
       child: TextField(
         controller: controller,
+        textAlignVertical: TextAlignVertical.center,
+        style: const TextStyle(
+          fontSize: 16,
+          fontWeight: FontWeight.w500,
+          color: FoodFlowTheme.ink,
+        ),
         decoration: InputDecoration(
           hintText: hintText,
-          prefixIcon: const Padding(
-            padding: EdgeInsets.all(8),
-            child: Icon(Icons.search_rounded, size: 18),
+          hintStyle: const TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.w500,
+            color: FoodFlowTheme.muted,
           ),
+          prefixIcon: iconOnRight ? null : icon,
+          prefixIconConstraints: iconOnRight ? null : iconConstraints,
+          suffixIcon: iconOnRight ? icon : null,
+          suffixIconConstraints: iconOnRight ? iconConstraints : null,
           filled: false,
           border: InputBorder.none,
-          contentPadding: const EdgeInsets.symmetric(vertical: 8),
+          enabledBorder: InputBorder.none,
+          focusedBorder: InputBorder.none,
+          errorBorder: InputBorder.none,
+          focusedErrorBorder: InputBorder.none,
+          disabledBorder: InputBorder.none,
+          isDense: true,
+          contentPadding: EdgeInsets.only(
+            left: iconOnRight ? 16 : 4,
+            right: iconOnRight ? 4 : 16,
+          ),
         ),
       ),
     );
@@ -2684,7 +2885,7 @@ class _QuickChip extends StatelessWidget {
             Text(
               label,
               style: TextStyle(
-                fontSize: 11,
+                fontSize: 14,
                 fontWeight: FontWeight.w600,
                 color: selected ? const Color(0xFF0A9443) : FoodFlowTheme.ink,
               ),

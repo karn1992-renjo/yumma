@@ -1,20 +1,16 @@
-// lib/screens/restaurant/restaurant_analytics_screen.dart
-import 'dart:math' as math;
-
-import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
 import '../../config/api_constants.dart';
 import '../../providers/auth_provider.dart';
+import '../../providers/restaurant_provider.dart';
 import '../../services/api_service.dart';
 import '../../theme/foodflow_theme.dart';
 import '../../utils/currency_utils.dart';
 import '../../utils/json_utils.dart';
 
 class RestaurantAnalyticsScreen extends StatefulWidget {
-  const RestaurantAnalyticsScreen({Key? key}) : super(key: key);
+  const RestaurantAnalyticsScreen({super.key});
 
   @override
   State<RestaurantAnalyticsScreen> createState() =>
@@ -23,1153 +19,959 @@ class RestaurantAnalyticsScreen extends StatefulWidget {
 
 class _RestaurantAnalyticsScreenState extends State<RestaurantAnalyticsScreen> {
   final ApiService _api = ApiService();
-  Map<String, dynamic> _data = {};
-  bool _isLoading = true;
-  String _selectedPeriod = 'week';
+  Map<String, dynamic> _performance = {};
+  Map<String, dynamic> _compare = {};
+  bool _loadingPerformance = true;
+  bool _loadingCompare = false;
+  String? _error;
+  String _tab = 'performance';
+  String _period = 'week';
+  String? _selectedCity;
+  String _section = 'Sales';
 
   @override
   void initState() {
     super.initState();
-    _loadAnalytics();
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      final provider = context.read<RestaurantProvider>();
+      if (provider.restaurants.isEmpty) await provider.loadRestaurants();
+      await _loadPerformance();
+    });
   }
 
-  Future<void> _loadAnalytics() async {
-    setState(() => _isLoading = true);
-
+  Future<void> _loadPerformance() async {
+    setState(() {
+      _loadingPerformance = true;
+      _error = null;
+    });
     try {
-      final response = await _api.get(
-        ApiConstants.restaurantAnalytics,
-        queryParams: {'period': _selectedPeriod},
-      );
-
+      final response = await _api.get(ApiConstants.restaurantAnalytics,
+          queryParams: _queryParams());
       if (!mounted) return;
-      if (response['success'] == true) {
-        setState(() => _data = Map<String, dynamic>.from(response['data']));
+      if (response['success'] == true && response['data'] is Map) {
+        setState(() {
+          _performance = Map<String, dynamic>.from(response['data']);
+          final sections = _performanceSections;
+          if (!sections.any((s) => s.title == _section))
+            _section = sections.isEmpty ? 'Sales' : sections.first.title;
+        });
+      } else {
+        setState(() => _error = response['message']?.toString() ??
+            'Unable to load restaurant reports.');
       }
     } catch (e) {
-      debugPrint('Load analytics error: $e');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Unable to load analytics: $e')),
-        );
-      }
+      if (mounted) setState(() => _error = e.toString());
     } finally {
-      if (mounted) setState(() => _isLoading = false);
+      if (mounted) setState(() => _loadingPerformance = false);
     }
+  }
+
+  Future<void> _loadCompare() async {
+    setState(() {
+      _loadingCompare = true;
+      _error = null;
+    });
+    try {
+      final response = await _api.get(ApiConstants.restaurantAnalyticsCompare,
+          queryParams: _queryParams());
+      if (!mounted) return;
+      if (response['success'] == true && response['data'] is Map) {
+        setState(() => _compare = Map<String, dynamic>.from(response['data']));
+      } else {
+        setState(() => _error = response['message']?.toString() ??
+            'Unable to load comparison analysis.');
+      }
+    } catch (e) {
+      if (mounted) setState(() => _error = e.toString());
+    } finally {
+      if (mounted) setState(() => _loadingCompare = false);
+    }
+  }
+
+  Map<String, dynamic> _queryParams() {
+    final provider = context.read<RestaurantProvider>();
+    return {
+      'period': _period,
+      if (provider.selectedRestaurantId != null)
+        'restaurant_id': provider.selectedRestaurantId,
+      if (_selectedCity != null && _selectedCity!.isNotEmpty)
+        'city': _selectedCity,
+    };
   }
 
   @override
   Widget build(BuildContext context) {
-    final canViewReports =
-        Provider.of<AuthProvider>(context).currentUser?.canViewReports ?? true;
+    final user = context.watch<AuthProvider>().currentUser;
+    if (!(user?.canViewReports ?? true)) return const _ReportsAccessDenied();
+    final provider = context.watch<RestaurantProvider>();
+    return Scaffold(
+      backgroundColor: const Color(0xFFF2F2F6),
+      body: SafeArea(
+        bottom: false,
+        child: RefreshIndicator(
+          color: _orange,
+          onRefresh: _tab == 'compare' ? _loadCompare : _loadPerformance,
+          child: ListView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            padding: EdgeInsets.zero,
+            children: [
+              _ReportsHeader(
+                  selectedTab: _tab,
+                  onTab: (value) async {
+                    setState(() => _tab = value);
+                    if (value == 'compare' && _compare.isEmpty)
+                      await _loadCompare();
+                  }),
+              _ReportsFilterBar(
+                  outletLabel: provider.selectedRestaurantLabel,
+                  periodLabel: _periodLabel,
+                  onFilter: _showFilters),
+              if (_error != null)
+                _ReportsMessage(
+                    icon: Icons.error_outline_rounded,
+                    text: _error!,
+                    actionLabel: 'Retry',
+                    onAction:
+                        _tab == 'compare' ? _loadCompare : _loadPerformance)
+              else if (_tab == 'compare')
+                _buildCompare()
+              else
+                _buildPerformance(),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 
-    if (!canViewReports) {
-      return Scaffold(
-        backgroundColor: const Color(0xFFF7F7F8),
-        body: Center(
+  Widget _buildPerformance() {
+    if (_loadingPerformance) return const _ReportsLoader();
+    final sections = _performanceSections;
+    if (sections.isEmpty)
+      return const _ReportsMessage(
+          icon: Icons.insert_chart_outlined_rounded,
+          text: 'Reports will appear after real orders are available.');
+    final selected = sections.firstWhere((s) => s.title == _section,
+        orElse: () => sections.first);
+    return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      _ReportsRail(
+          sections: sections.map((s) => s.title).toList(),
+          selected: selected.title,
+          onSelected: (v) => setState(() => _section = v)),
+      Expanded(
           child: Padding(
-            padding: const EdgeInsets.all(24),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: const [
-                Icon(Icons.lock_outline, size: 42, color: FoodFlowTheme.muted),
-                SizedBox(height: 12),
-                Text(
+              padding: const EdgeInsets.fromLTRB(8, 8, 10, 24),
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    _ReportsNotice(
+                        text: 'Showing real data for $_periodLabel.',
+                        onRefresh: _loadPerformance),
+                    const SizedBox(height: 8),
+                    _ReportsCard(
+                        title: selected.title, metrics: selected.metrics),
+                    if (selected.rows.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      _ReportsRowsCard(
+                          title: selected.rowTitle, rows: selected.rows)
+                    ],
+                  ]))),
+    ]);
+  }
+
+  Widget _buildCompare() {
+    if (_loadingCompare) return const _ReportsLoader();
+    final metrics = _list(_compare['metrics'])
+        .map((m) => _CompareMetric.fromMap(_map(m), _formatValue))
+        .toList();
+    if (metrics.isEmpty)
+      return const _ReportsMessage(
+          icon: Icons.compare_arrows_rounded,
+          text:
+              'Comparison will appear when delivery-zone restaurants have data.');
+    final restaurant = _map(_compare['restaurant']);
+    final zone = _map(_compare['delivery_zone']);
+    final peerCount = parseIntValue(_compare['peer_restaurant_count']);
+    final needs = metrics.where((m) => !m.isBetter).toList();
+    final good = metrics.where((m) => m.isBetter).toList();
+    return Padding(
+        padding: const EdgeInsets.fromLTRB(12, 10, 12, 24),
+        child:
+            Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          Container(
+              padding: const EdgeInsets.all(14),
+              decoration: _cardDecoration(),
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('Compare your performance',
+                        style: TextStyle(
+                            fontSize: 16, fontWeight: FontWeight.w900)),
+                    const SizedBox(height: 6),
+                    Text(
+                        '${restaurant['name'] ?? 'Selected outlet'} vs ${zone['name'] ?? restaurant['city'] ?? 'delivery zone'} average',
+                        style: const TextStyle(
+                            color: FoodFlowTheme.muted,
+                            fontWeight: FontWeight.w700)),
+                    const SizedBox(height: 4),
+                    Text(
+                        '$peerCount peer restaurants compared. Your own restaurants are excluded.',
+                        style: const TextStyle(
+                            color: FoodFlowTheme.muted,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600)),
+                  ])),
+          if (needs.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            _CompareSection(
+                title: 'Needs Improvement', good: false, metrics: needs)
+          ],
+          if (good.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            _CompareSection(title: 'Doing Great', good: true, metrics: good)
+          ],
+        ]));
+  }
+
+  List<_PerformanceSection> get _performanceSections {
+    final sections = <_PerformanceSection>[
+      _PerformanceSection('Sales', [
+        _metric('Net Sales', _num('total_revenue'), 'currency'),
+        _metric('Total Orders', _num('total_orders'), 'number'),
+        _metric('Delivered Orders', _num('delivered_orders'), 'number'),
+        _metric('Average Order Value', _num('avg_order_value'), 'currency'),
+        _metric('Cancelled Orders', _num('cancelled_orders'), 'number'),
+        _metric('Cancellation Rate', _num('cancellation_rate'), 'percent'),
+      ]),
+    ];
+    final promo = _map(_performance['promotion_performance']);
+    if (promo.isNotEmpty) {
+      sections.add(_PerformanceSection(
+          'Growth',
+          [
+            _metricFrom(
+                promo, 'Active Promotions', 'active_promotions', 'number'),
+            _metricFrom(
+                promo, 'Total Promotions', 'total_promotions', 'number'),
+            _metricFrom(promo, 'Promo Orders', 'coupon_orders', 'number'),
+            _metricFrom(promo, 'Discount Given', 'discount_given', 'currency'),
+            _metricFrom(promo, 'Average Discount', 'avg_discount', 'currency'),
+          ],
+          rows: _promoRows(promo),
+          rowTitle: 'Top promotions'));
+    }
+    final topItems = _list(_performance['top_items']);
+    if (topItems.isNotEmpty) {
+      sections.add(_PerformanceSection(
+          'Menu',
+          [
+            _metric(
+                'Top Item Revenue', _sumRows(topItems, 'revenue'), 'currency'),
+            _metric('Top Item Orders', _sumRows(topItems, 'total_orders'),
+                'number'),
+          ],
+          rows: topItems.take(8).map((item) {
+            final row = _map(item);
+            return _ReportRow(
+                row['name']?.toString() ?? 'Menu item',
+                '${_formatValue(parseNullableDouble(row['total_orders']) ?? 0, 'number')} orders',
+                _formatValue(
+                    parseNullableDouble(row['revenue']) ?? 0, 'currency'));
+          }).toList(),
+          rowTitle: 'Top selling items'));
+    }
+    final hourly = _list(_performance['hourly_data']);
+    if (hourly.isNotEmpty) {
+      final busiest =
+          hourly.map(_map).fold<Map<String, dynamic>?>(null, (prev, cur) {
+        if (prev == null) return cur;
+        return (parseNullableDouble(cur['orders']) ?? 0) >
+                (parseNullableDouble(prev['orders']) ?? 0)
+            ? cur
+            : prev;
+      });
+      sections.add(_PerformanceSection('Operations', [
+        _metric(
+            'Busiest Hour', parseNullableDouble(busiest?['hour']) ?? 0, 'hour'),
+        _metric('Busiest Hour Orders',
+            parseNullableDouble(busiest?['orders']) ?? 0, 'number'),
+      ]));
+    }
+    return sections;
+  }
+
+  _ReportMetric _metric(String title, num value, String unit) =>
+      _ReportMetric(title, _formatValue(value, unit));
+  _ReportMetric _metricFrom(
+          Map<String, dynamic> data, String title, String key, String unit) =>
+      _metric(title, parseNullableDouble(data[key]) ?? 0, unit);
+  double _num(String key) => parseNullableDouble(_performance[key]) ?? 0;
+  double _sumRows(List<dynamic> rows, String key) => rows.fold<double>(
+      0, (sum, item) => sum + (parseNullableDouble(_map(item)[key]) ?? 0));
+
+  List<_ReportRow> _promoRows(Map<String, dynamic> promo) =>
+      _list(promo['top_promos']).take(6).map((item) {
+        final row = _map(item);
+        return _ReportRow(
+            row['title']?.toString() ?? 'Promotion',
+            '${parseIntValue(row['usage_count'])} orders',
+            _formatValue(
+                parseNullableDouble(row['discount_given']) ?? 0, 'currency'));
+      }).toList();
+
+  String _formatValue(num value, String unit) {
+    switch (unit) {
+      case 'currency':
+        return formatCurrency(context, value);
+      case 'percent':
+        return '${_trim(value)}%';
+      case 'minutes':
+        return '${_trim(value)} min';
+      case 'rating':
+        return '${_trim(value)}/5';
+      case 'hour':
+        return '${value.toInt().toString().padLeft(2, '0')}:00';
+      default:
+        return _trim(value);
+    }
+  }
+
+  String _trim(num value) {
+    final fixed =
+        value.toStringAsFixed(value.truncateToDouble() == value ? 0 : 2);
+    return fixed.endsWith('.00') ? fixed.substring(0, fixed.length - 3) : fixed;
+  }
+
+  String get _periodLabel => switch (_period) {
+        'today' => 'Today',
+        'yesterday' => 'Yesterday',
+        'last_week' => 'Last week',
+        'month' => 'This month',
+        'year' => 'Last 365 days',
+        _ => 'Last 7 days',
+      };
+  void _showFilters() {
+    final provider = context.read<RestaurantProvider>();
+    var sheetPeriod = _period;
+    var sheetCity = _selectedCity;
+    var sheetRestaurantId = provider.selectedRestaurantId;
+    final restaurants = provider.restaurants;
+    final cities = restaurants
+        .map((r) => r['city']?.toString().trim())
+        .whereType<String>()
+        .where((c) => c.isNotEmpty)
+        .toSet()
+        .toList()
+      ..sort();
+    var activeTab = 'Date';
+    showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        backgroundColor: Colors.transparent,
+        builder: (context) =>
+            StatefulBuilder(builder: (context, setSheetState) {
+              final filteredRestaurants = sheetCity == null
+                  ? restaurants
+                  : restaurants
+                      .where((r) => r['city']?.toString() == sheetCity)
+                      .toList();
+              return FractionallySizedBox(
+                  heightFactor: 0.72,
+                  child: Container(
+                      decoration: const BoxDecoration(
+                          color: Colors.white,
+                          borderRadius:
+                              BorderRadius.vertical(top: Radius.circular(20))),
+                      child: Column(children: [
+                        Padding(
+                            padding: const EdgeInsets.fromLTRB(18, 14, 10, 12),
+                            child: Row(children: [
+                              const Expanded(
+                                  child: Text('Filters',
+                                      style: TextStyle(
+                                          fontSize: 24,
+                                          fontWeight: FontWeight.w900))),
+                              IconButton(
+                                  onPressed: () => Navigator.pop(context),
+                                  icon: const Icon(Icons.close_rounded)),
+                            ])),
+                        const Divider(height: 1, color: FoodFlowTheme.line),
+                        Expanded(
+                            child: Row(children: [
+                          SizedBox(
+                              width: 94,
+                              child: Column(
+                                  children: ['Date', 'City', 'Outlet']
+                                      .map((tab) => _FilterTab(
+                                          label: tab,
+                                          selected: activeTab == tab,
+                                          onTap: () => setSheetState(
+                                              () => activeTab = tab)))
+                                      .toList())),
+                          const VerticalDivider(
+                              width: 1, color: FoodFlowTheme.line),
+                          Expanded(
+                              child: ListView(
+                                  padding:
+                                      const EdgeInsets.fromLTRB(18, 16, 18, 20),
+                                  children: [
+                                if (activeTab == 'Date')
+                                  ..._periodOptions.entries.map((e) =>
+                                      RadioListTile<String>(
+                                          dense: true,
+                                          value: e.key,
+                                          groupValue: sheetPeriod,
+                                          activeColor: _orange,
+                                          title: Text(e.value),
+                                          onChanged: (v) => setSheetState(() =>
+                                              sheetPeriod = v ?? 'week'))),
+                                if (activeTab == 'City') ...[
+                                  CheckboxListTile(
+                                      dense: true,
+                                      value: sheetCity == null,
+                                      activeColor: _orange,
+                                      title: const Text('All Cities'),
+                                      onChanged: (_) => setSheetState(
+                                          () => sheetCity = null)),
+                                  ...cities.map((city) => CheckboxListTile(
+                                      dense: true,
+                                      value: sheetCity == city,
+                                      activeColor: _orange,
+                                      title: Text(city),
+                                      onChanged: (_) => setSheetState(() {
+                                            sheetCity =
+                                                sheetCity == city ? null : city;
+                                            if (sheetCity != null &&
+                                                !filteredRestaurants.any((r) =>
+                                                    _id(r['id']) ==
+                                                    sheetRestaurantId))
+                                              sheetRestaurantId = null;
+                                          }))),
+                                ],
+                                if (activeTab == 'Outlet') ...[
+                                  RadioListTile<int?>(
+                                      dense: true,
+                                      value: null,
+                                      groupValue: sheetRestaurantId,
+                                      activeColor: _orange,
+                                      title:
+                                          const Text('All accessible outlets'),
+                                      onChanged: (v) => setSheetState(
+                                          () => sheetRestaurantId = v)),
+                                  ...filteredRestaurants.map((restaurant) {
+                                    final id = _id(restaurant['id']);
+                                    final subtitle = [
+                                      restaurant['city']?.toString(),
+                                      restaurant['area']?.toString()
+                                    ]
+                                        .whereType<String>()
+                                        .where((v) => v.isNotEmpty)
+                                        .join(', ');
+                                    return RadioListTile<int?>(
+                                        dense: true,
+                                        value: id,
+                                        groupValue: sheetRestaurantId,
+                                        activeColor: _orange,
+                                        title: Text(
+                                            restaurant['name']?.toString() ??
+                                                'Outlet'),
+                                        subtitle: subtitle.isEmpty
+                                            ? null
+                                            : Text(subtitle),
+                                        onChanged: (v) => setSheetState(
+                                            () => sheetRestaurantId = v));
+                                  }),
+                                ],
+                              ])),
+                        ])),
+                        SafeArea(
+                            top: false,
+                            minimum: const EdgeInsets.fromLTRB(16, 12, 16, 18),
+                            child: Row(children: [
+                              Expanded(
+                                  child: TextButton(
+                                      onPressed: () async {
+                                        setState(() {
+                                          _period = 'week';
+                                          _selectedCity = null;
+                                        });
+                                        await provider.selectRestaurant(null);
+                                        if (!mounted) return;
+                                        Navigator.pop(context);
+                                        await _reloadCurrentTab();
+                                      },
+                                      child: const Text('Clear Filter'))),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                  flex: 2,
+                                  child: FilledButton(
+                                      style: FilledButton.styleFrom(
+                                          backgroundColor: _orange,
+                                          minimumSize:
+                                              const Size.fromHeight(52),
+                                          shape: RoundedRectangleBorder(
+                                              borderRadius:
+                                                  BorderRadius.circular(12))),
+                                      onPressed: () async {
+                                        setState(() {
+                                          _period = sheetPeriod;
+                                          _selectedCity = sheetCity;
+                                        });
+                                        await provider.selectRestaurant(
+                                            sheetRestaurantId);
+                                        if (!mounted) return;
+                                        Navigator.pop(context);
+                                        await _reloadCurrentTab();
+                                      },
+                                      child: const Text('Apply',
+                                          style: TextStyle(
+                                              fontWeight: FontWeight.w900)))),
+                            ])),
+                      ])));
+            }));
+  }
+
+  Future<void> _reloadCurrentTab() =>
+      _tab == 'compare' ? _loadCompare() : _loadPerformance();
+  static int? _id(dynamic value) =>
+      value is int ? value : int.tryParse(value?.toString() ?? '');
+  static Map<String, dynamic> _map(dynamic value) => value
+          is Map<String, dynamic>
+      ? value
+      : (value is Map ? Map<String, dynamic>.from(value) : <String, dynamic>{});
+  static List<dynamic> _list(dynamic value) => value is List ? value : const [];
+  static const _periodOptions = {
+    'today': 'Today',
+    'yesterday': 'Yesterday',
+    'week': 'This week',
+    'last_week': 'Last week',
+    'month': 'This month'
+  };
+}
+
+class _PerformanceSection {
+  const _PerformanceSection(this.title, this.metrics,
+      {this.rows = const [], this.rowTitle = 'Details'});
+  final String title;
+  final List<_ReportMetric> metrics;
+  final List<_ReportRow> rows;
+  final String rowTitle;
+}
+
+class _ReportMetric {
+  const _ReportMetric(this.title, this.value);
+  final String title;
+  final String value;
+}
+
+class _ReportRow {
+  const _ReportRow(this.title, this.subtitle, this.trailing);
+  final String title;
+  final String subtitle;
+  final String trailing;
+}
+
+class _CompareMetric {
+  const _CompareMetric(
+      {required this.label,
+      required this.group,
+      required this.you,
+      required this.average,
+      required this.isBetter});
+  factory _CompareMetric.fromMap(
+      Map<String, dynamic> data, String Function(num, String) formatter) {
+    final unit = data['unit']?.toString() ?? 'number';
+    return _CompareMetric(
+        label: data['label']?.toString() ?? 'Metric',
+        group: data['group']?.toString() ?? 'Performance',
+        you: formatter(parseNullableDouble(data['you']) ?? 0, unit),
+        average: formatter(
+            parseNullableDouble(data['delivery_zone_average']) ?? 0, unit),
+        isBetter: data['is_better'] == true);
+  }
+  final String label;
+  final String group;
+  final String you;
+  final String average;
+  final bool isBetter;
+}
+
+const _orange = Color(0xFFFF5200);
+BoxDecoration _cardDecoration() => BoxDecoration(
+    color: Colors.white,
+    borderRadius: BorderRadius.circular(10),
+    border: Border.all(color: FoodFlowTheme.line));
+
+class _ReportsHeader extends StatelessWidget {
+  const _ReportsHeader({required this.selectedTab, required this.onTab});
+  final String selectedTab;
+  final ValueChanged<String> onTab;
+  @override
+  Widget build(BuildContext context) => Container(
+      color: Colors.white,
+      child: Column(children: [
+        Padding(
+            padding: const EdgeInsets.fromLTRB(14, 14, 14, 4),
+            child: Row(children: const [
+              Expanded(
+                  child: Text('Business Reports',
+                      style: TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.w900,
+                          color: FoodFlowTheme.ink)))
+            ])),
+        Row(children: [
+          _TopTab(
+              label: 'Your Performance',
+              selected: selectedTab == 'performance',
+              onTap: () => onTab('performance')),
+          _TopTab(
+              label: 'Compare',
+              selected: selectedTab == 'compare',
+              onTap: () => onTab('compare'))
+        ]),
+      ]));
+}
+
+class _TopTab extends StatelessWidget {
+  const _TopTab(
+      {required this.label, required this.selected, required this.onTap});
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+  @override
+  Widget build(BuildContext context) => Expanded(
+      child: InkWell(
+          onTap: onTap,
+          child: Column(children: [
+            Padding(
+                padding: const EdgeInsets.symmetric(vertical: 13),
+                child: Text(label,
+                    style: TextStyle(
+                        color:
+                            selected ? FoodFlowTheme.ink : FoodFlowTheme.muted,
+                        fontWeight: FontWeight.w900))),
+            AnimatedContainer(
+                duration: const Duration(milliseconds: 180),
+                height: 3,
+                margin: const EdgeInsets.symmetric(horizontal: 20),
+                decoration: BoxDecoration(
+                    color: selected ? _orange : Colors.transparent,
+                    borderRadius: BorderRadius.circular(4))),
+          ])));
+}
+
+class _ReportsFilterBar extends StatelessWidget {
+  const _ReportsFilterBar(
+      {required this.outletLabel,
+      required this.periodLabel,
+      required this.onFilter});
+  final String outletLabel;
+  final String periodLabel;
+  final VoidCallback onFilter;
+  @override
+  Widget build(BuildContext context) => Container(
+      padding: const EdgeInsets.fromLTRB(12, 11, 12, 11),
+      decoration: const BoxDecoration(
+          color: Colors.white,
+          border: Border(top: BorderSide(color: FoodFlowTheme.line))),
+      child: Row(children: [
+        const Icon(Icons.tune_rounded, size: 20),
+        const SizedBox(width: 8),
+        Expanded(
+            child: Text('$outletLabel - $periodLabel',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontWeight: FontWeight.w900))),
+        TextButton(onPressed: onFilter, child: const Text('Filter')),
+      ]));
+}
+
+class _ReportsRail extends StatelessWidget {
+  const _ReportsRail(
+      {required this.sections,
+      required this.selected,
+      required this.onSelected});
+  final List<String> sections;
+  final String selected;
+  final ValueChanged<String> onSelected;
+  @override
+  Widget build(BuildContext context) => Container(
+      width: 86,
+      color: Colors.white,
+      child: Column(
+          children: sections
+              .map((section) => InkWell(
+                  onTap: () => onSelected(section),
+                  child: Container(
+                      height: 54,
+                      alignment: Alignment.centerLeft,
+                      padding: const EdgeInsets.only(left: 9),
+                      decoration: BoxDecoration(
+                          border: Border(
+                              left: BorderSide(
+                                  color: section == selected
+                                      ? _orange
+                                      : Colors.transparent,
+                                  width: 4))),
+                      child: Text(section,
+                          style: TextStyle(
+                              color: section == selected
+                                  ? _orange
+                                  : FoodFlowTheme.ink,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w800)))))
+              .toList()));
+}
+
+class _ReportsNotice extends StatelessWidget {
+  const _ReportsNotice({required this.text, required this.onRefresh});
+  final String text;
+  final VoidCallback onRefresh;
+  @override
+  Widget build(BuildContext context) => Container(
+      padding: const EdgeInsets.all(12),
+      decoration: _cardDecoration(),
+      child: Row(children: [
+        Expanded(
+            child: Text(text,
+                style: const TextStyle(
+                    color: FoodFlowTheme.muted,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700))),
+        TextButton.icon(
+            onPressed: onRefresh,
+            icon: const Icon(Icons.refresh_rounded, size: 16),
+            label: const Text('Refresh'))
+      ]));
+}
+
+class _ReportsCard extends StatelessWidget {
+  const _ReportsCard({required this.title, required this.metrics});
+  final String title;
+  final List<_ReportMetric> metrics;
+  @override
+  Widget build(BuildContext context) => Container(
+      padding: const EdgeInsets.all(14),
+      decoration: _cardDecoration(),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(title,
+            style: const TextStyle(fontSize: 19, fontWeight: FontWeight.w900)),
+        const SizedBox(height: 10),
+        const Divider(height: 1, color: FoodFlowTheme.line),
+        const SizedBox(height: 12),
+        GridView.builder(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            itemCount: metrics.length,
+            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 2,
+                childAspectRatio: 1.75,
+                crossAxisSpacing: 10,
+                mainAxisSpacing: 12),
+            itemBuilder: (context, index) {
+              final metric = metrics[index];
+              return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(metric.title,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                            color: FoodFlowTheme.muted,
+                            fontWeight: FontWeight.w700,
+                            fontSize: 13)),
+                    const SizedBox(height: 5),
+                    Text(metric.value,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                            fontSize: 19, fontWeight: FontWeight.w900))
+                  ]);
+            }),
+      ]));
+}
+
+class _ReportsRowsCard extends StatelessWidget {
+  const _ReportsRowsCard({required this.title, required this.rows});
+  final String title;
+  final List<_ReportRow> rows;
+  @override
+  Widget build(BuildContext context) => Container(
+      padding: const EdgeInsets.all(14),
+      decoration: _cardDecoration(),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(title, style: const TextStyle(fontWeight: FontWeight.w900)),
+        const SizedBox(height: 8),
+        ...rows.map((row) => Padding(
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            child: Row(children: [
+              Expanded(
+                  child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                    Text(row.title,
+                        style: const TextStyle(fontWeight: FontWeight.w800)),
+                    const SizedBox(height: 2),
+                    Text(row.subtitle,
+                        style: const TextStyle(
+                            color: FoodFlowTheme.muted, fontSize: 12))
+                  ])),
+              Text(row.trailing,
+                  style: const TextStyle(fontWeight: FontWeight.w900))
+            ]))),
+      ]));
+}
+
+class _CompareSection extends StatelessWidget {
+  const _CompareSection(
+      {required this.title, required this.good, required this.metrics});
+  final String title;
+  final bool good;
+  final List<_CompareMetric> metrics;
+  @override
+  Widget build(BuildContext context) {
+    final accent = good ? const Color(0xFF0F9D58) : const Color(0xFFE94970);
+    final bg = good ? const Color(0xFFEAF8F0) : const Color(0xFFFFEDF2);
+    return Container(
+        padding: const EdgeInsets.all(14),
+        decoration: _cardDecoration(),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            Icon(
+                good ? Icons.check_circle_rounded : Icons.priority_high_rounded,
+                color: accent,
+                size: 20),
+            const SizedBox(width: 8),
+            Text(title,
+                style: TextStyle(
+                    color: accent, fontSize: 16, fontWeight: FontWeight.w900))
+          ]),
+          const SizedBox(height: 10),
+          ...metrics.map((metric) => Container(
+              margin: const EdgeInsets.only(bottom: 10),
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                  color: bg,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: accent.withOpacity(0.26))),
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(metric.group.toUpperCase(),
+                        style: const TextStyle(
+                            color: FoodFlowTheme.muted,
+                            fontSize: 10,
+                            fontWeight: FontWeight.w900)),
+                    const SizedBox(height: 6),
+                    Text(metric.label,
+                        style: const TextStyle(fontWeight: FontWeight.w900)),
+                    const SizedBox(height: 10),
+                    Row(children: [
+                      Expanded(
+                          child: _CompareValue(
+                              label: 'YOU', value: metric.you, color: accent)),
+                      Expanded(
+                          child: _CompareValue(
+                              label: 'ZONE AVG',
+                              value: metric.average,
+                              color: FoodFlowTheme.ink))
+                    ]),
+                  ]))),
+        ]));
+  }
+}
+
+class _CompareValue extends StatelessWidget {
+  const _CompareValue(
+      {required this.label, required this.value, required this.color});
+  final String label;
+  final String value;
+  final Color color;
+  @override
+  Widget build(BuildContext context) =>
+      Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(label,
+            style: const TextStyle(
+                color: FoodFlowTheme.muted,
+                fontSize: 10,
+                fontWeight: FontWeight.w900)),
+        const SizedBox(height: 3),
+        Text(value, style: TextStyle(color: color, fontWeight: FontWeight.w900))
+      ]);
+}
+
+class _FilterTab extends StatelessWidget {
+  const _FilterTab(
+      {required this.label, required this.selected, required this.onTap});
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+  @override
+  Widget build(BuildContext context) => InkWell(
+      onTap: onTap,
+      child: Container(
+          height: 58,
+          alignment: Alignment.centerLeft,
+          padding: const EdgeInsets.only(left: 9),
+          decoration: BoxDecoration(
+              border: Border(
+                  left: BorderSide(
+                      color: selected ? _orange : Colors.transparent,
+                      width: 4))),
+          child: Text(label,
+              style: TextStyle(
+                  color: selected ? _orange : FoodFlowTheme.ink,
+                  fontWeight: FontWeight.w800))));
+}
+
+class _ReportsLoader extends StatelessWidget {
+  const _ReportsLoader();
+  @override
+  Widget build(BuildContext context) => const Padding(
+      padding: EdgeInsets.only(top: 150),
+      child: Center(child: CircularProgressIndicator()));
+}
+
+class _ReportsMessage extends StatelessWidget {
+  const _ReportsMessage(
+      {required this.icon,
+      required this.text,
+      this.actionLabel,
+      this.onAction});
+  final IconData icon;
+  final String text;
+  final String? actionLabel;
+  final VoidCallback? onAction;
+  @override
+  Widget build(BuildContext context) => Padding(
+      padding: const EdgeInsets.only(top: 160, left: 24, right: 24),
+      child: Column(children: [
+        Icon(icon, size: 54, color: FoodFlowTheme.muted),
+        const SizedBox(height: 14),
+        Text(text,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+                color: FoodFlowTheme.muted, fontWeight: FontWeight.w800)),
+        if (actionLabel != null && onAction != null) ...[
+          const SizedBox(height: 12),
+          OutlinedButton(onPressed: onAction, child: Text(actionLabel!))
+        ],
+      ]));
+}
+
+class _ReportsAccessDenied extends StatelessWidget {
+  const _ReportsAccessDenied();
+  @override
+  Widget build(BuildContext context) => const Scaffold(
+      backgroundColor: Color(0xFFF2F2F6),
+      body: Center(
+          child: Padding(
+              padding: EdgeInsets.all(24),
+              child: Text(
                   'Reports access is not enabled for this staff account.',
                   textAlign: TextAlign.center,
                   style: TextStyle(
-                    color: FoodFlowTheme.muted,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      );
-    }
-
-    return Scaffold(
-      backgroundColor: const Color(0xFFF7F7F8),
-      body: RefreshIndicator(
-        color: FoodFlowTheme.orange,
-        onRefresh: _loadAnalytics,
-        child: _isLoading
-            ? ListView(
-                physics: const AlwaysScrollableScrollPhysics(),
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.only(top: 80),
-                    child: const Center(child: CircularProgressIndicator()),
-                  ),
-                ],
-              )
-            : ListView(
-                physics: const AlwaysScrollableScrollPhysics(),
-                padding: const EdgeInsets.fromLTRB(16, 14, 16, 28),
-                children: [
-                  _AnalyticsHeader(onRefresh: _loadAnalytics),
-                  const SizedBox(height: 10),
-                  _PeriodSelector(
-                    selected: _selectedPeriod,
-                    onChanged: (value) {
-                      setState(() => _selectedPeriod = value);
-                      _loadAnalytics();
-                    },
-                  ),
-                  const SizedBox(height: 12),
-                  _buildMetricGrid(),
-                  const SizedBox(height: 14),
-                  _SectionPanel(
-                    title: 'Promotion performance',
-                    subtitle: 'Offer usage and discount impact',
-                    child: _buildPromotionPerformance(),
-                  ),
-                  const SizedBox(height: 12),
-                  _SectionPanel(
-                    title: 'Revenue trend',
-                    subtitle: 'Sales across $_periodLabel',
-                    trailing: _money(context, _num('total_revenue')),
-                    child: SizedBox(
-                      height: 210,
-                      child: _buildRevenueChart(),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  _SectionPanel(
-                    title: 'Order volume',
-                    subtitle: 'Daily order movement',
-                    trailing: '${_int('total_orders')} orders',
-                    child: SizedBox(
-                      height: 190,
-                      child: _buildOrdersChart(),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  _SectionPanel(
-                    title: 'Best sellers',
-                    subtitle: 'Items customers picked most',
-                    child: _buildTopItemsList(),
-                  ),
-                  const SizedBox(height: 12),
-                  _SectionPanel(
-                    title: 'Peak hours',
-                    subtitle: 'When your kitchen is busiest',
-                    child: _buildHourlyDistribution(),
-                  ),
-                ],
-              ),
-      ),
-    );
-  }
-
-  Widget _buildMetricGrid() {
-    final delivered = _int('delivered_orders');
-    return GridView.count(
-      crossAxisCount: 2,
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      mainAxisSpacing: 12,
-      crossAxisSpacing: 12,
-      childAspectRatio: 1.82,
-      children: [
-        _MetricTile(
-          title: 'Revenue',
-          value: _money(context, _num('total_revenue')),
-          icon: Icons.payments_outlined,
-          color: const Color(0xFF0F9D58),
-        ),
-        _MetricTile(
-          title: 'Orders',
-          value: '${_int('total_orders')}',
-          icon: Icons.receipt_long,
-          color: FoodFlowTheme.crimson,
-        ),
-        _MetricTile(
-          title: 'Avg order',
-          value: _money(context, _num('avg_order_value')),
-          icon: Icons.trending_up,
-          color: const Color(0xFF2563EB),
-        ),
-        _MetricTile(
-          title: delivered > 0 ? 'Delivered' : 'Cancelled',
-          value: delivered > 0
-              ? '$delivered'
-              : '${_num('cancellation_rate').toStringAsFixed(1)}%',
-          icon: delivered > 0 ? Icons.done_all : Icons.cancel_outlined,
-          color: const Color(0xFFFF8A00),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildPromotionPerformance() {
-    final performance = _mapOrEmpty(_data['promotion_performance']);
-    final activePromos = parseIntValue(performance['active_promotions'] ?? 0);
-    final totalPromos = parseIntValue(performance['total_promotions'] ?? 0);
-    final couponOrders = parseIntValue(performance['coupon_orders'] ?? 0);
-    final discountGiven =
-        parseNullableDouble(performance['discount_given']) ?? 0;
-    final avgDiscount = parseNullableDouble(performance['avg_discount']) ?? 0;
-    final topPromos =
-        performance['top_promos'] is List ? performance['top_promos'] as List : [];
-
-    if (totalPromos == 0 && couponOrders == 0 && discountGiven == 0) {
-      return const _EmptyAnalyticsState(
-        icon: Icons.local_offer_outlined,
-        text: 'Promotion results will appear after offers are created',
-      );
-    }
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        GridView.count(
-          crossAxisCount: 2,
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          mainAxisSpacing: 10,
-          crossAxisSpacing: 10,
-          childAspectRatio: 1.72,
-          children: [
-            _PromoMetricTile(
-              title: 'Active promos',
-              value: '$activePromos',
-              note: '$totalPromos total',
-              icon: Icons.campaign_outlined,
-            ),
-            _PromoMetricTile(
-              title: 'Promo orders',
-              value: '$couponOrders',
-              note: 'redeemed',
-              icon: Icons.receipt_long_outlined,
-            ),
-            _PromoMetricTile(
-              title: 'Discount given',
-              value: _money(context, discountGiven),
-              note: 'customer savings',
-              icon: Icons.savings_outlined,
-            ),
-            _PromoMetricTile(
-              title: 'Avg discount',
-              value: _money(context, avgDiscount),
-              note: 'per promo order',
-              icon: Icons.percent_rounded,
-            ),
-          ],
-        ),
-        if (topPromos.isNotEmpty) ...[
-          const SizedBox(height: 14),
-          ...topPromos.take(5).map((item) {
-            final promo = _map(item);
-            return _PromotionPerformanceRow(
-              title: promo['title']?.toString() ?? 'Promotion',
-              code: promo['code']?.toString() ?? 'Auto promotion',
-              uses: parseIntValue(promo['usage_count'] ?? 0),
-              discount: _money(
-                context,
-                parseNullableDouble(promo['discount_given']) ?? 0,
-              ),
-            );
-          }),
-        ],
-      ],
-    );
-  }
-
-  Widget _buildRevenueChart() {
-    final dailyData = _list('daily_revenue');
-    final spots = <FlSpot>[];
-
-    for (var i = 0; i < dailyData.length; i++) {
-      final item = _map(dailyData[i]);
-      spots
-          .add(FlSpot(i.toDouble(), parseNullableDouble(item['revenue']) ?? 0));
-    }
-
-    if (spots.isEmpty || spots.every((spot) => spot.y == 0)) {
-      return const _EmptyAnalyticsState(
-        icon: Icons.show_chart,
-        text: 'Revenue will appear after orders come in',
-      );
-    }
-
-    final maxY = spots.map((spot) => spot.y).reduce(math.max);
-    return LineChart(
-      LineChartData(
-        minY: 0,
-        maxY: maxY * 1.2,
-        gridData: FlGridData(
-          drawVerticalLine: false,
-          getDrawingHorizontalLine: (_) => FlLine(
-            color: Colors.grey.shade200,
-            strokeWidth: 1,
-          ),
-        ),
-        titlesData: FlTitlesData(
-          leftTitles: AxisTitles(
-            sideTitles: SideTitles(
-              showTitles: true,
-              reservedSize: 44,
-              interval: _chartInterval(maxY),
-              getTitlesWidget: (value, meta) => Text(
-                _compactMoney(context, value),
-                style:
-                    const TextStyle(fontSize: 10, color: FoodFlowTheme.muted),
-              ),
-            ),
-          ),
-          bottomTitles: AxisTitles(
-            sideTitles: SideTitles(
-              showTitles: true,
-              reservedSize: 32,
-              interval: _bottomInterval(dailyData.length),
-              getTitlesWidget: (value, meta) =>
-                  _dateTitle(value, dailyData, compact: true),
-            ),
-          ),
-          rightTitles:
-              const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-          topTitles:
-              const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-        ),
-        borderData: FlBorderData(show: false),
-        lineTouchData: LineTouchData(
-          touchTooltipData: LineTouchTooltipData(
-            getTooltipItems: (spots) => spots.map((spot) {
-              return LineTooltipItem(
-                _money(context, spot.y),
-                const TextStyle(
-                    color: Colors.white, fontWeight: FontWeight.w800),
-              );
-            }).toList(),
-          ),
-        ),
-        lineBarsData: [
-          LineChartBarData(
-            spots: spots,
-            isCurved: true,
-            color: FoodFlowTheme.orange,
-            barWidth: 4,
-            isStrokeCapRound: true,
-            dotData: FlDotData(
-              show: dailyData.length <= 12,
-              getDotPainter: (spot, percent, bar, index) => FlDotCirclePainter(
-                radius: 4,
-                color: Colors.white,
-                strokeWidth: 3,
-                strokeColor: FoodFlowTheme.orange,
-              ),
-            ),
-            belowBarData: BarAreaData(
-              show: true,
-              gradient: LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                colors: [
-                  FoodFlowTheme.orange.withOpacity(0.24),
-                  FoodFlowTheme.orange.withOpacity(0.02),
-                ],
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildOrdersChart() {
-    final dailyData = _list('daily_orders');
-    final groups = <BarChartGroupData>[];
-
-    for (var i = 0; i < dailyData.length; i++) {
-      final item = _map(dailyData[i]);
-      final orders = parseNullableDouble(item['orders']) ?? 0;
-      groups.add(
-        BarChartGroupData(
-          x: i,
-          barRods: [
-            BarChartRodData(
-              toY: orders,
-              width: dailyData.length > 18 ? 8 : 16,
-              color: FoodFlowTheme.orange,
-              borderRadius:
-                  const BorderRadius.vertical(top: Radius.circular(5)),
-              backDrawRodData: BackgroundBarChartRodData(
-                show: true,
-                toY: math.max(orders, 1),
-                color: const Color(0xFFFFE7D1),
-              ),
-            ),
-          ],
-        ),
-      );
-    }
-
-    if (groups.isEmpty ||
-        groups.every((group) => group.barRods.first.toY == 0)) {
-      return const _EmptyAnalyticsState(
-        icon: Icons.bar_chart,
-        text: 'Order volume will appear here',
-      );
-    }
-
-    final maxY = groups.map((g) => g.barRods.first.toY).reduce(math.max);
-    return BarChart(
-      BarChartData(
-        alignment: BarChartAlignment.spaceAround,
-        maxY: maxY + math.max(2, maxY * 0.2),
-        gridData: FlGridData(
-          drawVerticalLine: false,
-          getDrawingHorizontalLine: (_) => FlLine(
-            color: Colors.grey.shade200,
-            strokeWidth: 1,
-          ),
-        ),
-        borderData: FlBorderData(show: false),
-        barGroups: groups,
-        titlesData: FlTitlesData(
-          leftTitles: AxisTitles(
-            sideTitles: SideTitles(
-              showTitles: true,
-              reservedSize: 32,
-              getTitlesWidget: (value, meta) => Text(
-                value.toInt().toString(),
-                style:
-                    const TextStyle(fontSize: 10, color: FoodFlowTheme.muted),
-              ),
-            ),
-          ),
-          bottomTitles: AxisTitles(
-            sideTitles: SideTitles(
-              showTitles: true,
-              reservedSize: 30,
-              interval: _bottomInterval(dailyData.length),
-              getTitlesWidget: (value, meta) =>
-                  _dateTitle(value, dailyData, compact: true),
-            ),
-          ),
-          rightTitles:
-              const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-          topTitles:
-              const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildTopItemsList() {
-    final topItems = _list('top_items');
-
-    if (topItems.isEmpty) {
-      return const _EmptyAnalyticsState(
-        icon: Icons.restaurant_menu,
-        text: 'Top items will appear after sales',
-      );
-    }
-
-    final maxOrders = topItems
-        .map((item) => parseNullableDouble(_map(item)['total_orders']) ?? 0)
-        .fold<double>(0, math.max);
-
-    return Column(
-      children: topItems.take(6).toList().asMap().entries.map((entry) {
-        final index = entry.key;
-        final item = _map(entry.value);
-        final orders = parseNullableDouble(item['total_orders']) ?? 0;
-        final revenue = parseNullableDouble(item['revenue']) ?? 0;
-        final progress =
-            maxOrders <= 0 ? 0.0 : (orders / maxOrders).clamp(0.0, 1.0);
-
-        return Padding(
-          padding:
-              EdgeInsets.only(bottom: index == topItems.length - 1 ? 0 : 14),
-          child: Row(
-            children: [
-              Container(
-                width: 34,
-                height: 34,
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  color: index == 0
-                      ? const Color(0xFFFFF1D6)
-                      : Colors.grey.shade100,
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Text(
-                  '${index + 1}',
-                  style: TextStyle(
-                    color: index == 0
-                        ? const Color(0xFFFF8A00)
-                        : FoodFlowTheme.ink,
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      item['name']?.toString() ?? 'Menu item',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w900,
-                        color: FoodFlowTheme.ink,
-                      ),
-                    ),
-                    const SizedBox(height: 7),
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(20),
-                      child: LinearProgressIndicator(
-                        value: progress,
-                        minHeight: 7,
-                        backgroundColor: Colors.grey.shade200,
-                        color: FoodFlowTheme.orange,
-                      ),
-                    ),
-                    const SizedBox(height: 5),
-                    Text(
-                      '${orders.toInt()} orders',
-                      style: const TextStyle(
-                        color: FoodFlowTheme.muted,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 12),
-              Text(
-                _money(context, revenue),
-                style: const TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w900,
-                  color: FoodFlowTheme.ink,
-                ),
-              ),
-            ],
-          ),
-        );
-      }).toList(),
-    );
-  }
-
-  Widget _buildHourlyDistribution() {
-    final hourlyData = _list('hourly_data');
-    if (hourlyData.isEmpty) {
-      return const _EmptyAnalyticsState(
-        icon: Icons.schedule,
-        text: 'Peak-hour data will appear here',
-      );
-    }
-
-    final activeHours = hourlyData
-        .map((item) => _map(item))
-        .where((item) => (parseNullableDouble(item['orders']) ?? 0) > 0)
-        .toList();
-
-    if (activeHours.isEmpty) {
-      return const _EmptyAnalyticsState(
-        icon: Icons.schedule,
-        text: 'No busy hours in this period',
-      );
-    }
-
-    activeHours.sort((a, b) {
-      final aOrders = parseNullableDouble(a['orders']) ?? 0;
-      final bOrders = parseNullableDouble(b['orders']) ?? 0;
-      return bOrders.compareTo(aOrders);
-    });
-
-    final topHours = activeHours.take(5).toList();
-    final maxOrders = topHours
-        .map((e) => parseNullableDouble(e['orders']) ?? 0)
-        .reduce(math.max);
-
-    return Column(
-      children: topHours.map((item) {
-        final hour = parseIntValue(item['hour']);
-        final orders = parseNullableDouble(item['orders']) ?? 0;
-        final label = '${hour.toString().padLeft(2, '0')}:00';
-        return Padding(
-          padding: const EdgeInsets.only(bottom: 12),
-          child: Row(
-            children: [
-              SizedBox(
-                width: 54,
-                child: Text(
-                  label,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w900,
-                    color: FoodFlowTheme.ink,
-                  ),
-                ),
-              ),
-              Expanded(
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(20),
-                  child: LinearProgressIndicator(
-                    value: maxOrders <= 0 ? 0 : (orders / maxOrders),
-                    minHeight: 12,
-                    color: FoodFlowTheme.crimson,
-                    backgroundColor: const Color(0xFFFFE2E5),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 12),
-              SizedBox(
-                width: 68,
-                child: Text(
-                  '${orders.toInt()} orders',
-                  textAlign: TextAlign.right,
-                  style: const TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w800,
-                    color: FoodFlowTheme.muted,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        );
-      }).toList(),
-    );
-  }
-
-  Widget _dateTitle(double value, List<dynamic> data, {bool compact = false}) {
-    final index = value.toInt();
-    if (index < 0 || index >= data.length) return const SizedBox.shrink();
-    final rawDate = _map(data[index])['date']?.toString();
-    if (rawDate == null) return const SizedBox.shrink();
-    final date = DateTime.tryParse(rawDate);
-    if (date == null) return const SizedBox.shrink();
-
-    return Padding(
-      padding: const EdgeInsets.only(top: 8),
-      child: Text(
-        _selectedPeriod == 'year'
-            ? DateFormat('MMM').format(date)
-            : DateFormat(compact ? 'd MMM' : 'dd MMM').format(date),
-        style: const TextStyle(
-          fontSize: 10,
-          color: FoodFlowTheme.muted,
-          fontWeight: FontWeight.w700,
-        ),
-      ),
-    );
-  }
-
-  double _chartInterval(double maxY) {
-    if (maxY <= 0) return 1;
-    return math.max(1, (maxY / 4).ceilToDouble());
-  }
-
-  double _bottomInterval(int length) {
-    if (length <= 8) return 1;
-    if (length <= 31) return 5;
-    return 45;
-  }
-
-  String _compactMoney(BuildContext context, double value) {
-    final symbol = getCurrencySymbol(context);
-    if (value >= 100000)
-      return '$symbol${(value / 100000).toStringAsFixed(1)}L';
-    if (value >= 1000) return '$symbol${(value / 1000).toStringAsFixed(0)}k';
-    return '$symbol${value.toInt()}';
-  }
-
-  String _money(BuildContext context, num value) =>
-      formatCurrency(context, value);
-
-  num _num(String key) => parseNullableDouble(_data[key]) ?? 0;
-
-  int _int(String key) => parseIntValue(_data[key] ?? 0);
-
-  List<dynamic> _list(String key) =>
-      _data[key] is List ? _data[key] as List : [];
-
-  Map<String, dynamic> _mapOrEmpty(dynamic value) =>
-      value is Map ? Map<String, dynamic>.from(value) : <String, dynamic>{};
-
-  Map<String, dynamic> _map(dynamic value) => value is Map<String, dynamic>
-      ? value
-      : Map<String, dynamic>.from(value as Map);
-
-  String get _periodLabel {
-    switch (_selectedPeriod) {
-      case 'month':
-        return 'last 30 days';
-      case 'year':
-        return 'last 12 months';
-      default:
-        return 'last 7 days';
-    }
-  }
-}
-
-class _PromoMetricTile extends StatelessWidget {
-  const _PromoMetricTile({
-    required this.title,
-    required this.value,
-    required this.note,
-    required this.icon,
-  });
-
-  final String title;
-  final String value;
-  final String note;
-  final IconData icon;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: FoodFlowTheme.orange.withOpacity(0.06),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: FoodFlowTheme.orange.withOpacity(0.14)),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 34,
-            height: 34,
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(11),
-            ),
-            child: Icon(icon, color: FoodFlowTheme.orange, size: 19),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: FoodFlowTheme.muted,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                FittedBox(
-                  fit: BoxFit.scaleDown,
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    value,
-                    style: const TextStyle(
-                      color: FoodFlowTheme.ink,
-                      fontSize: 16,
-                      fontWeight: FontWeight.w900,
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  note,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: FoodFlowTheme.muted,
-                    fontSize: 10,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _PromotionPerformanceRow extends StatelessWidget {
-  const _PromotionPerformanceRow({
-    required this.title,
-    required this.code,
-    required this.uses,
-    required this.discount,
-  });
-
-  final String title;
-  final String code;
-  final int uses;
-  final String discount;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
-      child: Row(
-        children: [
-          Container(
-            width: 36,
-            height: 36,
-            decoration: BoxDecoration(
-              color: FoodFlowTheme.orange.withOpacity(0.1),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Icon(
-              Icons.local_offer_outlined,
-              color: FoodFlowTheme.orange,
-              size: 19,
-            ),
-          ),
-          const SizedBox(width: 11),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: FoodFlowTheme.ink,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
-                const SizedBox(height: 3),
-                Text(
-                  '$code · $uses uses',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: FoodFlowTheme.muted,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 10),
-          Text(
-            discount,
-            style: const TextStyle(
-              color: Color(0xFF0F9D58),
-              fontSize: 12,
-              fontWeight: FontWeight.w900,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _PeriodSelector extends StatelessWidget {
-  const _PeriodSelector({required this.selected, required this.onChanged});
-
-  final String selected;
-  final ValueChanged<String> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    final periods = const [
-      ('week', '7 days'),
-      ('month', '30 days'),
-      ('year', '12 months'),
-    ];
-
-    return Container(
-      padding: const EdgeInsets.all(4),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFFE9E9EB)),
-      ),
-      child: Row(
-        children: periods.map((period) {
-          final isSelected = selected == period.$1;
-          return Expanded(
-            child: InkWell(
-              borderRadius: BorderRadius.circular(10),
-              onTap: () => onChanged(period.$1),
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 160),
-                padding: const EdgeInsets.symmetric(vertical: 9),
-                decoration: BoxDecoration(
-                  color: isSelected ? FoodFlowTheme.orange : Colors.transparent,
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                alignment: Alignment.center,
-                child: Text(
-                  period.$2,
-                  style: TextStyle(
-                    color: isSelected ? Colors.white : FoodFlowTheme.muted,
-                    fontWeight: FontWeight.w900,
-                    fontSize: 12,
-                  ),
-                ),
-              ),
-            ),
-          );
-        }).toList(),
-      ),
-    );
-  }
-}
-
-class _AnalyticsHeader extends StatelessWidget {
-  const _AnalyticsHeader({required this.onRefresh});
-
-  final VoidCallback onRefresh;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: FoodFlowTheme.line),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.035),
-            blurRadius: 14,
-            offset: const Offset(0, 6),
-          ),
-        ],
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 40,
-            height: 40,
-            decoration: BoxDecoration(
-              color: FoodFlowTheme.orange.withOpacity(0.12),
-              borderRadius: BorderRadius.circular(13),
-            ),
-            child: Icon(
-              Icons.analytics_rounded,
-              color: FoodFlowTheme.orange,
-              size: 22,
-            ),
-          ),
-          const SizedBox(width: 11),
-          const Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Performance',
-                  style: TextStyle(
-                    color: FoodFlowTheme.ink,
-                    fontSize: 16,
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
-                SizedBox(height: 2),
-                Text(
-                  'Revenue, orders, and busy-hour signals',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: FoodFlowTheme.muted,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          IconButton(
-            onPressed: onRefresh,
-            icon: const Icon(Icons.refresh_rounded),
-            color: FoodFlowTheme.orange,
-            visualDensity: VisualDensity.compact,
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _MetricTile extends StatelessWidget {
-  const _MetricTile({
-    required this.title,
-    required this.value,
-    required this.icon,
-    required this.color,
-  });
-
-  final String title;
-  final String value;
-  final IconData icon;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFFE9E9EB)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.04),
-            blurRadius: 14,
-            offset: const Offset(0, 6),
-          ),
-        ],
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 38,
-            height: 38,
-            decoration: BoxDecoration(
-              color: color.withOpacity(0.11),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Icon(icon, color: color, size: 20),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: FoodFlowTheme.muted,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                const SizedBox(height: 5),
-                FittedBox(
-                  fit: BoxFit.scaleDown,
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    value,
-                    style: const TextStyle(
-                      color: FoodFlowTheme.ink,
-                      fontSize: 17,
-                      fontWeight: FontWeight.w900,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _SectionPanel extends StatelessWidget {
-  const _SectionPanel({
-    required this.title,
-    required this.subtitle,
-    required this.child,
-    this.trailing,
-  });
-
-  final String title;
-  final String subtitle;
-  final String? trailing;
-  final Widget child;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFFE9E9EB)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      title,
-                      style: const TextStyle(
-                        color: FoodFlowTheme.ink,
-                        fontSize: 15,
-                        fontWeight: FontWeight.w900,
-                      ),
-                    ),
-                    const SizedBox(height: 3),
-                    Text(
-                      subtitle,
-                      style: const TextStyle(
-                        color: FoodFlowTheme.muted,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              if (trailing != null)
-                Text(
-                  trailing!,
-                  style: TextStyle(
-                    color: FoodFlowTheme.orange,
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
-            ],
-          ),
-          const SizedBox(height: 14),
-          child,
-        ],
-      ),
-    );
-  }
-}
-
-class _EmptyAnalyticsState extends StatelessWidget {
-  const _EmptyAnalyticsState({required this.icon, required this.text});
-
-  final IconData icon;
-  final String text;
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, color: Colors.grey.shade400, size: 42),
-          const SizedBox(height: 10),
-          Text(
-            text,
-            textAlign: TextAlign.center,
-            style: const TextStyle(
-              color: FoodFlowTheme.muted,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
+                      color: FoodFlowTheme.muted,
+                      fontWeight: FontWeight.w800)))));
 }

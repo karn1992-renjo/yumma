@@ -734,29 +734,10 @@ class _HeroBackground extends StatelessWidget {
     return SizedBox(
       width: double.infinity,
       height: compact ? 398 : 474,
-      child: Stack(
-        clipBehavior: Clip.none,
+      child: Image.asset(
+        'assets/images/background.png',
+        fit: BoxFit.cover,
         alignment: Alignment.topCenter,
-        children: [
-          Positioned.fill(
-            child: Image.asset(
-              'assets/images/background.png',
-              fit: BoxFit.cover,
-              alignment: Alignment.topCenter,
-            ),
-          ),
-          Positioned(
-            top: compact ? 0 : 8,
-            left: 0,
-            right: 0,
-            child: Image.asset(
-              'assets/images/logo.png',
-              width: compact ? 190 : 216,
-              height: compact ? 96 : 110,
-              fit: BoxFit.contain,
-            ),
-          ),
-        ],
       ),
     );
   }

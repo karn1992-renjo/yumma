@@ -1,5 +1,5 @@
 @extends('layouts.admin')
-@php $currencySymbol = App\Models\AppSetting::getValue('currency_symbol', '?'); @endphp
+@php $currencySymbol = App\Models\AppSetting::sanitizedCurrencySymbol(); @endphp
 
 @section('title', 'Create Payout')
 @section('header', 'Create New Payout')

@@ -10,6 +10,7 @@ import '../../theme/foodflow_theme.dart';
 import '../../utils/currency_utils.dart';
 import '../../widgets/customer/account_chrome.dart';
 import '../../widgets/common/app_cached_image.dart';
+import '../../widgets/common/app_skeleton.dart';
 
 class OffersScreen extends StatefulWidget {
   const OffersScreen({super.key});
@@ -37,8 +38,8 @@ class _OffersScreenState extends State<OffersScreen> {
         ApiConstants.activeOffers,
         includeAuth: false,
         cachePolicy: ApiCachePolicy.discovery,
-        cacheFirst: false,
-        refreshCached: false,
+        cacheFirst: !forceRefresh,
+        refreshCached: !forceRefresh,
         onCacheRefreshed: (_) {
           if (mounted) _loadOffers(forceRefresh: true);
         },
@@ -111,8 +112,9 @@ class _OffersScreenState extends State<OffersScreen> {
             slivers: [
               SliverToBoxAdapter(child: _OffersHeader(onRefresh: _loadOffers)),
               if (_loading)
-                const SliverFillRemaining(
-                  child: Center(child: CircularProgressIndicator()),
+                const AppSkeletonSliverList(
+                  itemCount: 4,
+                  itemHeight: 126,
                 )
               else if (groups.isEmpty)
                 SliverFillRemaining(

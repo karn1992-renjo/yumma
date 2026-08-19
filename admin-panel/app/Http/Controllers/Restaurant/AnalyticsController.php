@@ -153,7 +153,7 @@ class AnalyticsController extends Controller
             'cancellation_rate' => $this->calculateCancellationRate($restaurant->id, $startDate, $endDate),
         ];
 
-        $currencySymbol = AppSetting::getValue('currency_symbol', html_entity_decode('&#8377;', ENT_QUOTES, 'UTF-8'));
+        $currencySymbol = AppSetting::sanitizedCurrencySymbol();
         $currencyDecimals = AppSetting::currencyDecimals();
         $startDateValue = $startDate->format('Y-m-d');
         $endDateValue = $endDate->format('Y-m-d');

@@ -10,11 +10,17 @@
             <h1>Home Section Management</h1>
             <p>Control the live homepage structure, order, and curated content sections.</p>
         </div>
-        <a href="{{ route('admin.home-sections.create') }}" class="btn btn-primary">
-            <i class="fas fa-plus me-2"></i>Add Home Section
-        </a>
+        <div class="d-flex gap-2">
+            <a href="{{ route('admin.banners.create', ['layout_mode' => 'promo_card']) }}" class="btn btn-outline-primary">
+                <i class="fas fa-bolt me-2"></i>Create Widget
+            </a>
+            <a href="{{ route('admin.home-sections.create') }}" class="btn btn-primary">
+                <i class="fas fa-plus me-2"></i>Add Home Section
+            </a>
+        </div>
     </div>
 </div>
+<p class="text-muted small mt-n3 mb-4">"Create Widget" opens the coupon-style promo card builder (title, subtitle, CTA button, image with badge). Saving it automatically creates/updates a "Promo Widgets" section below and attaches the widget to it. Move or hide that section here to control where the promo banner appears on the app home.</p>
 
 <div class="row g-3 mb-4">
     <div class="col-md-3">

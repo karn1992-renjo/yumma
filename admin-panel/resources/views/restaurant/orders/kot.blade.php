@@ -1,5 +1,5 @@
 @php
-    $currencySymbol = App\Models\AppSetting::getValue('currency_symbol', '?');
+    $currencySymbol = App\Models\AppSetting::sanitizedCurrencySymbol();
     $decimals = App\Models\AppSetting::currencyDecimals();
     $orderItems = [];
 

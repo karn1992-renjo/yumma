@@ -2,6 +2,7 @@
 
 use Illuminate\Support\Facades\Broadcast;
 use App\Models\Order;
+use App\Models\SupportConversation;
 
 Broadcast::channel('restaurant.{restaurantId}', function ($user, int $restaurantId) {
     return (int) $user->current_restaurant_id === $restaurantId
@@ -41,4 +42,25 @@ Broadcast::channel('order.{orderId}', function ($user, int $orderId) {
     return (bool) optional($order->restaurant)
         ->staff
         ?->contains(fn ($staff) => (int) $staff->user_id === (int) $user->id);
+});
+
+Broadcast::channel('support.{conversationId}', function ($user, int $conversationId) {
+    if ($user->hasAnyRole(['super_admin', 'admin'])) {
+        return true;
+    }
+
+    $conversation = SupportConversation::with('restaurant.owner')->find($conversationId);
+    if (! $conversation) {
+        return false;
+    }
+
+    if ((int) $conversation->user_id === (int) $user->id) {
+        return true;
+    }
+
+    return (int) optional($conversation->restaurant)->owner_id === (int) $user->id;
+});
+
+Broadcast::channel('support-queue', function ($user) {
+    return $user->hasAnyRole(['super_admin', 'admin']);
 });

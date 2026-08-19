@@ -1,5 +1,5 @@
-﻿@extends('layouts.admin')
-@php $currencySymbol = App\Models\AppSetting::getValue('currency_symbol', '?'); @endphp
+@extends('layouts.admin')
+@php $currencySymbol = App\Models\AppSetting::sanitizedCurrencySymbol(); @endphp
 
 @section('title', 'Edit Driver')
 @section('header', 'Edit Driver')

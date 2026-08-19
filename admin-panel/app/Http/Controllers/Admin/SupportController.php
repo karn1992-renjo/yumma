@@ -2,12 +2,15 @@
 
 namespace App\Http\Controllers\Admin;
 
-use App\Helpers\FirebaseHelper;
+use App\Events\SupportMessageSent;
 use App\Http\Controllers\Controller;
-use App\Models\SupportTicket;
-use App\Models\SupportTicketReply;
 use App\Models\Restaurant;
-use App\Models\User;
+use App\Models\SupportConversation;
+use App\Models\SupportMessage;
+use App\Models\Wallet;
+use App\Models\WalletTransaction;
+use App\Models\Order;
+use App\Services\RefundService;
 use App\Services\SupportNotificationService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -17,457 +20,465 @@ use Illuminate\Support\Facades\Log;
 class SupportController extends Controller
 {
     public function __construct(
-        protected SupportNotificationService $supportNotifications
+        protected SupportNotificationService $supportNotifications,
+        protected RefundService $refundService,
     ) {
     }
 
-    /**
-     * Display a listing of support tickets for admin
-     */
     public function index(Request $request)
     {
-        $query = SupportTicket::with(['restaurant', 'user']);
-        
-        // Filter by status
+        $query = SupportConversation::with(['restaurant', 'user', 'order:id,order_number']);
+
+        if ($request->filled('stage')) {
+            $query->where('stage', $request->stage);
+        }
+
         if ($request->filled('status')) {
             $query->where('status', $request->status);
         }
-        
-        // Filter by priority
+
         if ($request->filled('priority')) {
             $query->where('priority', $request->priority);
         }
-        
-        // Filter by category
+
         if ($request->filled('category')) {
             $query->where('category', $request->category);
         }
-        
-        // Filter by restaurant
+
         if ($request->filled('restaurant_id')) {
             $query->where('restaurant_id', $request->restaurant_id);
         }
 
-        // Filter by requester role
         if ($request->filled('requester_role')) {
             $query->where('requester_role', $request->requester_role);
         }
-        
-        // Search by ticket number or subject
+
         if ($request->filled('search')) {
             $search = $request->search;
-            $query->where(function($q) use ($search) {
-                $q->where('ticket_number', 'LIKE', "%{$search}%")
-                  ->orWhere('subject', 'LIKE', "%{$search}%");
+            $query->where(function ($q) use ($search) {
+                $q->where('conversation_number', 'LIKE', "%{$search}%")
+                  ->orWhereHas('user', fn ($u) => $u->where('name', 'LIKE', "%{$search}%"));
             });
         }
-        
-        $tickets = $query->orderBy('created_at', 'desc')->paginate(15);
-        
-        // Statistics
+
+        $conversations = $query->orderByDesc('last_message_at')->paginate(15);
+
         $stats = [
-            'total' => SupportTicket::count(),
-            'open' => SupportTicket::where('status', 'open')->count(),
-            'in_progress' => SupportTicket::where('status', 'in_progress')->count(),
-            'resolved' => SupportTicket::where('status', 'resolved')->count(),
-            'closed' => SupportTicket::where('status', 'closed')->count(),
-            'urgent' => SupportTicket::where('priority', 'urgent')->whereNotIn('status', ['resolved', 'closed'])->count(),
+            'total' => SupportConversation::count(),
+            'bot_resolved' => SupportConversation::where('stage', 'resolved')->whereNull('assigned_to')->count(),
+            'escalated_open' => SupportConversation::where('stage', 'human')->whereIn('status', ['open', 'in_progress'])->count(),
+            'urgent' => SupportConversation::urgent()->count(),
             'avg_response_time' => $this->calculateAvgResponseTime(),
+            'avg_resolution_time' => $this->calculateAvgResolutionTime(),
+            'avg_csat' => round((float) SupportConversation::whereNotNull('csat_rating')->avg('csat_rating'), 1),
         ];
-        
+
         $restaurants = Restaurant::orderBy('name')->get(['id', 'name']);
-        $requesterRoles = SupportTicket::select('requester_role')
-            ->distinct()
-            ->orderBy('requester_role')
-            ->pluck('requester_role');
-        
-        return view('admin.support.index', compact('tickets', 'stats', 'restaurants', 'requesterRoles'));
+        $requesterRoles = SupportConversation::select('requester_role')->distinct()->orderBy('requester_role')->pluck('requester_role');
+
+        return view('admin.support.index', compact('conversations', 'stats', 'restaurants', 'requesterRoles'));
     }
-    
-    /**
-     * Display the specified ticket details
-     */
+
     public function show($id)
     {
-        $ticket = SupportTicket::with([
+        $conversation = SupportConversation::with([
             'restaurant',
             'user',
-            'replies' => function($query) {
-                $query->with('user')->orderBy('created_at', 'asc');
-            }
+            'order',
+            'assignedAdmin',
+            'messages' => fn ($query) => $query->with('sender')->orderBy('created_at'),
         ])->findOrFail($id);
-        
-        // Mark as in_progress if admin is viewing an open ticket
-        if ($ticket->status === 'open') {
-            $ticket->update(['status' => 'in_progress']);
+
+        if ($conversation->stage === 'human' && $conversation->status === 'open') {
+            $conversation->update(['status' => 'in_progress']);
         }
-        
-        return view('admin.support.show', compact('ticket'));
+
+        return view('admin.support.show', compact('conversation'));
     }
-    
-    /**
-     * Reply to a support ticket
-     */
+
     public function reply(Request $request, $id)
     {
-        $ticket = SupportTicket::findOrFail($id);
-        
+        $conversation = SupportConversation::findOrFail($id);
+
         $validated = $request->validate([
             'message' => 'required|string',
-            'attachment' => 'nullable|file|max:5120', // Max 5MB
-            'status' => 'nullable|in:open,in_progress,resolved,closed',
+            'attachment' => 'nullable|file|max:5120',
         ]);
-        
-        $reply = $ticket->replies()->create([
-            'user_id' => Auth::id(),
+
+        $message = $conversation->messages()->create([
+            'sender_id' => Auth::id(),
+            'sender_type' => 'admin',
+            'message_type' => 'text',
             'message' => $validated['message'],
-            'is_admin_reply' => true,
+            'delivered_at' => now(),
         ]);
-        
+
         if ($request->hasFile('attachment')) {
             $path = $request->file('attachment')->store('support-replies', 'public');
-            $reply->update(['attachment' => $path]);
+            $message->update(['attachment_path' => $path]);
         }
-        
-        // Update ticket status if provided
-        if ($request->filled('status')) {
-            $ticket->update(['status' => $request->status]);
-        }
-        
-        $this->supportNotifications->notifyRequesterAboutAdminReply($ticket, $reply);
-        
-        return redirect()->route('admin.support.show', $ticket->id)
-            ->with('success', 'Reply sent successfully!');
+
+        $conversation->update([
+            'last_message_at' => now(),
+            'assigned_to' => $conversation->assigned_to ?: Auth::id(),
+            'assigned_at' => $conversation->assigned_at ?: now(),
+        ]);
+
+        broadcast(new SupportMessageSent($message))->toOthers();
+        $this->supportNotifications->notifyRequesterAboutAdminReply($conversation, $message);
+
+        return redirect()->route('admin.support.show', $conversation->id)->with('success', 'Reply sent successfully!');
     }
-    
-    /**
-     * Update ticket status
-     */
+
     public function updateStatus(Request $request, $id)
     {
-        $ticket = SupportTicket::findOrFail($id);
-        
+        $conversation = SupportConversation::findOrFail($id);
+
         $validated = $request->validate([
             'status' => 'required|in:open,in_progress,resolved,closed',
             'resolve_notes' => 'nullable|string|required_if:status,resolved',
         ]);
-        
-        $oldStatus = $ticket->status;
-        $ticket->update([
+
+        $oldStatus = $conversation->status;
+        $isResolved = $validated['status'] === 'resolved';
+
+        $conversation->update([
             'status' => $validated['status'],
-            'resolved_at' => $validated['status'] === 'resolved' ? now() : null,
+            'stage' => $isResolved ? 'resolved' : $conversation->stage,
+            'resolved_at' => $isResolved ? now() : null,
             'resolve_notes' => $validated['resolve_notes'] ?? null,
         ]);
-        
-        // Add system note for status change
-        $ticket->replies()->create([
-            'user_id' => Auth::id(),
-            'message' => "**System Update:** Ticket status changed from {$oldStatus} to {$validated['status']}",
-            'is_system_message' => true,
+
+        $system = $conversation->messages()->create([
+            'sender_type' => 'system',
+            'message_type' => 'system',
+            'message' => $isResolved
+                ? 'This conversation was marked resolved. How did we do?'
+                : "Conversation status changed from {$oldStatus} to {$validated['status']}.",
         ]);
 
-        $this->supportNotifications->notifyRequesterAboutStatusUpdate(
-            $ticket,
-            $oldStatus,
-            $validated['status']
-        );
-        
-        $message = $validated['status'] === 'resolved' 
-            ? 'Ticket resolved successfully!' 
-            : 'Ticket status updated successfully!';
-        
-        return redirect()->route('admin.support.show', $ticket->id)
-            ->with('success', $message);
+        broadcast(new SupportMessageSent($system))->toOthers();
+        $this->supportNotifications->notifyRequesterAboutStatusUpdate($conversation, $oldStatus, $validated['status']);
+
+        $message = $isResolved ? 'Conversation resolved successfully!' : 'Conversation status updated successfully!';
+
+        return redirect()->route('admin.support.show', $conversation->id)->with('success', $message);
     }
-    
-    /**
-     * Assign ticket to admin
-     */
+
     public function assign(Request $request, $id)
     {
-        $ticket = SupportTicket::findOrFail($id);
-        
+        $conversation = SupportConversation::findOrFail($id);
+
         $validated = $request->validate([
             'assigned_to' => 'nullable|exists:users,id',
         ]);
-        
-        $ticket->update([
+
+        $conversation->update([
             'assigned_to' => $validated['assigned_to'],
             'assigned_at' => $validated['assigned_to'] ? now() : null,
         ]);
-        
-        return redirect()->route('admin.support.show', $ticket->id)
-            ->with('success', 'Ticket assigned successfully!');
+
+        return redirect()->route('admin.support.show', $conversation->id)->with('success', 'Conversation assigned successfully!');
     }
-    
-    /**
-     * Bulk update tickets
-     */
+
+    public function resolutionAction(Request $request, $id)
+    {
+        $conversation = SupportConversation::with('order')->findOrFail($id);
+        $order = $conversation->order;
+
+        if (! $order) {
+            return redirect()->route('admin.support.show', $conversation->id)->with('error', 'This conversation is not linked to an order.');
+        }
+
+        $validated = $request->validate([
+            'action' => 'required|in:refund,wallet_credit',
+            'amount' => 'nullable|numeric|min:0.01',
+            'reason' => 'required|string|max:255',
+        ]);
+
+        $result = $validated['action'] === 'refund'
+            ? $this->runRefundAction($order, $validated)
+            : $this->runWalletCreditAction($order, $validated);
+
+        $message = $conversation->messages()->create([
+            'sender_id' => Auth::id(),
+            'sender_type' => 'admin',
+            'message_type' => 'action',
+            'message' => $result['message'],
+            'meta' => ['action' => $validated['action'], 'success' => $result['success']],
+            'delivered_at' => now(),
+        ]);
+
+        $conversation->update(['last_message_at' => now()]);
+        broadcast(new SupportMessageSent($message))->toOthers();
+
+        return redirect()->route('admin.support.show', $conversation->id)
+            ->with($result['success'] ? 'success' : 'error', $result['message']);
+    }
+
+    private function runRefundAction(Order $order, array $data): array
+    {
+        if ($order->refund_status === 'completed') {
+            return ['success' => false, 'message' => 'Refund already processed for this order.'];
+        }
+
+        $result = $this->refundService->processRefund($order, $data['reason'], $data['amount'] ?? null);
+
+        return [
+            'success' => $result['success'],
+            'message' => $result['success']
+                ? "Refund of \u{20B9}{$result['refund_amount']} issued for order #{$order->order_number}."
+                : $result['message'],
+        ];
+    }
+
+    private function runWalletCreditAction(Order $order, array $data): array
+    {
+        if (empty($data['amount'])) {
+            return ['success' => false, 'message' => 'Enter an amount to credit.'];
+        }
+
+        if (! $order->customer_id) {
+            return ['success' => false, 'message' => 'This order has no customer to credit.'];
+        }
+
+        $wallet = Wallet::firstOrCreate(
+            ['user_id' => $order->customer_id],
+            ['balance' => 0, 'locked_balance' => 0, 'currency' => 'INR', 'is_active' => true]
+        );
+
+        $wallet->increment('balance', $data['amount']);
+        $wallet->refresh();
+
+        WalletTransaction::create([
+            'wallet_id' => $wallet->id,
+            'user_id' => $order->customer_id,
+            'type' => 'support_credit',
+            'amount' => $data['amount'],
+            'balance_after' => $wallet->balance,
+            'reference_type' => 'support_conversation',
+            'reference_id' => $order->id,
+            'description' => "Goodwill credit: {$data['reason']}",
+        ]);
+
+        return ['success' => true, 'message' => "\u{20B9}{$data['amount']} credited to the customer's wallet."];
+    }
+
     public function bulkUpdate(Request $request)
     {
         $validated = $request->validate([
-            'ticket_ids' => 'required|array',
-            'ticket_ids.*' => 'exists:support_tickets,id',
+            'conversation_ids' => 'required|array',
+            'conversation_ids.*' => 'exists:support_conversations,id',
             'action' => 'required|in:resolve,close,assign,in_progress',
             'assigned_to' => 'required_if:action,assign|nullable|exists:users,id',
         ]);
-        
-        $tickets = SupportTicket::whereIn('id', $validated['ticket_ids'])
-            ->with(['user', 'restaurant.owner'])
-            ->get();
+
+        $conversations = SupportConversation::whereIn('id', $validated['conversation_ids'])->with('user')->get();
 
         switch ($validated['action']) {
             case 'resolve':
-                foreach ($tickets as $ticket) {
-                    $oldStatus = $ticket->status;
-                    $ticket->update(['status' => 'resolved', 'resolved_at' => now()]);
-                    $this->supportNotifications->notifyRequesterAboutStatusUpdate(
-                        $ticket,
-                        $oldStatus,
-                        'resolved'
-                    );
+                foreach ($conversations as $conversation) {
+                    $oldStatus = $conversation->status;
+                    $conversation->update(['status' => 'resolved', 'stage' => 'resolved', 'resolved_at' => now()]);
+                    $this->supportNotifications->notifyRequesterAboutStatusUpdate($conversation, $oldStatus, 'resolved');
                 }
-                $message = count($validated['ticket_ids']) . ' tickets resolved.';
+                $message = count($validated['conversation_ids']) . ' conversations resolved.';
                 break;
             case 'close':
-                foreach ($tickets as $ticket) {
-                    $oldStatus = $ticket->status;
-                    $ticket->update(['status' => 'closed']);
-                    $this->supportNotifications->notifyRequesterAboutStatusUpdate(
-                        $ticket,
-                        $oldStatus,
-                        'closed'
-                    );
+                foreach ($conversations as $conversation) {
+                    $oldStatus = $conversation->status;
+                    $conversation->update(['status' => 'closed']);
+                    $this->supportNotifications->notifyRequesterAboutStatusUpdate($conversation, $oldStatus, 'closed');
                 }
-                $message = count($validated['ticket_ids']) . ' tickets closed.';
+                $message = count($validated['conversation_ids']) . ' conversations closed.';
                 break;
             case 'in_progress':
-                foreach ($tickets as $ticket) {
-                    $oldStatus = $ticket->status;
-                    $ticket->update(['status' => 'in_progress']);
-                    $this->supportNotifications->notifyRequesterAboutStatusUpdate(
-                        $ticket,
-                        $oldStatus,
-                        'in_progress'
-                    );
+                foreach ($conversations as $conversation) {
+                    $oldStatus = $conversation->status;
+                    $conversation->update(['status' => 'in_progress']);
+                    $this->supportNotifications->notifyRequesterAboutStatusUpdate($conversation, $oldStatus, 'in_progress');
                 }
-                $message = count($validated['ticket_ids']) . ' tickets marked as in progress.';
+                $message = count($validated['conversation_ids']) . ' conversations marked as in progress.';
                 break;
             case 'assign':
-                foreach ($tickets as $ticket) {
-                    $ticket->update([
+                foreach ($conversations as $conversation) {
+                    $conversation->update([
                         'assigned_to' => $validated['assigned_to'],
                         'assigned_at' => now(),
                     ]);
                 }
-                $message = count($validated['ticket_ids']) . ' tickets assigned.';
+                $message = count($validated['conversation_ids']) . ' conversations assigned.';
                 break;
         }
-        
-        return redirect()->route('admin.support.index')
-            ->with('success', $message);
+
+        return redirect()->route('admin.support.index')->with('success', $message);
     }
-    
-    /**
-     * Export tickets to CSV
-     */
+
     public function export(Request $request)
     {
-        $query = SupportTicket::with(['restaurant', 'user']);
-        
+        $query = SupportConversation::with(['restaurant', 'user']);
+
         if ($request->filled('status')) {
             $query->where('status', $request->status);
         }
-        
+
         if ($request->filled('date_from')) {
             $query->whereDate('created_at', '>=', $request->date_from);
         }
-        
+
         if ($request->filled('date_to')) {
             $query->whereDate('created_at', '<=', $request->date_to);
         }
-        
-        $tickets = $query->orderBy('created_at', 'desc')->get();
-        
-        $filename = 'support-tickets-' . date('Y-m-d-His') . '.csv';
+
+        $conversations = $query->orderByDesc('created_at')->get();
+
+        $filename = 'support-conversations-' . date('Y-m-d-His') . '.csv';
         $handle = fopen('php://temp', 'w+');
-        
-        // Add CSV headers
+
         fputcsv($handle, [
-            'Ticket Number', 'Restaurant', 'Customer', 'Subject', 'Category', 
-            'Priority', 'Status', 'Created At', 'Resolved At', 'Last Reply'
+            'Conversation Number', 'Requester', 'Requester Role', 'Category',
+            'Stage', 'Status', 'Priority', 'CSAT', 'Created At', 'Resolved At',
         ]);
-        
-        foreach ($tickets as $ticket) {
+
+        foreach ($conversations as $conversation) {
             fputcsv($handle, [
-                $ticket->ticket_number,
-                $ticket->restaurant->name ?? 'N/A',
-                $ticket->user->name ?? 'N/A',
-                $ticket->subject,
-                str_replace('_', ' ', ucfirst($ticket->category)),
-                ucfirst($ticket->priority),
-                ucfirst($ticket->status),
-                $ticket->created_at->format('Y-m-d H:i:s'),
-                $ticket->resolved_at ? $ticket->resolved_at->format('Y-m-d H:i:s') : '',
-                $ticket->replies->last()?->created_at->format('Y-m-d H:i:s') ?? '',
+                $conversation->conversation_number,
+                $conversation->user->name ?? 'N/A',
+                $conversation->requester_role,
+                str_replace('_', ' ', ucfirst($conversation->category)),
+                ucfirst($conversation->stage),
+                ucfirst($conversation->status),
+                ucfirst($conversation->priority),
+                $conversation->csat_rating ?? '',
+                $conversation->created_at->format('Y-m-d H:i:s'),
+                $conversation->resolved_at ? $conversation->resolved_at->format('Y-m-d H:i:s') : '',
             ]);
         }
-        
+
         rewind($handle);
         $csvContent = stream_get_contents($handle);
         fclose($handle);
-        
+
         return response($csvContent, 200, [
             'Content-Type' => 'text/csv',
             'Content-Disposition' => "attachment; filename=\"{$filename}\"",
         ]);
     }
-    
-    /**
-     * Delete a ticket (soft delete or permanent)
-     */
+
     public function destroy($id)
     {
-        $ticket = SupportTicket::findOrFail($id);
-        
-        // Optional: Check if ticket can be deleted
-        if ($ticket->status !== 'closed') {
-            return redirect()->route('admin.support.index')
-                ->with('error', 'Only closed tickets can be deleted.');
+        $conversation = SupportConversation::findOrFail($id);
+
+        if ($conversation->status !== 'closed') {
+            return redirect()->route('admin.support.index')->with('error', 'Only closed conversations can be deleted.');
         }
-        
-        $ticket->delete();
-        
-        return redirect()->route('admin.support.index')
-            ->with('success', 'Ticket deleted successfully!');
+
+        $conversation->delete();
+
+        return redirect()->route('admin.support.index')->with('success', 'Conversation deleted successfully!');
     }
-    
-    /**
-     * Get ticket statistics for dashboard
-     */
+
     public function statistics()
     {
         $stats = [
-            'by_status' => SupportTicket::select('status', DB::raw('count(*) as count'))
-                ->groupBy('status')
-                ->pluck('count', 'status'),
-            'by_priority' => SupportTicket::select('priority', DB::raw('count(*) as count'))
+            'by_status' => SupportConversation::select('status', DB::raw('count(*) as count'))
+                ->groupBy('status')->pluck('count', 'status'),
+            'by_stage' => SupportConversation::select('stage', DB::raw('count(*) as count'))
+                ->groupBy('stage')->pluck('count', 'stage'),
+            'by_category' => SupportConversation::select('category', DB::raw('count(*) as count'))
                 ->whereNotIn('status', ['resolved', 'closed'])
-                ->groupBy('priority')
-                ->pluck('count', 'priority'),
-            'by_category' => SupportTicket::select('category', DB::raw('count(*) as count'))
-                ->whereNotIn('status', ['resolved', 'closed'])
-                ->groupBy('category')
-                ->pluck('count', 'category'),
-            'by_day' => SupportTicket::select(DB::raw('DATE(created_at) as date'), DB::raw('count(*) as count'))
+                ->groupBy('category')->pluck('count', 'category'),
+            'by_day' => SupportConversation::select(DB::raw('DATE(created_at) as date'), DB::raw('count(*) as count'))
                 ->where('created_at', '>=', now()->subDays(30))
-                ->groupBy('date')
-                ->orderBy('date')
-                ->get(),
+                ->groupBy('date')->orderBy('date')->get(),
             'avg_resolution_time' => $this->calculateAvgResolutionTime(),
         ];
-        
+
         return response()->json($stats);
     }
 
     public function notificationSummary()
     {
-        $replyIds = SupportTicketReply::query()
+        $replyIds = SupportMessage::query()
             ->selectRaw('MAX(id)')
-            ->groupBy('ticket_id');
+            ->groupBy('conversation_id');
 
-        $ticketsNeedingReply = SupportTicket::query()
+        $conversationsNeedingReply = SupportConversation::query()
             ->with(['restaurant:id,name', 'user:id,name'])
+            ->where('stage', 'human')
             ->whereIn('status', ['open', 'in_progress'])
-            ->whereHas('replies', function ($query) use ($replyIds) {
+            ->whereHas('messages', function ($query) use ($replyIds) {
                 $query->whereIn('id', $replyIds)
-                    ->where('is_admin_reply', false)
-                    ->where('is_system_message', false);
+                    ->whereNotIn('sender_type', ['admin', 'system']);
             })
             ->latest('updated_at')
             ->limit(5)
             ->get()
-            ->map(fn (SupportTicket $ticket) => [
-                'id' => $ticket->id,
-                'ticket_number' => $ticket->ticket_number,
-                'subject' => $ticket->subject,
-                'requester_name' => $ticket->user?->name ?: $ticket->restaurant?->name ?: 'Unknown',
-                'requester_role' => $ticket->requester_role,
-                'updated_at_human' => optional($ticket->updated_at)?->diffForHumans(),
-                'url' => route('admin.support.show', $ticket->id),
+            ->map(fn (SupportConversation $conversation) => [
+                'id' => $conversation->id,
+                'conversation_number' => $conversation->conversation_number,
+                'requester_name' => $conversation->user?->name ?: $conversation->restaurant?->name ?: 'Unknown',
+                'requester_role' => $conversation->requester_role,
+                'updated_at_human' => optional($conversation->updated_at)?->diffForHumans(),
+                'url' => route('admin.support.show', $conversation->id),
             ])
             ->values();
 
         return response()->json([
-            'count' => $ticketsNeedingReply->count(),
-            'tickets' => $ticketsNeedingReply,
+            'count' => $conversationsNeedingReply->count(),
+            'conversations' => $conversationsNeedingReply,
         ]);
     }
-    
-    /**
-     * Calculate average response time (SQLite compatible)
-     */
+
     private function calculateAvgResponseTime()
     {
         try {
-            // Get all tickets that have admin replies
-            $tickets = SupportTicket::whereHas('replies', function($query) {
-                $query->where('is_admin_reply', true);
-            })->with(['replies' => function($query) {
-                $query->where('is_admin_reply', true)->orderBy('created_at', 'asc');
+            $conversations = SupportConversation::whereHas('messages', function ($query) {
+                $query->where('sender_type', 'admin');
+            })->with(['messages' => function ($query) {
+                $query->where('sender_type', 'admin')->orderBy('created_at', 'asc');
             }])->get();
-            
-            if ($tickets->isEmpty()) {
+
+            if ($conversations->isEmpty()) {
                 return 0;
             }
-            
+
             $totalHours = 0;
             $count = 0;
-            
-            foreach ($tickets as $ticket) {
-                $firstAdminReply = $ticket->replies->first();
+
+            foreach ($conversations as $conversation) {
+                $firstAdminReply = $conversation->messages->first();
                 if ($firstAdminReply) {
-                    // Calculate difference in hours using diffInHours method
-                    $hours = $ticket->created_at->diffInHours($firstAdminReply->created_at);
-                    $totalHours += $hours;
+                    $totalHours += $conversation->created_at->diffInHours($firstAdminReply->created_at);
                     $count++;
                 }
             }
-            
+
             return $count > 0 ? round($totalHours / $count, 1) : 0;
-            
         } catch (\Exception $e) {
             Log::error('Error calculating avg response time: ' . $e->getMessage());
             return 0;
         }
     }
-    
-    /**
-     * Calculate average resolution time (SQLite compatible)
-     */
+
     private function calculateAvgResolutionTime()
     {
         try {
-            $resolvedTickets = SupportTicket::whereNotNull('resolved_at')
-                ->where('status', 'resolved')
-                ->get();
-            
-            if ($resolvedTickets->isEmpty()) {
+            $resolved = SupportConversation::whereNotNull('resolved_at')->where('stage', 'resolved')->get();
+
+            if ($resolved->isEmpty()) {
                 return 0;
             }
-            
+
             $totalHours = 0;
-            foreach ($resolvedTickets as $ticket) {
-                $hours = $ticket->created_at->diffInHours($ticket->resolved_at);
-                $totalHours += $hours;
+            foreach ($resolved as $conversation) {
+                $totalHours += $conversation->created_at->diffInHours($conversation->resolved_at);
             }
-            
-            return round($totalHours / $resolvedTickets->count(), 1);
-            
+
+            return round($totalHours / $resolved->count(), 1);
         } catch (\Exception $e) {
             Log::error('Error calculating avg resolution time: ' . $e->getMessage());
             return 0;
         }
     }
-    
 }

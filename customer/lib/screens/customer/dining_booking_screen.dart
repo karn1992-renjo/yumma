@@ -7,6 +7,7 @@ import '../../config/app_config.dart';
 import '../../theme/foodflow_theme.dart';
 import '../../utils/currency_utils.dart';
 import '../../widgets/customer/account_chrome.dart';
+import '../../widgets/common/app_skeleton.dart';
 import 'dining_booking_checkout_screen.dart';
 import 'dining_confirmation_screen.dart';
 
@@ -54,7 +55,12 @@ class _DiningBookingScreenState extends State<DiningBookingScreen> {
   Future<void> _loadCelebrationTypes() async {
     setState(() => _isLoading = true);
     try {
-      final response = await _api.get(ApiConstants.diningCelebrationTypes);
+      final response = await _api.get(
+        ApiConstants.diningCelebrationTypes,
+        includeAuth: false,
+        cachePolicy: ApiCachePolicy.staticContent,
+        cacheFirst: true,
+      );
       final data = response['data'];
       if (!mounted) return;
       if (response['success'] == true && data is List) {
@@ -345,7 +351,8 @@ class _DiningBookingScreenState extends State<DiningBookingScreen> {
                           ),
                           _CounterButton(
                             icon: Icons.add,
-                            onTap: () => setModalState(() => selectedCount += 1),
+                            onTap: () =>
+                                setModalState(() => selectedCount += 1),
                           ),
                         ],
                       ),
@@ -537,12 +544,7 @@ class _DiningBookingScreenState extends State<DiningBookingScreen> {
       title: 'Occasion vibe',
       subtitle: 'Optional, but it helps the restaurant prepare better.',
       child: _isLoading
-          ? const Center(
-              child: Padding(
-                padding: EdgeInsets.symmetric(vertical: 16),
-                child: CircularProgressIndicator(),
-              ),
-            )
+          ? const AppSkeletonColumn(itemCount: 2, itemHeight: 48)
           : _celebrationTypes.isNotEmpty
               ? Wrap(
                   spacing: 8,
@@ -559,8 +561,7 @@ class _DiningBookingScreenState extends State<DiningBookingScreen> {
                       selected: isSelected,
                       showCheckmark: false,
                       backgroundColor: const Color(0xFFFFF5EF),
-                      selectedColor:
-                          AppConfig.primaryColor.withOpacity(0.14),
+                      selectedColor: AppConfig.primaryColor.withOpacity(0.14),
                       side: BorderSide(
                         color: isSelected
                             ? AppConfig.primaryColor.withOpacity(0.18)
@@ -608,7 +609,8 @@ class _DiningBookingScreenState extends State<DiningBookingScreen> {
         minLines: 4,
         maxLines: 5,
         decoration: InputDecoration(
-          hintText: 'Birthday cake, quiet corner, stroller space, accessibility, etc.',
+          hintText:
+              'Birthday cake, quiet corner, stroller space, accessibility, etc.',
           filled: true,
           fillColor: const Color(0xFFFFFBF8),
           border: OutlineInputBorder(

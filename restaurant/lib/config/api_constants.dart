@@ -4,7 +4,7 @@ class ApiConstants {
   // Base URL - Update this with your actual API URL
   static const String baseUrl = String.fromEnvironment(
     'API_BASE_URL',
-    defaultValue: 'https://yumma.in/api',
+    defaultValue: 'https://yumma.online/api',
   );
 
   // Auth endpoints
@@ -53,6 +53,14 @@ class ApiConstants {
   static const String legalContent = '/content/legal';
   static const String partnerApplications = '/partner-applications';
 
+  // Realtime document verification (Cashfree) during registration
+  static const String verifyGstin = '/verification/gstin';
+  static const String verifyPan = '/verification/pan';
+  static const String verifyVehicleRc = '/verification/vehicle-rc';
+  static const String verifyDrivingLicense = '/verification/driving-license';
+  static const String verifyPanDocument = '/verification/pan-document';
+  static const String verifyAadhaarDocument = '/verification/aadhaar-document';
+
   // Order Customer endpoints
   static const String createOrder = '/orders';
   static const String myOrders = '/orders';
@@ -99,6 +107,10 @@ class ApiConstants {
   static const String restaurantLocationChangeRequest =
       '/restaurant/location-change-request';
   static const String restaurantAnalytics = '/restaurant/analytics';
+  static const String restaurantAnalyticsCompare =
+      '/restaurant/analytics/compare';
+  static const String restaurantReviews = '/restaurant/reviews';
+  static const String restaurantComplaints = '/restaurant/complaints';
   static const String restaurantPromos = '/restaurant/promos';
   static const String restaurantPromoOptions = '/restaurant/promos/options';
   static const String restaurantPrinters = '/restaurant/printers';
@@ -114,6 +126,8 @@ class ApiConstants {
       '$restaurantOrders/$orderId/accept';
   static String restaurantRejectOrder(int orderId) =>
       '$restaurantOrders/$orderId/reject';
+  static String restaurantOrderOutOfStock(int orderId) =>
+      '$restaurantOrders/$orderId/out-of-stock';
   static String restaurantOrderStatus(int orderId) =>
       '$restaurantOrders/$orderId/status';
   static String restaurantOrderReady(int orderId) =>

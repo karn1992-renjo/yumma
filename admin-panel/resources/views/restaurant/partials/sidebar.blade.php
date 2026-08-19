@@ -26,8 +26,9 @@
     
     // Count open support tickets
     $openTicketsCount = 0;
-    if ($currentRestaurant && class_exists('\App\Models\SupportTicket')) {
-        $openTicketsCount = \App\Models\SupportTicket::where('restaurant_id', $currentRestaurant->id)
+    if ($currentRestaurant && class_exists('\App\Models\SupportConversation')) {
+        $openTicketsCount = \App\Models\SupportConversation::where('restaurant_id', $currentRestaurant->id)
+            ->where('requester_role', 'restaurant')
             ->whereIn('status', ['open', 'in_progress'])
             ->count();
     }

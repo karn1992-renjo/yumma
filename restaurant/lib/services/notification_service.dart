@@ -224,8 +224,9 @@ class FirebaseNotificationService {
     if (imageUrl == null || imageUrl.isEmpty) return null;
 
     try {
-      final response =
-          await http.get(Uri.parse(imageUrl)).timeout(const Duration(seconds: 4));
+      final response = await http
+          .get(Uri.parse(imageUrl))
+          .timeout(const Duration(seconds: 4));
       if (response.statusCode < 200 || response.statusCode >= 300) {
         return null;
       }
@@ -356,17 +357,17 @@ class FirebaseNotificationService {
 
   void _presentOrderFromData(Map<String, dynamic> data) {
     data = _normalizeOrderData(data);
+    if (_isStaticOrderData(data)) {
+      _queueOrderOverlay(data);
+      return;
+    }
+
     if (_handleGenericDeepLink(data)) {
       return;
     }
 
     final orderId = data['order_id'] ?? data['id'];
     if (orderId == null) {
-      return;
-    }
-
-    if (_isStaticOrderData(data)) {
-      _queueOrderOverlay(data);
       return;
     }
 
@@ -389,6 +390,16 @@ class FirebaseNotificationService {
         if (orderId != null) {
           appNavigatorKey.currentState?.pushNamed(
             '/restaurant/order/chat',
+            arguments: orderId,
+          );
+        }
+        return true;
+      }
+      if (deepLink == '/restaurant/order' || deepLink == '/driver/order') {
+        final orderId = data['order_id'] ?? data['id'];
+        if (orderId != null) {
+          appNavigatorKey.currentState?.pushNamed(
+            deepLink,
             arguments: orderId,
           );
         }
@@ -541,8 +552,7 @@ class FirebaseNotificationService {
         ? orderId.toInt()
         : int.tryParse(orderId?.toString() ?? '');
     if (parsed != null) return 100000 + parsed.abs() % 900000;
-    return 100000 +
-        (orderId?.toString().hashCode ?? 0).abs().remainder(900000);
+    return 100000 + (orderId?.toString().hashCode ?? 0).abs().remainder(900000);
   }
 
   static Future<void> persistPendingOrderData(

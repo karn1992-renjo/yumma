@@ -5,9 +5,15 @@ import 'package:hive_flutter/hive_flutter.dart';
 class LocalCacheService {
   static const _boxName = 'public_api_cache_v2';
   static const _legacyBoxName = 'api_cache';
-  static const _maxEntries = 80;
+  static const _maxEntries = 240;
+  static final Map<String, dynamic> _memory = <String, dynamic>{};
+  static Future<void>? _initializing;
 
-  static Future<void> initialize() async {
+  static Future<void> initialize() {
+    return _initializing ??= _initialize();
+  }
+
+  static Future<void> _initialize() async {
     await Hive.initFlutter();
     if (await Hive.boxExists(_legacyBoxName)) {
       if (Hive.isBoxOpen(_legacyBoxName)) {
@@ -30,14 +36,18 @@ class LocalCacheService {
   }) async {
     if (!Hive.isBoxOpen(_boxName)) return;
     final box = Hive.box<String>(_boxName);
-    await box.put(key, jsonEncode({
+    final envelope = <String, dynamic>{
       '_cache_schema': _schemaVersion,
       'cached_at': DateTime.now().toUtc().toIso8601String(),
       'max_age_seconds': maxAge?.inSeconds,
       'data': value,
-    }));
+    };
+    _memory[key] = envelope;
+    await box.put(key, jsonEncode(envelope));
     while (box.length > _maxEntries) {
+      final oldestKey = box.keyAt(0)?.toString();
       await box.deleteAt(0);
+      if (oldestKey != null) _memory.remove(oldestKey);
     }
   }
 
@@ -48,9 +58,18 @@ class LocalCacheService {
   }) {
     if (!Hive.isBoxOpen(_boxName)) return null;
     final box = Hive.box<String>(_boxName);
-    final value = box.get(key);
-    if (value == null) return null;
-    final decoded = jsonDecode(value);
+    dynamic decoded = _memory[key];
+    if (decoded == null) {
+      final value = box.get(key);
+      if (value == null) return null;
+      try {
+        decoded = jsonDecode(value);
+        _memory[key] = decoded;
+      } catch (_) {
+        box.delete(key);
+        return null;
+      }
+    }
     if (decoded is! Map || decoded['_cache_schema'] != _schemaVersion) {
       if (_isFailedApiResponse(decoded)) {
         box.delete(key);
@@ -86,6 +105,7 @@ class LocalCacheService {
   }
 
   static Future<void> clear() async {
+    _memory.clear();
     if (Hive.isBoxOpen(_boxName)) await Hive.box<String>(_boxName).clear();
   }
 }

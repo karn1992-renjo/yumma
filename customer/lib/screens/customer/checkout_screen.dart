@@ -22,6 +22,7 @@ import '../../services/flexible_order_payment_service.dart';
 import '../../theme/foodflow_theme.dart';
 import '../../utils/currency_utils.dart';
 import '../../utils/promotion_display_utils.dart';
+import '../../utils/promotion_summary_utils.dart';
 import '../../widgets/common/lucide_icon.dart';
 import '../../widgets/customer/cart_item_card.dart';
 import '../../widgets/customer/account_chrome.dart';
@@ -46,6 +47,32 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   final ApiService _api = ApiService();
   final FlexibleOrderPaymentService _paymentService =
       FlexibleOrderPaymentService();
+
+  TextTheme? _cachedBaseTextTheme;
+  TextTheme? _cachedJakartaTextTheme;
+  TextTheme? _cachedBasePrimaryTextTheme;
+  TextTheme? _cachedJakartaPrimaryTextTheme;
+
+  TextTheme _jakartaTextTheme(TextTheme base) {
+    if (identical(_cachedBaseTextTheme, base) &&
+        _cachedJakartaTextTheme != null) {
+      return _cachedJakartaTextTheme!;
+    }
+    _cachedBaseTextTheme = base;
+    _cachedJakartaTextTheme = GoogleFonts.plusJakartaSansTextTheme(base);
+    return _cachedJakartaTextTheme!;
+  }
+
+  TextTheme _jakartaPrimaryTextTheme(TextTheme base) {
+    if (identical(_cachedBasePrimaryTextTheme, base) &&
+        _cachedJakartaPrimaryTextTheme != null) {
+      return _cachedJakartaPrimaryTextTheme!;
+    }
+    _cachedBasePrimaryTextTheme = base;
+    _cachedJakartaPrimaryTextTheme = GoogleFonts.plusJakartaSansTextTheme(base);
+    return _cachedJakartaPrimaryTextTheme!;
+  }
+
   bool _isSummaryLoading = false;
   double? _summarySubtotal;
   double? _summaryOriginalSubtotal;
@@ -150,20 +177,25 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       return;
     }
 
-    final requestSignature = _cartSignature(cart);
-    if (_inFlightSummarySignature == requestSignature) {
-      return;
-    }
-    _inFlightSummarySignature = requestSignature;
-    final requestId = ++_summaryRequestId;
-    setState(() => _isSummaryLoading = true);
+    String? requestSignature;
+    int? requestId;
     try {
-      unawaited(_loadCartPromos(restaurant.id));
-      unawaited(_loadSuggestedItems());
       final orderType = _effectiveOrderType(restaurant);
       final address = orderType == 'delivery'
           ? await _loadAddressesForCart(restaurant.id)
           : _selectedAddress;
+      if (!mounted ||
+          cart.restaurant?.id != restaurant.id ||
+          cart.paidItems.isEmpty) {
+        return;
+      }
+
+      requestSignature = _cartSignature(cart);
+      if (_inFlightSummarySignature == requestSignature) return;
+      _inFlightSummarySignature = requestSignature;
+      requestId = ++_summaryRequestId;
+      setState(() => _isSummaryLoading = true);
+
       final cartCouponCode = cart.promotionCouponCode;
       final couponCode =
           _selectedCouponCode.isNotEmpty ? _selectedCouponCode : cartCouponCode;
@@ -207,6 +239,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
           'order_type': orderType,
           if (couponCode.isNotEmpty) 'coupon_code': couponCode,
         },
+        coalesce: true,
+        reuseFor: const Duration(seconds: 10),
       );
 
       if (!mounted ||
@@ -234,7 +268,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
               _toDouble(data['embedded_item_discount']);
           _summaryTotal = _toDouble(data['total']);
           _promotionProgress = _mapList(data['promotion_progress']);
-          _rewardLines = _mapList(data['reward_lines']);
+          _rewardLines = promotionRewardLinesFromSummary(data);
           _rewardActions = _mapList(data['reward_actions']);
           _cashbackEarned = _toDouble(data['cashback_earned']);
           _rewardPointsEarned = _toDouble(data['reward_points_earned']).round();
@@ -258,7 +292,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
           'actions=${_rewardActions.length}, progress=${_promotionProgress.length}, '
           '${_summaryDebug(data)}',
         );
-        context.read<CartProvider>().syncPromotionRewards(_rewardLines);
+        unawaited(_loadCartPromos(restaurant.id));
+        unawaited(_loadSuggestedItems());
         if (celebrate) {
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (mounted) showFreeDeliverySuccessPopup(context);
@@ -269,17 +304,18 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       debugPrint('Cart summary error: $e');
       debugPrint('[SwaadPromoCart] checkout summary failed: $e');
     } finally {
-      if (_inFlightSummarySignature == requestSignature) {
+      if (requestSignature != null &&
+          _inFlightSummarySignature == requestSignature) {
         _inFlightSummarySignature = null;
       }
-      if (mounted && requestId == _summaryRequestId) {
+      if (mounted && requestId != null && requestId == _summaryRequestId) {
         setState(() => _isSummaryLoading = false);
       }
     }
   }
 
   void _queueCartSummaryRefresh(
-      {Duration delay = const Duration(milliseconds: 180)}) {
+      {Duration delay = const Duration(milliseconds: 80)}) {
     _summaryDebounce?.cancel();
     _summaryDebounce = Timer(delay, () {
       if (!mounted) return;
@@ -302,6 +338,10 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       final response = await _api.get(
         ApiConstants.addresses,
         queryParams: {'restaurant_id': restaurantId},
+        cacheResponse: true,
+        cacheFirst: !force,
+        refreshCached: true,
+        cachePolicy: ApiCachePolicy.screen,
       );
       if (response['success'] != true || response['data'] is! List) {
         return _selectedAddress;
@@ -596,10 +636,20 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     try {
       final responses = await Future.wait([
         _api
-            .get(ApiConstants.customerRestaurantPromos(restaurantId))
+            .get(
+              ApiConstants.customerRestaurantPromos(restaurantId),
+              cacheResponse: true,
+              cacheFirst: true,
+              cachePolicy: ApiCachePolicy.screen,
+            )
             .timeout(const Duration(seconds: 10)),
         _api
-            .get(ApiConstants.rewardCoupons)
+            .get(
+              ApiConstants.rewardCoupons,
+              cacheResponse: true,
+              cacheFirst: true,
+              cachePolicy: ApiCachePolicy.screen,
+            )
             .timeout(const Duration(seconds: 10)),
       ]);
       final response = responses.first;
@@ -1162,6 +1212,16 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     final orderType = _effectiveOrderType(restaurant);
     final isTakeaway = orderType == 'takeaway';
     final localPromotionDiscount = cart.promotionDisplayDiscount;
+    // While a fresh re-sync is in flight (item added, quantity changed,
+    // address/coupon changed), keep showing the last fetched delivery
+    // fee/platform fee/tax for this same restaurant+order-type instead of
+    // snapping to the crude local cart defaults (which are hardcoded to 0
+    // for platform fee/tax) — that snap-then-correct was the visible
+    // "sync" flicker on every quantity change.
+    final canReuseChargeSummary = !hasFreshSummary &&
+        _summaryCartSignature != null &&
+        _summaryCartSignature!
+            .startsWith('${restaurant?.id ?? 0}::$orderType::');
     final subtotal =
         hasFreshSummary ? (_summarySubtotal ?? cart.subtotal) : cart.subtotal;
     final originalSubtotal = hasFreshSummary
@@ -1169,24 +1229,20 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         : cart.subtotal;
     final deliveryFee = isTakeaway
         ? (hasFreshSummary ? (_summaryDeliveryFee ?? 0) : 0.0)
-        : (hasFreshSummary
+        : (hasFreshSummary || canReuseChargeSummary
             ? (_summaryDeliveryFee ?? cart.deliveryFee)
             : cart.deliveryFee);
     final deliveryDiscount = isTakeaway
         ? 0.0
-        : (hasFreshSummary ? (_summaryDeliveryDiscount ?? 0) : 0.0);
-    final canReuseChargeSummary =
-        _isSummaryLoading && _summaryCartSignature != null;
-    final platformFee = hasFreshSummary
+        : (hasFreshSummary || canReuseChargeSummary
+            ? (_summaryDeliveryDiscount ?? 0)
+            : 0.0);
+    final platformFee = hasFreshSummary || canReuseChargeSummary
         ? (_summaryPlatformFee ?? cart.platformFee)
-        : canReuseChargeSummary
-            ? (_summaryPlatformFee ?? cart.platformFee)
-            : cart.platformFee;
-    final tax = hasFreshSummary
+        : cart.platformFee;
+    final tax = hasFreshSummary || canReuseChargeSummary
         ? (_summaryTax ?? cart.tax)
-        : canReuseChargeSummary
-            ? (_summaryTax ?? cart.tax)
-            : cart.tax;
+        : cart.tax;
     final discount =
         hasFreshSummary ? (_summaryDiscount ?? 0) : localPromotionDiscount;
     final savedOnOrder =
@@ -1216,9 +1272,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
 
     final baseTheme = Theme.of(context);
     final cartTheme = baseTheme.copyWith(
-      textTheme: GoogleFonts.nunitoSansTextTheme(baseTheme.textTheme),
-      primaryTextTheme:
-          GoogleFonts.nunitoSansTextTheme(baseTheme.primaryTextTheme),
+      textTheme: _jakartaTextTheme(baseTheme.textTheme),
+      primaryTextTheme: _jakartaPrimaryTextTheme(baseTheme.primaryTextTheme),
     );
 
     return Theme(
@@ -1422,26 +1477,22 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   Widget _buildTopSavingsStrip(double discount) {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          colors: [Color(0xFFEFF5FF), Color(0xFFFFF6E8)],
-        ),
-      ),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
+      color: const Color(0xFFEFFCF3),
       child: Row(
         children: [
-          const Icon(Icons.celebration_rounded,
-              color: Color(0xFF1D64D8), size: 18),
-          const SizedBox(width: 7),
+          const Icon(Icons.local_offer_rounded,
+              color: Color(0xFF16A34A), size: 16),
+          const SizedBox(width: 8),
           Expanded(
             child: Text(
               'You saved ${formatCurrency(context, discount)} on this order',
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(
-                color: Color(0xFF1D64D8),
-                fontSize: 13,
-                fontWeight: FontWeight.w900,
+                color: Color(0xFF16A34A),
+                fontSize: 12.5,
+                fontWeight: FontWeight.w800,
               ),
             ),
           ),
@@ -1458,7 +1509,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       padding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
       child: Column(
         children: [
-          ...cart.items.map((item) {
+          ...cart.paidItems.map((item) {
             final rewardLine =
                 hasFreshSummary ? _rewardLineForCartItem(item) : null;
             final freeQuantity = item.isPromotionReward
@@ -1509,11 +1560,124 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     );
   }
 
+  /// True once a promotion/coupon is actually applied to this cart — as
+  /// opposed to merely being available to apply (e.g. an unused scratch
+  /// card coupon sitting in [_cartPromos]).
+  bool _hasAppliedPromotion(bool hasFreshSummary, double discount) {
+    final cart = context.read<CartProvider>();
+    final hasCartItemPromotion = cart.paidItems
+        .any((item) => (item.promotionTitle ?? '').trim().isNotEmpty);
+    if (hasCartItemPromotion) return true;
+    if (discount > 0) return true;
+    if (hasFreshSummary && _rewardLines.isNotEmpty) return true;
+    if (_selectedCouponCode.isNotEmpty) return true;
+    return false;
+  }
+
   Widget _buildSpecialOfferPanel(
     double discount, {
     required double savedOnOrder,
     required bool hasFreshSummary,
   }) {
+    final applied = _hasAppliedPromotion(hasFreshSummary, discount);
+
+    if (!applied) {
+      // A coupon is available (e.g. a scratch-card reward the customer
+      // won) but hasn't been applied yet — prompt them to apply it instead
+      // of showing a misleading "ADDED" badge for nothing.
+      final availablePromo = _cartPromos.isNotEmpty ? _cartPromos.first : null;
+      final isScratchWin =
+          availablePromo != null && _isScratchRewardPromo(availablePromo);
+      final promoTitle = availablePromo != null
+          ? _promoTitle(availablePromo)
+          : 'Coupon available for this order';
+
+      return _CartPanel(
+        padding: const EdgeInsets.fromLTRB(14, 14, 12, 12),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(16),
+          onTap: _showPromoSelectorSheet,
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              color: const Color(0xFFEFFCF3),
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    width: 46,
+                    height: 46,
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(999),
+                      border: const Border.fromBorderSide(
+                        BorderSide(color: Color(0xFFBBF0CE)),
+                      ),
+                    ),
+                    child: const Icon(
+                      Icons.card_giftcard_rounded,
+                      color: Color(0xFF16A34A),
+                      size: 24,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          isScratchWin
+                              ? 'You won a coupon!'
+                              : 'Coupon available for you',
+                          style: const TextStyle(
+                            color: FoodFlowTheme.ink,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                        const SizedBox(height: 5),
+                        Text(
+                          promoTitle,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Color(0xFF16A34A),
+                            fontSize: 12,
+                            height: 1.2,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 10, vertical: 7),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF16A34A),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: const Text(
+                      'APPLY',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
     final title = _activePromotionTitle(hasFreshSummary: hasFreshSummary);
     final rewardLine =
         hasFreshSummary && _rewardLines.isNotEmpty ? _rewardLines.first : null;
@@ -1528,108 +1692,112 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
 
     return _CartPanel(
       padding: const EdgeInsets.fromLTRB(14, 14, 12, 12),
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          gradient: const LinearGradient(
-            colors: [Color(0xFFFFF3E9), Color(0xFFFFFBF6)],
+      child: InkWell(
+        borderRadius: BorderRadius.circular(16),
+        onTap: _showPromoSelectorSheet,
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              colors: [Color(0xFFFFF3E9), Color(0xFFFFFBF6)],
+            ),
+            borderRadius: BorderRadius.circular(16),
           ),
-          borderRadius: BorderRadius.circular(16),
-        ),
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Container(
-                width: 46,
-                height: 46,
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(999),
-                  border: Border.all(color: const Color(0xFFFFCDD2)),
-                ),
-                child: const Icon(
-                  Icons.card_giftcard_rounded,
-                  color: Color(0xFFE83E58),
-                  size: 24,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Special offer for you',
-                      style: TextStyle(
-                        color: FoodFlowTheme.ink,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w900,
-                      ),
-                    ),
-                    const SizedBox(height: 9),
-                    Text(
-                      title,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: FoodFlowTheme.ink,
-                        fontSize: 13,
-                        height: 1.2,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                    const SizedBox(height: 5),
-                    Text(
-                      support,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: Color(0xFF2E7BE6),
-                        fontSize: 12,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 8),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(10),
-                      border: Border.all(
-                        color: FoodFlowTheme.brandPrimary(context),
-                      ),
-                    ),
-                    child: Text(
-                      'ADDED',
-                      style: TextStyle(
-                        color: FoodFlowTheme.brandPrimary(context),
-                        fontSize: 12,
-                        fontWeight: FontWeight.w900,
-                      ),
-                    ),
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: 46,
+                  height: 46,
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(999),
+                    border: Border.all(color: const Color(0xFFFFCDD2)),
                   ),
-                  if (discount > 0) ...[
-                    const SizedBox(height: 8),
-                    Text(
-                      formatCurrency(context, discount),
-                      style: TextStyle(
-                        color: FoodFlowTheme.brandPrimary(context),
-                        fontSize: 12,
-                        fontWeight: FontWeight.w900,
+                  child: const Icon(
+                    Icons.card_giftcard_rounded,
+                    color: Color(0xFFE83E58),
+                    size: 24,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Special offer for you',
+                        style: TextStyle(
+                          color: FoodFlowTheme.ink,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                      const SizedBox(height: 9),
+                      Text(
+                        title,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: FoodFlowTheme.ink,
+                          fontSize: 13,
+                          height: 1.2,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      const SizedBox(height: 5),
+                      Text(
+                        support,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Color(0xFF2E7BE6),
+                          fontSize: 12,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 10, vertical: 7),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(
+                          color: FoodFlowTheme.brandPrimary(context),
+                        ),
+                      ),
+                      child: Text(
+                        'ADDED',
+                        style: TextStyle(
+                          color: FoodFlowTheme.brandPrimary(context),
+                          fontSize: 12,
+                          fontWeight: FontWeight.w900,
+                        ),
                       ),
                     ),
+                    if (discount > 0) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        formatCurrency(context, discount),
+                        style: TextStyle(
+                          color: FoodFlowTheme.brandPrimary(context),
+                          fontSize: 12,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                    ],
                   ],
-                ],
-              ),
-            ],
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -2016,12 +2184,19 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     final displaySavings = (discount + itemPromotionSavings)
         .clamp(0.0, double.infinity)
         .toDouble();
+    // Only worth showing as a choice when the restaurant genuinely offers
+    // both — a lone "Delivery" (or lone "Pickup") chip with nothing to
+    // switch to is just clutter, not a real selector.
+    final showOrderTypeSelector =
+        _supportsDelivery(restaurant) && _supportsTakeaway(restaurant);
     return _CartPanel(
       padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
       child: Column(
         children: [
-          _buildOrderTypeSelector(primary, restaurant),
-          const _PanelDivider(),
+          if (showOrderTypeSelector) ...[
+            _buildOrderTypeSelector(primary, restaurant),
+            const _PanelDivider(),
+          ],
           _InfoLine(
             icon: isTakeaway ? Icons.storefront_outlined : Icons.bolt_rounded,
             title: _scheduledTime == null
@@ -2590,17 +2765,17 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                                 formatCurrency(context, total),
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
-                                style: GoogleFonts.nunitoSans(
+                                style: GoogleFonts.plusJakartaSans(
                                   color: FoodFlowTheme.brandOnPrimary(context),
                                   fontSize: 15,
                                   fontWeight: FontWeight.w900,
                                 ),
                               ),
                               Text(
-                                _isSummaryLoading ? 'UPDATING' : 'TOTAL',
+                                'TOTAL',
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
-                                style: GoogleFonts.nunitoSans(
+                                style: GoogleFonts.plusJakartaSans(
                                   color: FoodFlowTheme.brandOnPrimary(context)
                                       .withOpacity(0.85),
                                   fontSize: 10,
@@ -2625,7 +2800,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                             'Place Order',
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: GoogleFonts.nunitoSans(
+                            style: GoogleFonts.plusJakartaSans(
                               color: FoodFlowTheme.brandOnPrimary(context),
                               fontSize: 14,
                               fontWeight: FontWeight.w900,
@@ -2691,9 +2866,11 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     await authProvider.loadUser(forceRefresh: true);
     if (!mounted) return;
     final initialUser = authProvider.currentUser;
-    debugPrint('[PaymentTrace] checkout.settings.refreshed source=sheet default=${initialUser?.paymentGatewayProvider ?? '-'} enabled=${initialUser?.enabledPaymentGatewayKeys.join(',') ?? '-'} gateways=${initialUser?.paymentGateways.map((gateway) => '${gateway.key}:${gateway.enabled}:${gateway.selected}').join('|') ?? '-'}');
+    debugPrint(
+        '[PaymentTrace] checkout.settings.refreshed source=sheet default=${initialUser?.paymentGatewayProvider ?? '-'} enabled=${initialUser?.enabledPaymentGatewayKeys.join(',') ?? '-'} gateways=${initialUser?.paymentGateways.map((gateway) => '${gateway.key}:${gateway.enabled}:${gateway.selected}').join('|') ?? '-'}');
     final initialGateway = _effectiveGatewayProvider(initialUser);
-    debugPrint('[PaymentTrace] checkout.sheet.open selectedMethod=$_selectedPaymentMethod selectedGateway=$_selectedGatewayKey effectiveGateway=$initialGateway enabledGateways=${initialUser?.enabledPaymentGatewayKeys.join(',') ?? '-'} defaultProvider=${initialUser?.paymentGatewayProvider ?? '-'}');
+    debugPrint(
+        '[PaymentTrace] checkout.sheet.open selectedMethod=$_selectedPaymentMethod selectedGateway=$_selectedGatewayKey effectiveGateway=$initialGateway enabledGateways=${initialUser?.enabledPaymentGatewayKeys.join(',') ?? '-'} defaultProvider=${initialUser?.paymentGatewayProvider ?? '-'}');
     if (initialGateway == 'cashfree') {
       await _loadCashfreeUpiApps();
       if (!mounted) return;
@@ -2710,7 +2887,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         final user =
             Provider.of<AuthProvider>(context, listen: false).currentUser;
         final activeGateway = _effectiveGatewayProvider(user);
-        debugPrint('[PaymentTrace] checkout.sheet.build activeGateway=$activeGateway selectedGateway=$_selectedGatewayKey selectedMode=$_selectedOnlinePaymentMode cashfreeApps=${_cashfreeUpiApps.length}');
+        debugPrint(
+            '[PaymentTrace] checkout.sheet.build activeGateway=$activeGateway selectedGateway=$_selectedGatewayKey selectedMode=$_selectedOnlinePaymentMode cashfreeApps=${_cashfreeUpiApps.length}');
         final availableGateways = _availablePaymentGateways(user);
         final onlineOptions = activeGateway == null
             ? const <_OnlinePaymentModeOption>[]
@@ -2801,9 +2979,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                         assetIcon: _gatewayAssetForKey(gateway.key),
                         selected: _selectedPaymentMethod == 'online' &&
                             activeGateway == gateway.key,
-                        trailingText: gateway.key == activeGateway
-                            ? 'Selected'
-                            : 'Use',
+                        trailingText:
+                            gateway.key == activeGateway ? 'Selected' : 'Use',
                         onTap: () => _selectPaymentMethod(
                           'online',
                           gatewayKey: gateway.key,
@@ -2912,7 +3089,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     String? cashfreeUpiAppId,
     String? cashfreeUpiAppName,
   }) {
-    debugPrint('[PaymentTrace] checkout.select method=$method gateway=${gatewayKey ?? '-'} mode=${onlineMode ?? '-'} cashfreeUpiApp=${cashfreeUpiAppId ?? '-'} cashfreeUpiName=${cashfreeUpiAppName ?? '-'}');
+    debugPrint(
+        '[PaymentTrace] checkout.select method=$method gateway=${gatewayKey ?? '-'} mode=${onlineMode ?? '-'} cashfreeUpiApp=${cashfreeUpiAppId ?? '-'} cashfreeUpiName=${cashfreeUpiAppName ?? '-'}');
     setState(() {
       _selectedPaymentMethod = method;
       if (method == 'online') {
@@ -3325,17 +3503,18 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
 
   Future<void> _loadCashfreeUpiApps() async {
     if (_isLoadingCashfreeUpiApps || _hasLoadedCashfreeUpiApps) {
-      debugPrint('[PaymentTrace] checkout.cashfreeUpiApps.skip loading=$_isLoadingCashfreeUpiApps loaded=$_hasLoadedCashfreeUpiApps count=${_cashfreeUpiApps.length}');
+      debugPrint(
+          '[PaymentTrace] checkout.cashfreeUpiApps.skip loading=$_isLoadingCashfreeUpiApps loaded=$_hasLoadedCashfreeUpiApps count=${_cashfreeUpiApps.length}');
       return;
     }
     setState(() => _isLoadingCashfreeUpiApps = true);
     try {
       final apps = await _paymentService.cashfreeUpiApps();
       if (!mounted) return;
-      final appSummary = apps
-          .map((app) => '${app.id}:${app.displayName}')
-          .join('|');
-      debugPrint('[PaymentTrace] checkout.cashfreeUpiApps.loaded count=${apps.length} apps=$appSummary');
+      final appSummary =
+          apps.map((app) => '${app.id}:${app.displayName}').join('|');
+      debugPrint(
+          '[PaymentTrace] checkout.cashfreeUpiApps.loaded count=${apps.length} apps=$appSummary');
       setState(() {
         _cashfreeUpiApps = apps;
         _hasLoadedCashfreeUpiApps = true;
@@ -3675,6 +3854,9 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   }) {
     final itemPromotionSavings =
         (originalSubtotal - subtotal).clamp(0.0, double.infinity).toDouble();
+    final orderPromotionSavings =
+        (discount - deliveryDiscount).clamp(0.0, double.infinity).toDouble();
+    final offerDiscount = itemPromotionSavings + orderPromotionSavings;
     showModalBottomSheet<void>(
       context: context,
       backgroundColor: Colors.transparent,
@@ -3700,13 +3882,6 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
               ),
               const SizedBox(height: 16),
               _billRow(context, 'Item total', originalSubtotal),
-              if (itemPromotionSavings > 0)
-                _billRow(
-                  context,
-                  'Item promotion savings',
-                  itemPromotionSavings,
-                  isSavings: true,
-                ),
               _billDeliveryRow(
                 context,
                 deliveryLabel,
@@ -3722,13 +3897,11 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                 onTap: () => _showTaxBreakdownPopup(tax),
                 tappable: true,
               ),
-              if ((discount - deliveryDiscount).clamp(0, double.infinity) > 0)
+              if (offerDiscount > 0)
                 _billRow(
                   context,
-                  'Promotion discount',
-                  (discount - deliveryDiscount)
-                      .clamp(0, double.infinity)
-                      .toDouble(),
+                  'Offer discount',
+                  offerDiscount,
                   isSavings: true,
                 ),
               const Divider(height: 24),
@@ -4292,7 +4465,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                   achieved
                       ? 'You unlocked free delivery!'
                       : 'Add ${formatCurrency(context, remaining)} more for free delivery',
-                  style: GoogleFonts.nunitoSans(
+                  style: GoogleFonts.plusJakartaSans(
                     color: FoodFlowTheme.ink,
                     fontSize: 13,
                     fontWeight: FontWeight.w800,
@@ -4901,7 +5074,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     await authProvider.loadUser(forceRefresh: true);
     if (!mounted) return;
     final refreshedUser = authProvider.currentUser;
-    debugPrint('[PaymentTrace] checkout.settings.refreshed source=place default=${refreshedUser?.paymentGatewayProvider ?? '-'} enabled=${refreshedUser?.enabledPaymentGatewayKeys.join(',') ?? '-'} gateways=${refreshedUser?.paymentGateways.map((gateway) => '${gateway.key}:${gateway.enabled}:${gateway.selected}').join('|') ?? '-'}');
+    debugPrint(
+        '[PaymentTrace] checkout.settings.refreshed source=place default=${refreshedUser?.paymentGatewayProvider ?? '-'} enabled=${refreshedUser?.enabledPaymentGatewayKeys.join(',') ?? '-'} gateways=${refreshedUser?.paymentGateways.map((gateway) => '${gateway.key}:${gateway.enabled}:${gateway.selected}').join('|') ?? '-'}');
     final paymentMethod = _orderPaymentMethod(refreshedUser);
     if (paymentMethod == null) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -4961,7 +5135,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       if (_scheduledTime != null)
         'scheduled_time': _scheduledTime!.toIso8601String(),
     };
-    debugPrint('[PaymentTrace] checkout.place resolvedPayment=$paymentMethod selectedMethod=$_selectedPaymentMethod selectedGateway=$_selectedGatewayKey onlineMode=${_selectedOnlineModeFor(refreshedUser)} cashfreeUpiApp=${_selectedCashfreeUpiAppId ?? '-'} userDefault=${refreshedUser?.paymentGatewayProvider ?? '-'} enabledGateways=${refreshedUser?.enabledPaymentGatewayKeys.join(',') ?? '-'}');
+    debugPrint(
+        '[PaymentTrace] checkout.place resolvedPayment=$paymentMethod selectedMethod=$_selectedPaymentMethod selectedGateway=$_selectedGatewayKey onlineMode=${_selectedOnlineModeFor(refreshedUser)} cashfreeUpiApp=${_selectedCashfreeUpiAppId ?? '-'} userDefault=${refreshedUser?.paymentGatewayProvider ?? '-'} enabledGateways=${refreshedUser?.enabledPaymentGatewayKeys.join(',') ?? '-'}');
     debugPrint(
       '[SwaadPromoCart] create order request: restaurant=${restaurant.id}, '
       'paidItems=${cart.paidItems.map((item) => '${item.menuItem.id}x${item.quantity}').join(',')}, '
@@ -5019,7 +5194,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     String? cashfreeUpiAppId,
   }) async {
     try {
-      debugPrint('[PaymentTrace] checkout.payForCheckout.call gateway=$gateway mode=$paymentMode cashfreeUpiApp=${cashfreeUpiAppId ?? '-'} orderPaymentMethod=${orderData['payment_method']} itemCount=${orderData['items'] is List ? (orderData['items'] as List).length : '-'}');
+      debugPrint(
+          '[PaymentTrace] checkout.payForCheckout.call gateway=$gateway mode=$paymentMode cashfreeUpiApp=${cashfreeUpiAppId ?? '-'} orderPaymentMethod=${orderData['payment_method']} itemCount=${orderData['items'] is List ? (orderData['items'] as List).length : '-'}');
       return await _paymentService.payForCheckout(
         orderData: orderData,
         gateway: gateway,

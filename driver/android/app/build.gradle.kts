@@ -11,7 +11,7 @@ plugins {
 }
 
 val keystoreProperties = Properties()
-val keystorePropertiesFile = file("D:/karn/swaad/driver_key/key.properties")
+val keystorePropertiesFile = file("D:/karn/Yumma!/driver_key/key.properties")
 if (keystorePropertiesFile.exists()) {
     keystoreProperties.load(FileInputStream(keystorePropertiesFile))
 }

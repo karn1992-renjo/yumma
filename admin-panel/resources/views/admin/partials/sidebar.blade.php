@@ -1,4 +1,4 @@
-@php
+﻿@php
     $appName = App\Models\AppSetting::getValue('app_name', config('app.name', 'FoodFlow'));
     $appLogo = App\Models\AppSetting::getValue('app_logo');
     $headerBrandingType = App\Models\AppSetting::getValue('header_branding_type', 'text');
@@ -21,7 +21,7 @@
     $pendingPartnerApplications = \App\Models\PartnerApplication::where('status', 'pending')->count();
     $pendingRestaurantApprovals = \App\Models\RestaurantLocationChangeRequest::where('status', 'pending')->count();
     $pendingDiningBookings = \App\Models\DiningBooking::where('status', 'pending')->count();
-    $openTicketsCount = \App\Models\SupportTicket::whereIn('status', ['open', 'in_progress'])->count();
+    $openTicketsCount = \App\Models\SupportConversation::where('stage', 'human')->whereIn('status', ['open', 'in_progress'])->count();
 
     $badge = fn ($count) => $count > 99 ? '99+' : $count;
 
@@ -103,7 +103,8 @@
                 ['label' => 'Push Notifications', 'icon' => 'paper-plane', 'url' => route('admin.push-notifications.index'), 'active' => ['admin.push-notifications*']],
                 ['label' => 'Dining Bookings', 'icon' => 'utensils', 'url' => route('admin.dining-bookings.index'), 'active' => ['admin.dining-bookings.*'], 'badge' => $pendingDiningBookings ? $badge($pendingDiningBookings) : null],
                 ['label' => 'Celebration Types', 'icon' => 'champagne-glasses', 'url' => route('admin.celebration-types.index'), 'active' => ['admin.celebration-types*']],
-                ['label' => 'Support Tickets', 'icon' => 'headset', 'url' => route('admin.support.index'), 'active' => ['admin.support.*'], 'badge' => $openTicketsCount ? $badge($openTicketsCount) : null],
+                ['label' => 'Customer Reviews', 'icon' => 'star', 'url' => route('admin.reviews.index'), 'active' => ['admin.reviews.*']],
+                ['label' => 'Support', 'icon' => 'headset', 'url' => route('admin.support.index'), 'active' => ['admin.support.*'], 'badge' => $openTicketsCount ? $badge($openTicketsCount) : null],
             ],
         ],
         [

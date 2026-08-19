@@ -21,6 +21,7 @@ use App\Services\PaymentGatewayService;
 use App\Services\OrderReleaseService;
 use App\Services\PrinterService;
 use App\Services\PromotionEngineService;
+use App\Services\PromotionRewardOrderItemService;
 use App\Notifications\AppDatabaseNotification;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -218,13 +219,17 @@ class CheckoutController extends Controller
                 $subtotal += $itemTotal;
                 
                 $orderItems[] = [
+                    'id' => $menuItem->id,
                     'menu_item_id' => $menuItem->id,
-                    'item_name' => $menuItem->name,
+                    'name' => $menuItem->name,
+                    'price' => $unitPrice,
                     'quantity' => $item['quantity'],
-                    'unit_price' => $unitPrice,
-                    'total_price' => $itemTotal,
                     'selected_variant' => $variant,
                     'selected_add_ons' => $addOns,
+                    'tags' => [],
+                    'line_type' => 'paid',
+                    'special_instructions' => null,
+                    'total' => $itemTotal,
                 ];
             }
             
@@ -250,6 +255,23 @@ class CheckoutController extends Controller
             $discount = $pricing['discount'];
             $total = $pricing['total'];
             $promo = $pricing['promo'] ?? $promo;
+
+            try {
+                $orderItems = app(PromotionRewardOrderItemService::class)->applyRewardLines(
+                    $orderItems,
+                    $pricing['reward_lines'] ?? [],
+                    (int) $restaurant->id
+                );
+            } catch (\InvalidArgumentException $e) {
+                if (DB::transactionLevel() > 0) {
+                    DB::rollback();
+                }
+
+                return response()->json([
+                    'success' => false,
+                    'message' => $e->getMessage(),
+                ], 422);
+            }
 
             // Prepare customer address array
             $customerAddress = $orderType === 'takeaway'
@@ -305,22 +327,25 @@ class CheckoutController extends Controller
             foreach ($orderItems as $item) {
                 OrderItem::create([
                     'order_id' => $order->id,
-                    'menu_item_id' => $item['menu_item_id'],
+                    'menu_item_id' => $item['id'],
                     'quantity' => $item['quantity'],
-                    'unit_price' => $item['unit_price'],
-                    'total_price' => $item['total_price'],
+                    'unit_price' => $item['price'],
+                    'total_price' => $item['total'],
                     'selected_variant' => $item['selected_variant'],
                     'selected_add_ons' => $item['selected_add_ons'],
+                    'special_instructions' => $item['special_instructions'] ?? null,
                 ]);
             }
             
-            DB::commit();
-            
-            Log::info('Order created successfully', ['order_id' => $order->id]);
+            app(PromotionEngineService::class)->recordUsage(
+                $order,
+                $pricing['promotion_result'] ?? [],
+                $pricing['promotion_context'] ?? []
+            );
 
-            if ($promo) {
-                $promo->increment('used_count');
-            }
+            DB::commit();
+
+            Log::info('Order created successfully', ['order_id' => $order->id]);
 
             if ($request->payment_method === 'wallet') {
                 $this->payWithWallet($order);
@@ -753,6 +778,7 @@ class CheckoutController extends Controller
             'tax_label' => $taxLabel,
             'tax_breakdown' => $taxBreakdown,
             'discount' => $discount,
+            'reward_lines' => $promotionResult['reward_lines'] ?? [],
             'total' => max(0, round($subtotal + $deliveryFee + $platformFee + $tax - $discount, 2)),
             'promo' => $promo,
             'promotion_result' => $promotionResult,

@@ -5,18 +5,19 @@ import 'package:http/http.dart' as http;
 import '../config/app_config.dart';
 import 'api_service.dart';
 import 'app_branding_service.dart';
+import 'restaurant_order_realtime_service.dart';
 
 class WebSocketService {
   static final WebSocketService _instance = WebSocketService._internal();
   factory WebSocketService() => _instance;
   WebSocketService._internal();
-  
+
   PusherChannelsFlutter? _pusher;
   final Set<String> _subscribedChannels = {};
   final Map<String, _RestaurantSocketHandlers> _restaurantHandlers = {};
   final Map<String, _DriverSocketHandlers> _driverHandlers = {};
   final Map<int, Function(Map<String, dynamic>)> _orderChatHandlers = {};
-  
+
   Future<void> init(
     int restaurantId, {
     required Function(Map<String, dynamic>) onNewOrder,
@@ -29,7 +30,7 @@ class WebSocketService {
     );
   }
 
-  Future<void> initRestaurant(
+  Future<bool> initRestaurant(
     int restaurantId, {
     required Function(Map<String, dynamic>) onNewOrder,
     required Function(Map<String, dynamic>) onOrderUpdate,
@@ -41,7 +42,7 @@ class WebSocketService {
         onNewOrder: onNewOrder,
         onOrderUpdate: onOrderUpdate,
       );
-      if (_subscribedChannels.contains(channelName)) return;
+      if (_subscribedChannels.contains(channelName)) return true;
       debugPrint('Pusher subscribing to $channelName');
 
       await _pusher!.subscribe(
@@ -49,8 +50,10 @@ class WebSocketService {
         onEvent: _handlePusherEvent,
       );
       _subscribedChannels.add(channelName);
+      return true;
     } catch (e) {
-      print('WebSocket init error: $e');
+      debugPrint('WebSocket init error: $e');
+      return false;
     }
   }
 
@@ -103,7 +106,8 @@ class WebSocketService {
     final pusherKey = branding.resolvedPusherAppKey;
     final pusherCluster = branding.resolvedPusherAppCluster;
     if (pusherKey.isEmpty) {
-      throw Exception('Pusher key is not configured in admin panel branding settings.');
+      throw Exception(
+          'Pusher key is not configured in admin panel branding settings.');
     }
 
     _pusher = PusherChannelsFlutter.getInstance();
@@ -140,13 +144,23 @@ class WebSocketService {
     await _pusher!.connect();
   }
 
-  void _handlePusherEvent(PusherEvent event) {
+  void _handlePusherEvent(dynamic rawEvent) {
+    if (rawEvent is! PusherEvent) {
+      debugPrint('Ignoring unsupported Pusher event: ${rawEvent.runtimeType}');
+      return;
+    }
+    final event = rawEvent;
     final eventName = _normalizeEventName(event.eventName);
     final data = _normalizeOrderPayload(_decodeEventData(event.data));
     debugPrint(
       'Pusher event: ${event.channelName} -> ${event.eventName} '
       'data: ${jsonEncode(data)}',
     );
+
+    if (_isNewOrderEvent(eventName, data) ||
+        _isOrderStatusEvent(eventName, data)) {
+      RestaurantOrderRealtimeService.instance.publish(data);
+    }
 
     final restaurantHandlers = _restaurantHandlers[event.channelName];
     if (restaurantHandlers != null) {
@@ -159,7 +173,8 @@ class WebSocketService {
     }
 
     final driverHandlers = _driverHandlers[event.channelName];
-    if (driverHandlers != null && _isDriverOrderAssignedEvent(eventName, data)) {
+    if (driverHandlers != null &&
+        _isDriverOrderAssignedEvent(eventName, data)) {
       driverHandlers.onOrderAssigned(data);
       return;
     }
@@ -200,7 +215,8 @@ class WebSocketService {
         data.containsKey('driver_id');
   }
 
-  bool _isDriverOrderAssignedEvent(String eventName, Map<String, dynamic> data) {
+  bool _isDriverOrderAssignedEvent(
+      String eventName, Map<String, dynamic> data) {
     final type = data['type']?.toString().toLowerCase() ?? '';
     final payloadEvent = data['event']?.toString().toLowerCase() ?? '';
     return eventName == 'driver-order-assigned' ||
@@ -344,7 +360,7 @@ class WebSocketService {
     }
     return data;
   }
-  
+
   void dispose() {
     _pusher?.disconnect();
     _pusher = null;

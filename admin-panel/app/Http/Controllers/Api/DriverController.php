@@ -313,6 +313,7 @@ class DriverController extends Controller
         }
 
         $totalEarnings = (float) (clone $query)->sum(DB::raw('COALESCE(driver_earning, delivery_fee)'));
+        $tipEarnings = (float) (clone $query)->sum('tip_amount');
         $totalOrders = (clone $query)->count();
         $orders = $query->latest()->limit(20)->get();
 
@@ -321,19 +322,36 @@ class DriverController extends Controller
             'data' => [
                 'summary' => [
                     'total_earnings' => $totalEarnings,
+                    'tip_earnings' => $tipEarnings,
                     'total_deliveries' => $totalOrders,
                     'avg_per_delivery' => $totalOrders > 0 ? round($totalEarnings / $totalOrders, 2) : 0,
                     'pending_amount' => $totalEarnings,
                     'withdrawn_amount' => 0,
                     'daily_earnings' => $this->dailyEarnings($driverId, $startDate),
                 ],
-                'transactions' => $orders->map(fn ($order) => [
-                    'type' => 'credit',
-                    'description' => 'Delivery earning',
-                    'order_number' => $order->order_number,
-                    'amount' => (float) ($order->driver_earning ?? $order->delivery_fee ?? 0),
-                    'created_at' => $order->delivered_at?->toIso8601String() ?? $order->created_at->toIso8601String(),
-                ]),
+                'transactions' => $orders->flatMap(function ($order) {
+                    $rows = [[
+                        'type' => 'credit',
+                        'description' => 'Delivery earning',
+                        'order_number' => $order->order_number,
+                        'amount' => (float) ($order->driver_earning ?? $order->delivery_fee ?? 0),
+                        'created_at' => $order->delivered_at?->toIso8601String() ?? $order->created_at->toIso8601String(),
+                    ]];
+
+                    if ((float) ($order->tip_amount ?? 0) > 0) {
+                        $rows[] = [
+                            'type' => 'credit',
+                            'description' => 'Customer tip',
+                            'order_number' => $order->order_number,
+                            'amount' => (float) $order->tip_amount,
+                            'created_at' => $order->tip_paid_at?->toIso8601String()
+                                ?? $order->delivered_at?->toIso8601String()
+                                ?? $order->created_at->toIso8601String(),
+                        ];
+                    }
+
+                    return $rows;
+                })->values(),
             ]
         ]);
     }

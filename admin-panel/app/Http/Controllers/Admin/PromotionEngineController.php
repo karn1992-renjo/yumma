@@ -147,7 +147,6 @@ class PromotionEngineController extends Controller
         ]);
     }
 
-
     public function campaignExport(Request $request, PromotionFinanceReportService $reports)
     {
         $filters = $request->validate([
@@ -405,7 +404,6 @@ class PromotionEngineController extends Controller
         ]);
     }
 
-
     private function fraudAttemptQuery(array $filters)
     {
         return PromotionFraudAttempt::query()
@@ -448,9 +446,10 @@ class PromotionEngineController extends Controller
             'ends_time' => ['nullable', 'date_format:H:i'],
             'reward_type' => ['required', 'string', 'max:80'],
             'reward_value' => ['nullable', 'numeric', 'min:0'],
+            'reward_value_type' => ['nullable', 'in:percentage,fixed'],
             'max_discount' => ['nullable', 'numeric', 'min:0'],
-            'buy_quantity' => ['nullable', 'integer', 'min:1'],
-            'free_quantity' => ['nullable', 'integer', 'min:1'],
+            'buy_quantity' => ['nullable', 'integer', 'min:1', 'max:100'],
+            'free_quantity' => ['nullable', 'integer', 'min:1', 'max:100'],
             'free_item_id' => ['nullable', 'integer', 'exists:menu_items,id'],
             'scratch_card_pool' => ['nullable', 'string', 'max:2000'],
             'scratch_trigger' => ['nullable', 'in:order_placed,restaurant_accepts,payment_success,delivery,every_order,every_n_orders,manual'],
@@ -556,6 +555,7 @@ class PromotionEngineController extends Controller
             ]);
         }
         $validated['reward_type'] = $allowedTypes[$validated['promotion_type']]['reward_type'] ?? $validated['reward_type'];
+        $this->validateRewardValue($validated, $allowedTypes[$validated['promotion_type']]);
 
         $defaultFundingType = in_array($ownerType, ['restaurant', 'branch'], true) ? 'restaurant' : 'platform';
         $validated['funding_type'] = $validated['funding_type'] ?? $defaultFundingType;
@@ -570,14 +570,14 @@ class PromotionEngineController extends Controller
             $shareTotal = round($validated['platform_share_percent'] + $validated['restaurant_share_percent'], 2);
             if (abs($shareTotal - 100.0) > 0.01) {
                 throw ValidationException::withMessages([
-                    'restaurant_share_percent' => 'Platform share and restaurant share must total 100%. Current total is '.$shareTotal.'%.',
+                    'restaurant_share_percent' => 'Platform share and restaurant share must total 100%. Current total is ' . $shareTotal . '%.',
                 ]);
             }
         }
 
         $scratchPool = $this->scratchRewardPool($validated);
         if (($validated['reward_type'] ?? null) === 'scratch_card' && $scratchPool === []) {
-            throw \Illuminate\Validation\ValidationException::withMessages([
+            throw ValidationException::withMessages([
                 'scratch_rewards' => 'Add at least one scratch card reward.',
             ]);
         }
@@ -585,8 +585,8 @@ class PromotionEngineController extends Controller
         if (($validated['reward_type'] ?? null) === 'scratch_card' && collect($scratchPool)->contains(fn (array $reward) => array_key_exists('probability', $reward))) {
             $probabilityTotal = round((float) collect($scratchPool)->sum(fn (array $reward) => (float) ($reward['probability'] ?? 0)), 2);
             if (abs($probabilityTotal - 100.0) > 0.01) {
-                throw \Illuminate\Validation\ValidationException::withMessages([
-                    'scratch_rewards' => 'Scratch card reward probability total must equal 100%. Current total is '.$probabilityTotal.'%.',
+                throw ValidationException::withMessages([
+                    'scratch_rewards' => 'Scratch card reward probability total must equal 100%. Current total is ' . $probabilityTotal . '%.',
                 ]);
             }
         }
@@ -600,6 +600,13 @@ class PromotionEngineController extends Controller
         $rewardItemIds = array_values(array_unique(array_map('intval', $validated['reward_item_ids'] ?? [])));
         $rewardCategoryIds = array_values(array_unique(array_map('intval', $validated['reward_category_ids'] ?? [])));
         $comboGroups = $this->normalizedComboGroups($validated['combo_groups'] ?? [], isset($validated['reward_value']) ? (float) $validated['reward_value'] : null);
+        if (in_array($promotionType, ['combo_deal', 'meal_deal'], true)
+            && $comboGroups === []
+            && (float) ($validated['reward_value'] ?? 0) <= 0) {
+            throw ValidationException::withMessages([
+                'reward_value' => 'Set a positive deal price or configure priced combo groups.',
+            ]);
+        }
         if ($comboGroups !== []) {
             $rewardItemIds = array_values(array_unique(array_merge(
                 $rewardItemIds,
@@ -655,6 +662,9 @@ class PromotionEngineController extends Controller
         $rewards = [
             'type' => $validated['reward_type'],
             'value' => isset($validated['reward_value']) ? (float) $validated['reward_value'] : 0,
+            'value_type' => in_array($validated['promotion_type'], ['delivery_discount', 'packaging_discount'], true)
+                ? ($validated['reward_value_type'] ?? null)
+                : null,
             'max_discount' => isset($validated['max_discount']) ? (float) $validated['max_discount'] : null,
             'buy_quantity' => $buyQuantity,
             'free_quantity' => $freeQuantity,
@@ -876,7 +886,7 @@ class PromotionEngineController extends Controller
         }
 
         if ($messages !== []) {
-            throw \Illuminate\Validation\ValidationException::withMessages($messages);
+            throw ValidationException::withMessages($messages);
         }
     }
 
@@ -1088,6 +1098,7 @@ class PromotionEngineController extends Controller
                         ->values()
                         ->all(),
                 ]);
+
                 continue;
             }
 
@@ -1153,6 +1164,45 @@ class PromotionEngineController extends Controller
             ->where('restaurant_id', '!=', $restaurantId)
             ->exists()) {
             $messages['free_item_id'] = 'The free item must belong to the selected restaurant scope.';
+        }
+
+        if ($messages !== []) {
+            throw ValidationException::withMessages($messages);
+        }
+    }
+
+    private function validateRewardValue(array $validated, array $typeMeta): void
+    {
+        $promotionType = (string) ($validated['promotion_type'] ?? '');
+        $value = (float) ($validated['reward_value'] ?? 0);
+        $valueIsOptional = (bool) data_get($typeMeta, 'defaults.no_value_required', false)
+            || in_array($promotionType, ['combo_deal', 'meal_deal'], true);
+        $messages = [];
+
+        if (! $valueIsOptional && $value <= 0) {
+            $messages['reward_value'] = 'Enter a value greater than zero for this promotion type.';
+        }
+
+        if (! $valueIsOptional
+            && ($typeMeta['discount_type'] ?? null) === 'percentage'
+            && $value > 100) {
+            $messages['reward_value'] = 'Percentage discounts cannot exceed 100%.';
+        }
+
+        if (in_array($promotionType, ['delivery_discount', 'packaging_discount'], true)) {
+            $mode = $validated['reward_value_type'] ?? null;
+            if (! in_array($mode, ['percentage', 'fixed'], true)) {
+                $messages['reward_value_type'] = 'Choose percentage or fixed amount for this charge discount.';
+            }
+            if ($mode === 'percentage' && $value > 100) {
+                $messages['reward_value'] = 'Percentage discounts cannot exceed 100%.';
+            }
+        }
+
+        if (array_key_exists('max_discount', $validated)
+            && $validated['max_discount'] !== null
+            && (float) $validated['max_discount'] <= 0) {
+            $messages['max_discount'] = 'Maximum discount must be greater than zero when provided.';
         }
 
         if ($messages !== []) {
@@ -1298,4 +1348,3 @@ class PromotionEngineController extends Controller
         );
     }
 }
-

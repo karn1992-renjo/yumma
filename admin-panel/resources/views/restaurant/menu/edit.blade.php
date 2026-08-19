@@ -2,9 +2,10 @@
 @extends('layouts.restaurant')
 
 @php
-    $currencySymbol = App\Models\AppSetting::getValue('currency_symbol', '?');
+    $currencySymbol = App\Models\AppSetting::sanitizedCurrencySymbol();
     $currencyDecimals = App\Models\AppSetting::currencyDecimals();
     $priceStep = number_format(1 / pow(10, $currencyDecimals), $currencyDecimals, '.', '');
+    $globalMenuItems = $globalMenuItems ?? collect();
     $scheduleText = collect(old('availability_schedule', $menuItem->availability_schedule ?? []))
         ->map(fn ($slot) => trim(($slot['label'] ?? '') . ' | ' . ($slot['start'] ?? '') . ' | ' . ($slot['end'] ?? '') . ' | ' . implode(',', $slot['days'] ?? []), ' |'))
         ->implode("\n");

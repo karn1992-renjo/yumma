@@ -64,7 +64,7 @@ class OrderAlertForegroundService : Service() {
 
         val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(applicationInfo.icon)
-            .setContentTitle("Yumma is online")
+            .setContentTitle("Yumma! is online")
             .setContentText(status)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setCategory(NotificationCompat.CATEGORY_CALL)
@@ -103,7 +103,7 @@ class OrderAlertForegroundService : Service() {
     }
 
     companion object {
-        const val CHANNEL_ID = "yumma_order_listener"
+        const val CHANNEL_ID = "Yumma_order_listener"
         const val NOTIFICATION_ID = 4101
         const val EXTRA_STATUS = "status"
         const val EXTRA_FULL_SCREEN = "full_screen"

@@ -14,6 +14,7 @@ import '../../services/app_branding_service.dart';
 import '../../services/firebase_phone_auth_service.dart';
 import '../../services/location_service.dart';
 import '../../services/partner_application_service.dart';
+import '../../services/verification_service.dart';
 import '../../utils/phone_number_utils.dart';
 import 'otp_verification_screen.dart';
 
@@ -40,11 +41,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
   static const draftKey = 'restaurant_registration_draft_v3';
 
   final _applicationService = PartnerApplicationService.instance;
+  final _verificationService = VerificationService.instance;
   final _locationService = LocationService();
   final _firebasePhoneAuthService = FirebasePhoneAuthService();
 
   final restaurantName = TextEditingController();
-  final cuisineSearch = TextEditingController();
   final description = TextEditingController();
   final ownerName = TextEditingController();
   final phone = TextEditingController();
@@ -76,20 +77,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   final branch = TextEditingController();
   final upi = TextEditingController();
 
-  final cuisines = const [
-    'North Indian',
-    'South Indian',
-    'Chinese',
-    'Italian',
-    'Fast Food',
-    'Biryani',
-    'Bakery',
-    'Desserts',
-    'Beverages',
-    'Continental',
-    'Healthy Food',
-    'Street Food',
-  ];
+  List<String> cuisines = const [];
   final banks = const [
     'HDFC Bank',
     'ICICI Bank',
@@ -102,7 +90,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   AppBranding branding = AppBranding.fallback();
   List<Map<String, dynamic>> deliveryAreas = const [];
   List<Map<String, dynamic>> suggestions = const [];
-  Set<String> selectedCuisines = {'North Indian'};
+  Set<String> selectedCuisines = {};
   Set<String> serviceTypes = {'Dine-in', 'Delivery'};
   int step = 0;
   int? matchedAreaId;
@@ -123,6 +111,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   bool declaration = false;
   bool agreement = false;
   bool loading = true;
+  bool loadingCuisines = true;
   bool saving = false;
   bool sendingOtp = false;
   bool locating = false;
@@ -131,6 +120,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   bool showPassword = false;
   bool showConfirmPassword = false;
   String saveStatus = 'Saved';
+  String? cuisineLoadError;
   String? verifiedPhoneToken;
   String? verifiedPhoneNumber;
   File? logoFile;
@@ -142,6 +132,15 @@ class _RegisterScreenState extends State<RegisterScreen> {
   Timer? saveDebounce;
   Timer? periodicSave;
   Timer? searchDebounce;
+  Timer? gstinDebounce;
+  Timer? panDebounce;
+
+  DocVerifyResult? gstinResult;
+  DocVerifyResult? panResult;
+  DocVerifyResult? panDocResult;
+  bool checkingGstin = false;
+  bool checkingPan = false;
+  bool checkingPanDoc = false;
 
   final steps = const [
     'Basic Info',
@@ -167,9 +166,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
     saveDebounce?.cancel();
     periodicSave?.cancel();
     searchDebounce?.cancel();
+    gstinDebounce?.cancel();
+    panDebounce?.cancel();
     for (final c in [
       restaurantName,
-      cuisineSearch,
       description,
       ownerName,
       phone,
@@ -241,8 +241,17 @@ class _RegisterScreenState extends State<RegisterScreen> {
   }
 
   Future<void> _bootstrap() async {
-    await Future.wait([_loadBranding(), _loadAreas(), _loadDraft()]);
-    if (mounted) setState(() => loading = false);
+    await Future.wait([
+      _loadBranding(),
+      _loadAreas(),
+      _loadCuisines(),
+      _loadDraft(),
+    ]);
+    if (!mounted) return;
+    setState(() {
+      selectedCuisines = selectedCuisines.where(cuisines.contains).toSet();
+      loading = false;
+    });
   }
 
   Future<void> _loadBranding() async {
@@ -260,6 +269,38 @@ class _RegisterScreenState extends State<RegisterScreen> {
       if (mounted) setState(() => deliveryAreas = areas);
     } catch (_) {
       if (mounted) setState(() => deliveryAreas = const []);
+    }
+  }
+
+  Future<void> _loadCuisines() async {
+    if (mounted) {
+      setState(() {
+        loadingCuisines = true;
+        cuisineLoadError = null;
+      });
+    }
+    try {
+      final data = await _applicationService.fetchActiveCuisines();
+      final names = data
+          .map((item) => item['name']?.toString().trim() ?? '')
+          .where((name) => name.isNotEmpty)
+          .toSet()
+          .toList(growable: false);
+      if (!mounted) return;
+      setState(() {
+        cuisines = names;
+        selectedCuisines = selectedCuisines.where(names.contains).toSet();
+        loadingCuisines = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        cuisines = const [];
+        selectedCuisines = {};
+        loadingCuisines = false;
+        cuisineLoadError =
+            'Unable to load cuisines. Check your connection and retry.';
+      });
     }
   }
 
@@ -457,6 +498,118 @@ class _RegisterScreenState extends State<RegisterScreen> {
     if (path == null || !mounted) return;
     setState(() => setFile(File(path)));
     _queueSave();
+  }
+
+  void _onGstinChanged(String value) {
+    gstinDebounce?.cancel();
+    final gstin = value.trim().toUpperCase();
+    if (!RegExp(r'^\d{2}[A-Z]{5}\d{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$')
+        .hasMatch(gstin)) {
+      setState(() => gstinResult = null);
+      return;
+    }
+    gstinDebounce = Timer(const Duration(milliseconds: 700), () async {
+      setState(() => checkingGstin = true);
+      final result = await _verificationService.verifyGstin(
+        gstin,
+        businessName: legalName.text.trim().isNotEmpty
+            ? legalName.text.trim()
+            : restaurantName.text.trim(),
+      );
+      if (!mounted) return;
+      setState(() {
+        checkingGstin = false;
+        gstinResult = result;
+      });
+    });
+  }
+
+  void _onPanNumberChanged(String value) {
+    panDebounce?.cancel();
+    final pan = value.trim().toUpperCase();
+    if (!RegExp(r'^[A-Z]{5}\d{4}[A-Z]{1}$').hasMatch(pan)) {
+      setState(() => panResult = null);
+      return;
+    }
+    panDebounce = Timer(const Duration(milliseconds: 700), () async {
+      setState(() => checkingPan = true);
+      final result = await _verificationService.verifyPan(
+        pan,
+        name: ownerName.text.trim().isNotEmpty ? ownerName.text.trim() : null,
+      );
+      if (!mounted) return;
+      setState(() {
+        checkingPan = false;
+        panResult = result;
+      });
+    });
+  }
+
+  Future<void> _checkPanDocument(File file) async {
+    setState(() {
+      checkingPanDoc = true;
+      panDocResult = null;
+    });
+    final result = await _verificationService.verifyPanDocument(file.path);
+    if (!mounted) return;
+    setState(() {
+      checkingPanDoc = false;
+      panDocResult = result;
+    });
+  }
+
+  Widget verifyStatusLine(bool checking, DocVerifyResult? result) {
+    if (checking) {
+      return Padding(
+        padding: const EdgeInsets.only(top: 6),
+        child: Row(
+          children: [
+            const SizedBox(
+              width: 13,
+              height: 13,
+              child: CircularProgressIndicator(strokeWidth: 2, color: orange),
+            ),
+            const SizedBox(width: 8),
+            Text('Verifying with Cashfree...', style: t(12.5, color: muted)),
+          ],
+        ),
+      );
+    }
+    if (result == null || result.status == DocVerifyStatus.unconfigured) {
+      return const SizedBox.shrink();
+    }
+    final IconData icon;
+    final Color color;
+    final String text;
+    switch (result.status) {
+      case DocVerifyStatus.verified:
+        icon = Icons.verified_rounded;
+        color = green;
+        text = 'Verified';
+        break;
+      case DocVerifyStatus.invalid:
+        icon = Icons.error_rounded;
+        color = red;
+        text = result.message ?? 'Could not verify. Please check and retry.';
+        break;
+      default:
+        icon = Icons.info_rounded;
+        color = muted;
+        text = result.message ?? 'Could not verify right now.';
+    }
+    return Padding(
+      padding: const EdgeInsets.only(top: 6),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, color: color, size: 15),
+          const SizedBox(width: 6),
+          Expanded(
+              child: Text(text,
+                  style: t(12.5, weight: FontWeight.w600, color: color))),
+        ],
+      ),
+    );
   }
 
   Future<void> _verifyPhone() async {
@@ -1153,9 +1306,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
   }
 
   Widget _basic() {
-    final query = cuisineSearch.text.trim().toLowerCase();
-    final visibleCuisines =
-        cuisines.where((c) => c.toLowerCase().contains(query)).toList();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1172,47 +1322,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
         label(
           'Cuisine Type',
           req: true,
-          child: Column(
-            children: [
-              input(
-                cuisineSearch,
-                'Search cuisine type',
-                Icons.search_rounded,
-                onChanged: (_) => setState(() {}),
-              ),
-              const SizedBox(height: 10),
-              Align(
-                alignment: Alignment.centerLeft,
-                child: Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: visibleCuisines.map((cuisine) {
-                    final selected = selectedCuisines.contains(cuisine);
-                    return FilterChip(
-                      label: Text(cuisine),
-                      selected: selected,
-                      selectedColor: orange.withOpacity(.12),
-                      checkmarkColor: orange,
-                      side: BorderSide(color: selected ? orange : border),
-                      labelStyle: t(
-                        13,
-                        weight: FontWeight.w600,
-                        color: selected ? orange : body,
-                      ),
-                      onSelected: (_) {
-                        setState(
-                          () => selected
-                              ? selectedCuisines.remove(cuisine)
-                              : selectedCuisines.add(cuisine),
-                        );
-                        _queueSave();
-                      },
-                    );
-                  }).toList(),
-                ),
-              ),
-            ],
-          ),
+          helper: 'Select all cuisines offered by your restaurant',
+          child: _cuisineChecklist(),
         ),
         gap(),
         label(
@@ -1348,6 +1459,113 @@ class _RegisterScreenState extends State<RegisterScreen> {
     );
   }
 
+  Widget _cuisineChecklist() {
+    if (loadingCuisines) {
+      return const SizedBox(
+        height: 76,
+        child: Center(
+          child: CircularProgressIndicator(strokeWidth: 2.4),
+        ),
+      );
+    }
+
+    if (cuisineLoadError != null) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: red.withOpacity(.05),
+          border: Border.all(color: red.withOpacity(.28)),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            const Icon(Icons.error_outline_rounded, color: red, size: 20),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                cuisineLoadError!,
+                style: t(12, weight: FontWeight.w600, color: body),
+              ),
+            ),
+            TextButton(
+              onPressed: _loadCuisines,
+              child: const Text('Retry'),
+            ),
+          ],
+        ),
+      );
+    }
+
+    if (cuisines.isEmpty) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: bg,
+          border: Border.all(color: border),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Text(
+          'No active cuisines are available. Ask the administrator to add or enable cuisines.',
+          style: t(13, weight: FontWeight.w600, color: muted),
+        ),
+      );
+    }
+
+    return Container(
+      clipBehavior: Clip.antiAlias,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: Border.all(color: border),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        children: List.generate(cuisines.length, (index) {
+          final cuisine = cuisines[index];
+          final selected = selectedCuisines.contains(cuisine);
+          return Column(
+            children: [
+              CheckboxListTile(
+                value: selected,
+                onChanged: (checked) {
+                  setState(() {
+                    if (checked == true) {
+                      selectedCuisines.add(cuisine);
+                    } else {
+                      selectedCuisines.remove(cuisine);
+                    }
+                  });
+                  _queueSave();
+                },
+                activeColor: orange,
+                checkColor: Colors.white,
+                controlAffinity: ListTileControlAffinity.leading,
+                contentPadding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+                visualDensity: const VisualDensity(
+                  horizontal: -2,
+                  vertical: -2,
+                ),
+                title: Text(
+                  cuisine,
+                  style: t(
+                    13,
+                    weight: selected ? FontWeight.w700 : FontWeight.w600,
+                    color: selected ? ink : body,
+                  ),
+                ),
+              ),
+              if (index < cuisines.length - 1)
+                const Divider(height: 1, color: border),
+            ],
+          );
+        }),
+      ),
+    );
+  }
+
   Widget _business() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1424,11 +1642,18 @@ class _RegisterScreenState extends State<RegisterScreen> {
             label(
               'GST Number',
               req: true,
-              child: input(
-                gstNumber,
-                'Enter GST number',
-                Icons.percent_rounded,
-                caps: TextCapitalization.characters,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  input(
+                    gstNumber,
+                    'Enter GST number',
+                    Icons.percent_rounded,
+                    caps: TextCapitalization.characters,
+                    onChanged: _onGstinChanged,
+                  ),
+                  verifyStatusLine(checkingGstin, gstinResult),
+                ],
               ),
             ),
         ]),
@@ -1469,28 +1694,42 @@ class _RegisterScreenState extends State<RegisterScreen> {
             ),
           label(
             'PAN Number',
-            child: input(
-              panNumber,
-              'Enter PAN number',
-              Icons.badge_outlined,
-              caps: TextCapitalization.characters,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                input(
+                  panNumber,
+                  'Enter PAN number',
+                  Icons.badge_outlined,
+                  caps: TextCapitalization.characters,
+                  onChanged: _onPanNumberChanged,
+                ),
+                verifyStatusLine(checkingPan, panResult),
+              ],
             ),
           ),
           label(
             'PAN Card',
-            child: upload(
-              'Upload PAN Card',
-              'JPG, PNG or PDF (Max. 5MB)',
-              Icons.upload_file_rounded,
-              panFile,
-              () => _pick((f) => panFile = f, const [
-                'jpg',
-                'jpeg',
-                'png',
-                'pdf',
-              ]),
-              () => setState(() => panFile = null),
-              compact: true,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                upload(
+                  'Upload PAN Card',
+                  'JPG, PNG or PDF (Max. 5MB)',
+                  Icons.upload_file_rounded,
+                  panFile,
+                  () => _pick((f) {
+                    panFile = f;
+                    _checkPanDocument(f);
+                  }, const ['jpg', 'jpeg', 'png', 'pdf']),
+                  () => setState(() {
+                    panFile = null;
+                    panDocResult = null;
+                  }),
+                  compact: true,
+                ),
+                verifyStatusLine(checkingPanDoc, panDocResult),
+              ],
             ),
           ),
         ]),

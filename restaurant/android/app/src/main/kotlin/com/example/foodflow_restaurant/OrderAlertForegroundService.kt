@@ -1,4 +1,4 @@
-package com.adgraph.yumma_vendor
+package com.renjo.restro.android
 
 import android.app.Notification
 import android.app.NotificationChannel
@@ -33,7 +33,7 @@ class OrderAlertForegroundService : Service() {
 
         val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(applicationInfo.icon)
-            .setContentTitle("Yumma! Resto is online")
+            .setContentTitle("Renjo Resto is online")
             .setContentText(status)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setCategory(NotificationCompat.CATEGORY_CALL)
@@ -72,7 +72,7 @@ class OrderAlertForegroundService : Service() {
     }
 
     companion object {
-        const val CHANNEL_ID = "yumma_order_listener"
+        const val CHANNEL_ID = "renjo_order_listener"
         const val NOTIFICATION_ID = 4101
         const val EXTRA_STATUS = "status"
         const val EXTRA_FULL_SCREEN = "full_screen"

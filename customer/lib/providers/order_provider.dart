@@ -66,21 +66,25 @@ class OrderProvider extends ChangeNotifier {
     }
   }
 
-  Future<List<Order>> fetchMyOrders({bool notifyLoading = true}) async {
-    if (notifyLoading) {
+  Future<List<Order>> fetchMyOrders({
+    bool notifyLoading = true,
+    bool forceRefresh = false,
+  }) async {
+    if (notifyLoading && _orders.isEmpty) {
       _setLoading(true);
     }
 
     try {
-      final response = await _api.get(ApiConstants.myOrders);
-      if (response['success'] == true) {
-        final List<dynamic> ordersData =
-            response['data']['data'] ?? response['data'];
-        _orders = ordersData.map((json) => Order.fromJson(json)).toList();
+      final response = await _api.get(
+        ApiConstants.myOrders,
+        cachePolicy: ApiCachePolicy.screen,
+        cacheFirst: notifyLoading && !forceRefresh,
+        refreshCached: notifyLoading && !forceRefresh,
+        onCacheRefreshed: _applyOrdersResponse,
+      );
+      if (_applyOrdersResponse(response)) {
         if (notifyLoading) {
           _setLoading(false);
-        } else {
-          notifyListeners();
         }
         return _orders;
       }
@@ -99,16 +103,22 @@ class OrderProvider extends ChangeNotifier {
   Future<Order?> fetchOrderDetails(
     int orderId, {
     bool notifyLoading = true,
+    bool preferCache = false,
   }) async {
-    if (notifyLoading) {
+    if (notifyLoading && _currentOrder?.id != orderId) {
       _setLoading(true);
     }
 
     try {
-      final response = await _api.get('${ApiConstants.orderDetails}/$orderId');
-      if (response['success'] == true) {
-        final order = Order.fromJson(response['data']);
-        _currentOrder = order;
+      final response = await _api.get(
+        '${ApiConstants.orderDetails}/$orderId',
+        cachePolicy: ApiCachePolicy.screen,
+        cacheFirst: preferCache,
+        refreshCached: preferCache,
+        onCacheRefreshed: (fresh) => _applyOrderResponse(orderId, fresh),
+      );
+      final order = _applyOrderResponse(orderId, response);
+      if (order != null) {
         if (notifyLoading) {
           _setLoading(false);
         }
@@ -122,6 +132,38 @@ class OrderProvider extends ChangeNotifier {
       }
       return null;
     }
+  }
+
+  bool _applyOrdersResponse(dynamic response) {
+    if (response is! Map || response['success'] != true) return false;
+    final payload = response['data'];
+    final rows = payload is Map ? payload['data'] : payload;
+    if (rows is! List) return false;
+    _orders = rows
+        .whereType<Map>()
+        .map((json) => Order.fromJson(Map<String, dynamic>.from(json)))
+        .toList();
+    _error = null;
+    notifyListeners();
+    return true;
+  }
+
+  Order? _applyOrderResponse(int orderId, dynamic response) {
+    if (response is! Map ||
+        response['success'] != true ||
+        response['data'] is! Map) {
+      return null;
+    }
+    final order = Order.fromJson(
+      Map<String, dynamic>.from(response['data'] as Map),
+    );
+    if (order.id != orderId) return null;
+    _currentOrder = order;
+    final index = _orders.indexWhere((item) => item.id == order.id);
+    if (index >= 0) _orders[index] = order;
+    _error = null;
+    notifyListeners();
+    return order;
   }
 
   Future<bool> cancelOrder(int orderId, String reason) async {
@@ -177,6 +219,7 @@ class OrderProvider extends ChangeNotifier {
     String? driverFeedback,
     String? itemFeedback,
     String? serviceFeedback,
+    List<Map<String, int>>? itemRatings,
   }) async {
     try {
       final response = await _api.post(
@@ -194,6 +237,8 @@ class OrderProvider extends ChangeNotifier {
             'item_feedback': itemFeedback!.trim(),
           if (serviceFeedback?.trim().isNotEmpty == true)
             'service_feedback': serviceFeedback!.trim(),
+          if (itemRatings != null && itemRatings.isNotEmpty)
+            'items': itemRatings,
         },
       );
 

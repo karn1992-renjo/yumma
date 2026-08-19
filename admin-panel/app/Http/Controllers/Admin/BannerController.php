@@ -8,6 +8,7 @@ use App\Models\AppSetting;
 use App\Models\Category;
 use App\Models\MenuItem;
 use App\Models\Restaurant;
+use App\Services\HomeSectionService;
 use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
@@ -16,6 +17,10 @@ use Illuminate\Validation\ValidationException;
 
 class BannerController extends Controller
 {
+    public function __construct(private readonly HomeSectionService $homeSectionService)
+    {
+    }
+
     public function index()
     {
         $banners = Banner::with(['redirectCategory', 'redirectRestaurant', 'redirectMenuItem'])->orderBy('display_order')->get();
@@ -41,9 +46,12 @@ class BannerController extends Controller
             ->with('success', 'Banner duration updated successfully.');
     }
     
-    public function create()
+    public function create(Request $request)
     {
-        return view('admin.banners.create', $this->redirectOptions());
+        return view('admin.banners.create', array_merge(
+            $this->redirectOptions(),
+            ['defaultLayoutMode' => $request->query('layout_mode')],
+        ));
     }
     
     public function store(Request $request)
@@ -51,7 +59,9 @@ class BannerController extends Controller
         $validated = $request->validate([
             'title' => 'required|string|max:255',
             'description' => 'nullable|string',
-            'image' => ['required', 'file', 'max:8192'],
+            'cta_label' => 'nullable|string|max:40',
+            'image' => ['required', 'file'],
+            'badge_image' => ['nullable', 'image'],
             'link' => 'nullable|url',
             'redirect_type' => ['nullable', Rule::in(['category', 'restaurant', 'menu_item'])],
             'redirect_category_id' => ['nullable', 'required_if:redirect_type,category', 'exists:categories,id'],
@@ -59,7 +69,7 @@ class BannerController extends Controller
             'redirect_menu_item_id' => ['nullable', 'required_if:redirect_type,menu_item', 'exists:menu_items,id'],
             'display_order' => 'nullable|integer|min:0',
             'banner_type' => 'required|in:home,search_bar,category,promo',
-            'layout_mode' => 'required|in:text_image,full_image',
+            'layout_mode' => 'required|in:text_image,full_image,promo_card',
             'image_ratio' => 'nullable|integer|min:35|max:70',
             'start_date' => 'nullable|date',
             'end_date' => 'nullable|date|after:start_date',
@@ -69,12 +79,23 @@ class BannerController extends Controller
         if ($request->hasFile('image')) {
             $validated['image'] = $this->storeBannerMedia($request->file('image'));
         }
+
+        if ($request->hasFile('badge_image')) {
+            $validated['badge_image'] = $request->file('badge_image')->store('banners/badges', 'public');
+        }
         
         $validated['is_active'] = $request->boolean('is_active', true);
         $validated['image_ratio'] = (int) ($validated['image_ratio'] ?? 46);
         $validated = $this->normalizeRedirectTarget($validated);
 
-        Banner::create($validated);
+        $banner = Banner::create($validated);
+
+        if ($this->shouldAttachToPromoWidgets($banner)) {
+            $this->homeSectionService->attachPromoWidget($banner);
+
+            return redirect()->route('admin.home-sections.index')
+                ->with('success', 'Promo widget created and added to the "Promo Widgets" home section below.');
+        }
         
         return redirect()->route('admin.banners.index')
             ->with('success', 'Banner created successfully!');
@@ -90,7 +111,10 @@ class BannerController extends Controller
         $validated = $request->validate([
             'title' => 'required|string|max:255',
             'description' => 'nullable|string',
-            'image' => ['nullable', 'file', 'max:8192'],
+            'cta_label' => 'nullable|string|max:40',
+            'image' => ['nullable', 'file'],
+            'badge_image' => ['nullable', 'image'],
+            'remove_badge_image' => 'nullable|boolean',
             'link' => 'nullable|url',
             'redirect_type' => ['nullable', Rule::in(['category', 'restaurant', 'menu_item'])],
             'redirect_category_id' => ['nullable', 'required_if:redirect_type,category', 'exists:categories,id'],
@@ -98,7 +122,7 @@ class BannerController extends Controller
             'redirect_menu_item_id' => ['nullable', 'required_if:redirect_type,menu_item', 'exists:menu_items,id'],
             'display_order' => 'nullable|integer|min:0',
             'banner_type' => 'required|in:home,search_bar,category,promo',
-            'layout_mode' => 'required|in:text_image,full_image',
+            'layout_mode' => 'required|in:text_image,full_image,promo_card',
             'image_ratio' => 'nullable|integer|min:35|max:70',
             'is_active' => 'nullable|boolean',
             'start_date' => 'nullable|date',
@@ -112,12 +136,34 @@ class BannerController extends Controller
             }
             $validated['image'] = $path;
         }
+
+        if ($request->hasFile('badge_image')) {
+            if ($banner->badge_image) {
+                Storage::disk('public')->delete($banner->badge_image);
+            }
+            $validated['badge_image'] = $request->file('badge_image')->store('banners/badges', 'public');
+        } elseif ($request->boolean('remove_badge_image')) {
+            if ($banner->badge_image) {
+                Storage::disk('public')->delete($banner->badge_image);
+            }
+            $validated['badge_image'] = null;
+        }
+        unset($validated['remove_badge_image']);
         
         $validated['is_active'] = $request->boolean('is_active');
         $validated['image_ratio'] = (int) ($validated['image_ratio'] ?? 46);
         $validated = $this->normalizeRedirectTarget($validated);
 
         $banner->update($validated);
+
+        if ($this->shouldAttachToPromoWidgets($banner)) {
+            $this->homeSectionService->attachPromoWidget($banner);
+
+            return redirect()->route('admin.home-sections.index')
+                ->with('success', 'Promo widget updated. Make sure the "Promo Widgets" home section below is shown on the homepage.');
+        }
+
+        $this->homeSectionService->detachPromoWidget($banner);
         
         return redirect()->route('admin.banners.index')
             ->with('success', 'Banner updated successfully!');
@@ -128,13 +174,17 @@ class BannerController extends Controller
         if ($banner->image) {
             Storage::disk('public')->delete($banner->image);
         }
-        
+        if ($banner->badge_image) {
+            Storage::disk('public')->delete($banner->badge_image);
+        }
+
+        $this->homeSectionService->detachPromoWidget($banner);
         $banner->delete();
-        
+
         return redirect()->route('admin.banners.index')
             ->with('success', 'Banner deleted successfully!');
     }
-    
+
     public function reorder(Request $request)
     {
         $request->validate([
@@ -170,6 +220,10 @@ class BannerController extends Controller
         ];
     }
 
+    private function shouldAttachToPromoWidgets(Banner $banner): bool
+    {
+        return $banner->layout_mode === 'promo_card' || $banner->banner_type === 'promo';
+    }
     private function normalizeRedirectTarget(array $validated): array
     {
         $type = $validated['redirect_type'] ?? null;
@@ -216,22 +270,7 @@ class BannerController extends Controller
             }
         }
 
-        if ($isImage) {
-            $size = getimagesize($file->getRealPath());
-            if (! $size) {
-                throw ValidationException::withMessages([
-                    'image' => 'The selected banner image could not be read.',
-                ]);
-            }
 
-            [$width, $height] = $size;
-            $ratio = $height > 0 ? $width / $height : 0;
-            if ($width < 900 || $height < 360 || $ratio < 1.8 || $ratio > 3.2) {
-                throw ValidationException::withMessages([
-                    'image' => 'Upload a landscape banner image at least 900x360px with an aspect ratio between 1.8:1 and 3.2:1 so it covers the app banner area.',
-                ]);
-            }
-        }
 
         return $file->store('banners', 'public');
     }

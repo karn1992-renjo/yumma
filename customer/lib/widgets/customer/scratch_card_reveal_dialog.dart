@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 
 import '../../config/api_constants.dart';
@@ -21,6 +22,19 @@ Future<ScratchCard?> showScratchCardRevealDialog(
   );
 }
 
+class _ScratchParticle {
+  _ScratchParticle({
+    required this.position,
+    required this.velocity,
+    required this.color,
+  });
+
+  Offset position;
+  Offset velocity;
+  final Color color;
+  double life = 1;
+}
+
 class _ScratchCardRevealDialog extends StatefulWidget {
   const _ScratchCardRevealDialog({required this.card});
 
@@ -31,25 +45,55 @@ class _ScratchCardRevealDialog extends StatefulWidget {
       _ScratchCardRevealDialogState();
 }
 
-class _ScratchCardRevealDialogState extends State<_ScratchCardRevealDialog> {
+class _ScratchCardRevealDialogState extends State<_ScratchCardRevealDialog>
+    with TickerProviderStateMixin {
   final ApiService _api = ApiService();
   final List<Offset> _scratchPoints = [];
   final Set<String> _scratchCells = {};
+  final List<_ScratchParticle> _particles = [];
+  final math.Random _random = math.Random();
   late ScratchCard _card = widget.card;
   bool _revealing = false;
   bool _started = false;
   bool _introVisible = false;
+  bool _autoRevealStarted = false;
   String? _error;
   double _progress = 0;
+  Offset _wipeCenter = Offset.zero;
+  Duration? _lastParticleTick;
 
-  bool get _surfaceHidden =>
-      _card.isRevealed && (!_started || _progress >= 0.58);
+  late final AnimationController _wipeController;
+  late final Ticker _particleTicker;
+
+  void _onWipeStatusChanged(AnimationStatus status) {
+    if (status == AnimationStatus.completed && mounted) {
+      setState(() {});
+    }
+  }
+
+  bool get _surfaceHidden {
+    if (!_card.isRevealed) return false;
+    if (!_started) return true;
+    return _wipeController.isCompleted;
+  }
 
   @override
   void initState() {
     super.initState();
+    _wipeController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 560),
+    )..addStatusListener(_onWipeStatusChanged);
+    _particleTicker = createTicker(_tickParticles);
     _introVisible = !_card.isRevealed;
     _markViewed();
+  }
+
+  @override
+  void dispose() {
+    _wipeController.dispose();
+    _particleTicker.dispose();
+    super.dispose();
   }
 
   Future<void> _markViewed() async {
@@ -92,6 +136,7 @@ class _ScratchCardRevealDialogState extends State<_ScratchCardRevealDialog> {
         if (!mounted) return;
         HapticFeedback.mediumImpact();
         setState(() => _card = revealed);
+        _maybeStartAutoReveal();
       } else {
         setState(() => _error = response['message']?.toString());
       }
@@ -104,6 +149,14 @@ class _ScratchCardRevealDialogState extends State<_ScratchCardRevealDialog> {
       }
     } finally {
       if (mounted) setState(() => _revealing = false);
+    }
+  }
+
+  void _maybeStartAutoReveal() {
+    if (_autoRevealStarted) return;
+    if (_card.isRevealed && _progress >= 0.58) {
+      _autoRevealStarted = true;
+      _wipeController.forward();
     }
   }
 
@@ -136,11 +189,62 @@ class _ScratchCardRevealDialogState extends State<_ScratchCardRevealDialog> {
         ((size.width / cellSize).ceil() * (size.height / cellSize).ceil())
             .clamp(1, 10000);
 
+    _spawnParticles(localPosition);
+
     setState(() {
       _scratchPoints.add(localPosition);
       _scratchCells.add('$cellX:$cellY');
       _progress = (_scratchCells.length / maxCells).clamp(0, 1);
+      _wipeCenter = localPosition;
     });
+    _maybeStartAutoReveal();
+  }
+
+  void _spawnParticles(Offset origin) {
+    const colors = [
+      Color(0xFFFFD54A),
+      Color(0xFFFFB300),
+      Colors.white,
+      Color(0xFF9CA3AF),
+    ];
+    for (var i = 0; i < 2; i++) {
+      final angle = _random.nextDouble() * math.pi * 2;
+      final speed = 40 + _random.nextDouble() * 70;
+      _particles.add(
+        _ScratchParticle(
+          position: origin,
+          velocity: Offset(math.cos(angle) * speed, math.sin(angle) * speed - 30),
+          color: colors[_random.nextInt(colors.length)],
+        ),
+      );
+    }
+    if (_particles.length > 60) {
+      _particles.removeRange(0, _particles.length - 60);
+    }
+    if (!_particleTicker.isTicking) {
+      _lastParticleTick = null;
+      _particleTicker.start();
+    }
+  }
+
+  void _tickParticles(Duration elapsed) {
+    final last = _lastParticleTick;
+    _lastParticleTick = elapsed;
+    if (last == null) return;
+    final dt = (elapsed - last).inMicroseconds / 1e6;
+    if (dt <= 0) return;
+
+    for (final particle in _particles) {
+      particle.position += particle.velocity * dt;
+      particle.velocity += Offset(0, 260 * dt);
+      particle.life -= dt * 1.6;
+    }
+    _particles.removeWhere((p) => p.life <= 0);
+
+    if (_particles.isEmpty) {
+      _particleTicker.stop();
+    }
+    if (mounted) setState(() {});
   }
 
   @override
@@ -237,6 +341,11 @@ class _ScratchCardRevealDialogState extends State<_ScratchCardRevealDialog> {
                     child: LayoutBuilder(
                       builder: (context, constraints) {
                         final size = constraints.biggest;
+                        final maxRadius = math.sqrt(
+                              size.width * size.width +
+                                  size.height * size.height,
+                            ) +
+                            8;
                         return GestureDetector(
                           onPanDown: (details) =>
                               _scratch(details.localPosition, size),
@@ -253,16 +362,39 @@ class _ScratchCardRevealDialogState extends State<_ScratchCardRevealDialog> {
                                   error: _error,
                                 ),
                                 IgnorePointer(
-                                  child: AnimatedOpacity(
-                                    opacity: _surfaceHidden ? 0 : 1,
-                                    duration: const Duration(milliseconds: 260),
-                                    child: CustomPaint(
-                                      painter: _ScratchOverlayPainter(
-                                        points: _scratchPoints,
-                                        primary: primary,
-                                        progress: _progress,
+                                  child: AnimatedBuilder(
+                                    animation: _wipeController,
+                                    builder: (context, child) {
+                                      final radius =
+                                          _wipeController.value * maxRadius;
+                                      return ClipPath(
+                                        clipper: _InverseCircleClipper(
+                                          center: _wipeCenter,
+                                          radius: radius,
+                                        ),
+                                        child: child,
+                                      );
+                                    },
+                                    child: AnimatedOpacity(
+                                      opacity: _card.isRevealed && !_started
+                                          ? 0
+                                          : 1,
+                                      duration:
+                                          const Duration(milliseconds: 260),
+                                      child: CustomPaint(
+                                        painter: _ScratchOverlayPainter(
+                                          points: _scratchPoints,
+                                          primary: primary,
+                                          progress: _progress,
+                                        ),
                                       ),
                                     ),
+                                  ),
+                                ),
+                                IgnorePointer(
+                                  child: CustomPaint(
+                                    painter: _ParticlePainter(
+                                        particles: _particles),
                                   ),
                                 ),
                               ],
@@ -325,21 +457,70 @@ class _ScratchCardRevealDialogState extends State<_ScratchCardRevealDialog> {
   }
 }
 
-class _ScratchResultDialog extends StatelessWidget {
+/// Clips away a growing circular hole from the overlay — the "foil melts
+/// away from where you last scratched" auto-complete wipe.
+class _InverseCircleClipper extends CustomClipper<Path> {
+  const _InverseCircleClipper({required this.center, required this.radius});
+
+  final Offset center;
+  final double radius;
+
+  @override
+  Path getClip(Size size) {
+    final rectPath = Path()..addRect(Offset.zero & size);
+    if (radius <= 0) return rectPath;
+    final circlePath = Path()
+      ..addOval(Rect.fromCircle(center: center, radius: radius));
+    return Path.combine(PathOperation.difference, rectPath, circlePath);
+  }
+
+  @override
+  bool shouldReclip(covariant _InverseCircleClipper oldClipper) {
+    return oldClipper.center != center || oldClipper.radius != radius;
+  }
+}
+
+class _ParticlePainter extends CustomPainter {
+  const _ParticlePainter({required this.particles});
+
+  final List<_ScratchParticle> particles;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    for (final particle in particles) {
+      final paint = Paint()
+        ..color = particle.color.withOpacity(particle.life.clamp(0, 1));
+      canvas.drawCircle(particle.position, 2.4, paint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _ParticlePainter oldDelegate) => true;
+}
+
+class _ScratchResultDialog extends StatefulWidget {
   const _ScratchResultDialog({required this.card, required this.onClose});
 
   final ScratchCard card;
   final VoidCallback onClose;
 
+  @override
+  State<_ScratchResultDialog> createState() => _ScratchResultDialogState();
+}
+
+class _ScratchResultDialogState extends State<_ScratchResultDialog>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+
   bool get _isNoReward {
-    final reward = card.reward ?? const <String, dynamic>{};
-    final type = card.rewardType ?? reward['type']?.toString() ?? '';
+    final reward = widget.card.reward ?? const <String, dynamic>{};
+    final type = widget.card.rewardType ?? reward['type']?.toString() ?? '';
     return type == 'no_reward';
   }
 
   bool get _isWalletReward {
-    final reward = card.reward ?? const <String, dynamic>{};
-    final type = card.rewardType ?? reward['type']?.toString() ?? '';
+    final reward = widget.card.reward ?? const <String, dynamic>{};
+    final type = widget.card.rewardType ?? reward['type']?.toString() ?? '';
     return type == 'wallet_cashback' ||
         type == 'wallet_credit' ||
         type == 'cashback' ||
@@ -347,8 +528,23 @@ class _ScratchResultDialog extends StatelessWidget {
   }
 
   @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1400),
+    )..forward();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final code = ScratchRewardText.code(card);
+    final code = ScratchRewardText.code(widget.card);
     return Dialog(
       insetPadding: const EdgeInsets.symmetric(horizontal: 22, vertical: 24),
       backgroundColor: Colors.transparent,
@@ -370,29 +566,43 @@ class _ScratchResultDialog extends StatelessWidget {
           child: Stack(
             children: [
               Positioned.fill(
-                  child: CustomPaint(painter: _DialogConfettiPainter())),
+                child: AnimatedBuilder(
+                  animation: _controller,
+                  builder: (context, _) => CustomPaint(
+                    painter: _DialogConfettiBurstPainter(t: _controller.value),
+                  ),
+                ),
+              ),
               Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Align(
                     alignment: Alignment.centerRight,
                     child: IconButton(
-                      onPressed: onClose,
+                      onPressed: widget.onClose,
                       icon: const Icon(Icons.close_rounded),
                       color: FoodFlowTheme.ink,
                     ),
                   ),
-                  if (_isNoReward)
-                    const _BetterLuckContent()
-                  else if (code.isNotEmpty)
-                    _CouponWinContent(card: card, code: code)
-                  else
-                    _WalletWinContent(card: card),
+                  TweenAnimationBuilder<double>(
+                    tween: Tween(begin: 0, end: 1),
+                    duration: const Duration(milliseconds: 650),
+                    curve: Curves.elasticOut,
+                    builder: (context, value, child) => Transform.scale(
+                      scale: value.clamp(0, 1.15),
+                      child: child,
+                    ),
+                    child: _isNoReward
+                        ? const _BetterLuckContent()
+                        : code.isNotEmpty
+                            ? _CouponWinContent(card: widget.card, code: code)
+                            : _WalletWinContent(card: widget.card),
+                  ),
                   const SizedBox(height: 18),
                   SizedBox(
                     width: double.infinity,
                     child: ElevatedButton(
-                      onPressed: onClose,
+                      onPressed: widget.onClose,
                       style: ElevatedButton.styleFrom(
                         backgroundColor: FoodFlowTheme.tagOrange,
                         foregroundColor: Colors.white,
@@ -637,32 +847,57 @@ class _BetterLuckContent extends StatelessWidget {
   }
 }
 
-class _DialogConfettiPainter extends CustomPainter {
+/// A one-shot outward confetti burst — pieces fly from the center, arc
+/// under gravity, spin, and fade — parametrised entirely by `t` so it can
+/// be driven by a single AnimationController without per-frame state.
+class _DialogConfettiBurstPainter extends CustomPainter {
+  const _DialogConfettiBurstPainter({required this.t});
+
+  final double t;
+
+  static const _colors = [
+    Color(0xFFFF5A00),
+    Color(0xFFFFB300),
+    Color(0xFF54A7C5),
+    Color(0xFFD673B1),
+    Color(0xFF3DBE6A),
+  ];
+
   @override
   void paint(Canvas canvas, Size size) {
-    const colors = [
-      Color(0xFFFF5A00),
-      Color(0xFFFFB300),
-      Color(0xFF54A7C5),
-      Color(0xFFD673B1),
-    ];
-    for (var i = 0; i < 18; i++) {
-      final x = ((i * 47) % 100) / 100 * size.width;
-      final y = ((i * 31) % 100) / 100 * size.height;
+    final center = Offset(size.width / 2, size.height * 0.28);
+    const count = 26;
+    for (var i = 0; i < count; i++) {
+      final seed = i * 137.5;
+      final angle = (seed % 360) / 360 * math.pi * 2;
+      final speed = 90 + (i * 13 % 90);
+      final vx = math.cos(angle) * speed;
+      final vy = math.sin(angle) * speed - 70;
+      final x = center.dx + vx * t;
+      final y = center.dy + vy * t + 0.5 * 260 * t * t;
+      final opacity = (1 - t).clamp(0, 1) as double;
+      if (opacity <= 0) continue;
+
       final paint = Paint()
-        ..color = colors[i % colors.length].withOpacity(0.65)
-        ..strokeWidth = i.isEven ? 4 : 3
-        ..strokeCap = StrokeCap.round;
+        ..color = _colors[i % _colors.length].withOpacity(opacity);
       canvas.save();
       canvas.translate(x, y);
-      canvas.rotate(i * 0.38);
-      canvas.drawLine(const Offset(-4, 0), const Offset(4, 0), paint);
+      canvas.rotate(seed + t * 8);
+      if (i % 3 == 0) {
+        canvas.drawRect(const Rect.fromLTWH(-3, -5, 6, 10), paint);
+      } else if (i % 3 == 1) {
+        canvas.drawCircle(Offset.zero, 3.4, paint);
+      } else {
+        canvas.drawLine(const Offset(-5, 0), const Offset(5, 0),
+            paint..strokeWidth = 3);
+      }
       canvas.restore();
     }
   }
 
   @override
-  bool shouldRepaint(covariant _DialogConfettiPainter oldDelegate) => false;
+  bool shouldRepaint(covariant _DialogConfettiBurstPainter oldDelegate) =>
+      oldDelegate.t != t;
 }
 
 class _ScratchIntroDialog extends StatelessWidget {
@@ -712,68 +947,77 @@ class _ScratchIntroDialog extends StatelessWidget {
                       color: FoodFlowTheme.ink,
                     ),
                   ),
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.fromLTRB(18, 18, 18, 20),
-                    decoration: BoxDecoration(
-                      gradient: const LinearGradient(
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                        colors: [Color(0xFFFF7A1A), Color(0xFFFF3D00)],
-                      ),
-                      borderRadius: BorderRadius.circular(22),
-                      boxShadow: [
-                        BoxShadow(
-                          color: FoodFlowTheme.tagOrange.withOpacity(0.24),
-                          blurRadius: 22,
-                          offset: const Offset(0, 12),
-                        ),
-                      ],
+                  TweenAnimationBuilder<double>(
+                    tween: Tween(begin: 0, end: 1),
+                    duration: const Duration(milliseconds: 600),
+                    curve: Curves.elasticOut,
+                    builder: (context, value, child) => Transform.scale(
+                      scale: value.clamp(0, 1.08),
+                      child: child,
                     ),
-                    child: Column(
-                      children: [
-                        const Text(
-                          'Congratulations!',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 22,
-                            fontWeight: FontWeight.w900,
-                          ),
+                    child: Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.fromLTRB(18, 18, 18, 20),
+                      decoration: BoxDecoration(
+                        gradient: const LinearGradient(
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                          colors: [Color(0xFFFF7A1A), Color(0xFFFF3D00)],
                         ),
-                        const SizedBox(height: 4),
-                        const Text(
-                          'You have unlocked',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 14,
-                            fontWeight: FontWeight.w800,
+                        borderRadius: BorderRadius.circular(22),
+                        boxShadow: [
+                          BoxShadow(
+                            color: FoodFlowTheme.tagOrange.withOpacity(0.24),
+                            blurRadius: 22,
+                            offset: const Offset(0, 12),
                           ),
-                        ),
-                        const SizedBox(height: 3),
-                        const Text(
-                          '1 Scratch Card',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 21,
-                            fontWeight: FontWeight.w900,
-                          ),
-                        ),
-                        const SizedBox(height: 6),
-                        const ScratchGiftBox(size: 138),
-                        if (card.restaurantName?.isNotEmpty == true) ...[
-                          const SizedBox(height: 4),
-                          Text(
-                            card.restaurantName!,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
+                        ],
+                      ),
+                      child: Column(
+                        children: [
+                          const Text(
+                            'Congratulations!',
+                            style: TextStyle(
                               color: Colors.white,
-                              fontSize: 12,
+                              fontSize: 22,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          const Text(
+                            'You have unlocked',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 14,
                               fontWeight: FontWeight.w800,
                             ),
                           ),
+                          const SizedBox(height: 3),
+                          const Text(
+                            '1 Scratch Card',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 21,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          const ScratchGiftBox(size: 138),
+                          if (card.restaurantName?.isNotEmpty == true) ...[
+                            const SizedBox(height: 4),
+                            Text(
+                              card.restaurantName!,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                          ],
                         ],
-                      ],
+                      ),
                     ),
                   ),
                   const SizedBox(height: 18),
@@ -808,7 +1052,7 @@ class _ScratchIntroDialog extends StatelessWidget {
                       ),
                       child: Text(
                         card.isRevealLocked ? 'After Delivery' : 'Scratch Now',
-                        style: TextStyle(
+                        style: const TextStyle(
                             fontSize: 15, fontWeight: FontWeight.w900),
                       ),
                     ),
@@ -818,7 +1062,7 @@ class _ScratchIntroDialog extends StatelessWidget {
                     onPressed: onClose,
                     child: Text(
                       card.isRevealLocked ? 'Close' : 'Maybe Later',
-                      style: TextStyle(
+                      style: const TextStyle(
                         color: FoodFlowTheme.muted,
                         fontWeight: FontWeight.w800,
                       ),
@@ -931,17 +1175,17 @@ class _ScratchOverlayPainter extends CustomPainter {
         begin: Alignment.topLeft,
         end: Alignment.bottomRight,
         colors: [
-          const Color(0xFFE5E7EB),
+          const Color(0xFFFFD54A),
           Colors.white,
-          const Color(0xFF9CA3AF),
-          primary.withOpacity(0.35),
+          const Color(0xFFFFB300),
+          primary.withOpacity(0.45),
         ],
         stops: const [0, 0.34, 0.68, 1],
       ).createShader(bounds);
     canvas.drawRRect(rect, foil);
 
     final shimmer = Paint()
-      ..color = Colors.white.withOpacity(0.36)
+      ..color = Colors.white.withOpacity(0.4)
       ..strokeWidth = 2;
     for (var i = -size.height.toInt(); i < size.width; i += 24) {
       canvas.drawLine(
@@ -951,7 +1195,7 @@ class _ScratchOverlayPainter extends CustomPainter {
       );
     }
 
-    final badgePaint = Paint()..color = Colors.black.withOpacity(0.16);
+    final badgePaint = Paint()..color = Colors.black.withOpacity(0.18);
     canvas.drawRRect(
       RRect.fromRectAndRadius(
         Rect.fromCenter(

@@ -25,6 +25,16 @@ class PromotionLogger
                 'eligible_count' => count($result['eligible_promotions'] ?? []),
                 'rejected_count' => count($result['invalid_reasons'] ?? []),
                 'invalid_reasons' => $result['invalid_reasons'] ?? [],
+                'applied_promotion_ids' => collect($result['applied_promotions'] ?? [])
+                    ->pluck('id')
+                    ->filter()
+                    ->values()
+                    ->all(),
+                'discount_buckets' => collect($result['discount_lines'] ?? [])
+                    ->groupBy(fn ($line) => $line['bucket'] ?? 'unknown')
+                    ->map(fn ($lines) => round((float) $lines->sum('discount_amount'), 2))
+                    ->all(),
+                'reward_line_count' => count($result['reward_lines'] ?? []),
                 'calculation_ms' => $calculationMs,
             ],
         ]);

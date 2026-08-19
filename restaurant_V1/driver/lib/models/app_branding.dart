@@ -1,0 +1,106 @@
+import '../config/app_config.dart';
+
+class AppBranding {
+  final String appName;
+  final String appFaviconUrl;
+  final String primaryColorHex;
+  final String secondaryColorHex;
+  final String driverPrimaryColorHex;
+  final String driverSecondaryColorHex;
+  final String supportEmail;
+  final String supportPhone;
+  final String defaultMobileCountryCode;
+  final String pusherAppKey;
+  final String pusherAppCluster;
+  final String otpServiceProvider;
+
+  const AppBranding({
+    required this.appName,
+    this.appFaviconUrl = '',
+    this.primaryColorHex = '#0A9443',
+    this.secondaryColorHex = '#0C7038',
+    this.driverPrimaryColorHex = '#0A9443',
+    this.driverSecondaryColorHex = '#0C7038',
+    this.supportEmail = '',
+    this.supportPhone = '',
+    this.defaultMobileCountryCode = '+91',
+    this.pusherAppKey = '',
+    this.pusherAppCluster = 'mt1',
+    this.otpServiceProvider = 'log',
+  });
+
+  factory AppBranding.fromJson(Map<String, dynamic> json) {
+    return AppBranding(
+      appName: (json['app_name'] ?? AppConfig.appName).toString().trim(),
+      appFaviconUrl: (json['app_favicon'] ?? '').toString().trim(),
+      primaryColorHex: (json['primary_color'] ?? '#0A9443').toString().trim(),
+      secondaryColorHex:
+          (json['secondary_color'] ?? '#0C7038').toString().trim(),
+      driverPrimaryColorHex:
+          (json['driver_primary_color'] ?? json['primary_color'] ?? '#0A9443')
+              .toString()
+              .trim(),
+      driverSecondaryColorHex: (json['driver_secondary_color'] ??
+              json['secondary_color'] ??
+              '#0C7038')
+          .toString()
+          .trim(),
+      supportEmail: (json['support_email'] ?? '').toString().trim(),
+      supportPhone: (json['support_phone'] ?? '').toString().trim(),
+      defaultMobileCountryCode: _normalizeCountryCode(
+        (json['default_mobile_country_code'] ?? '+91').toString(),
+      ),
+      pusherAppKey: (json['pusher_app_key'] ?? '').toString().trim(),
+      pusherAppCluster: (json['pusher_app_cluster'] ?? 'mt1').toString().trim(),
+      otpServiceProvider:
+          (json['otp_service_provider'] ?? 'log').toString().trim(),
+    );
+  }
+
+  factory AppBranding.fallback() {
+    return AppBranding(
+      appName: AppConfig.appName,
+      supportEmail: AppConfig.supportEmail,
+      supportPhone: AppConfig.supportPhone,
+      defaultMobileCountryCode: '+91',
+      pusherAppCluster: 'mt1',
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'app_name': appName,
+      'app_favicon': appFaviconUrl,
+      'primary_color': primaryColorHex,
+      'secondary_color': secondaryColorHex,
+      'driver_primary_color': driverPrimaryColorHex,
+      'driver_secondary_color': driverSecondaryColorHex,
+      'support_email': supportEmail,
+      'support_phone': supportPhone,
+      'default_mobile_country_code': defaultMobileCountryCode,
+      'pusher_app_key': pusherAppKey,
+      'pusher_app_cluster': pusherAppCluster,
+      'otp_service_provider': otpServiceProvider,
+    };
+  }
+
+  String get displayName => appName.isEmpty ? AppConfig.appName : appName;
+  String get resolvedPusherAppKey => pusherAppKey.trim();
+  String get resolvedPusherAppCluster {
+    final cluster = pusherAppCluster.trim();
+    return cluster.isEmpty ? 'mt1' : cluster;
+  }
+
+  String get resolvedOtpServiceProvider {
+    final provider = otpServiceProvider.trim().toLowerCase();
+    return provider.isEmpty ? 'log' : provider;
+  }
+
+  bool get usesFirebasePhoneAuth => resolvedOtpServiceProvider == 'firebase';
+
+  static String _normalizeCountryCode(String value) {
+    final trimmed = value.trim();
+    if (trimmed.isEmpty) return '+91';
+    return trimmed.startsWith('+') ? trimmed : '+$trimmed';
+  }
+}

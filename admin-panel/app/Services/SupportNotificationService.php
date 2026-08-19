@@ -3,8 +3,8 @@
 namespace App\Services;
 
 use App\Helpers\FirebaseHelper;
-use App\Models\SupportTicket;
-use App\Models\SupportTicketReply;
+use App\Models\SupportConversation;
+use App\Models\SupportMessage;
 use App\Models\User;
 use App\Notifications\AppDatabaseNotification;
 
@@ -16,127 +16,77 @@ class SupportNotificationService
         $this->firebase ??= new FirebaseHelper();
     }
 
-    public function notifyRequesterAboutAdminReply(SupportTicket $ticket, SupportTicketReply $reply): bool
+    public function notifyRequesterAboutAdminReply(SupportConversation $conversation, SupportMessage $message): bool
     {
-        $recipient = $this->resolveRequester($ticket);
+        $recipient = $conversation->user;
 
         if (! $recipient) {
             return false;
         }
 
         $title = 'Support reply received';
-        $body = sprintf(
-            'Our support team replied on ticket %s.',
-            $ticket->ticket_number
-        );
+        $body = 'Our support team replied on conversation ' . $conversation->conversation_number . '.';
 
-        $payload = $this->payloadForRequester($ticket, $recipient, [
-            'type' => 'support_ticket_reply',
-            'reply_id' => (string) $reply->id,
+        return $this->notify($conversation, $recipient, $title, $body, [
+            'type' => 'support_message',
+            'message_id' => (string) $message->id,
         ]);
-
-        $recipient->notify(new AppDatabaseNotification($title, $body, $payload));
-
-        $token = $recipient->fcmTokenForApp($payload['requester_role'] ?? $this->inferRole($recipient));
-
-        if (blank($token)) {
-            return false;
-        }
-
-        return $this->firebase->sendToDevice(
-            $token,
-            $title,
-            $body,
-            $payload
-        );
     }
 
     public function notifyRequesterAboutStatusUpdate(
-        SupportTicket $ticket,
+        SupportConversation $conversation,
         string $oldStatus,
         string $newStatus
     ): bool {
-        $recipient = $this->resolveRequester($ticket);
+        $recipient = $conversation->user;
 
         if (! $recipient) {
             return false;
         }
 
-        $title = 'Support ticket updated';
+        $title = 'Support conversation updated';
         $body = sprintf(
-            'Ticket %s moved from %s to %s.',
-            $ticket->ticket_number,
+            'Conversation %s moved from %s to %s.',
+            $conversation->conversation_number,
             str_replace('_', ' ', $oldStatus),
             str_replace('_', ' ', $newStatus)
         );
 
-        $payload = $this->payloadForRequester($ticket, $recipient, [
-            'type' => 'support_ticket_status_update',
+        return $this->notify($conversation, $recipient, $title, $body, [
+            'type' => 'support_conversation_status_update',
             'old_status' => $oldStatus,
             'new_status' => $newStatus,
         ]);
+    }
+
+    protected function notify(SupportConversation $conversation, User $recipient, string $title, string $body, array $extra): bool
+    {
+        $payload = array_merge([
+            'conversation_id' => (string) $conversation->id,
+            'conversation_number' => (string) $conversation->conversation_number,
+            'stage' => (string) $conversation->stage,
+            'status' => (string) $conversation->status,
+            'requester_role' => (string) $conversation->requester_role,
+            'deep_link' => $this->deepLinkFor($conversation->requester_role),
+        ], $extra);
 
         $recipient->notify(new AppDatabaseNotification($title, $body, $payload));
 
-        $token = $recipient->fcmTokenForApp($payload['requester_role'] ?? $this->inferRole($recipient));
+        $token = $recipient->fcmTokenForApp($conversation->requester_role);
 
         if (blank($token)) {
             return false;
         }
 
-        return $this->firebase->sendToDevice(
-            $token,
-            $title,
-            $body,
-            $payload
-        );
+        return $this->firebase->sendToDevice($token, $title, $body, $payload);
     }
 
-    protected function resolveRequester(SupportTicket $ticket): ?User
+    protected function deepLinkFor(string $requesterRole): string
     {
-        $ticket->loadMissing(['user', 'restaurant.owner']);
-
-        if ($ticket->user) {
-            return $ticket->user;
-        }
-
-        return $ticket->restaurant?->owner;
-    }
-
-    protected function payloadForRequester(
-        SupportTicket $ticket,
-        User $recipient,
-        array $extra = []
-    ): array {
-        return array_merge([
-            'ticket_id' => (string) $ticket->id,
-            'ticket_number' => (string) $ticket->ticket_number,
-            'subject' => (string) $ticket->subject,
-            'status' => (string) $ticket->status,
-            'requester_role' => (string) ($ticket->requester_role ?: $this->inferRole($recipient)),
-            'deep_link' => $this->deepLinkFor($recipient),
-        ], $extra);
-    }
-
-    protected function deepLinkFor(User $recipient): string
-    {
-        if ($recipient->hasAnyRole(['restaurant_owner', 'restaurant_staff'])) {
-            return '/restaurant/profile/help';
-        }
-
-        return '/support';
-    }
-
-    protected function inferRole(User $recipient): string
-    {
-        if ($recipient->hasAnyRole(['restaurant_owner', 'restaurant_staff'])) {
-            return 'restaurant';
-        }
-
-        if ($recipient->hasRole('delivery_partner')) {
-            return 'driver';
-        }
-
-        return 'customer';
+        return match ($requesterRole) {
+            'restaurant' => '/restaurant/profile/help',
+            'driver' => '/support',
+            default => '/support',
+        };
     }
 }

@@ -14,6 +14,7 @@ use App\Models\WalletTransaction;
 use App\Services\AutoAssignDriverService;
 use App\Services\DeliveryAreaResolver;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Spatie\Permission\Models\Role;
 
@@ -158,10 +159,32 @@ class DriverController extends Controller
             ->orderBy('created_at', 'desc')
             ->take(20)
             ->get();
+
+        $pendingCodQuery = Order::query()
+            ->where('driver_id', $driver->id)
+            ->where('status', 'delivered')
+            ->where(function ($query) {
+                $query->where('delivery_payment_mode', 'cod')
+                    ->orWhere('payment_method', 'cod');
+            })
+            ->where('cash_collected_amount', '>', 0)
+            ->whereNull('cod_deposited_at');
+        $pendingCodOrders = (clone $pendingCodQuery)
+            ->latest('cash_collected_at')
+            ->get(['id', 'order_number', 'cash_collected_amount', 'cash_collected_at']);
+        $pendingCodAmount = (float) $pendingCodOrders->sum('cash_collected_amount');
         
         $globalMaxActiveOrders = (int) AppSetting::getValue('max_active_orders_per_driver', 1);
         
-        return view('admin.drivers.show', compact('driver', 'wallet', 'orders', 'walletTransactions', 'globalMaxActiveOrders'));
+        return view('admin.drivers.show', compact(
+            'driver',
+            'wallet',
+            'orders',
+            'walletTransactions',
+            'globalMaxActiveOrders',
+            'pendingCodOrders',
+            'pendingCodAmount'
+        ));
     }
     
     public function edit($id)
@@ -244,7 +267,7 @@ class DriverController extends Controller
         $wallet = $driver->wallet()->firstOrCreate(['user_id' => $driver->id], [
             'balance' => 0,
             'locked_balance' => 0,
-            'currency' => 'USD',
+            'currency' => strtoupper(AppSetting::getValue('currency_code', 'INR') ?: 'INR'),
             'is_active' => true,
         ]);
         
@@ -266,6 +289,90 @@ class DriverController extends Controller
         ]);
         
         return redirect()->route('admin.drivers.show', $driver->id)->with('success', 'Wallet topped up successfully!');
+    }
+
+    public function collectCash($id)
+    {
+        $driver = User::role('delivery_partner')->findOrFail($id);
+
+        $settled = DB::transaction(function () use ($driver) {
+            $orders = Order::query()
+                ->where('driver_id', $driver->id)
+                ->where('status', 'delivered')
+                ->where(function ($query) {
+                    $query->where('delivery_payment_mode', 'cod')
+                        ->orWhere('payment_method', 'cod');
+                })
+                ->where('cash_collected_amount', '>', 0)
+                ->whereNull('cod_deposited_at')
+                ->lockForUpdate()
+                ->get();
+
+            if ($orders->isEmpty()) {
+                return ['count' => 0, 'amount' => 0.0];
+            }
+
+            $wallet = Wallet::where('user_id', $driver->id)->lockForUpdate()->first()
+                ?: Wallet::create([
+                    'user_id' => $driver->id,
+                    'balance' => 0,
+                    'locked_balance' => 0,
+                    'currency' => strtoupper(AppSetting::getValue('currency_code', 'INR') ?: 'INR'),
+                    'is_active' => true,
+                ]);
+
+            $settledCount = 0;
+            $settledAmount = 0.0;
+
+            foreach ($orders as $order) {
+                $alreadyCredited = WalletTransaction::query()
+                    ->where('wallet_id', $wallet->id)
+                    ->where('reference_type', 'driver_cod_deposit')
+                    ->where('reference_id', $order->id)
+                    ->exists();
+
+                $amount = round((float) $order->cash_collected_amount, 2);
+                if (! $alreadyCredited && $amount > 0) {
+                    $wallet->increment('balance', $amount);
+                    $wallet->refresh();
+
+                    WalletTransaction::create([
+                        'wallet_id' => $wallet->id,
+                        'user_id' => $driver->id,
+                        'type' => 'credit',
+                        'amount' => $amount,
+                        'balance_after' => $wallet->balance,
+                        'reference_type' => 'driver_cod_deposit',
+                        'reference_id' => $order->id,
+                        'description' => 'COD cash deposited for order #' . ($order->order_number ?? $order->id),
+                        'created_by' => auth()->id(),
+                        'meta' => ['source' => 'admin_cash_collection'],
+                    ]);
+
+                    $settledCount++;
+                    $settledAmount += $amount;
+                }
+
+                $order->forceFill([
+                    'cod_reconciliation_status' => 'deposited',
+                    'cod_deposited_at' => now(),
+                ])->save();
+            }
+
+            return ['count' => $settledCount, 'amount' => $settledAmount];
+        });
+
+        if ($settled['count'] === 0) {
+            return redirect()->route('admin.drivers.show', $driver->id)
+                ->with('info', 'There is no unsettled COD cash for this driver.');
+        }
+
+        return redirect()->route('admin.drivers.show', $driver->id)->with(
+            'success',
+            'Collected ' . AppSetting::sanitizedCurrencySymbol()
+                . number_format($settled['amount'], AppSetting::currencyDecimals())
+                . ' from ' . $settled['count'] . ' COD order(s).'
+        );
     }
 
     public function walletTransactions(Request $request, $id)
@@ -360,7 +467,7 @@ class DriverController extends Controller
             ->where('driver_id', $driver->id)
             ->firstOrFail();
         
-        $currencySymbol = AppSetting::getValue('currency_symbol', '?');
+        $currencySymbol = AppSetting::sanitizedCurrencySymbol();
         
         return view('admin.drivers.order-details', compact('driver', 'order', 'currencySymbol'));
     }

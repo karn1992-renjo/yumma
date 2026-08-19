@@ -3,7 +3,7 @@
 @section('title', 'Wallet Management')
 @section('header', 'Wallet Management')
 
-@php $currencySymbol = App\Models\AppSetting::getValue('currency_symbol', '₹'); @endphp
+@php $currencySymbol = App\Models\AppSetting::sanitizedCurrencySymbol(); @endphp
 
 @section('content')
 <div class="page-header">

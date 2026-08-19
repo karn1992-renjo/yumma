@@ -7,7 +7,7 @@
     <meta name="csrf-token" content="{{ csrf_token() }}">
     <title>{{ $restaurant->name }} - Order Online | {{ $appName ?? config('app.name') }}</title>
     @php
-        $currencySymbol = App\Models\AppSetting::getValue('currency_symbol', '₹');
+        $currencySymbol = App\Models\AppSetting::sanitizedCurrencySymbol();
         $currencyDecimals = App\Models\AppSetting::currencyDecimals();
     @endphp
     

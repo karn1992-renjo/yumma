@@ -162,7 +162,10 @@ class RestaurantCart {
 
   Map<String, dynamic> toJson() => {
         'restaurant': restaurant.toJson(),
-        'items': items.map((item) => item.toJson()).toList(),
+        'items': items
+            .where((item) => !item.isPromotionReward)
+            .map((item) => item.toJson())
+            .toList(),
       };
 
   factory RestaurantCart.fromJson(Map<String, dynamic> json) {
@@ -175,7 +178,9 @@ class RestaurantCart {
             final itemData = Map<String, dynamic>.from(itemJson);
             return CartItem.fromJson(itemData, MenuItem.fromJson(itemData));
           }).where((item) {
-            return item.menuItem.id > 0 && item.quantity > 0;
+            return !item.isPromotionReward &&
+                item.menuItem.id > 0 &&
+                item.quantity > 0;
           }).toList(growable: false)
         : <CartItem>[];
 
@@ -532,96 +537,6 @@ class CartProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  void syncPromotionRewards(List<Map<String, dynamic>> rewardLines) {
-    final restaurant = _restaurant;
-    if (restaurant == null) {
-      debugPrint(
-        '[SwaadPromoCart] syncPromotionRewards skipped: no active restaurant, '
-        'rewardLines=${rewardLines.length}',
-      );
-      return;
-    }
-
-    final beforePaid = paidItemCount;
-    final beforeRewards = promotionRewardItems.fold(
-      0,
-      (sum, item) => sum + item.quantity,
-    );
-    _items.removeWhere((item) => item.isPromotionReward);
-    debugPrint(
-      '[SwaadPromoCart] syncPromotionRewards start: restaurant=${restaurant.id}, '
-      'paidQty=$beforePaid, oldRewardQty=$beforeRewards, '
-      'incomingLines=${rewardLines.length}',
-    );
-
-    if (paidItems.isEmpty) {
-      debugPrint(
-        '[SwaadPromoCart] syncPromotionRewards cleared: no paid items left.',
-      );
-      _syncActiveCart();
-      _saveCart();
-      notifyListeners();
-      return;
-    }
-
-    for (final line in rewardLines) {
-      final menuItemId = _parseNullableInt(
-            line['menu_item_id'] ?? line['item_id'],
-          ) ??
-          0;
-      if (menuItemId <= 0) {
-        debugPrint(
-          '[SwaadPromoCart] reward line skipped: missing item id, line=$line',
-        );
-        continue;
-      }
-
-      final quantity = CartItem._parseQuantity(line['quantity'] ?? line['qty']);
-      debugPrint(
-        '[SwaadPromoCart] reward line add: promotion=${line['promotion_id']}, '
-        'item=$menuItemId, qty=$quantity, included=${line['included_in_cart']}, '
-        'name=${line['name'] ?? line['title']}',
-      );
-      _items.add(
-        CartItem(
-          menuItem: MenuItem.fromJson({
-            'id': menuItemId,
-            'menu_item_id': menuItemId,
-            'restaurant_id': restaurant.id,
-            'category_id': line['category_id'],
-            'name': line['name'] ?? line['title'] ?? 'Free item',
-            'description': line['description'],
-            'price': line['unit_price'] ?? line['price'] ?? 0,
-            'discounted_price': 0,
-            'image_url': line['image_url'] ?? line['image'],
-            'images': line['images'],
-            'is_veg': line['is_veg'] ?? true,
-            'food_type': line['food_type'],
-            'tags': ['promotion_reward'],
-            'created_at': DateTime.now().toIso8601String(),
-          }),
-          quantity: quantity,
-          isPromotionReward: true,
-          promotionId: _parseNullableInt(line['promotion_id']),
-          promotionTitle:
-              (line['promotion_title'] ?? line['title'])?.toString(),
-        ),
-      );
-    }
-
-    _syncActiveCart();
-    _saveCart();
-    final afterRewards = promotionRewardItems.fold(
-      0,
-      (sum, item) => sum + item.quantity,
-    );
-    debugPrint(
-      '[SwaadPromoCart] syncPromotionRewards done: paidQty=$paidItemCount, '
-      'rewardQty=$afterRewards, totalLines=${_items.length}',
-    );
-    notifyListeners();
-  }
-
   void incrementQuantity(int menuItemId) {
     final index = _items.indexWhere((item) => item.menuItem.id == menuItemId);
     if (index != -1) {
@@ -752,7 +667,7 @@ class CartProvider extends ChangeNotifier {
     final prefs = await SharedPreferences.getInstance();
     final cartData = {
       'restaurant': _restaurant?.toJson(),
-      'items': _items.map((item) => item.toJson()).toList(),
+      'items': paidItems.map((item) => item.toJson()).toList(),
       'active_restaurant_id': _activeRestaurantId,
       'carts': carts.map((cart) => cart.toJson()).toList(),
     };
@@ -802,7 +717,10 @@ class CartProvider extends ChangeNotifier {
                     MenuItem.fromJson(itemData),
                   );
                 })
-                .where((item) => item.menuItem.id > 0 && item.quantity > 0)
+                .where((item) =>
+                    !item.isPromotionReward &&
+                    item.menuItem.id > 0 &&
+                    item.quantity > 0)
                 .toList(growable: false);
           }
         }

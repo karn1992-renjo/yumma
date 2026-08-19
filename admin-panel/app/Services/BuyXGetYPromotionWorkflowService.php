@@ -41,11 +41,15 @@ class BuyXGetYPromotionWorkflowService
     {
         $type = $this->normalize($promotion->promotion_type);
         $rewardType = $this->normalize(data_get($promotion->rewards ?? [], 'type'));
+        $buyRule = data_get($promotion->conditions ?? [], 'buy_rule');
+        $rewardRule = data_get($promotion->rewards ?? [], 'reward_rule');
 
         return in_array($type, self::TYPES, true)
             || in_array($rewardType, self::TYPES, true)
-            || data_get($promotion->conditions ?? [], 'buy_rule') !== null
-            || data_get($promotion->rewards ?? [], 'reward_rule') !== null;
+            || (
+                is_array($buyRule) && $buyRule !== []
+                && is_array($rewardRule) && $rewardRule !== []
+            );
     }
 
     public function evaluate(Promotion $promotion, array $context): array
@@ -94,7 +98,12 @@ class BuyXGetYPromotionWorkflowService
 
         $rewardTypeForQuantity = $this->normalize($rewardRule['reward_type'] ?? 'same_item');
         $includedRewardUnits = $this->includedRewardUnits($eligibleItems, $rewardTypeForQuantity, $buyQuantity, $rewardQuantity);
-        $rewardCandidates = $this->rewardCandidates($eligibleItems, $rewardRule);
+        $rewardCandidates = $this->rewardCandidates(
+            $promotion,
+            $eligibleItems,
+            $rewardRule,
+            isset($context['restaurant_id']) ? (int) $context['restaurant_id'] : null
+        );
         $rewardIncludedInCart = (bool) (
             $rewardRule['included_in_cart']
             ?? $rewardRule['reward_included_in_cart']
@@ -285,16 +294,23 @@ class BuyXGetYPromotionWorkflowService
         return ! in_array(false, $activeChecks, true);
     }
 
-    private function rewardCandidates(Collection $eligibleItems, array $rewardRule): Collection
+    private function rewardCandidates(
+        Promotion $promotion,
+        Collection $eligibleItems,
+        array $rewardRule,
+        ?int $contextRestaurantId
+    ): Collection
     {
         $rewardType = $this->normalize($rewardRule['reward_type'] ?? 'same_item');
         $itemIds = array_map('intval', (array) ($rewardRule['item_ids'] ?? $rewardRule['menu_item_ids'] ?? []));
         $categoryIds = array_map('intval', (array) ($rewardRule['category_ids'] ?? []));
+        $restaurantId = $contextRestaurantId ?: (int) ($promotion->restaurant_id ?? 0);
 
         if ($itemIds) {
-            $items = MenuItem::query()
+            $items = $this->availableRewardItemsQuery($restaurantId)
                 ->whereIn('id', $itemIds)
                 ->get()
+                ->filter(fn (MenuItem $item) => $item->is_scheduled_available)
                 ->map(fn (MenuItem $item) => $this->candidateFromMenuItem($item));
 
             if ($items->isNotEmpty()) {
@@ -303,11 +319,11 @@ class BuyXGetYPromotionWorkflowService
         }
 
         if ($categoryIds) {
-            return MenuItem::query()
+            return $this->availableRewardItemsQuery($restaurantId)
                 ->whereIn('category_id', $categoryIds)
-                ->where('is_available', true)
                 ->limit(12)
                 ->get()
+                ->filter(fn (MenuItem $item) => $item->is_scheduled_available)
                 ->map(fn (MenuItem $item) => $this->candidateFromMenuItem($item));
         }
 
@@ -337,6 +353,17 @@ class BuyXGetYPromotionWorkflowService
         }
 
         return collect();
+    }
+
+    private function availableRewardItemsQuery(int $restaurantId)
+    {
+        return MenuItem::query()
+            ->when($restaurantId > 0, fn ($query) => $query->where('restaurant_id', $restaurantId))
+            ->where('is_available', true)
+            ->where(function ($query) {
+                $query->whereNull('approval_status')
+                    ->orWhere('approval_status', 'approved');
+            });
     }
 
     private function rewardCandidatesAreInCart(Collection $rewardCandidates, Collection $eligibleItems): bool

@@ -16,8 +16,13 @@ import '../../widgets/restaurant/reject_order_dialog.dart';
 
 class RestaurantOrderDetailScreen extends StatefulWidget {
   final int orderId;
+  final int? restaurantId;
 
-  const RestaurantOrderDetailScreen({super.key, required this.orderId});
+  const RestaurantOrderDetailScreen({
+    super.key,
+    required this.orderId,
+    this.restaurantId,
+  });
 
   @override
   State<RestaurantOrderDetailScreen> createState() =>
@@ -42,8 +47,12 @@ class _RestaurantOrderDetailScreenState
   Future<void> _loadOrder() async {
     setState(() => _isLoading = true);
     try {
-      final response =
-          await _api.get(ApiConstants.restaurantOrderDetails(widget.orderId));
+      final response = await _api.get(
+        ApiConstants.restaurantOrderDetails(widget.orderId),
+        queryParams: {
+          if (widget.restaurantId != null) 'restaurant_id': widget.restaurantId,
+        },
+      );
       if (response['success'] == true && mounted) {
         final data = response['data'];
         setState(() {

@@ -51,6 +51,7 @@ class MenuItemResource extends JsonResource
             'description' => $this->description,
             'price' => $this->price,
             'discounted_price' => $this->discounted_price,
+            'is_price_inclusive_gst' => (bool) $this->is_price_inclusive_gst,
             'final_price' => $this->getFinalPriceAttribute(),
             'images' => $images,
             'image' => $images[0] ?? null,
@@ -59,6 +60,7 @@ class MenuItemResource extends JsonResource
             'food_type' => $this->food_type ?: ($this->is_veg ? 'veg' : 'non_veg'),
             'diet_label' => $this->diet_label,
             'is_available' => $this->is_available,
+            'unavailable_until' => optional($this->unavailable_until)?->toIso8601String(),
             'is_scheduled_available' => $this->is_scheduled_available,
             'availability_schedule' => $this->availability_schedule ?? [],
             'approval_status' => $this->approval_status ?? 'approved',
@@ -76,3 +78,4 @@ class MenuItemResource extends JsonResource
         ];
     }
 }
+

@@ -4,7 +4,7 @@
 @section('header', 'Payment Settings')
 
 @php
-    $currencySymbol = App\Models\AppSetting::getValue('currency_symbol', 'â‚¹');
+    $currencySymbol = App\Models\AppSetting::sanitizedCurrencySymbol();
     $paymentGatewayEnabled = filter_var($settings['payment_gateway_enabled'] ?? '1', FILTER_VALIDATE_BOOLEAN);
     $enabledPaymentGateways = json_decode($settings['enabled_payment_gateways'] ?? '[]', true);
     $enabledPaymentGateways = is_array($enabledPaymentGateways) && count($enabledPaymentGateways)
@@ -263,6 +263,47 @@
                                 <select name="cashfree_mode" class="form-select">
                                     <option value="test" {{ ($settings['cashfree_mode'] ?? 'test') == 'test' ? 'selected' : '' }}>Test Mode</option>
                                     <option value="live" {{ ($settings['cashfree_mode'] ?? '') == 'live' ? 'selected' : '' }}>Live Mode</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+
+                    <hr>
+
+                    <div id="cashfree-vrs-settings-group" class="row">
+                        <div class="col-12">
+                            <p class="text-muted small mb-2">
+                                Cashfree Document Verification (Secure ID / VRS) &mdash; used to verify PAN, GSTIN, driving licence, vehicle RC and Aadhaar submitted during partner registration. Leave client ID/secret blank to reuse the Cashfree App ID / Secret Key above. When disabled, registration in the driver and restaurant apps works as usual with no verification calls made.
+                            </p>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="mb-3">
+                                <label class="form-label fw-semibold">Document Verification</label>
+                                <select name="cashfree_vrs_enabled" class="form-select">
+                                    <option value="0" {{ ($settings['cashfree_vrs_enabled'] ?? '0') == '0' ? 'selected' : '' }}>Disabled</option>
+                                    <option value="1" {{ ($settings['cashfree_vrs_enabled'] ?? '0') == '1' ? 'selected' : '' }}>Enabled</option>
+                                </select>
+                                <div class="form-text">When disabled, no verification calls are made and registration works as usual.</div>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="mb-3">
+                                <label class="form-label fw-semibold">Cashfree Verification Client ID</label>
+                                <input type="text" name="cashfree_vrs_client_id" class="form-control" value="{{ $settings['cashfree_vrs_client_id'] ?? '' }}">
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="mb-3">
+                                <label class="form-label fw-semibold">Cashfree Verification Client Secret</label>
+                                <input type="password" name="cashfree_vrs_client_secret" class="form-control" value="{{ old('cashfree_vrs_client_secret', '') }}">
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="mb-3">
+                                <label class="form-label fw-semibold">Cashfree Verification Mode</label>
+                                <select name="cashfree_vrs_mode" class="form-select">
+                                    <option value="test" {{ ($settings['cashfree_vrs_mode'] ?? 'test') == 'test' ? 'selected' : '' }}>Test Mode</option>
+                                    <option value="live" {{ ($settings['cashfree_vrs_mode'] ?? '') == 'live' ? 'selected' : '' }}>Live Mode</option>
                                 </select>
                             </div>
                         </div>

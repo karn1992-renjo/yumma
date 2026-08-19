@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../widgets/common/app_cached_image.dart';
+import '../../widgets/common/app_skeleton.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../config/api_constants.dart';
@@ -30,8 +31,8 @@ class _SavedRestaurantsScreenState extends State<SavedRestaurantsScreen> {
     _loadSaved();
   }
 
-  Future<void> _loadSaved() async {
-    setState(() => _loading = true);
+  Future<void> _loadSaved({bool forceRefresh = false}) async {
+    setState(() => _loading = _restaurants.isEmpty);
     final prefs = await SharedPreferences.getInstance();
     final savedIds = (prefs.getStringList('saved_restaurant_ids') ?? <String>[])
         .map(int.tryParse)
@@ -41,7 +42,15 @@ class _SavedRestaurantsScreenState extends State<SavedRestaurantsScreen> {
     final restaurants = <Map<String, dynamic>>[];
 
     try {
-      final response = await _api.get(ApiConstants.savedRestaurants);
+      final response = await _api.get(
+        ApiConstants.savedRestaurants,
+        cachePolicy: ApiCachePolicy.screen,
+        cacheFirst: !forceRefresh,
+        refreshCached: !forceRefresh,
+        onCacheRefreshed: (_) {
+          if (mounted) _loadSaved(forceRefresh: true);
+        },
+      );
       if (response['success'] == true && response['data'] is List) {
         restaurants.addAll(
           (response['data'] as List)
@@ -54,8 +63,13 @@ class _SavedRestaurantsScreenState extends State<SavedRestaurantsScreen> {
     if (restaurants.isEmpty) {
       for (final id in savedIds) {
         try {
-          final response =
-              await _api.get('${ApiConstants.restaurantDetails}/$id');
+          final response = await _api.get(
+            '${ApiConstants.restaurantDetails}/$id',
+            includeAuth: false,
+            cachePolicy: ApiCachePolicy.discovery,
+            cacheFirst: !forceRefresh,
+            refreshCached: !forceRefresh,
+          );
           final data = response['data'];
           if (response['success'] == true && data is Map) {
             restaurants.add(Map<String, dynamic>.from(data));
@@ -205,7 +219,7 @@ class _SavedRestaurantsScreenState extends State<SavedRestaurantsScreen> {
       body: SafeArea(
         bottom: false,
         child: RefreshIndicator(
-          onRefresh: _loadSaved,
+          onRefresh: () => _loadSaved(forceRefresh: true),
           color: profileAccentColor(context),
           child: CustomScrollView(
             slivers: [
@@ -256,8 +270,10 @@ class _SavedRestaurantsScreenState extends State<SavedRestaurantsScreen> {
                 ),
               ),
               if (_loading)
-                const SliverFillRemaining(
-                  child: Center(child: CircularProgressIndicator()),
+                const AppSkeletonSliverList(
+                  itemCount: 5,
+                  itemHeight: 112,
+                  padding: EdgeInsets.fromLTRB(12, 4, 12, 120),
                 )
               else if (_restaurants.isEmpty && fallbackIds.isEmpty)
                 SliverFillRemaining(

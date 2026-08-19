@@ -9,6 +9,8 @@ import '../../models/order.dart';
 import '../../providers/auth_provider.dart';
 import '../../providers/restaurant_provider.dart';
 import '../../services/api_service.dart';
+import '../../services/app_order_overlay_service.dart';
+import '../../services/restaurant_order_realtime_service.dart';
 import '../../theme/foodflow_theme.dart';
 import '../../utils/currency_utils.dart';
 import '../../widgets/common/network_image_loader.dart';
@@ -34,6 +36,10 @@ class _RestaurantOrdersScreenState extends State<RestaurantOrdersScreen> {
   bool _isLoading = true;
   String? _loadError;
   String _selectedFilter = 'all';
+  Map<String, dynamic>? _incomingOrderPayload;
+  bool _showIncomingOrderBanner = false;
+  bool _isOpeningIncomingOrder = false;
+  StreamSubscription<Map<String, dynamic>>? _orderUpdateSubscription;
 
   static const _filters = [
     'all',
@@ -47,7 +53,35 @@ class _RestaurantOrdersScreenState extends State<RestaurantOrdersScreen> {
   @override
   void initState() {
     super.initState();
+    _orderUpdateSubscription =
+        RestaurantOrderRealtimeService.instance.updates.listen(
+      _onRealtimeOrderUpdate,
+    );
     _loadOrders();
+  }
+
+  void _onRealtimeOrderUpdate(Map<String, dynamic> payload) {
+    if (!mounted || !_matchesRestaurantScope(payload)) return;
+    setState(() {
+      _upsertRealtimeOrder(payload);
+      _orders.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    });
+  }
+
+  bool _matchesRestaurantScope(Map<String, dynamic> payload) {
+    if (!_isProviderListenerAttached ||
+        _restaurantProvider.selectedRestaurantId == null) {
+      return true;
+    }
+    final restaurant = payload['restaurant'];
+    final restaurantId = _parseNullableInt(
+      payload['restaurant_id'] ?? (restaurant is Map ? restaurant['id'] : null),
+    );
+    if (restaurantId != null) {
+      return restaurantId == _restaurantProvider.selectedRestaurantId;
+    }
+    final orderId = _parseNullableInt(payload['id'] ?? payload['order_id']);
+    return orderId != null && _orders.any((order) => order.id == orderId);
   }
 
   @override
@@ -63,11 +97,83 @@ class _RestaurantOrdersScreenState extends State<RestaurantOrdersScreen> {
 
   void _onRestaurantProviderUpdated() {
     if (!mounted) return;
-    _loadOrders();
+    _mergeRealtimeOrdersFromProvider();
+  }
+
+  void _mergeRealtimeOrdersFromProvider() {
+    final payloads = <Map<String, dynamic>>[];
+    for (final source in [
+      ..._restaurantProvider.pendingOrders,
+      ..._restaurantProvider.activeOrders,
+    ]) {
+      if (source is Map<String, dynamic>) {
+        payloads.add(source);
+      } else if (source is Map) {
+        payloads.add(Map<String, dynamic>.from(source));
+      }
+    }
+    if (payloads.isEmpty) return;
+
+    setState(() {
+      for (final payload in payloads) {
+        _upsertRealtimeOrder(payload);
+      }
+      _orders.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    });
+  }
+
+  void _upsertRealtimeOrder(Map<String, dynamic> payload) {
+    final incoming = Order.fromJson(payload);
+    if (incoming.canRestaurantAccept) {
+      _incomingOrderPayload = payload;
+      _showIncomingOrderBanner = true;
+    } else if (_parseNullableInt(
+          _incomingOrderPayload?['id'] ?? _incomingOrderPayload?['order_id'],
+        ) ==
+        incoming.id) {
+      _incomingOrderPayload = null;
+      _showIncomingOrderBanner = false;
+    }
+
+    if (!_matchesSelectedFilter(incoming)) {
+      _orders.removeWhere((order) => order.id == incoming.id);
+      return;
+    }
+
+    final index = _orders.indexWhere((order) => order.id == incoming.id);
+    if (index == -1) {
+      _orders.insert(0, incoming);
+      return;
+    }
+
+    final hasFullDetails = payload.containsKey('items') ||
+        payload.containsKey('order_items') ||
+        payload.containsKey('customer_name') ||
+        payload.containsKey('total');
+    if (hasFullDetails) {
+      _orders[index] = incoming;
+      return;
+    }
+
+    _orders[index] = _orders[index].copyWithRealtime(
+      status: payload['status']?.toString(),
+      driverId: _parseNullableInt(payload['driver_id']),
+    );
+  }
+
+  bool _matchesSelectedFilter(Order order) {
+    return _selectedFilter == 'all' || order.status == _selectedFilter;
+  }
+
+  int? _parseNullableInt(dynamic value) {
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    return int.tryParse(value?.toString() ?? '');
   }
 
   @override
   void dispose() {
+    _orderUpdateSubscription?.cancel();
     if (_isProviderListenerAttached) {
       _restaurantProvider.removeListener(_onRestaurantProviderUpdated);
     }
@@ -257,6 +363,77 @@ class _RestaurantOrdersScreenState extends State<RestaurantOrdersScreen> {
     return showRestaurantRejectOrderDialog(context);
   }
 
+  Future<Map<String, dynamic>> _incomingOrderDetailsPayload(
+    Map<String, dynamic> payload,
+  ) async {
+    final orderId = _parseNullableInt(payload['id'] ?? payload['order_id']);
+    if (orderId == null) return payload;
+
+    try {
+      final response = await _api.get(
+        ApiConstants.restaurantOrderDetails(orderId),
+      );
+      final body = response['data'];
+      if (body is Map<String, dynamic>) {
+        return <String, dynamic>{...payload, ...body};
+      }
+      if (body is Map) {
+        return <String, dynamic>{
+          ...payload,
+          ...Map<String, dynamic>.from(body),
+        };
+      }
+    } catch (error) {
+      debugPrint('Incoming order details error: $error');
+    }
+    return payload;
+  }
+
+  Future<void> _openIncomingOrderAcceptScreen() async {
+    final payload = _incomingOrderPayload;
+    if (payload == null || _isOpeningIncomingOrder) return;
+
+    setState(() => _isOpeningIncomingOrder = true);
+    final fullPayload = await _incomingOrderDetailsPayload(payload);
+    if (!mounted) return;
+
+    setState(() => _isOpeningIncomingOrder = false);
+    final orderId = _parseNullableInt(
+      fullPayload['id'] ?? fullPayload['order_id'],
+    );
+    if (orderId == null) return;
+
+    var handled = false;
+    await AppOrderOverlayService.showRestaurantOrder(
+      fullPayload,
+      onAccept: (id, preparationMinutes) async {
+        final success = await _restaurantProvider.acceptOrder(
+          id,
+          preparationTimeMinutes: preparationMinutes,
+        );
+        handled = success;
+        return success;
+      },
+      onReject: (id, reason) async {
+        final selectedReason = await _askRejectReason();
+        if (selectedReason == null) return false;
+        final success = await _restaurantProvider.rejectOrder(
+          id,
+          selectedReason,
+        );
+        handled = success;
+        return success;
+      },
+    );
+
+    if (!mounted || !handled) return;
+    setState(() {
+      _incomingOrderPayload = null;
+      _showIncomingOrderBanner = false;
+    });
+    await _loadOrders();
+  }
+
   @override
   Widget build(BuildContext context) {
     final canManageOrders =
@@ -265,7 +442,8 @@ class _RestaurantOrdersScreenState extends State<RestaurantOrdersScreen> {
       backgroundColor: FoodFlowTheme.canvas,
       appBar: widget.showAppBar
           ? AppBar(
-              title: const Text('Orders'),
+              title: const Text('Orders',
+                  style: TextStyle(fontWeight: FontWeight.w900)),
               actions: [
                 IconButton(
                   onPressed: _loadOrders,
@@ -350,9 +528,139 @@ class _RestaurantOrdersScreenState extends State<RestaurantOrdersScreen> {
                             ),
                           ),
           ),
+          if (_incomingOrderPayload != null)
+            _IncomingOrderSlideBanner(
+              visible: _showIncomingOrderBanner,
+              loading: _isOpeningIncomingOrder,
+              payload: _incomingOrderPayload!,
+              onTap: _openIncomingOrderAcceptScreen,
+              onDismiss: () => setState(() => _showIncomingOrderBanner = false),
+            ),
         ],
       ),
     );
+  }
+}
+
+class _IncomingOrderSlideBanner extends StatelessWidget {
+  const _IncomingOrderSlideBanner({
+    required this.visible,
+    required this.loading,
+    required this.payload,
+    required this.onTap,
+    required this.onDismiss,
+  });
+
+  final bool visible;
+  final bool loading;
+  final Map<String, dynamic> payload;
+  final VoidCallback onTap;
+  final VoidCallback onDismiss;
+
+  @override
+  Widget build(BuildContext context) {
+    final orderNumber = _text(
+        payload['order_number'] ?? payload['order_no'] ?? payload['id'],
+        'Order');
+    final restaurantName = _text(payload['restaurant_name'], 'New order');
+    final total =
+        payload['total'] ?? payload['grand_total'] ?? payload['amount'];
+    final items = payload['items'] ?? payload['order_items'];
+    final itemCount = items is List ? items.length : null;
+
+    return SafeArea(
+      top: false,
+      minimum: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+      child: AnimatedSlide(
+        duration: const Duration(milliseconds: 220),
+        curve: Curves.easeOutCubic,
+        offset: visible ? Offset.zero : const Offset(0, 1.1),
+        child: AnimatedOpacity(
+          duration: const Duration(milliseconds: 180),
+          opacity: visible ? 1 : 0,
+          child: Material(
+            color: Colors.transparent,
+            child: InkWell(
+              onTap: loading ? null : onTap,
+              borderRadius: BorderRadius.circular(18),
+              child: Container(
+                padding: const EdgeInsets.fromLTRB(14, 12, 10, 12),
+                decoration: BoxDecoration(
+                  color: FoodFlowTheme.success,
+                  borderRadius: BorderRadius.circular(18),
+                  boxShadow: const [
+                    BoxShadow(
+                      color: Color(0x22000000),
+                      blurRadius: 18,
+                      offset: Offset(0, 8),
+                    ),
+                  ],
+                ),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 44,
+                      height: 44,
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(.18),
+                        borderRadius: BorderRadius.circular(13),
+                      ),
+                      child: loading
+                          ? const Padding(
+                              padding: EdgeInsets.all(12),
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Colors.white,
+                              ),
+                            )
+                          : const Icon(Icons.receipt_long, color: Colors.white),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            'You have a new order',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 15,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                          const SizedBox(height: 3),
+                          Text(
+                            '#$orderNumber • $restaurantName${itemCount == null ? '' : ' • $itemCount item${itemCount == 1 ? '' : 's'}'}${total == null ? '' : ' • ${formatCurrencyValue(context, total)}'}',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: Colors.white.withOpacity(.86),
+                              fontSize: 11,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    IconButton(
+                      onPressed: onDismiss,
+                      icon: const Icon(Icons.close, color: Colors.white),
+                    ),
+                    const Icon(Icons.arrow_forward, color: Colors.white),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  static String _text(dynamic value, String fallback) {
+    final text = value?.toString().trim();
+    return text == null || text.isEmpty ? fallback : text;
   }
 }
 

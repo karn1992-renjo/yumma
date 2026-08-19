@@ -132,7 +132,7 @@ class OrderAlertForegroundService : Service() {
     }
 
     companion object {
-        const val CHANNEL_ID = "swaad_order_listener"
+        const val CHANNEL_ID = "Yumma!_order_listener"
         const val NOTIFICATION_ID = 4101
         const val RESTART_REQUEST_CODE = 4102
         const val DEFAULT_STATUS = "Logged in and ready for delivery orders"

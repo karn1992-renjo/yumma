@@ -1,17 +1,19 @@
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+import 'package:food_delivery_customer/utils/app_text.dart';
 
 import '../../models/app_branding.dart';
 import '../../providers/auth_provider.dart';
 import '../../services/app_branding_service.dart';
 import '../../services/appsflyer_deep_link_service.dart';
 import '../../services/firebase_phone_auth_service.dart';
-import '../../theme/brand_palette.dart';
+import '../../theme/foodflow_theme.dart';
 import '../../utils/phone_number_utils.dart';
+import 'a1paso_auth_widgets.dart';
 import 'otp_verification_screen.dart';
-
-import 'package:food_delivery_customer/utils/app_text.dart';
 
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({
@@ -30,9 +32,9 @@ class RegisterScreen extends StatefulWidget {
 }
 
 class _RegisterScreenState extends State<RegisterScreen> {
-  static const _text = Color(0xFF111827);
-  static const _subtext = Color(0xFF6B7280);
-  static const _line = Color(0xFFE5E7EB);
+  static const _text = A1PasoAuthColors.text;
+  static const _subtext = A1PasoAuthColors.subtext;
+  static const _line = A1PasoAuthColors.border;
 
   final GlobalKey<FormState> _formKey = GlobalKey<FormState>();
   final TextEditingController _nameController = TextEditingController();
@@ -48,9 +50,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   bool _isLoadingBranding = true;
   bool _isSendingOtp = false;
 
-  BrandPalette get _palette => BrandPalette.fromBranding(_branding);
-  Color get _primary => _palette.primary;
-  Color get _secondary => _palette.secondary;
+  String get _countryCode => _branding.defaultMobileCountryCode;
 
   @override
   void initState() {
@@ -86,7 +86,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   String _normalizedPhone() {
     return PhoneNumberUtils.normalizeMobile(
       _phoneController.text,
-      countryCode: _branding.defaultMobileCountryCode,
+      countryCode: _countryCode,
       log: true,
     ).normalizedNumber;
   }
@@ -96,7 +96,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
     try {
       return PhoneNumberUtils.localMobile(
         phone,
-        countryCode: _branding.defaultMobileCountryCode,
+        countryCode: _countryCode,
       );
     } on FormatException {
       return PhoneNumberUtils.sanitizedDigits(phone);
@@ -106,7 +106,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   Future<void> _verifyMobile() async {
     if (_isSendingOtp) return;
     if (_phoneController.text.trim().isEmpty) {
-      _showMessage('Enter your mobile number first.', isError: true);
+      _showMessage(appText('Enter your mobile number first.'), isError: true);
       return;
     }
 
@@ -129,7 +129,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
       if (status == null) {
         _showMessage(
-          authProvider.error ?? 'Unable to validate your mobile number.',
+          authProvider.error ??
+              appText('Unable to validate your mobile number.'),
           isError: true,
         );
         return;
@@ -137,7 +138,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
       if (status['exists'] == true) {
         _showMessage(
-          'An account already exists with this mobile number. Please sign in.',
+          appText(
+              'An account already exists with this mobile number. Please sign in.'),
           isError: true,
         );
         return;
@@ -149,7 +151,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
         try {
           firebaseVerificationId = await _firebasePhoneAuthService.sendOtp(
             phone: phone,
-            countryCode: _branding.defaultMobileCountryCode,
+            countryCode: _countryCode,
           );
         } catch (error) {
           if (!mounted) return;
@@ -169,7 +171,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
         if (!mounted) return;
 
         if (!sent) {
-          _showMessage(authProvider.error ?? 'Failed to send OTP',
+          _showMessage(authProvider.error ?? appText('Failed to send OTP'),
               isError: true);
           return;
         }
@@ -179,7 +181,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
         MaterialPageRoute(
           builder: (_) => OtpVerificationScreen(
             phoneNumber: phone,
-            countryCode: _branding.defaultMobileCountryCode,
+            countryCode: _countryCode,
             appName: _branding.displayName,
             role: 'customer',
             flow: 'signup',
@@ -197,7 +199,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
         _phoneController.text = _stripCountryCode(_verifiedPhoneNumber!);
       });
 
-      _showMessage('Mobile number verified successfully.');
+      _showMessage(appText('Mobile number verified successfully.'));
     } finally {
       if (mounted) {
         setState(() => _isSendingOtp = false);
@@ -208,7 +210,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
   Future<void> _handleRegister() async {
     if (!_formKey.currentState!.validate()) return;
     if (!_agreeTerms) {
-      _showMessage('Please agree to the terms and conditions', isError: true);
+      _showMessage(appText('Please agree to the terms and conditions'),
+          isError: true);
       return;
     }
 
@@ -236,7 +239,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
     if (!success) {
       _showMessage(
-        authProvider.error ?? 'Registration failed',
+        authProvider.error ?? appText('Registration failed'),
         isError: true,
       );
       return;
@@ -246,7 +249,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       await authProvider.logout();
       if (!mounted) return;
       _showMessage(
-        'Please register with a customer account.',
+        appText('Please register with a customer account.'),
         isError: true,
       );
       return;
@@ -259,373 +262,348 @@ class _RegisterScreenState extends State<RegisterScreen> {
   InputDecoration _fieldDecoration({
     required String hint,
     Widget? prefixIcon,
+    BoxConstraints? prefixIconConstraints,
     Widget? suffixIcon,
   }) {
+    final primary = FoodFlowTheme.brandPrimary(context);
     return InputDecoration(
       hintText: hint,
-      hintStyle: TextStyle(
-        fontSize: 16,
+      hintStyle: const TextStyle(
+        fontSize: 13,
         fontWeight: FontWeight.w500,
-        color: Color(0xFF9CA3AF),
+        color: Color(0xFF8B919B),
       ),
-      prefixIcon: prefixIcon,
-      suffixIcon: suffixIcon,
       filled: true,
       fillColor: Colors.white,
-      contentPadding: EdgeInsets.symmetric(horizontal: 18, vertical: 18),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 19),
       enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(18),
-        borderSide: BorderSide(color: _line),
+        borderRadius: BorderRadius.circular(8),
+        borderSide: const BorderSide(color: _line, width: 1.2),
       ),
       focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(18),
-        borderSide: BorderSide(color: _primary, width: 1.4),
+        borderRadius: BorderRadius.circular(8),
+        borderSide: BorderSide(color: primary, width: 1.4),
       ),
       errorBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(18),
-        borderSide: BorderSide(color: Colors.red),
+        borderRadius: BorderRadius.circular(8),
+        borderSide: const BorderSide(color: Colors.red),
       ),
       focusedErrorBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(18),
-        borderSide: BorderSide(color: Colors.red, width: 1.4),
+        borderRadius: BorderRadius.circular(8),
+        borderSide: const BorderSide(color: Colors.red, width: 1.4),
       ),
+      prefixIcon: prefixIcon,
+      prefixIconConstraints: prefixIconConstraints,
+      suffixIcon: suffixIcon,
     );
   }
 
   @override
   Widget build(BuildContext context) {
+    final bottomInset = MediaQuery.of(context).viewInsets.bottom;
+
     return Consumer<AuthProvider>(
       builder: (context, auth, _) {
         final isVerified = _verifiedPhoneToken != null;
+        final busy = auth.isLoading || _isLoadingBranding || _isSendingOtp;
 
         return Scaffold(
           backgroundColor: Colors.white,
           body: SafeArea(
-            child: SingleChildScrollView(
-              padding: EdgeInsets.fromLTRB(24, 12, 24, 24),
-              child: Form(
-                key: _formKey,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    SizedBox(height: 4),
-                    Center(
-                      child: Container(
-                        width: 96,
-                        height: 6,
-                        decoration: BoxDecoration(
-                          color: Color(0xFFE9EEF5),
-                          borderRadius: BorderRadius.circular(999),
-                        ),
-                      ),
-                    ),
-                    SizedBox(height: 20),
-                    _buildHero(isVerified),
-                    SizedBox(height: 26),
-                    Text(
-                      appText('Create account'),
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
-                        color: _subtext,
-                      ),
-                    ),
-                    SizedBox(height: 10),
-                    TextFormField(
-                      controller: _nameController,
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w500,
-                        color: _text,
-                      ),
-                      decoration: _fieldDecoration(
-                        hint: 'Full name',
-                        prefixIcon: Icon(
-                          Icons.person_outline_rounded,
-                          color: _subtext,
-                        ),
-                      ),
-                      validator: (value) {
-                        if (value == null || value.trim().isEmpty) {
-                          return 'Name is required';
-                        }
-                        return null;
-                      },
-                    ),
-                    SizedBox(height: 16),
-                    TextFormField(
-                      controller: _phoneController,
-                      keyboardType: TextInputType.phone,
-                      readOnly: isVerified,
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w500,
-                        color: _text,
-                      ),
-                      onChanged: (_) {
-                        if (isVerified) return;
-                        if (_verifiedPhoneToken != null) {
-                          setState(() {
-                            _verifiedPhoneToken = null;
-                            _verifiedPhoneNumber = null;
-                          });
-                        }
-                      },
-                      decoration: InputDecoration(
-                        hintText: appText('Enter mobile number'),
-                        hintStyle: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w500,
-                          color: Color(0xFF9CA3AF),
-                        ),
-                        filled: true,
-                        fillColor: Colors.white,
-                        contentPadding: EdgeInsets.symmetric(
-                          horizontal: 18,
-                          vertical: 18,
-                        ),
-                        enabledBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(18),
-                          borderSide: BorderSide(color: _line),
-                        ),
-                        focusedBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(18),
-                          borderSide: BorderSide(color: _primary, width: 1.4),
-                        ),
-                        prefixIcon: Padding(
-                          padding: EdgeInsets.only(left: 14, right: 10),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Container(
-                                width: 26,
-                                height: 18,
-                                decoration: BoxDecoration(
-                                  borderRadius: BorderRadius.circular(4),
-                                  border: Border.all(
-                                    color: Color(0xFFE5E7EB),
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final compact = constraints.maxHeight < 760;
+                return SingleChildScrollView(
+                  physics: const AlwaysScrollableScrollPhysics(),
+                  keyboardDismissBehavior:
+                      ScrollViewKeyboardDismissBehavior.onDrag,
+                  padding: EdgeInsets.only(bottom: bottomInset + 22),
+                  child: ConstrainedBox(
+                    constraints:
+                        BoxConstraints(minHeight: constraints.maxHeight),
+                    child: Column(
+                      children: [
+                        _HeroBackground(compact: compact),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 28),
+                          child: Form(
+                            key: _formKey,
+                            child: Column(
+                              children: [
+                                SizedBox(height: compact ? 16 : 28),
+                                Text(
+                                  isVerified
+                                      ? appText('Almost There!')
+                                      : appText('Create Account'),
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(
+                                    color: _text,
+                                    fontSize: compact ? 23 : 26,
+                                    fontWeight: FontWeight.w900,
+                                    height: 1,
                                   ),
-                                  gradient: LinearGradient(
-                                    colors: [
-                                      Color(0xFFFF9933),
-                                      Color(0xFFFF9933),
-                                      Colors.white,
-                                      Colors.white,
-                                      Color(0xFF138808),
-                                      Color(0xFF138808),
+                                ),
+                                const SizedBox(height: 16),
+                                Text(
+                                  isVerified
+                                      ? appText(
+                                          'Your number is verified. Complete your details to continue')
+                                      : appText(
+                                          'Sign up to start your deliveries'),
+                                  textAlign: TextAlign.center,
+                                  style: const TextStyle(
+                                    color: _subtext,
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w500,
+                                    height: 1.2,
+                                  ),
+                                ),
+                                const SizedBox(height: 30),
+                                TextFormField(
+                                  controller: _nameController,
+                                  style: const TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w700,
+                                    color: _text,
+                                  ),
+                                  decoration: _fieldDecoration(
+                                    hint: appText('Full name'),
+                                    prefixIcon: const Padding(
+                                      padding: EdgeInsets.only(
+                                          left: 18, right: 12),
+                                      child: Icon(
+                                        Icons.person_outline_rounded,
+                                        color: _subtext,
+                                        size: 20,
+                                      ),
+                                    ),
+                                    prefixIconConstraints:
+                                        const BoxConstraints(minWidth: 52),
+                                  ),
+                                  validator: (value) {
+                                    if (value == null ||
+                                        value.trim().isEmpty) {
+                                      return appText('Name is required');
+                                    }
+                                    return null;
+                                  },
+                                ),
+                                const SizedBox(height: 14),
+                                TextFormField(
+                                  controller: _phoneController,
+                                  keyboardType: TextInputType.phone,
+                                  readOnly: isVerified,
+                                  style: const TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w700,
+                                    color: _text,
+                                  ),
+                                  onChanged: (_) {
+                                    if (isVerified) return;
+                                    if (_verifiedPhoneToken != null) {
+                                      setState(() {
+                                        _verifiedPhoneToken = null;
+                                        _verifiedPhoneNumber = null;
+                                      });
+                                    }
+                                  },
+                                  decoration: _fieldDecoration(
+                                    hint: appText('Enter your mobile number'),
+                                    prefixIcon: Padding(
+                                      padding: const EdgeInsets.only(
+                                          left: 18, right: 12),
+                                      child: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          CountryFlagBadge(
+                                              countryCode: _countryCode),
+                                          const SizedBox(width: 12),
+                                          Text(
+                                            _countryCode,
+                                            style: const TextStyle(
+                                              color: _text,
+                                              fontSize: 13,
+                                              fontWeight: FontWeight.w800,
+                                            ),
+                                          ),
+                                          const SizedBox(width: 3),
+                                          const Icon(
+                                            Icons.keyboard_arrow_down_rounded,
+                                            color: _subtext,
+                                            size: 18,
+                                          ),
+                                          const SizedBox(width: 10),
+                                        ],
+                                      ),
+                                    ),
+                                    prefixIconConstraints:
+                                        const BoxConstraints(minWidth: 116),
+                                    suffixIcon: Padding(
+                                      padding: const EdgeInsets.only(right: 6),
+                                      child: TextButton(
+                                        onPressed: busy || isVerified
+                                            ? null
+                                            : _verifyMobile,
+                                        child: Text(
+                                          isVerified
+                                              ? appText('Verified')
+                                              : _isSendingOtp
+                                                  ? appText('Sending...')
+                                                  : appText('Verify'),
+                                          style: TextStyle(
+                                            color: isVerified
+                                                ? A1PasoAuthColors.green
+                                                : FoodFlowTheme.brandPrimary(
+                                                    context),
+                                            fontSize: 13,
+                                            fontWeight: FontWeight.w800,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                  validator: (value) {
+                                    return PhoneNumberUtils.validateIndianMobile(
+                                      value,
+                                      countryCode: _countryCode,
+                                    );
+                                  },
+                                ),
+                                const SizedBox(height: 14),
+                                TextFormField(
+                                  controller: _emailController,
+                                  keyboardType: TextInputType.emailAddress,
+                                  style: const TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w700,
+                                    color: _text,
+                                  ),
+                                  decoration: _fieldDecoration(
+                                    hint: appText('Email address'),
+                                    prefixIcon: const Padding(
+                                      padding: EdgeInsets.only(
+                                          left: 18, right: 12),
+                                      child: Icon(
+                                        Icons.mail_outline_rounded,
+                                        color: _subtext,
+                                        size: 20,
+                                      ),
+                                    ),
+                                    prefixIconConstraints:
+                                        const BoxConstraints(minWidth: 52),
+                                  ),
+                                  validator: (value) {
+                                    if (value == null ||
+                                        value.trim().isEmpty) {
+                                      return appText('Email is required');
+                                    }
+                                    if (!value.contains('@')) {
+                                      return appText('Enter a valid email');
+                                    }
+                                    return null;
+                                  },
+                                ),
+                                const SizedBox(height: 18),
+                                Container(
+                                  width: double.infinity,
+                                  padding: const EdgeInsets.all(14),
+                                  decoration: BoxDecoration(
+                                    color: A1PasoAuthColors.wash,
+                                    borderRadius: BorderRadius.circular(8),
+                                    border: Border.all(color: _line),
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      Icon(
+                                        isVerified
+                                            ? Icons.verified_rounded
+                                            : Icons.info_outline_rounded,
+                                        color: isVerified
+                                            ? A1PasoAuthColors.green
+                                            : FoodFlowTheme.brandPrimary(
+                                                context),
+                                        size: 20,
+                                      ),
+                                      const SizedBox(width: 12),
+                                      Expanded(
+                                        child: Text(
+                                          isVerified
+                                              ? appText(
+                                                  'Your mobile number is verified. You can finish creating your account.')
+                                              : appText(
+                                                  'Verify your mobile number first. Your login will stay OTP only.'),
+                                          style: const TextStyle(
+                                            color: _text,
+                                            fontSize: 12,
+                                            fontWeight: FontWeight.w500,
+                                            height: 1.4,
+                                          ),
+                                        ),
+                                      ),
                                     ],
-                                    stops: [0, 0.33, 0.33, 0.66, 0.66, 1],
-                                    begin: Alignment.topCenter,
-                                    end: Alignment.bottomCenter,
                                   ),
                                 ),
-                              ),
-                              SizedBox(width: 10),
-                              Text(
-                                _branding.defaultMobileCountryCode,
-                                style: TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.w600,
-                                  color: _text,
+                                const SizedBox(height: 6),
+                                CheckboxListTile(
+                                  value: _agreeTerms,
+                                  onChanged: (value) {
+                                    setState(() {
+                                      _agreeTerms = value ?? false;
+                                    });
+                                  },
+                                  activeColor:
+                                      FoodFlowTheme.brandPrimary(context),
+                                  contentPadding: EdgeInsets.zero,
+                                  controlAffinity:
+                                      ListTileControlAffinity.leading,
+                                  title: Text(
+                                    appText(
+                                        'I agree to the Terms & Conditions and Privacy Policy'),
+                                    style: const TextStyle(
+                                      color: _subtext,
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
                                 ),
-                              ),
-                              SizedBox(width: 6),
-                              Icon(
-                                Icons.keyboard_arrow_down_rounded,
-                                size: 20,
-                                color: _subtext,
-                              ),
-                              SizedBox(width: 10),
-                              Container(width: 1, height: 24, color: _line),
-                            ],
-                          ),
-                        ),
-                        prefixIconConstraints: BoxConstraints(minWidth: 148),
-                        suffixIcon: Padding(
-                          padding: EdgeInsets.only(right: 8),
-                          child: TextButton(
-                            onPressed:
-                                auth.isLoading || _isSendingOtp || isVerified
-                                    ? null
-                                    : _verifyMobile,
-                            child: Text(
-                              isVerified
-                                  ? 'Verified'
-                                  : _isSendingOtp
-                                      ? 'Sending...'
-                                      : 'Verify',
-                            ),
-                          ),
-                        ),
-                      ),
-                      validator: (value) {
-                        return PhoneNumberUtils.validateIndianMobile(
-                          value,
-                          countryCode: _branding.defaultMobileCountryCode,
-                        );
-                      },
-                    ),
-                    SizedBox(height: 16),
-                    TextFormField(
-                      controller: _emailController,
-                      keyboardType: TextInputType.emailAddress,
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w500,
-                        color: _text,
-                      ),
-                      decoration: _fieldDecoration(
-                        hint: 'Email address',
-                        prefixIcon: Icon(
-                          Icons.mail_outline_rounded,
-                          color: _subtext,
-                        ),
-                      ),
-                      validator: (value) {
-                        if (value == null || value.trim().isEmpty) {
-                          return 'Email is required';
-                        }
-                        if (!value.contains('@')) {
-                          return 'Enter a valid email';
-                        }
-                        return null;
-                      },
-                    ),
-                    SizedBox(height: 16),
-                    Container(
-                      width: double.infinity,
-                      padding: EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        color: Color(0xFFFFF8EE),
-                        borderRadius: BorderRadius.circular(18),
-                        border: Border.all(color: Color(0xFFFFE0B2)),
-                      ),
-                      child: Row(
-                        children: [
-                          Icon(
-                            isVerified
-                                ? Icons.verified_rounded
-                                : Icons.info_outline_rounded,
-                            color: isVerified ? Colors.green : _primary,
-                          ),
-                          SizedBox(width: 12),
-                          Expanded(
-                            child: Text(
-                              isVerified
-                                  ? 'Your mobile number is verified. You can finish creating your account.'
-                                  : 'Verify your mobile number first. Your customer login will stay OTP only.',
-                              style: TextStyle(
-                                color: _text,
-                                fontSize: 14,
-                                fontWeight: FontWeight.w500,
-                                height: 1.45,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    SizedBox(height: 16),
-                    CheckboxListTile(
-                      value: _agreeTerms,
-                      onChanged: (value) {
-                        setState(() {
-                          _agreeTerms = value ?? false;
-                        });
-                      },
-                      contentPadding: EdgeInsets.zero,
-                      controlAffinity: ListTileControlAffinity.leading,
-                      title: Text(
-                        appText(
-                            'I agree to the Terms & Conditions and Privacy Policy'),
-                        style: TextStyle(
-                          color: _subtext,
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
-                    SizedBox(height: 18),
-                    SizedBox(
-                      width: double.infinity,
-                      child: DecoratedBox(
-                        decoration: BoxDecoration(
-                          gradient: LinearGradient(
-                            colors: [
-                              _primary,
-                              Color.lerp(_primary, _secondary, 0.24) ??
-                                  _primary,
-                            ],
-                          ),
-                          borderRadius: BorderRadius.circular(18),
-                          boxShadow: [
-                            BoxShadow(
-                              color: _primary.withOpacity(0.2),
-                              blurRadius: 18,
-                              offset: Offset(0, 10),
-                            ),
-                          ],
-                        ),
-                        child: ElevatedButton(
-                          onPressed: auth.isLoading ||
-                                  _isLoadingBranding ||
-                                  _isSendingOtp
-                              ? null
-                              : _handleRegister,
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.transparent,
-                            shadowColor: Colors.transparent,
-                            minimumSize: Size.fromHeight(58),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(18),
-                            ),
-                          ),
-                          child: Text(
-                            _isSendingOtp
-                                ? 'Sending OTP...'
-                                : auth.isLoading
-                                    ? 'Creating account...'
-                                    : isVerified
-                                        ? 'Create Account'
-                                        : 'Verify Mobile & Continue',
-                            style: TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.w600,
-                              color: Colors.black,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                    SizedBox(height: 24),
-                    Center(
-                      child: TextButton(
-                        onPressed: () => Navigator.pushReplacementNamed(
-                            context, '/login/form'),
-                        child: Text.rich(
-                          TextSpan(
-                            text: 'Already have an account? ',
-                            style: TextStyle(
-                              color: _subtext,
-                              fontSize: 16,
-                              fontWeight: FontWeight.w500,
-                            ),
-                            children: [
-                              TextSpan(
-                                text: 'Sign In',
-                                style: TextStyle(
-                                  color: Color(0xFF1D4ED8),
-                                  fontWeight: FontWeight.w700,
+                                const SizedBox(height: 8),
+                                _ThreeDButton(
+                                  height: 58,
+                                  onPressed: busy ? null : _handleRegister,
+                                  backgroundColor:
+                                      FoodFlowTheme.brandPrimary(context),
+                                  disabledColor:
+                                      FoodFlowTheme.brandPrimary(context)
+                                          .withOpacity(0.38),
+                                  shadowColor:
+                                      FoodFlowTheme.brandPrimary(context),
+                                  child: Text(
+                                    _isSendingOtp
+                                        ? appText('Sending OTP...')
+                                        : auth.isLoading
+                                            ? appText('Creating account...')
+                                            : isVerified
+                                                ? appText('Create Account')
+                                                : appText(
+                                                    'Verify Mobile & Continue'),
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 17,
+                                      fontWeight: FontWeight.w800,
+                                    ),
+                                  ),
                                 ),
-                              ),
-                            ],
+                                SizedBox(height: compact ? 24 : 32),
+                                _SignInPrompt(),
+                              ],
+                            ),
                           ),
                         ),
-                      ),
+                      ],
                     ),
-                  ],
-                ),
-              ),
+                  ),
+                );
+              },
             ),
           ),
         );
@@ -633,121 +611,175 @@ class _RegisterScreenState extends State<RegisterScreen> {
     );
   }
 
-  Widget _buildHero(bool isVerified) {
-    return SizedBox(
-      height: 330,
-      child: Stack(
-        clipBehavior: Clip.none,
-        children: [
-          Container(
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(32),
-              boxShadow: [
-                BoxShadow(
-                  color: Color(0x14000000),
-                  blurRadius: 24,
-                  offset: Offset(0, 12),
-                ),
-              ],
-            ),
-          ),
-          Positioned(
-            top: -18,
-            right: -12,
-            child: Container(
-              width: 250,
-              height: 220,
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [
-                    Color.lerp(_primary, Colors.white, 0.18) ?? _primary,
-                    _primary,
-                  ],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
-                borderRadius: BorderRadius.only(
-                  topRight: Radius.circular(36),
-                  bottomLeft: Radius.circular(120),
-                  bottomRight: Radius.circular(26),
-                ),
-              ),
-            ),
-          ),
-          Positioned(
-            right: 20,
-            top: 34,
-            child: Container(
-              width: 150,
-              height: 150,
-              decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.18),
-                shape: BoxShape.circle,
-              ),
-              child: Icon(
-                isVerified
-                    ? Icons.verified_user_rounded
-                    : Icons.person_add_alt_1_rounded,
-                size: 98,
-                color: Colors.white,
-              ),
-            ),
-          ),
-          Positioned.fill(
-            child: Padding(
-              padding: EdgeInsets.fromLTRB(22, 28, 22, 22),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  SizedBox(height: 90),
-                  Text(
-                    isVerified ? 'Almost there' : 'Join us',
-                    style: TextStyle(
-                      fontSize: 22,
-                      fontWeight: FontWeight.w600,
-                      color: _text,
-                    ),
-                  ),
-                  SizedBox(height: 6),
-                  Text(
-                    _branding.displayName,
-                    style: TextStyle(
-                      fontSize: 38,
-                      height: 1.08,
-                      fontWeight: FontWeight.w700,
-                      color: _text,
-                    ),
-                  ),
-                  SizedBox(height: 12),
-                  SizedBox(
-                    width: 190,
-                    child: Text(
-                      isVerified
-                          ? 'Your number is verified. Complete your profile and start ordering.'
-                          : 'Create your customer account with secure OTP based sign up.',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.w400,
-                        color: _subtext,
-                        height: 1.45,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
   void _showMessage(String message, {bool isError = false}) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(message),
-        backgroundColor: isError ? Colors.red : _primary,
+        content: Text(appText(message)),
+        backgroundColor:
+            isError ? Colors.red : FoodFlowTheme.brandPrimary(context),
+      ),
+    );
+  }
+}
+
+class _ThreeDButton extends StatefulWidget {
+  const _ThreeDButton({
+    required this.child,
+    required this.onPressed,
+    required this.backgroundColor,
+    required this.disabledColor,
+    required this.shadowColor,
+    this.border,
+    this.height = 58,
+  });
+
+  final Widget child;
+  final VoidCallback? onPressed;
+  final Color backgroundColor;
+  final Color disabledColor;
+  final Color shadowColor;
+  final BorderSide? border;
+  final double height;
+
+  @override
+  State<_ThreeDButton> createState() => _ThreeDButtonState();
+}
+
+class _ThreeDButtonState extends State<_ThreeDButton> {
+  bool _pressed = false;
+
+  bool get _enabled => widget.onPressed != null;
+
+  @override
+  Widget build(BuildContext context) {
+    final surfaceColor =
+        _enabled ? widget.backgroundColor : widget.disabledColor;
+    final y = _pressed && _enabled ? 3.0 : 0.0;
+
+    return GestureDetector(
+      onTapDown: _enabled ? (_) => setState(() => _pressed = true) : null,
+      onTapCancel: _enabled ? () => setState(() => _pressed = false) : null,
+      onTapUp: _enabled
+          ? (_) {
+              setState(() => _pressed = false);
+              widget.onPressed?.call();
+            }
+          : null,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 110),
+        curve: Curves.easeOut,
+        width: double.infinity,
+        height: widget.height,
+        padding: EdgeInsets.only(top: y),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(8),
+          boxShadow: [
+            BoxShadow(
+              color: widget.shadowColor.withOpacity(_enabled ? 0.28 : 0.12),
+              blurRadius: _pressed ? 7 : 18,
+              offset: Offset(0, _pressed ? 4 : 10),
+            ),
+          ],
+        ),
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: surfaceColor,
+            borderRadius: BorderRadius.circular(8),
+            border: widget.border == null
+                ? null
+                : Border.fromBorderSide(widget.border!),
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [
+                Color.lerp(surfaceColor, Colors.white, _enabled ? 0.13 : 0.05)!,
+                surfaceColor,
+                Color.lerp(surfaceColor, Colors.black, _enabled ? 0.08 : 0.02)!,
+              ],
+              stops: const [0, 0.58, 1],
+            ),
+          ),
+          child: Stack(
+            children: [
+              Positioned(
+                left: 1,
+                right: 1,
+                top: 1,
+                height: 15,
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    borderRadius:
+                        const BorderRadius.vertical(top: Radius.circular(7)),
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [
+                        Colors.white.withOpacity(_enabled ? 0.30 : 0.12),
+                        Colors.white.withOpacity(0),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              Center(child: widget.child),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _HeroBackground extends StatelessWidget {
+  const _HeroBackground({required this.compact});
+
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: double.infinity,
+      height: compact ? 398 : 474,
+      child: Image.asset(
+        'assets/images/background.png',
+        fit: BoxFit.cover,
+        alignment: Alignment.topCenter,
+      ),
+    );
+  }
+}
+
+class _SignInPrompt extends StatelessWidget {
+  const _SignInPrompt();
+
+  @override
+  Widget build(BuildContext context) {
+    final linkStyle = TextStyle(
+      color: FoodFlowTheme.brandPrimary(context),
+      fontSize: 13,
+      fontWeight: FontWeight.w900,
+    );
+
+    return Center(
+      child: Text.rich(
+        TextSpan(
+          text: appText('Already have an account? '),
+          style: const TextStyle(
+            color: A1PasoAuthColors.subtext,
+            fontSize: 13,
+            fontWeight: FontWeight.w500,
+          ),
+          children: [
+            TextSpan(
+              text: appText('Sign In'),
+              style: linkStyle,
+              recognizer: TapGestureRecognizer()
+                ..onTap = () =>
+                    Navigator.of(context).pushReplacementNamed('/login/form'),
+            ),
+          ],
+        ),
+        textAlign: TextAlign.center,
       ),
     );
   }

@@ -192,13 +192,18 @@
                 </div>
             </div>
             <div class="col-12 d-none" data-config-block="banner_ids">
-                <label class="form-label fw-semibold">Select Banners</label>
-                <select name="banner_ids[]" class="form-select" multiple size="8">
+                <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+                    <label class="form-label fw-semibold mb-0">Select Banners</label>
+                    <a href="{{ route('admin.banners.create', ['layout_mode' => 'promo_card']) }}" target="_blank" class="btn btn-sm btn-outline-primary">
+                        <i class="fas fa-plus me-1"></i>Create Widget
+                    </a>
+                </div>
+                <select name="banner_ids[]" class="form-select mt-2" multiple size="8">
                     @foreach($banners as $banner)
                         <option value="{{ $banner->id }}" @selected(in_array($banner->id, $selectedBannerIds))>{{ $banner->title ?: 'Banner #'.$banner->id }}</option>
                     @endforeach
                 </select>
-                <div class="form-text">Used only when the data source is manual.</div>
+                <div class="form-text">Used only when the data source is manual. Promo widgets appear wherever this Banner Carousel section is placed in Home Section Management. Multiple selected banners auto-rotate as a carousel.</div>
             </div>
             <div class="col-12 d-none" data-config-block="restaurant_ids">
                 <label class="form-label fw-semibold">Select Restaurants</label>

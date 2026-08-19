@@ -146,6 +146,14 @@ class UniqueUserContactForRole implements ValidationRule
     {
         $role = self::normalizeRole($role);
 
+        if ($role === 'restaurant_owner') {
+            return User::query()->where(function (Builder $query) {
+                $query->whereHas('roles', fn (Builder $roleQuery) => $roleQuery
+                    ->whereIn('name', ['restaurant_owner', 'restaurant_staff']))
+                    ->orWhereHas('restaurantStaff');
+            });
+        }
+
         return User::query()
             ->whereHas('roles', fn (Builder $query) => $query->where('name', $role));
     }

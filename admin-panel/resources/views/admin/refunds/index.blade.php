@@ -7,7 +7,7 @@
     $currencyStep = number_format(1 / pow(10, $currencyDecimals), $currencyDecimals, '.', '');
 @endphp
 
-@php $currencySymbol = App\Models\AppSetting::getValue('currency_symbol', '₹'); @endphp
+@php $currencySymbol = App\Models\AppSetting::sanitizedCurrencySymbol(); @endphp
 
 @section('content')
 <div class="page-header">

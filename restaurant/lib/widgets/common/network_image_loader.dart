@@ -11,7 +11,7 @@ class AppImageCache {
 
   static final CacheManager instance = CacheManager(
     Config(
-      'yumma_image_cache_v3',
+      'Yumma_image_cache_v3',
       stalePeriod: const Duration(days: 30),
       maxNrOfCacheObjects: 1000,
       fileService: HttpFileService(),

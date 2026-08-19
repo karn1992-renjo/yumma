@@ -334,6 +334,7 @@ class RestaurantMenuController extends Controller
             'name' => 'required|string|max:255',
             'master_menu_item_id' => 'nullable|integer|exists:master_menu_items,id',
             'price' => 'required|numeric|min:0',
+            'is_price_inclusive_gst' => 'nullable|boolean',
             'category_id' => 'nullable|integer|exists:categories,id',
             'global_category_id' => 'nullable|integer|exists:global_menu_categories,id',
             'global_subcategory_id' => 'nullable|integer|exists:global_menu_categories,id',
@@ -387,6 +388,7 @@ class RestaurantMenuController extends Controller
             'category_id' => $this->resolveRestaurantCategoryId($restaurant->id, $request->category_id, $request->global_category_id, $request->global_subcategory_id),
             'name' => $request->name,
             'price' => $request->price,
+            'is_price_inclusive_gst' => $request->boolean('is_price_inclusive_gst'),
             'discounted_price' => $request->discounted_price,
             'description' => $request->description,
             'cuisine_id' => $cuisineId,
@@ -447,6 +449,7 @@ class RestaurantMenuController extends Controller
             'name' => 'sometimes|string|max:255',
             'master_menu_item_id' => 'nullable|integer|exists:master_menu_items,id',
             'price' => 'sometimes|numeric|min:0',
+            'is_price_inclusive_gst' => 'nullable|boolean',
             'discounted_price' => 'nullable|numeric|min:0',
             'category_id' => 'nullable|integer|exists:categories,id',
             'global_category_id' => 'nullable|integer|exists:global_menu_categories,id',
@@ -611,6 +614,7 @@ class RestaurantMenuController extends Controller
         $menuItem->is_available = $request->has('is_available')
             ? $request->boolean('is_available')
             : !$menuItem->is_available;
+        $menuItem->unavailable_until = null;
         $menuItem->save();
 
         return response()->json([
@@ -1004,3 +1008,4 @@ class RestaurantMenuController extends Controller
         MediaStorage::delete($image);
     }
 }
+

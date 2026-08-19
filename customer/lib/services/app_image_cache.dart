@@ -9,10 +9,10 @@ class AppImageCache {
 
   static final CacheManager instance = CacheManager(
     Config(
-      'yumma_image_cache_v3',
+      'Yumma_image_cache_v3',
       stalePeriod: const Duration(days: 30),
       maxNrOfCacheObjects: 1000,
-      repo: JsonCacheInfoRepository(databaseName: 'yumma_image_cache_v3'),
+      repo: JsonCacheInfoRepository(databaseName: 'Yumma_image_cache_v3'),
       fileService: HttpFileService(),
     ),
   );
@@ -29,6 +29,12 @@ class AppImageCache {
         value == 'null' ||
         value.startsWith('{') ||
         value.startsWith('[')) {
+      return '';
+    }
+    if (RegExp(
+      r'^(?:fa[bsrld]?\s+)?fa-[a-z0-9-]+$',
+      caseSensitive: false,
+    ).hasMatch(value)) {
       return '';
     }
     final absolute = Uri.tryParse(value);

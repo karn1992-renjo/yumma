@@ -8,6 +8,7 @@ use App\Models\DeliveryArea;
 use App\Models\PartnerApplication;
 use App\Models\Restaurant;
 use App\Models\User;
+use App\Services\CashfreeVerificationService;
 use App\Services\DeliveryAreaResolver;
 use App\Support\PhoneNumber;
 use Carbon\Carbon;
@@ -23,7 +24,8 @@ use Illuminate\Validation\ValidationException;
 class PartnerApplicationController extends Controller
 {
     public function __construct(
-        private readonly DeliveryAreaResolver $deliveryAreaResolver
+        private readonly DeliveryAreaResolver $deliveryAreaResolver,
+        private readonly CashfreeVerificationService $verification
     ) {
     }
 
@@ -219,6 +221,25 @@ class PartnerApplicationController extends Controller
             ->with('success', 'Application rejected successfully.');
     }
 
+    public function reverify(PartnerApplication $application)
+    {
+        if (! $this->verification->isConfigured()) {
+            return redirect()->back()->with('error', 'Cashfree document verification is disabled or not configured. Enable it and add credentials under Settings > Payment.');
+        }
+
+        $results = $this->verification->verifyPartnerApplication($application);
+
+        if (empty($results)) {
+            return redirect()->back()->with('error', 'No verifiable documents/numbers found on this application.');
+        }
+
+        $application->update([
+            'document_verification' => array_merge((array) $application->document_verification, $results),
+        ]);
+
+        return redirect()->back()->with('success', 'Document verification refreshed.');
+    }
+
     public function destroy(PartnerApplication $application)
     {
         foreach ([
@@ -300,6 +321,8 @@ class PartnerApplicationController extends Controller
             'bank_ifsc' => ['nullable', 'string', 'max:100'],
             'upi_id' => ['nullable', 'string', 'max:255'],
             'gst_certificate' => ['nullable', 'file', 'mimes:pdf,jpg,jpeg,png', 'max:5120'],
+            'gstin_number' => ['nullable', 'string', 'regex:/^\d{2}[A-Z]{5}\d{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/i'],
+            'pan_number' => ['nullable', 'string', 'regex:/^[A-Z]{5}\d{4}[A-Z]{1}$/i'],
             'fssai_license' => ['nullable', 'file', 'mimes:pdf,jpg,jpeg,png', 'max:5120'],
             'logo_image' => ['nullable', 'file', 'mimes:jpg,jpeg,png,webp', 'max:5120'],
             'banner_image' => ['nullable', 'file', 'mimes:jpg,jpeg,png,webp', 'max:5120'],
@@ -395,6 +418,12 @@ class PartnerApplicationController extends Controller
                 'contact_email' => $validated['contact_email'],
                 'contact_phone' => $this->normalizePhone($validated['contact_phone']),
                 'gst_certificate' => $documents['gst_certificate'] ?? $application?->gst_certificate,
+                'gstin_number' => isset($validated['gstin_number']) && $validated['gstin_number'] !== ''
+                    ? strtoupper($validated['gstin_number'])
+                    : $application?->gstin_number,
+                'pan_number' => isset($validated['pan_number']) && $validated['pan_number'] !== ''
+                    ? strtoupper($validated['pan_number'])
+                    : $application?->pan_number,
                 'fssai_license' => $documents['fssai_license'] ?? $application?->fssai_license,
                 'reviewed_at' => $validated['status'] === 'pending' ? null : ($application?->reviewed_at ?? now()),
                 'reviewed_by' => $validated['status'] === 'pending' ? null : ($application?->reviewed_by ?? auth()->id()),

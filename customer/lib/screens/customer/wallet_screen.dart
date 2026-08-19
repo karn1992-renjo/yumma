@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart' show DateFormat;
 import 'package:provider/provider.dart';
 
 import '../../config/api_constants.dart';
@@ -9,6 +10,7 @@ import '../../services/wallet_recharge_payment_service.dart';
 import '../../theme/foodflow_theme.dart';
 import '../../utils/currency_utils.dart';
 import '../../widgets/common/network_error_screen.dart';
+import '../../widgets/common/app_skeleton.dart';
 import '../../widgets/customer/account_chrome.dart';
 
 class WalletScreen extends StatefulWidget {
@@ -38,7 +40,7 @@ class _WalletScreenState extends State<WalletScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Wallet recharged successfully')),
         );
-        await _loadWallet();
+        await _loadWallet(forceRefresh: true);
       },
       onFailure: (message) {
         if (!mounted) return;
@@ -60,28 +62,42 @@ class _WalletScreenState extends State<WalletScreen> {
     super.dispose();
   }
 
-  Future<void> _loadWallet() async {
+  Future<void> _loadWallet({bool forceRefresh = false}) async {
     setState(() {
-      _isLoading = true;
+      _isLoading = _transactions.isEmpty && _balance == 0;
       _loadError = null;
     });
     try {
-      final response = await _api.get(ApiConstants.wallet);
-      if (response['success'] == true) {
-        final data = response['data'] ?? {};
-        final wallet = data['wallet'] ?? {};
-        setState(() {
-          _balance = double.tryParse('${wallet['balance'] ?? 0}') ?? 0;
-          _transactions = data['transactions'] ?? [];
-          _loadError = null;
-        });
-      }
+      final response = await _api.get(
+        ApiConstants.wallet,
+        cachePolicy: ApiCachePolicy.screen,
+        cacheFirst: !forceRefresh,
+        refreshCached: !forceRefresh,
+        onCacheRefreshed: _applyWallet,
+      );
+      _applyWallet(response);
     } catch (e) {
       if (!mounted) return;
       setState(() => _loadError = _cleanError(e));
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
+  }
+
+  void _applyWallet(dynamic response) {
+    if (!mounted || response is! Map || response['success'] != true) return;
+    final data = response['data'];
+    if (data is! Map) return;
+    final wallet = data['wallet'];
+    setState(() {
+      _balance = double.tryParse(
+            '${wallet is Map ? wallet['balance'] ?? 0 : 0}',
+          ) ??
+          0;
+      _transactions =
+          data['transactions'] is List ? data['transactions'] as List : [];
+      _loadError = null;
+    });
   }
 
   String _cleanError(Object error) {
@@ -123,7 +139,7 @@ class _WalletScreenState extends State<WalletScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Gift card redeemed successfully')),
       );
-      await _loadWallet();
+      await _loadWallet(forceRefresh: true);
     }
   }
 
@@ -199,116 +215,93 @@ class _WalletScreenState extends State<WalletScreen> {
         ),
       ),
       body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
+          ? const AppSkeletonListView(itemCount: 4, itemHeight: 116)
           : _loadError != null
               ? NetworkErrorView(
                   message: _loadError,
                   onRetry: _loadWallet,
                 )
-          : RefreshIndicator(
-              onRefresh: _loadWallet,
-              child: ListView(
-                padding: EdgeInsets.zero,
-                children: [
-                  const AccountHeroCard(
-                    title: 'Wallet & balance',
-                    subtitle:
-                        'Track your balance, add money, and review every movement from one clean account space.',
-                    icon: Icons.account_balance_wallet_outlined,
-                    badge: 'PROFILE SPACE',
-                  ),
-                  const Padding(
-                    padding: EdgeInsets.fromLTRB(16, 0, 16, 14),
-                    child: AccountSectionTitle(title: 'BALANCE'),
-                  ),
-                  AccountSurfaceCard(
-                    margin: const EdgeInsets.fromLTRB(16, 0, 16, 0),
-                    padding: const EdgeInsets.fromLTRB(16, 24, 16, 16),
-                    child: Column(
-                      children: [
-                        _WalletHero(balance: _balance),
-                        const SizedBox(height: 12),
-                        const Text(
-                          'Add money to enjoy one-tap, seamless payments',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            color: FoodFlowTheme.muted,
-                            fontSize: 13,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                        const SizedBox(height: 18),
-                        SizedBox(
-                          width: double.infinity,
-                          child: ElevatedButton(
-                            onPressed: _isRecharging ? null : _showRechargeSheet,
-                            style: FoodFlowTheme.zomatoPrimaryButton(),
-                            child: _isRecharging
-                                ? const SizedBox(
-                                    height: 18,
-                                    width: 18,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                      color: Colors.white,
-                                    ),
-                                  )
-                                : const Text(
-                                    'Add money',
-                                    style: TextStyle(
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.w800,
-                                    ),
-                                  ),
-                          ),
-                        ),
-                        const SizedBox(height: 10),
-                        SizedBox(
-                          width: double.infinity,
-                          child: OutlinedButton.icon(
-                            onPressed:
-                                _isRecharging ? null : _showGiftCardDialog,
-                            icon: const Icon(Icons.card_giftcard_rounded),
-                            label: const Text(
-                              'Claim gift card',
-                              style: TextStyle(fontWeight: FontWeight.w800),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 28),
-                  const Padding(
-                    padding: EdgeInsets.symmetric(horizontal: 16),
-                    child: AccountSectionTitle(title: 'TRANSACTION HISTORY'),
-                  ),
-                  const SizedBox(height: 14),
-                  SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    child: Row(
-                      children: [
-                        _buildFilterChip('all', 'All Transactions'),
-                        _buildFilterChip('additions', 'Additions'),
-                        _buildFilterChip('deductions', 'Deductions'),
-                        _buildFilterChip('refunds', 'Refunds'),
-                        _buildFilterChip('expired', 'Expired'),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 26),
-                  if (transactions.isEmpty)
-                    const _WalletEmptyState()
-                  else
-                    ...transactions.map(
-                      (transaction) => Padding(
-                        padding: const EdgeInsets.only(bottom: 12),
-                        child: _WalletTransactionTile(transaction: transaction),
+              : RefreshIndicator(
+                  onRefresh: () => _loadWallet(forceRefresh: true),
+                  child: ListView(
+                    padding: const EdgeInsets.fromLTRB(0, 0, 0, 24),
+                    children: [
+                      _PaytmBalanceCard(
+                        balance: _balance,
+                        isRecharging: _isRecharging,
+                        onAddMoney: _showRechargeSheet,
+                        onGiftCard: _showGiftCardDialog,
                       ),
-                    ),
-                ],
-              ),
-            ),
+                      const SizedBox(height: 26),
+                      const Padding(
+                        padding: EdgeInsets.symmetric(horizontal: 16),
+                        child:
+                            AccountSectionTitle(title: 'PASSBOOK'),
+                      ),
+                      const SizedBox(height: 14),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        child: SingleChildScrollView(
+                          scrollDirection: Axis.horizontal,
+                          child: Row(
+                            children: [
+                              _buildFilterChip('all', 'All Transactions'),
+                              _buildFilterChip('additions', 'Additions'),
+                              _buildFilterChip('deductions', 'Deductions'),
+                              _buildFilterChip('refunds', 'Refunds'),
+                              _buildFilterChip('expired', 'Expired'),
+                            ],
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 22),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        child: transactions.isEmpty
+                            ? const _WalletEmptyState()
+                            : Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children:
+                                    _buildPassbookEntries(transactions),
+                              ),
+                      ),
+                    ],
+                  ),
+                ),
     );
+  }
+
+  /// Interleaves day-grouped headers ("Today" / "Yesterday" / date) with
+  /// transaction rows, Paytm passbook-style. Falls back to a single
+  /// "Recent" bucket for any entries without a parseable date, so a data
+  /// shape mismatch never breaks the list.
+  List<Widget> _buildPassbookEntries(List<dynamic> transactions) {
+    final widgets = <Widget>[];
+    String? lastGroupKey;
+
+    for (final transaction in transactions) {
+      final date = DateTime.tryParse(
+        transaction['created_at']?.toString() ?? '',
+      )?.toLocal();
+      final groupKey = date == null
+          ? 'recent'
+          : '${date.year}-${date.month}-${date.day}';
+
+      if (groupKey != lastGroupKey) {
+        if (lastGroupKey != null) widgets.add(const SizedBox(height: 18));
+        widgets.add(_PassbookDateHeader(date: date));
+        widgets.add(const SizedBox(height: 10));
+        lastGroupKey = groupKey;
+      } else {
+        widgets.add(const SizedBox(height: 12));
+      }
+
+      widgets.add(
+        _WalletTransactionTile(transaction: transaction, time: date),
+      );
+    }
+
+    return widgets;
   }
 
   Widget _buildFilterChip(String key, String label) {
@@ -324,7 +317,8 @@ class _WalletScreenState extends State<WalletScreen> {
             color: selected ? const Color(0xFFEFF9F2) : Colors.white,
             borderRadius: BorderRadius.circular(14),
             border: Border.all(
-              color: selected ? const Color(0xFF68B98A) : const Color(0xFFE3E6EE),
+              color:
+                  selected ? const Color(0xFF68B98A) : const Color(0xFFE3E6EE),
             ),
           ),
           child: Text(
@@ -341,54 +335,181 @@ class _WalletScreenState extends State<WalletScreen> {
   }
 }
 
-class _WalletHero extends StatelessWidget {
-  final double balance;
+/// Full-bleed colored balance card with the primary "Add Money" CTA
+/// embedded directly on it — the signature Paytm wallet-home layout.
+class _PaytmBalanceCard extends StatelessWidget {
+  const _PaytmBalanceCard({
+    required this.balance,
+    required this.isRecharging,
+    required this.onAddMoney,
+    required this.onGiftCard,
+  });
 
-  const _WalletHero({required this.balance});
+  final double balance;
+  final bool isRecharging;
+  final VoidCallback onAddMoney;
+  final VoidCallback onGiftCard;
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      children: [
-        Container(
-          width: 92,
-          height: 92,
-          decoration: BoxDecoration(
-            gradient: const LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [Color(0xFFFF6C86), Color(0xFFE83F5B)],
-            ),
-            borderRadius: BorderRadius.circular(28),
-            boxShadow: [
-              BoxShadow(
-                color: const Color(0xFFE83F5B).withOpacity(0.28),
-                blurRadius: 20,
-                offset: const Offset(0, 10),
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+      padding: const EdgeInsets.fromLTRB(20, 20, 20, 20),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [scheme.primary, scheme.secondary],
+        ),
+        borderRadius: BorderRadius.circular(26),
+        boxShadow: [
+          BoxShadow(
+            color: scheme.primary.withOpacity(0.28),
+            blurRadius: 26,
+            offset: const Offset(0, 14),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 34,
+                height: 34,
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.18),
+                  borderRadius: BorderRadius.circular(11),
+                ),
+                child: const Icon(
+                  Icons.account_balance_wallet_rounded,
+                  color: Colors.white,
+                  size: 18,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Text(
+                '${AppConfig.walletMoneyLabel} Balance',
+                style: TextStyle(
+                  color: Colors.white.withOpacity(0.88),
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                ),
               ),
             ],
           ),
-          child: const Center(
-            child: Text(
-              '₹',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 40,
-                fontWeight: FontWeight.w900,
-              ),
+          const SizedBox(height: 16),
+          Text(
+            formatCurrencyWithDecimals(context, balance, decimals: 2),
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 36,
+              fontWeight: FontWeight.w900,
+              height: 1,
             ),
           ),
-        ),
-        const SizedBox(height: 16),
-        Text(
-          formatCurrencyWithDecimals(context, balance, decimals: 2),
-          style: const TextStyle(
-            color: FoodFlowTheme.ink,
-            fontSize: 30,
-            fontWeight: FontWeight.w900,
+          const SizedBox(height: 4),
+          Text(
+            'Usable across ${AppConfig.appName} for one-tap payments',
+            style: TextStyle(
+              color: Colors.white.withOpacity(0.78),
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
           ),
-        ),
-      ],
+          const SizedBox(height: 20),
+          Row(
+            children: [
+              Expanded(
+                child: SizedBox(
+                  height: 46,
+                  child: ElevatedButton.icon(
+                    onPressed: isRecharging ? null : onAddMoney,
+                    icon: isRecharging
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          )
+                        : const Icon(Icons.add_rounded, size: 18),
+                    label: Text(
+                      isRecharging ? 'Processing...' : 'Add Money',
+                      style: const TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.white,
+                      foregroundColor: scheme.primary,
+                      elevation: 0,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              SizedBox(
+                width: 46,
+                height: 46,
+                child: OutlinedButton(
+                  onPressed: isRecharging ? null : onGiftCard,
+                  style: OutlinedButton.styleFrom(
+                    padding: EdgeInsets.zero,
+                    side: BorderSide(color: Colors.white.withOpacity(0.55)),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                  ),
+                  child: const Icon(
+                    Icons.card_giftcard_rounded,
+                    color: Colors.white,
+                    size: 20,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PassbookDateHeader extends StatelessWidget {
+  const _PassbookDateHeader({required this.date});
+
+  final DateTime? date;
+
+  String get _label {
+    final value = date;
+    if (value == null) return 'Recent';
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final day = DateTime(value.year, value.month, value.day);
+    final diff = today.difference(day).inDays;
+    if (diff == 0) return 'Today';
+    if (diff == 1) return 'Yesterday';
+    return DateFormat('d MMMM yyyy').format(value);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Text(
+      _label,
+      style: const TextStyle(
+        color: FoodFlowTheme.inkSoft,
+        fontSize: 12,
+        fontWeight: FontWeight.w800,
+        letterSpacing: 0.3,
+      ),
     );
   }
 }
@@ -471,8 +592,9 @@ class _WalletEmptyState extends StatelessWidget {
 
 class _WalletTransactionTile extends StatelessWidget {
   final dynamic transaction;
+  final DateTime? time;
 
-  const _WalletTransactionTile({required this.transaction});
+  const _WalletTransactionTile({required this.transaction, this.time});
 
   @override
   Widget build(BuildContext context) {
@@ -497,8 +619,8 @@ class _WalletTransactionTile extends StatelessWidget {
             height: 42,
             decoration: BoxDecoration(
               color: (isCredit
-                      ? const Color(0xFFEFF9F2)
-                      : const Color(0xFFFFF0EC)),
+                  ? const Color(0xFFEFF9F2)
+                  : const Color(0xFFFFF0EC)),
               borderRadius: BorderRadius.circular(14),
             ),
             child: Icon(
@@ -514,6 +636,8 @@ class _WalletTransactionTile extends StatelessWidget {
                 Text(
                   transaction['description']?.toString() ??
                       type.replaceAll('_', ' '),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
                     fontSize: 14,
                     fontWeight: FontWeight.w800,
@@ -532,13 +656,30 @@ class _WalletTransactionTile extends StatelessWidget {
               ],
             ),
           ),
-          Text(
-            '${isCredit ? '+' : '-'} ${formatCurrency(context, amount)}',
-            style: TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.w800,
-              color: isCredit ? const Color(0xFF0E8F45) : primary,
-            ),
+          const SizedBox(width: 8),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text(
+                '${isCredit ? '+' : '-'} ${formatCurrency(context, amount)}',
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w800,
+                  color: isCredit ? const Color(0xFF0E8F45) : primary,
+                ),
+              ),
+              if (time != null) ...[
+                const SizedBox(height: 3),
+                Text(
+                  DateFormat('h:mm a').format(time!),
+                  style: const TextStyle(
+                    fontSize: 10.5,
+                    fontWeight: FontWeight.w600,
+                    color: FoodFlowTheme.muted,
+                  ),
+                ),
+              ],
+            ],
           ),
         ],
       ),
@@ -865,11 +1006,12 @@ class _WalletRechargeFormState extends State<_WalletRechargeForm> {
                     borderRadius: BorderRadius.circular(14),
                     child: Container(
                       padding: const EdgeInsets.symmetric(
-                        horizontal: 28,
-                        vertical: 14,
+                        horizontal: 20,
+                        vertical: 12,
                       ),
                       decoration: BoxDecoration(
-                        color: selected ? const Color(0xFFEFF9F2) : Colors.white,
+                        color:
+                            selected ? const Color(0xFFEFF9F2) : Colors.white,
                         borderRadius: BorderRadius.circular(14),
                         border: Border.all(
                           color: selected
@@ -877,15 +1019,28 @@ class _WalletRechargeFormState extends State<_WalletRechargeForm> {
                               : const Color(0xFFE4E8F0),
                         ),
                       ),
-                      child: Text(
-                        formatCurrency(context, amount.toDouble()),
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w800,
-                          color: selected
-                              ? const Color(0xFF0E8F45)
-                              : FoodFlowTheme.inkSoft,
-                        ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.add_circle_rounded,
+                            size: 15,
+                            color: selected
+                                ? const Color(0xFF0E8F45)
+                                : FoodFlowTheme.faint,
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            formatCurrency(context, amount.toDouble()),
+                            style: TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w800,
+                              color: selected
+                                  ? const Color(0xFF0E8F45)
+                                  : FoodFlowTheme.inkSoft,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ),

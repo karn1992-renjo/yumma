@@ -4,7 +4,7 @@
 @section('header', 'Dashboard')
 
 @php
-    $currencySymbol = App\Models\AppSetting::getValue('currency_symbol', html_entity_decode('&#8377;', ENT_QUOTES, 'UTF-8'));
+    $currencySymbol = App\Models\AppSetting::sanitizedCurrencySymbol();
     $currencyDecimals = App\Models\AppSetting::currencyDecimals();
     $totalRevenue = $totalRevenue ?? 0;
     $totalOrders = $totalOrders ?? 0;

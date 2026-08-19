@@ -51,12 +51,12 @@ class _AppSplashScreenState extends State<AppSplashScreen> {
 class _SplashView extends StatelessWidget {
   const _SplashView();
 
-  static const Color _splashPurple = Color(0xFF5F008C);
+  static const Color _splashBackground = Color(0xFF5F008C);
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: _splashPurple,
+      backgroundColor: _splashBackground,
       body: SafeArea(
         child: Center(
           child: Column(

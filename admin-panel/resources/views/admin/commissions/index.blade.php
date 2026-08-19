@@ -3,7 +3,7 @@
 @section('title', 'Commission Settings')
 
 @php
-    $currencySymbol = App\Models\AppSetting::getValue('currency_symbol', '?');
+    $currencySymbol = App\Models\AppSetting::sanitizedCurrencySymbol();
     $currencyDecimals = App\Models\AppSetting::currencyDecimals();
     $restaurantSetting = $settings->where('type', 'restaurant')->first();
     $driverSetting = $settings->where('type', 'driver')->first();

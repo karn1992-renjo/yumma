@@ -1,4 +1,4 @@
-@php $currencySymbol = App\Models\AppSetting::getValue('currency_symbol', '?'); @endphp
+@php $currencySymbol = App\Models\AppSetting::sanitizedCurrencySymbol(); @endphp
 {{-- resources/views/checkout.blade.php --}}
 <!DOCTYPE html>
 <html lang="en">

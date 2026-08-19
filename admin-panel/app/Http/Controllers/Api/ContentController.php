@@ -46,11 +46,15 @@ class ContentController extends Controller
                                 'id' => $item->id,
                                 'title' => $item->title,
                                 'description' => $item->description,
+                                'cta_label' => $item->cta_label,
                                 'image' => MediaStorage::url($item->image),
                                 'image_url' => MediaStorage::url($item->image),
+                                'badge_image' => $item->badge_image ? MediaStorage::url($item->badge_image) : null,
+                                'badge_image_url' => $item->badge_image ? MediaStorage::url($item->badge_image) : null,
                                 'lottie_url' => $this->bannerMediaType($item->image) === 'lottie' ? MediaStorage::url($item->image) : null,
                                 'media_type' => $this->bannerMediaType($item->image),
                                 'link' => $item->link,
+                                'banner_type' => $item->banner_type ?? 'home',
                                 'layout_mode' => $item->layout_mode ?? 'text_image',
                                 'image_ratio' => (int) ($item->image_ratio ?? 46),
                                 'duration_seconds' => $bannerDurationSeconds,
@@ -94,6 +98,9 @@ class ContentController extends Controller
             $banners = Banner::where('is_active', true)
                 ->where('banner_type', 'home')
                 ->where(function ($q) {
+                    $q->whereNull('layout_mode')->orWhere('layout_mode', '!=', 'promo_card');
+                })
+                ->where(function ($q) {
                     $q->whereNull('start_date')
                       ->orWhere('start_date', '<=', now());
                 })
@@ -108,8 +115,11 @@ class ContentController extends Controller
                         'id' => $banner->id,
                         'title' => $banner->title,
                         'description' => $banner->description,
+                        'cta_label' => $banner->cta_label,
                         'image' => MediaStorage::url($banner->image),
                         'image_url' => MediaStorage::url($banner->image),
+                        'badge_image' => $banner->badge_image ? MediaStorage::url($banner->badge_image) : null,
+                        'badge_image_url' => $banner->badge_image ? MediaStorage::url($banner->badge_image) : null,
                         'lottie_url' => $this->bannerMediaType($banner->image) === 'lottie' ? MediaStorage::url($banner->image) : null,
                         'media_type' => $this->bannerMediaType($banner->image),
                         'link' => $banner->link,
@@ -146,6 +156,11 @@ class ContentController extends Controller
         try {
             $bannerDurationSeconds = $this->bannerDurationSeconds();
             $banners = Banner::where('banner_type', $type)
+                ->when($type === 'home', function ($q) {
+                    $q->where(function ($builder) {
+                        $builder->whereNull('layout_mode')->orWhere('layout_mode', '!=', 'promo_card');
+                    });
+                })
                 ->where('is_active', true)
                 ->where(function ($q) {
                     $q->whereNull('start_date')
@@ -162,8 +177,11 @@ class ContentController extends Controller
                         'id' => $banner->id,
                         'title' => $banner->title,
                         'description' => $banner->description,
+                        'cta_label' => $banner->cta_label,
                         'image' => MediaStorage::url($banner->image),
                         'image_url' => MediaStorage::url($banner->image),
+                        'badge_image' => $banner->badge_image ? MediaStorage::url($banner->badge_image) : null,
+                        'badge_image_url' => $banner->badge_image ? MediaStorage::url($banner->badge_image) : null,
                         'lottie_url' => $this->bannerMediaType($banner->image) === 'lottie' ? MediaStorage::url($banner->image) : null,
                         'media_type' => $this->bannerMediaType($banner->image),
                         'link' => $banner->link,

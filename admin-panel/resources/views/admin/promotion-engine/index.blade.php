@@ -5,7 +5,7 @@
 
 @section('content')
 @php
-    $currencySymbol = \App\Models\AppSetting::getValue('currency_symbol', 'Rs');
+    $currencySymbol = \App\Models\AppSetting::sanitizedCurrencySymbol();
     $currencyDecimals = \App\Models\AppSetting::currencyDecimals();
     $statusBadge = [
         'active' => 'success',

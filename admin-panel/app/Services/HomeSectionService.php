@@ -1163,6 +1163,100 @@ class HomeSectionService
         return 'order_offer';
     }
 
+    /**
+     * Promo widgets (layout_mode=promo_card or banner_type=promo) appear on the customer home
+     * only when they are attached to a Banner Carousel home section.
+     */
+    public function attachPromoWidget(Banner $banner): HomeSection
+    {
+        $section = HomeSection::query()
+            ->where('section_type', 'banner_carousel')
+            ->where('title', 'Promo Widgets')
+            ->first();
+
+        if (! $section) {
+            $section = HomeSection::create([
+                'title' => 'Promo Widgets',
+                'subtitle' => null,
+                'section_type' => 'banner_carousel',
+                'data_source' => 'manual',
+                'display_order' => (int) (HomeSection::max('display_order') ?? 0) + 1,
+                'is_active' => true,
+                'configuration' => [
+                    'limit' => 8,
+                    'banner_ids' => [],
+                    'promo_widget' => true,
+                ],
+            ]);
+        }
+
+        $configuration = $section->configuration ?? [];
+        $configuration['promo_widget'] = true;
+
+        $bannerIds = collect($configuration['banner_ids'] ?? [])
+            ->map(fn ($id) => (int) $id)
+            ->values();
+
+        if (! $bannerIds->contains($banner->id)) {
+            $bannerIds->push($banner->id);
+            $configuration['banner_ids'] = $bannerIds->values()->all();
+            $section->update(['configuration' => $configuration]);
+        }
+
+        return $section;
+    }
+
+    public function detachPromoWidget(Banner $banner): void
+    {
+        $section = HomeSection::query()
+            ->where('section_type', 'banner_carousel')
+            ->where('title', 'Promo Widgets')
+            ->first();
+
+        if (! $section) {
+            return;
+        }
+
+        $configuration = $section->configuration ?? [];
+        $original = collect($configuration['banner_ids'] ?? [])
+            ->map(fn ($id) => (int) $id)
+            ->filter()
+            ->values();
+        $bannerIds = $original
+            ->reject(fn (int $id) => $id === (int) $banner->id)
+            ->values();
+
+        if ($bannerIds->count() !== $original->count()) {
+            $configuration['banner_ids'] = $bannerIds->all();
+            $section->update(['configuration' => $configuration]);
+        }
+    }
+    /**
+     * Attach promo banners that were created before this behavior existed
+     * or whose Promo Widgets section was deleted.
+     */
+    public function syncOrphanedPromoWidgets(): void
+    {
+        $attachedIds = HomeSection::query()
+            ->where('section_type', 'banner_carousel')
+            ->get()
+            ->flatMap(fn (HomeSection $section) => collect($section->configuration['banner_ids'] ?? [])
+                ->map(fn ($id) => (int) $id))
+            ->unique()
+            ->all();
+        $orphans = Banner::query()
+            ->where(function ($query) {
+                $query->where('layout_mode', 'promo_card')
+                    ->orWhere('banner_type', 'promo');
+            })
+            ->when($attachedIds, fn ($query) => $query->whereNotIn('id', $attachedIds))
+            ->get();
+
+        foreach ($orphans as $orphan) {
+            $this->attachPromoWidget($orphan);
+        }
+    }
+
     private function resolveBannerSection(HomeSection $section): ?array
     {
         $configuration = $section->configuration ?? [];
@@ -1186,6 +1280,25 @@ class HomeSectionService
             }
 
             $query->whereIn('id', $bannerIds->all());
+
+            if ($this->isPromoWidgetSection($section)) {
+                $query->where(function ($builder) {
+                    $builder->where('layout_mode', 'promo_card')
+                        ->orWhere('banner_type', 'promo');
+                });
+            } else {
+                $query->where(function ($builder) {
+                    $builder->whereNull('layout_mode')->orWhere('layout_mode', '!=', 'promo_card');
+                })->where(function ($builder) {
+                    $builder->whereNull('banner_type')->orWhere('banner_type', '!=', 'promo');
+                });
+            }
+        } else {
+            $query->where(function ($builder) {
+                $builder->whereNull('layout_mode')->orWhere('layout_mode', '!=', 'promo_card');
+            })->where(function ($builder) {
+                $builder->whereNull('banner_type')->orWhere('banner_type', '!=', 'promo');
+            });
         }
 
         $items = $query->limit($limit)->get();
@@ -1204,6 +1317,14 @@ class HomeSectionService
             'items' => $items,
             'style' => $this->sectionStyle($section),
         ];
+    }
+
+    private function isPromoWidgetSection(HomeSection $section): bool
+    {
+        $configuration = $section->configuration ?? [];
+
+        return ($configuration['promo_widget'] ?? false) === true
+            || strcasecmp(trim((string) $section->title), 'Promo Widgets') === 0;
     }
 
     private function resolveHeroSection(HomeSection $section): ?array

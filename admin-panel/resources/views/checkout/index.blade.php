@@ -4,7 +4,7 @@
 
 @php
     $currencyDecimals = App\Models\AppSetting::currencyDecimals();
-    $currencySymbol = App\Models\AppSetting::getValue('currency_symbol', '₹');
+    $currencySymbol = App\Models\AppSetting::sanitizedCurrencySymbol();
 @endphp
 
 @section('styles')

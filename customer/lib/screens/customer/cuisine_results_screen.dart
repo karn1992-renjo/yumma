@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import '../../widgets/common/app_cached_image.dart';
+import '../../widgets/common/app_skeleton.dart';
 
 import '../../config/api_constants.dart';
 import '../../models/menu_item.dart';
@@ -41,9 +42,9 @@ class _CuisineResultsScreenState extends State<CuisineResultsScreen> {
     unawaited(_loadResults());
   }
 
-  Future<void> _loadResults() async {
+  Future<void> _loadResults({bool forceRefresh = false}) async {
     setState(() {
-      _isLoading = true;
+      _isLoading = _restaurants.isEmpty && _items.isEmpty;
       _error = null;
     });
 
@@ -72,15 +73,19 @@ class _CuisineResultsScreenState extends State<CuisineResultsScreen> {
           },
           'radius': 15,
         },
+        includeAuth: false,
+        cachePolicy: ApiCachePolicy.discovery,
+        cacheFirst: !forceRefresh,
+        refreshCached: !forceRefresh,
+        onCacheRefreshed: (_) {
+          if (mounted) _loadResults(forceRefresh: true);
+        },
       ).timeout(const Duration(seconds: 15));
 
       final restaurantMaps = _extractRestaurantMaps(response);
       final restaurants =
           restaurantMaps.map(Restaurant.fromJson).toList(growable: false);
-      final itemHits = <_CuisineMenuHit>[
-        ..._itemHitsFromSearchPayload(restaurantMaps, restaurants),
-        ...await _loadMatchingItems(restaurants),
-      ];
+      final itemHits = _itemHitsFromSearchPayload(restaurantMaps, restaurants);
       final seenHits = <String>{};
       final uniqueItemHits = itemHits
           .where((hit) => seenHits.add('${hit.restaurant.id}:${hit.item.id}'))
@@ -96,6 +101,7 @@ class _CuisineResultsScreenState extends State<CuisineResultsScreen> {
         _items = uniqueItemHits;
         _isLoading = false;
       });
+      unawaited(_enrichMenuItems(restaurants, uniqueItemHits));
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -105,6 +111,25 @@ class _CuisineResultsScreenState extends State<CuisineResultsScreen> {
     }
   }
 
+  Future<void> _enrichMenuItems(
+    List<Restaurant> restaurants,
+    List<_CuisineMenuHit> initialHits,
+  ) async {
+    final loadedHits = await _loadMatchingItems(restaurants);
+    if (!mounted || loadedHits.isEmpty) return;
+    final seen = <String>{};
+    final merged = <_CuisineMenuHit>[...initialHits, ...loadedHits]
+        .where((hit) => seen.add('${hit.restaurant.id}:${hit.item.id}'))
+        .toList(growable: false)
+      ..sort((a, b) => b.item.totalOrders.compareTo(a.item.totalOrders));
+    setState(() {
+      _items = merged;
+      _restaurants = _mergeUniqueRestaurants(restaurants, [
+        for (final hit in merged) hit.restaurant,
+      ]);
+    });
+  }
+
   Future<List<_CuisineMenuHit>> _loadMatchingItems(
     List<Restaurant> restaurants,
   ) async {
@@ -112,7 +137,12 @@ class _CuisineResultsScreenState extends State<CuisineResultsScreen> {
       restaurants.map((restaurant) async {
         try {
           final response = await _api
-              .get('${ApiConstants.restaurantDetails}/${restaurant.id}/menu')
+              .get(
+                '${ApiConstants.restaurantDetails}/${restaurant.id}/menu',
+                includeAuth: false,
+                cachePolicy: ApiCachePolicy.discovery,
+                cacheFirst: true,
+              )
               .timeout(const Duration(seconds: 6));
           final data = response['data'] is Map<String, dynamic>
               ? response['data'] as Map<String, dynamic>
@@ -414,7 +444,7 @@ class _CuisineResultsScreenState extends State<CuisineResultsScreen> {
         centerTitle: false,
       ),
       body: RefreshIndicator(
-        onRefresh: _loadResults,
+        onRefresh: () => _loadResults(forceRefresh: true),
         color: primary,
         child: ListView(
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
@@ -440,12 +470,7 @@ class _CuisineResultsScreenState extends State<CuisineResultsScreen> {
             ),
             const SizedBox(height: 16),
             if (_isLoading)
-              Padding(
-                padding: const EdgeInsets.only(top: 120),
-                child: Center(
-                  child: CircularProgressIndicator(color: primary),
-                ),
-              )
+              const AppSkeletonColumn(itemCount: 5, itemHeight: 112)
             else if (_error != null)
               _emptyState(_error!)
             else if (activeCount == 0)

@@ -13,7 +13,7 @@
         $primaryColor = App\Models\AppSetting::getValue('primary_color', '#EF4F5F');
         $secondaryColor = App\Models\AppSetting::getValue('secondary_color', '#FF8C42');
         $googleMapsKey = $googleMapsApiKey ?? App\Models\AppSetting::getValue('google_maps_api_key', App\Models\AppSetting::getValue('google_maps_key', ''));
-        $currencySymbol = App\Models\AppSetting::getValue('currency_symbol', '₹');
+        $currencySymbol = App\Models\AppSetting::sanitizedCurrencySymbol();
 
         $heroTitle = App\Models\AppSetting::getValue('hero_title', 'Where do you want to order from?');
         $heroSubtitle = App\Models\AppSetting::getValue('hero_subtitle', 'Discover the best restaurants in your neighborhood');

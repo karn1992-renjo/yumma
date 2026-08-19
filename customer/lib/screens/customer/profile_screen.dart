@@ -15,72 +15,12 @@ import '../../utils/currency_utils.dart';
 import '../../widgets/common/app_cached_image.dart';
 import 'edit_profile_screen.dart';
 
-const _profileText = FoodFlowTheme.ink;
 const _profileSubtext = FoodFlowTheme.muted;
-const _profileLine = FoodFlowTheme.line;
-const _profileSuccess = FoodFlowTheme.success;
 const _profileBg = Colors.white;
 const _profileAccent = Color(0xFFFF6A00);
 
 Color _profilePrimary(BuildContext context) =>
     FoodFlowTheme.brandPrimary(context);
-
-BoxDecoration _profilePanelDecoration(BuildContext context,
-    {double radius = 28}) {
-  return BoxDecoration(
-    gradient: const LinearGradient(
-      begin: Alignment.topLeft,
-      end: Alignment.bottomRight,
-      colors: [
-        FoodFlowTheme.surfaceColor,
-        FoodFlowTheme.surfaceWarm,
-        FoodFlowTheme.surfaceCool,
-      ],
-      stops: [0, 0.56, 1],
-    ),
-    borderRadius: BorderRadius.circular(radius),
-    border: Border.all(color: _profileLine),
-    boxShadow: [
-      BoxShadow(
-        color: Colors.white.withOpacity(0.95),
-        blurRadius: 3,
-        offset: const Offset(-2, -2),
-      ),
-      BoxShadow(
-        color: _profilePrimary(context).withOpacity(0.13),
-        blurRadius: 22,
-        spreadRadius: -3,
-        offset: const Offset(0, 14),
-      ),
-      BoxShadow(
-        color: Colors.black.withOpacity(0.06),
-        blurRadius: 24,
-        spreadRadius: -4,
-        offset: const Offset(0, 14),
-      ),
-    ],
-  );
-}
-
-BoxDecoration _profileCircleDecoration(Color color) {
-  return BoxDecoration(
-    color: Colors.white,
-    shape: BoxShape.circle,
-    border: Border.all(color: _profileLine),
-    boxShadow: [
-      BoxShadow(
-        color: color.withOpacity(0.14),
-        blurRadius: 18,
-        offset: const Offset(0, 10),
-      ),
-      BoxShadow(
-        color: Colors.black.withOpacity(0.05),
-        blurRadius: 16,
-        offset: const Offset(0, 8),
-      ),
-    ],
-  );
-}
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key, this.onBackToHome});
@@ -307,7 +247,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       offersCount: _offersCount,
                       onEdit: _openEditProfileScreen,
                     ),
-                    const SizedBox(height: 18),
+                    const SizedBox(height: 22),
+                    const _ProfileGroupLabel('QUICK ACCESS'),
+                    const SizedBox(height: 10),
                     _ProfileSectionCard(
                       children: [
                         _ProfileMenuTile(
@@ -318,8 +260,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
                             'saved address',
                             'saved addresses',
                           ),
-                          iconColor: const Color(0xFFD34B35),
-                          iconBackground: const Color(0xFFFCEFED),
                           onTap: () =>
                               Navigator.pushNamed(context, '/addresses'),
                         ),
@@ -328,8 +268,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           title: 'Payments',
                           subtitle:
                               'Balance ${formatCurrency(context, _walletBalance)}',
-                          iconColor: const Color(0xFF159947),
-                          iconBackground: const Color(0xFFEAF8EF),
                           onTap: () => Navigator.pushNamed(context, '/wallet'),
                         ),
                         _ProfileMenuTile(
@@ -340,8 +278,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
                             'saved restaurant',
                             'saved restaurants',
                           ),
-                          iconColor: const Color(0xFFE8387E),
-                          iconBackground: const Color(0xFFFCEAF3),
                           onTap: () => Navigator.pushNamed(
                               context, '/saved-restaurants'),
                         ),
@@ -353,19 +289,22 @@ class _ProfileScreenState extends State<ProfileScreen> {
                             'active offer',
                             'active offers',
                           ),
-                          iconColor: const Color(0xFFB245D5),
-                          iconBackground: const Color(0xFFF8ECFD),
                           onTap: () => Navigator.pushNamed(context, '/offers'),
                         ),
                         _ProfileMenuTile(
                           icon: LucideIcons.gift,
                           title: 'Scratch Cards',
                           subtitle: 'View and scratch your reward coupons',
-                          iconColor: const Color(0xFFFF6A00),
-                          iconBackground: const Color(0xFFFFF2E8),
                           onTap: () =>
                               Navigator.pushNamed(context, '/scratch-cards'),
                         ),
+                      ],
+                    ),
+                    const SizedBox(height: 22),
+                    const _ProfileGroupLabel('MY ACTIVITY'),
+                    const SizedBox(height: 10),
+                    _ProfileSectionCard(
+                      children: [
                         _ProfileMenuTile(
                           icon: LucideIcons.history,
                           title: 'Order History',
@@ -374,24 +313,25 @@ class _ProfileScreenState extends State<ProfileScreen> {
                             'past order',
                             'past orders',
                           ),
-                          iconColor: const Color(0xFFE78317),
-                          iconBackground: const Color(0xFFFFF3E6),
                           onTap: () => Navigator.pushNamed(context, '/orders'),
                         ),
+                      ],
+                    ),
+                    const SizedBox(height: 22),
+                    const _ProfileGroupLabel('SUPPORT & INFO'),
+                    const SizedBox(height: 10),
+                    _ProfileSectionCard(
+                      children: [
                         _ProfileMenuTile(
                           icon: LucideIcons.headset,
                           title: 'Help & Support',
                           subtitle: 'FAQs, contact us & more',
-                          iconColor: const Color(0xFF2A7FD6),
-                          iconBackground: const Color(0xFFEAF4FF),
                           onTap: () => Navigator.pushNamed(context, '/support'),
                         ),
                         _ProfileMenuTile(
                           icon: LucideIcons.shield_check,
                           title: 'Privacy Policy',
                           subtitle: 'Learn how we protect your data',
-                          iconColor: const Color(0xFF16A34A),
-                          iconBackground: const Color(0xFFEAF8EF),
                           onTap: () =>
                               Navigator.pushNamed(context, '/privacy-legal'),
                         ),
@@ -399,11 +339,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           icon: LucideIcons.file_text,
                           title: 'Terms & Conditions',
                           subtitle: 'Read our terms and conditions',
-                          iconColor: const Color(0xFF222222),
-                          iconBackground: const Color(0xFFF3F4F6),
                           onTap: () =>
                               Navigator.pushNamed(context, '/privacy-legal'),
                         ),
+                      ],
+                    ),
+                    const SizedBox(height: 22),
+                    const _ProfileGroupLabel('ACCOUNT'),
+                    const SizedBox(height: 10),
+                    _ProfileSectionCard(
+                      children: [
                         _ProfileMenuTile(
                           icon: _isLoggingOut
                               ? LucideIcons.loader
@@ -1009,90 +954,6 @@ class _ProfileAvatarFallback extends StatelessWidget {
   }
 }
 
-class _HeroContactLine extends StatelessWidget {
-  const _HeroContactLine({
-    required this.icon,
-    required this.text,
-  });
-
-  final IconData icon;
-  final String text;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Icon(icon, color: _profilePrimary(context), size: 16),
-        const SizedBox(width: 10),
-        Expanded(
-          child: FittedBox(
-            fit: BoxFit.scaleDown,
-            alignment: Alignment.centerLeft,
-            child: Text(
-              text,
-              maxLines: 1,
-              style: TextStyle(
-                color: _profileSubtext,
-                fontSize: 12,
-                fontWeight: FontWeight.w800,
-                height: 1.18,
-              ),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _HeroGlowCircle extends StatelessWidget {
-  const _HeroGlowCircle({required this.size});
-
-  final double size;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: size,
-      height: size,
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        color: Colors.white.withOpacity(0.1),
-      ),
-    );
-  }
-}
-
-class _HeroDots extends StatelessWidget {
-  const _HeroDots({required this.color});
-
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      width: 78,
-      height: 72,
-      child: GridView.builder(
-        physics: const NeverScrollableScrollPhysics(),
-        padding: EdgeInsets.zero,
-        itemCount: 48,
-        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: 8,
-          mainAxisSpacing: 7,
-          crossAxisSpacing: 7,
-        ),
-        itemBuilder: (_, __) => DecoratedBox(
-          decoration: BoxDecoration(
-            color: color,
-            shape: BoxShape.circle,
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 class _ProfileStatData {
   const _ProfileStatData({
     required this.icon,
@@ -1182,6 +1043,28 @@ class _ProfileStatItem extends StatelessWidget {
   }
 }
 
+class _ProfileGroupLabel extends StatelessWidget {
+  const _ProfileGroupLabel(this.label);
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(left: 4),
+      child: Text(
+        label,
+        style: const TextStyle(
+          color: _profileSubtext,
+          fontSize: 11.5,
+          fontWeight: FontWeight.w800,
+          letterSpacing: 0.8,
+        ),
+      ),
+    );
+  }
+}
+
 class _ProfileSectionCard extends StatelessWidget {
   const _ProfileSectionCard({
     required this.children,
@@ -1239,9 +1122,12 @@ class _ProfileMenuTile extends StatelessWidget {
   final Color? iconBackground;
   final Color? titleColor;
 
+  static const Color _neutralIconColor = Color(0xFF4B5563);
+  static const Color _neutralIconBackground = Color(0xFFF3F4F6);
+
   @override
   Widget build(BuildContext context) {
-    final resolvedColor = iconColor ?? _profileAccent;
+    final resolvedColor = iconColor ?? _neutralIconColor;
     return InkWell(
       onTap: onTap,
       child: Padding(
@@ -1249,13 +1135,13 @@ class _ProfileMenuTile extends StatelessWidget {
         child: Row(
           children: [
             Container(
-              width: 48,
-              height: 48,
+              width: 44,
+              height: 44,
               decoration: BoxDecoration(
-                color: iconBackground ?? const Color(0xFFFFF2E8),
-                borderRadius: BorderRadius.circular(14),
+                color: iconBackground ?? _neutralIconBackground,
+                borderRadius: BorderRadius.circular(13),
               ),
-              child: Icon(icon, color: resolvedColor, size: 22),
+              child: Icon(icon, color: resolvedColor, size: 20),
             ),
             const SizedBox(width: 18),
             Expanded(

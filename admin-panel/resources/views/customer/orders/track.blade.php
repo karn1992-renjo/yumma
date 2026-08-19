@@ -4,7 +4,7 @@
 
 @section('content')
 @php
-    $currencySymbol = App\Models\AppSetting::getValue('currency_symbol', '₹');
+    $currencySymbol = App\Models\AppSetting::sanitizedCurrencySymbol();
     $isTakeaway = ($order->order_type ?? 'delivery') === 'takeaway';
     $steps = $isTakeaway
         ? [

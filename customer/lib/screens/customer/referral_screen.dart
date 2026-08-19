@@ -10,6 +10,7 @@ import '../../config/api_constants.dart';
 import '../../config/app_config.dart';
 import '../../services/api_service.dart';
 import '../../theme/foodflow_theme.dart';
+import '../../widgets/common/app_skeleton.dart';
 
 class ReferralScreen extends StatefulWidget {
   const ReferralScreen({super.key});
@@ -29,19 +30,27 @@ class _ReferralScreenState extends State<ReferralScreen> {
     _load();
   }
 
-  Future<void> _load() async {
-    setState(() => _loading = true);
+  Future<void> _load({bool forceRefresh = false}) async {
+    setState(() => _loading = _data.isEmpty);
     try {
-      final response = await _api.get(ApiConstants.referralSummary);
-      if (!mounted) return;
-      setState(() {
-        _data = response is Map && response['data'] is Map
-            ? Map<String, dynamic>.from(response['data'] as Map)
-            : const {};
-      });
+      final response = await _api.get(
+        ApiConstants.referralSummary,
+        cachePolicy: ApiCachePolicy.screen,
+        cacheFirst: !forceRefresh,
+        refreshCached: !forceRefresh,
+        onCacheRefreshed: _applyReferral,
+      );
+      _applyReferral(response);
     } finally {
       if (mounted) setState(() => _loading = false);
     }
+  }
+
+  void _applyReferral(dynamic response) {
+    if (!mounted || response is! Map || response['data'] is! Map) return;
+    setState(() {
+      _data = Map<String, dynamic>.from(response['data'] as Map);
+    });
   }
 
   @override
@@ -65,9 +74,9 @@ class _ReferralScreenState extends State<ReferralScreen> {
         elevation: 0,
       ),
       body: _loading
-          ? const Center(child: CircularProgressIndicator())
+          ? const AppSkeletonListView(itemCount: 4, itemHeight: 118)
           : RefreshIndicator(
-              onRefresh: _load,
+              onRefresh: () => _load(forceRefresh: true),
               color: primary,
               child: ListView(
                 padding: const EdgeInsets.fromLTRB(18, 10, 18, 28),
@@ -136,9 +145,8 @@ class _ReferralScreenState extends State<ReferralScreen> {
                         SizedBox(
                           width: double.infinity,
                           child: ElevatedButton.icon(
-                            onPressed: code.isEmpty
-                                ? null
-                                : () => _shareInvite(code),
+                            onPressed:
+                                code.isEmpty ? null : () => _shareInvite(code),
                             icon: const Icon(LucideIcons.share_2),
                             label: const Text('Share Invite'),
                           ),
@@ -250,7 +258,8 @@ class _ReferralScreenState extends State<ReferralScreen> {
   }
 
   void _toast(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
   }
 
   Future<void> _shareInvite(String code) async {
@@ -292,7 +301,7 @@ class _ReferralScreenState extends State<ReferralScreen> {
     try {
       final bytes = await rootBundle.load(assetPath);
       final tempDir = await getTemporaryDirectory();
-      final file = File('${tempDir.path}/yumma-referral-logo.png');
+      final file = File('${tempDir.path}/Yumma-referral-logo.png');
       await file.writeAsBytes(
         bytes.buffer.asUint8List(bytes.offsetInBytes, bytes.lengthInBytes),
         flush: true,
@@ -330,7 +339,8 @@ class _ReferralScreenState extends State<ReferralScreen> {
     }
 
     final webLink =
-        Uri.https('yumma.in', '/referral', {'code': trimmedCode}).toString();
+        Uri.https('yumma.online', '/referral', {'code': trimmedCode})
+            .toString();
 
     final params = <String, String>{
       'pid': 'referral',
@@ -348,8 +358,7 @@ class _ReferralScreenState extends State<ReferralScreen> {
           'Use referral code $trimmedCode for a fast, convenient food ordering experience.',
     };
     final normalizedLogoUrl = logoUrl?.trim();
-    if (normalizedLogoUrl != null &&
-        normalizedLogoUrl.startsWith('https://')) {
+    if (normalizedLogoUrl != null && normalizedLogoUrl.startsWith('https://')) {
       params['af_og_image'] = normalizedLogoUrl;
     }
 

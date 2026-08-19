@@ -2,113 +2,141 @@
 
 namespace App\Http\Controllers\Restaurant;
 
+use App\Events\SupportMessageSent;
 use App\Http\Controllers\Controller;
 use App\Http\Controllers\Restaurant\Concerns\ResolvesRestaurantContext;
-use App\Models\SupportTicket;
+use App\Models\SupportConversation;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Str;
 
 class HelpSupportController extends Controller
 {
     use ResolvesRestaurantContext;
 
-    public function index()
+    public function index(Request $request)
     {
         $restaurant = $this->currentRestaurant();
-        
-        $tickets = SupportTicket::where('restaurant_id', $restaurant->id)
-            ->orderBy('created_at', 'desc')
-            ->paginate(10);
-            
-        $openTickets = SupportTicket::where('restaurant_id', $restaurant->id)
+
+        $query = SupportConversation::where('restaurant_id', $restaurant->id)
+            ->where('requester_role', 'restaurant')
+            ->with('firstMessage');
+
+        if ($request->filled('status')) {
+            $query->where('status', $request->status);
+        }
+
+        $tickets = $query->orderBy('created_at', 'desc')->paginate(10);
+
+        $openTickets = SupportConversation::where('restaurant_id', $restaurant->id)
+            ->where('requester_role', 'restaurant')
             ->whereIn('status', ['open', 'in_progress'])
             ->count();
-            
-        $resolvedTickets = SupportTicket::where('restaurant_id', $restaurant->id)
+
+        $resolvedTickets = SupportConversation::where('restaurant_id', $restaurant->id)
+            ->where('requester_role', 'restaurant')
             ->where('status', 'resolved')
             ->count();
-            
+
         return view('restaurant.support.index', compact('tickets', 'openTickets', 'resolvedTickets'));
     }
-    
+
     public function create()
     {
         return view('restaurant.support.create');
     }
-    
+
     public function store(Request $request)
     {
         $restaurant = $this->currentRestaurant();
-        
+
         $validated = $request->validate([
             'subject' => 'required|string|max:255',
-            'category' => 'required|in:order_issue,payment_issue,technical_support,account_issue,general_inquiry,live_chat',
+            'category' => 'required|in:order_issue,payment_issue,technical_support,account_issue,general_inquiry',
             'priority' => 'required|in:low,medium,high,urgent',
             'description' => 'required|string',
             'attachment' => 'nullable|file|max:5120',
         ]);
-        
-        $validated['restaurant_id'] = $restaurant->id;
-        $validated['user_id'] = Auth::id();
-        $validated['requester_role'] = 'restaurant';
-        $validated['status'] = 'open';
-        $validated['ticket_number'] = 'TKT-' . strtoupper(uniqid());
-        
-        if ($request->hasFile('attachment')) {
-            $path = $request->file('attachment')->store('support-tickets', 'public');
-            $validated['attachment'] = $path;
-        }
-        
-        SupportTicket::create($validated);
-        
+
+        $ticket = SupportConversation::create([
+            'conversation_number' => 'SUP-' . Str::upper(Str::random(8)),
+            'restaurant_id' => $restaurant->id,
+            'user_id' => Auth::id(),
+            'requester_role' => 'restaurant',
+            'category' => $validated['category'],
+            'stage' => 'human',
+            'status' => 'open',
+            'priority' => $validated['priority'],
+            'last_message_at' => now(),
+        ]);
+
+        $attachmentPath = $request->hasFile('attachment')
+            ? $request->file('attachment')->store('support-tickets', 'public')
+            : null;
+
+        $ticket->messages()->create([
+            'sender_id' => Auth::id(),
+            'sender_type' => 'restaurant',
+            'message_type' => $attachmentPath ? 'image' : 'text',
+            'message' => $validated['subject'] . "\n\n" . $validated['description'],
+            'attachment_path' => $attachmentPath,
+            'delivered_at' => now(),
+        ]);
+
         return redirect()->route('restaurant.support.index')
             ->with('success', 'Support ticket created successfully! We\'ll get back to you soon.');
     }
-    
+
     public function show($id)
     {
         $restaurant = $this->currentRestaurant();
-        $ticket = SupportTicket::where('restaurant_id', $restaurant->id)
-            ->with('replies.user')
+        $ticket = SupportConversation::where('restaurant_id', $restaurant->id)
+            ->with(['firstMessage', 'messages.sender'])
             ->findOrFail($id);
-            
+
         return view('restaurant.support.show', compact('ticket'));
     }
-    
+
     public function reply(Request $request, $id)
     {
         $restaurant = $this->currentRestaurant();
-        $ticket = SupportTicket::where('restaurant_id', $restaurant->id)->findOrFail($id);
-        
+        $ticket = SupportConversation::where('restaurant_id', $restaurant->id)->findOrFail($id);
+
         $validated = $request->validate([
             'message' => 'required|string',
             'attachment' => 'nullable|file|max:5120',
         ]);
-        
-        $reply = $ticket->replies()->create([
-            'user_id' => Auth::id(),
+
+        $attachmentPath = $request->hasFile('attachment')
+            ? $request->file('attachment')->store('support-replies', 'public')
+            : null;
+
+        $message = $ticket->messages()->create([
+            'sender_id' => Auth::id(),
+            'sender_type' => 'restaurant',
+            'message_type' => $attachmentPath ? 'image' : 'text',
             'message' => $validated['message'],
+            'attachment_path' => $attachmentPath,
+            'delivered_at' => now(),
         ]);
-        
-        if ($request->hasFile('attachment')) {
-            $path = $request->file('attachment')->store('support-replies', 'public');
-            $reply->update(['attachment' => $path]);
-        }
-        
+
+        $ticket->update(['last_message_at' => now()]);
+        broadcast(new SupportMessageSent($message))->toOthers();
+
         return redirect()->back()->with('success', 'Reply sent successfully!');
     }
-    
+
     public function close($id)
     {
         $restaurant = $this->currentRestaurant();
-        $ticket = SupportTicket::where('restaurant_id', $restaurant->id)->findOrFail($id);
-        
+        $ticket = SupportConversation::where('restaurant_id', $restaurant->id)->findOrFail($id);
+
         $ticket->update(['status' => 'closed']);
-        
+
         return redirect()->route('restaurant.support.index')
             ->with('success', 'Ticket closed successfully!');
     }
-    
+
     public function faq()
     {
         $faqs = [
@@ -153,12 +181,12 @@ class HelpSupportController extends Controller
                 'category' => 'Settings'
             ],
         ];
-        
+
         $categories = collect($faqs)->pluck('category')->unique();
-        
+
         return view('restaurant.support.faq', compact('faqs', 'categories'));
     }
-    
+
     public function contact()
     {
         return view('restaurant.support.contact');

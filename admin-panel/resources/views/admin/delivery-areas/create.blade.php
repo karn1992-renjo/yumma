@@ -216,16 +216,22 @@
 
 @section('scripts')
 @include('partials.google-maps-shim')
+@include('partials.address-autocomplete')
 <script>
 document.addEventListener('DOMContentLoaded', function() {
     // Get map container
     const mapContainer = document.getElementById('areaMap');
     if (!mapContainer) return;
-    
+
+    if (!window.L) {
+        mapContainer.innerHTML = '<div class="alert alert-warning m-0">Map is unavailable because the Google Maps API key is not configured (Admin &rarr; Settings &rarr; Map). You can still enter latitude/longitude manually below.</div>';
+        return;
+    }
+
     // Initialize map
     var map = L.map('areaMap').setView([20.5937, 78.9629], 5);
-    
-    
+
+
     setTimeout(function() { map.invalidateSize(); }, 100);
     setTimeout(function() { map.invalidateSize(); }, 500);
     
@@ -700,7 +706,27 @@ document.addEventListener('DOMContentLoaded', function() {
     }
     
     initCircleMode();
-    
+
+    if (window.AddressAutocomplete) {
+        AddressAutocomplete.bind('locationSearch', {
+            lat: 'latitudeInput',
+            lng: 'longitudeInput',
+        }, {
+            onPlace: function (place) {
+                const lat = place.geometry.location.lat();
+                const lng = place.geometry.location.lng();
+                if (areaTypeInput && areaTypeInput.value === 'circle') {
+                    updateMarker(lat, lng);
+                } else {
+                    map.setView([lat, lng], 13);
+                }
+            },
+            onNoLocation: function () {
+                alert('Select a suggested address or try a more specific search.');
+            },
+        });
+    }
+
     window.addEventListener('resize', function() {
         setTimeout(function() { map.invalidateSize(); }, 100);
     });

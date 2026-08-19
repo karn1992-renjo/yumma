@@ -60,6 +60,18 @@
                                 <div>{{ implode(', ', json_decode($application->cuisine ?? '[]', true)) }}</div>
                             </div>
                         </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label class="text-muted small">GSTIN Number</label>
+                                <div>{{ $application->gstin_number ?? 'Not provided' }}</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label class="text-muted small">PAN Number</label>
+                                <div>{{ $application->pan_number ?? 'Not provided' }}</div>
+                            </div>
+                        </div>
                         <div class="col-12">
                             <div class="mb-3">
                                 <label class="text-muted small">Address</label>
@@ -245,7 +257,7 @@
                         <div class="col-md-6">
                             <div class="mb-3">
                                 <label class="text-muted small">Date of Birth</label>
-                                <div>{{ $meta['date_of_birth'] ?? 'Not provided' }}</div>
+                                <div>{{ optional($application->dob)->format('F d, Y') ?? ($meta['date_of_birth'] ?? 'Not provided') }}</div>
                             </div>
                         </div>
                         <div class="col-md-6">
@@ -449,8 +461,70 @@
                 </div>
             </div>
         </div>
+
+        <!-- Document Verification -->
+        @php
+            $verification = is_array($application->document_verification) ? $application->document_verification : [];
+            $verificationLabels = [
+                'gstin' => 'GSTIN',
+                'vehicle_rc' => 'Vehicle RC',
+                'driving_license' => 'Driving License',
+                'pan' => 'PAN',
+                'aadhaar' => 'Aadhaar',
+            ];
+            $verificationBadge = [
+                'verified' => 'badge-success',
+                'checked' => 'badge-success',
+                'invalid' => 'badge-danger',
+                'error' => 'badge-secondary',
+                'not_configured' => 'badge-secondary',
+            ];
+        @endphp
+        <div class="table-card mb-4">
+            <div class="card-header bg-transparent d-flex justify-content-between align-items-center">
+                <h5 class="mb-0 fw-bold">Cashfree Document Verification</h5>
+                <form action="{{ route('admin.partner-applications.reverify', $application) }}" method="POST">
+                    @csrf
+                    <button type="submit" class="btn btn-sm btn-outline-primary">
+                        <i class="fas fa-rotate me-1"></i> Re-verify
+                    </button>
+                </form>
+            </div>
+            <div class="p-4">
+                @if(empty($verification))
+                    <div class="text-center text-muted py-3">No documents have been verified yet.</div>
+                @else
+                    <div class="row g-3">
+                        @foreach($verification as $key => $result)
+                            <div class="col-md-6">
+                                <div class="p-3 border rounded h-100">
+                                    <div class="d-flex justify-content-between align-items-start mb-2">
+                                        <div class="fw-semibold">{{ $verificationLabels[$key] ?? ucfirst($key) }}</div>
+                                        <span class="badge {{ $verificationBadge[$result['status'] ?? ''] ?? 'badge-warning' }}">
+                                            {{ ucfirst(str_replace('_', ' ', $result['status'] ?? 'unknown')) }}
+                                        </span>
+                                    </div>
+                                    @if(!empty($result['details']['registered_name'] ?? null))
+                                        <div class="small text-muted">Registered name: {{ $result['details']['registered_name'] }}</div>
+                                    @endif
+                                    @if(!empty($result['details']['name'] ?? null))
+                                        <div class="small text-muted">Name on record: {{ $result['details']['name'] }}</div>
+                                    @endif
+                                    @if(!empty($result['message']))
+                                        <div class="small text-muted">{{ $result['message'] }}</div>
+                                    @endif
+                                    @if(!empty($result['checked_at']))
+                                        <div class="small text-muted mt-1">Checked {{ \Carbon\Carbon::parse($result['checked_at'])->diffForHumans() }}</div>
+                                    @endif
+                                </div>
+                            </div>
+                        @endforeach
+                    </div>
+                @endif
+            </div>
+        </div>
     </div>
-    
+
     <div class="col-lg-4">
         <!-- Status Card -->
         <div class="table-card mb-4">

@@ -4,7 +4,7 @@ class ApiConstants {
   // Base URL - Update this with your actual API URL
   static const String baseUrl = String.fromEnvironment(
     'API_BASE_URL',
-    defaultValue: 'https://food.renjotech.in/api',
+    defaultValue: 'https://yumma.in/api',
   );
 
   // Auth endpoints
@@ -50,6 +50,16 @@ class ApiConstants {
   static const String supportTickets = '/support/tickets';
   static String supportTicketReply(int ticketId) =>
       '/support/tickets/$ticketId/reply';
+  static const String supportConversations = '/support/conversations';
+  static String supportConversation(int id) => '/support/conversations/$id';
+  static String supportConversationMessages(int id) =>
+      '/support/conversations/$id/messages';
+  static String supportConversationEscalate(int id) =>
+      '/support/conversations/$id/escalate';
+  static String supportConversationRead(int id) =>
+      '/support/conversations/$id/read';
+  static String supportConversationCsat(int id) =>
+      '/support/conversations/$id/csat';
   static String orderChat(int orderId) => '/orders/$orderId/chat';
   static String restaurantOrderChat(int orderId) =>
       '/restaurant/orders/$orderId/chat';
@@ -98,6 +108,7 @@ class ApiConstants {
   static const String trackOrder = '/orders/track';
   static String requestRefund(int orderId) => '/orders/$orderId/refund-request';
   static String orderFeedback(int orderId) => '/orders/$orderId/feedback';
+  static String orderTip(int orderId) => '/orders/$orderId/tip';
   static const String refundPolicy = '/refund-policy';
 
   // Address endpoints

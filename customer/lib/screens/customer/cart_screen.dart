@@ -11,6 +11,7 @@ import '../../providers/cart_provider.dart';
 import '../../services/api_service.dart';
 import '../../theme/foodflow_theme.dart';
 import '../../utils/currency_utils.dart';
+import '../../utils/promotion_summary_utils.dart';
 import '../../widgets/common/app_cached_image.dart';
 
 class CartScreen extends StatefulWidget {
@@ -35,8 +36,8 @@ class _CartScreenState extends State<CartScreen> {
   String? _inFlightRewardSignature;
   int _rewardRequestId = 0;
   Timer? _rewardDebounce;
-  bool _isRewardLoading = false;
   double? _summaryDiscount;
+  double? _summaryEmbeddedItemDiscount;
   double? _summaryTotal;
 
   @override
@@ -62,8 +63,9 @@ class _CartScreenState extends State<CartScreen> {
     final localTotal = cart.displayTotal;
     final double checkoutTotal =
         hasFreshSummary ? (_summaryTotal ?? localTotal) : localTotal;
-    final double checkoutDiscount =
-        hasFreshSummary ? (_summaryDiscount ?? 0) : localDiscount;
+    final double checkoutDiscount = hasFreshSummary
+        ? ((_summaryDiscount ?? 0) + (_summaryEmbeddedItemDiscount ?? 0))
+        : localDiscount;
 
     return Scaffold(
       backgroundColor: FoodFlowTheme.canvas,
@@ -91,10 +93,10 @@ class _CartScreenState extends State<CartScreen> {
                   SliverPadding(
                     padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
                     sliver: SliverList.separated(
-                      itemCount: cart.items.length,
+                      itemCount: cart.paidItems.length,
                       separatorBuilder: (_, __) => const SizedBox(height: 12),
                       itemBuilder: (context, index) {
-                        final item = cart.items[index];
+                        final item = cart.paidItems[index];
                         return _CartReviewItem(
                           item: item,
                           restaurant: cart.restaurant,
@@ -103,13 +105,12 @@ class _CartScreenState extends State<CartScreen> {
                       },
                     ),
                   ),
-                  if (_detachedRewardLines.isNotEmpty || _isRewardLoading)
+                  if (_detachedRewardLines.isNotEmpty)
                     SliverPadding(
                       padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
                       sliver: SliverToBoxAdapter(
                         child: _CartRewardSection(
                           rewardLines: _detachedRewardLines,
-                          isLoading: _isRewardLoading,
                         ),
                       ),
                     ),
@@ -122,7 +123,7 @@ class _CartScreenState extends State<CartScreen> {
           : _CartBottomBar(
               total: checkoutTotal,
               discount: checkoutDiscount,
-              itemCount: cart.itemCount,
+              itemCount: cart.paidItemCount,
               primary: primary,
               onAddMore: widget.onAddMore ?? _addMore,
               onCheckout: () => Navigator.pushNamed(context, '/checkout'),
@@ -168,12 +169,22 @@ class _CartScreenState extends State<CartScreen> {
             _rewardLines.clear();
             _rewardCartSignature = null;
             _summaryDiscount = null;
+            _summaryEmbeddedItemDiscount = null;
             _summaryTotal = null;
           });
         });
       }
       return;
     }
+
+    // Skip while this screen is hidden behind another route (e.g. the
+    // customer proceeded to checkout, which is pushed on top and keeps its
+    // own summary in sync). Without this guard, both screens independently
+    // re-fetch on every cart edit — checkout's build() keeps running here
+    // too since Navigator keeps this route's State alive underneath — and
+    // together they burn through /orders/summary's shared rate limit,
+    // surfacing as 429s while adjusting quantity.
+    if (ModalRoute.of(context)?.isCurrent != true) return;
 
     final signature = _cartSignature(cart);
     if (signature == _lastCartSignature) return;
@@ -184,7 +195,7 @@ class _CartScreenState extends State<CartScreen> {
   }
 
   void _queueCartRewardRefresh([
-    Duration delay = const Duration(milliseconds: 220),
+    Duration delay = const Duration(milliseconds: 80),
   ]) {
     _rewardDebounce?.cancel();
     _rewardDebounce = Timer(delay, () {
@@ -201,8 +212,8 @@ class _CartScreenState extends State<CartScreen> {
         _rewardLines.clear();
         _rewardCartSignature = null;
         _summaryDiscount = null;
+        _summaryEmbeddedItemDiscount = null;
         _summaryTotal = null;
-        _isRewardLoading = false;
       });
       return;
     }
@@ -213,7 +224,6 @@ class _CartScreenState extends State<CartScreen> {
     }
     _inFlightRewardSignature = requestSignature;
     final requestId = ++_rewardRequestId;
-    setState(() => _isRewardLoading = true);
     final summaryItems = cart.paidItems
         .map(
           (item) => {
@@ -250,6 +260,8 @@ class _CartScreenState extends State<CartScreen> {
           if (cart.promotionCouponCode.isNotEmpty)
             'coupon_code': cart.promotionCouponCode,
         },
+        coalesce: true,
+        reuseFor: const Duration(seconds: 10),
       );
 
       if (!mounted ||
@@ -258,24 +270,25 @@ class _CartScreenState extends State<CartScreen> {
         return;
       }
 
-      final lines = response['success'] == true
-          ? _mapList((response['data'] as Map?)?['reward_lines'])
-          : const <Map<String, dynamic>>[];
       final data = response['data'] is Map
           ? Map<String, dynamic>.from(response['data'] as Map)
           : const <String, dynamic>{};
+      final lines = response['success'] == true
+          ? promotionRewardLinesFromSummary(data)
+          : const <Map<String, dynamic>>[];
       debugPrint(
         '[SwaadPromoCart] cart summary response: success=${response['success']}, '
         'rewardLines=${lines.length}, rewards=${_rewardLineDebug(lines)}, '
         '${_summaryDebug(data)}',
       );
-      context.read<CartProvider>().syncPromotionRewards(lines);
       setState(() {
         _rewardLines
           ..clear()
           ..addAll(lines);
         _rewardCartSignature = requestSignature;
-        _summaryDiscount = _doubleValue(data['discount']);
+        _summaryDiscount = promotionSummaryNumber(data, 'discount');
+        _summaryEmbeddedItemDiscount =
+            promotionSummaryNumber(data, 'embedded_item_discount');
         _summaryTotal = _doubleValue(data['total']);
       });
     } catch (e) {
@@ -284,9 +297,6 @@ class _CartScreenState extends State<CartScreen> {
     } finally {
       if (_inFlightRewardSignature == requestSignature) {
         _inFlightRewardSignature = null;
-      }
-      if (mounted && requestId == _rewardRequestId) {
-        setState(() => _isRewardLoading = false);
       }
     }
   }
@@ -474,7 +484,7 @@ class _CartHeader extends StatelessWidget {
               const Spacer(),
               Text(
                 'Cart',
-                style: GoogleFonts.nunitoSans(
+                style: GoogleFonts.plusJakartaSans(
                   fontSize: 18,
                   fontWeight: FontWeight.w800,
                   color: FoodFlowTheme.ink,
@@ -501,7 +511,7 @@ class _CartHeader extends StatelessWidget {
                       restaurantName,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: GoogleFonts.nunitoSans(
+                      style: GoogleFonts.plusJakartaSans(
                         fontSize: 20,
                         fontWeight: FontWeight.w800,
                         color: FoodFlowTheme.ink,
@@ -512,7 +522,7 @@ class _CartHeader extends StatelessWidget {
                       '${cart.itemCount} item${cart.itemCount == 1 ? '' : 's'} ready for checkout',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: GoogleFonts.nunitoSans(
+                      style: GoogleFonts.plusJakartaSans(
                         fontSize: 12.5,
                         fontWeight: FontWeight.w600,
                         color: FoodFlowTheme.muted,
@@ -539,7 +549,7 @@ class _CartHeader extends StatelessWidget {
                 Expanded(
                   child: Text(
                     'Review items here. Payment and order placement happen on checkout.',
-                    style: GoogleFonts.nunitoSans(
+                    style: GoogleFonts.plusJakartaSans(
                       fontSize: 12,
                       height: 1.35,
                       fontWeight: FontWeight.w600,
@@ -582,7 +592,7 @@ class _CartHeader extends StatelessWidget {
               children: [
                 Text(
                   'Clear this cart?',
-                  style: GoogleFonts.nunitoSans(
+                  style: GoogleFonts.plusJakartaSans(
                     fontSize: 18,
                     fontWeight: FontWeight.w800,
                     color: FoodFlowTheme.ink,
@@ -591,7 +601,7 @@ class _CartHeader extends StatelessWidget {
                 const SizedBox(height: 8),
                 Text(
                   'Items from the current restaurant cart will be removed.',
-                  style: GoogleFonts.nunitoSans(
+                  style: GoogleFonts.plusJakartaSans(
                     fontSize: 13,
                     fontWeight: FontWeight.w500,
                     color: FoodFlowTheme.muted,
@@ -711,7 +721,7 @@ class _CartSwitcher extends StatelessWidget {
                           restaurant.name,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: GoogleFonts.nunitoSans(
+                          style: GoogleFonts.plusJakartaSans(
                             fontSize: 13,
                             fontWeight: FontWeight.w800,
                             color: FoodFlowTheme.ink,
@@ -720,7 +730,7 @@ class _CartSwitcher extends StatelessWidget {
                         const SizedBox(height: 2),
                         Text(
                           '${restaurantCart.itemCount} item${restaurantCart.itemCount == 1 ? '' : 's'}',
-                          style: GoogleFonts.nunitoSans(
+                          style: GoogleFonts.plusJakartaSans(
                             fontSize: 11,
                             fontWeight: FontWeight.w600,
                             color: isActive ? primary : FoodFlowTheme.muted,
@@ -795,7 +805,7 @@ class _CartReviewItem extends StatelessWidget {
                           menuItem.name,
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
-                          style: GoogleFonts.nunitoSans(
+                          style: GoogleFonts.plusJakartaSans(
                             fontSize: 14.5,
                             height: 1.24,
                             fontWeight: FontWeight.w800,
@@ -812,7 +822,7 @@ class _CartReviewItem extends StatelessWidget {
                       menuItem.description!.trim(),
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
-                      style: GoogleFonts.nunitoSans(
+                      style: GoogleFonts.plusJakartaSans(
                         fontSize: 11.5,
                         height: 1.35,
                         fontWeight: FontWeight.w500,
@@ -838,7 +848,7 @@ class _CartReviewItem extends StatelessWidget {
                         child: isReward
                             ? Text(
                                 'FREE',
-                                style: GoogleFonts.nunitoSans(
+                                style: GoogleFonts.plusJakartaSans(
                                   fontSize: 15,
                                   fontWeight: FontWeight.w900,
                                   color: FoodFlowTheme.successDark,
@@ -913,7 +923,7 @@ class _InlineRewardBadge extends StatelessWidget {
               '$quantity free item • $title',
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: GoogleFonts.nunitoSans(
+              style: GoogleFonts.plusJakartaSans(
                 fontSize: 11,
                 fontWeight: FontWeight.w800,
                 color: FoodFlowTheme.tagGreenDark,
@@ -929,15 +939,13 @@ class _InlineRewardBadge extends StatelessWidget {
 class _CartRewardSection extends StatelessWidget {
   const _CartRewardSection({
     required this.rewardLines,
-    required this.isLoading,
   });
 
   final List<Map<String, dynamic>> rewardLines;
-  final bool isLoading;
 
   @override
   Widget build(BuildContext context) {
-    if (rewardLines.isEmpty && !isLoading) return const SizedBox.shrink();
+    if (rewardLines.isEmpty) return const SizedBox.shrink();
 
     return Container(
       margin: const EdgeInsets.only(top: 12),
@@ -966,30 +974,17 @@ class _CartRewardSection extends StatelessWidget {
               ),
               const SizedBox(width: 8),
               Text(
-                'Free items added',
-                style: GoogleFonts.nunitoSans(
+                'Free with this order',
+                style: GoogleFonts.plusJakartaSans(
                   fontSize: 14,
                   fontWeight: FontWeight.w900,
                   color: FoodFlowTheme.ink,
                 ),
               ),
-              if (isLoading) ...[
-                const Spacer(),
-                SizedBox(
-                  width: 16,
-                  height: 16,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
-                    color: FoodFlowTheme.brandPrimary(context),
-                  ),
-                ),
-              ],
             ],
           ),
-          if (rewardLines.isNotEmpty) ...[
-            const SizedBox(height: 12),
-            ...rewardLines.map((line) => _DetachedRewardLine(line: line)),
-          ],
+          const SizedBox(height: 12),
+          ...rewardLines.map((line) => _DetachedRewardLine(line: line)),
         ],
       ),
     );
@@ -1035,7 +1030,7 @@ class _DetachedRewardLine extends StatelessWidget {
               name.isEmpty ? 'Free item' : name,
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
-              style: GoogleFonts.nunitoSans(
+              style: GoogleFonts.plusJakartaSans(
                 fontSize: 13,
                 height: 1.25,
                 fontWeight: FontWeight.w800,
@@ -1046,7 +1041,7 @@ class _DetachedRewardLine extends StatelessWidget {
           const SizedBox(width: 8),
           Text(
             '$quantity x FREE',
-            style: GoogleFonts.nunitoSans(
+            style: GoogleFonts.plusJakartaSans(
               fontSize: 12,
               fontWeight: FontWeight.w900,
               color: FoodFlowTheme.tagGreenDark,
@@ -1131,7 +1126,7 @@ class _PriceLine extends StatelessWidget {
       children: [
         Text(
           formatCurrency(context, displayTotal),
-          style: GoogleFonts.nunitoSans(
+          style: GoogleFonts.plusJakartaSans(
             fontSize: 17,
             fontWeight: FontWeight.w900,
             color: FoodFlowTheme.ink,
@@ -1143,7 +1138,7 @@ class _PriceLine extends StatelessWidget {
               context,
               menuItem.price * item.quantity,
             ),
-            style: GoogleFonts.nunitoSans(
+            style: GoogleFonts.plusJakartaSans(
               fontSize: 12,
               fontWeight: FontWeight.w700,
               color: FoodFlowTheme.faint,
@@ -1180,7 +1175,7 @@ class _OptionText extends StatelessWidget {
         values,
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
-        style: GoogleFonts.nunitoSans(
+        style: GoogleFonts.plusJakartaSans(
           fontSize: 10.5,
           fontWeight: FontWeight.w700,
           color: FoodFlowTheme.tagOrangeDark,
@@ -1228,7 +1223,7 @@ class _QuantityStepper extends StatelessWidget {
             child: Text(
               quantity.toString(),
               textAlign: TextAlign.center,
-              style: GoogleFonts.nunitoSans(
+              style: GoogleFonts.plusJakartaSans(
                 fontSize: 13,
                 fontWeight: FontWeight.w900,
                 color: primary,
@@ -1311,7 +1306,7 @@ class _CartBottomBar extends StatelessWidget {
               label: Text(
                 'Add more',
                 overflow: TextOverflow.ellipsis,
-                style: GoogleFonts.nunitoSans(
+                style: GoogleFonts.plusJakartaSans(
                   fontSize: 13,
                   fontWeight: FontWeight.w800,
                   color: primary,
@@ -1365,7 +1360,7 @@ class _CartBottomBar extends StatelessWidget {
                                 formatCurrency(context, total),
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
-                                style: GoogleFonts.nunitoSans(
+                                style: GoogleFonts.plusJakartaSans(
                                   fontSize: 15,
                                   fontWeight: FontWeight.w900,
                                   color: FoodFlowTheme.brandOnPrimary(context),
@@ -1377,7 +1372,7 @@ class _CartBottomBar extends StatelessWidget {
                                     : '$itemCount item${itemCount == 1 ? '' : 's'}',
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
-                                style: GoogleFonts.nunitoSans(
+                                style: GoogleFonts.plusJakartaSans(
                                   fontSize: 10,
                                   fontWeight: FontWeight.w700,
                                   color: FoodFlowTheme.brandOnPrimary(context)
@@ -1391,7 +1386,7 @@ class _CartBottomBar extends StatelessWidget {
                           'Checkout',
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: GoogleFonts.nunitoSans(
+                          style: GoogleFonts.plusJakartaSans(
                             fontSize: 14,
                             fontWeight: FontWeight.w900,
                             color: FoodFlowTheme.brandOnPrimary(context),
@@ -1443,7 +1438,7 @@ class _EmptyCartView extends StatelessWidget {
               const Spacer(),
               Text(
                 'Cart',
-                style: GoogleFonts.nunitoSans(
+                style: GoogleFonts.plusJakartaSans(
                   fontSize: 18,
                   fontWeight: FontWeight.w800,
                   color: FoodFlowTheme.ink,
@@ -1471,7 +1466,7 @@ class _EmptyCartView extends StatelessWidget {
           Text(
             'Your cart is empty',
             textAlign: TextAlign.center,
-            style: GoogleFonts.nunitoSans(
+            style: GoogleFonts.plusJakartaSans(
               fontSize: 24,
               fontWeight: FontWeight.w900,
               color: FoodFlowTheme.ink,
@@ -1481,7 +1476,7 @@ class _EmptyCartView extends StatelessWidget {
           Text(
             'Add dishes from restaurants and review them here before checkout.',
             textAlign: TextAlign.center,
-            style: GoogleFonts.nunitoSans(
+            style: GoogleFonts.plusJakartaSans(
               fontSize: 13,
               height: 1.45,
               fontWeight: FontWeight.w500,
@@ -1503,7 +1498,7 @@ class _EmptyCartView extends StatelessWidget {
               ),
               child: Text(
                 'Browse restaurants',
-                style: GoogleFonts.nunitoSans(
+                style: GoogleFonts.plusJakartaSans(
                   fontWeight: FontWeight.w800,
                 ),
               ),

@@ -1,9 +1,9 @@
-﻿@extends('layouts.admin')
+@extends('layouts.admin')
 
 @section('title', 'Delivery Charges Settings')
 
 @php
-    $currencySymbol = App\Models\AppSetting::getValue('currency_symbol', '?');
+    $currencySymbol = App\Models\AppSetting::sanitizedCurrencySymbol();
 @endphp
 
 @section('content')

@@ -203,6 +203,11 @@ void configLoading() {
 
 int? _parseOrderId(dynamic args) {
   if (args == null) return null;
+  if (args is Map) {
+    return _parseOrderId(
+      args['orderId'] ?? args['order_id'] ?? args['id'],
+    );
+  }
   if (args is int) return args;
   if (args is String) return int.tryParse(args);
   if (args is double) return args.toInt();
@@ -305,10 +310,10 @@ class _FoodDeliveryAppState extends State<FoodDeliveryApp> {
         scaffoldBackgroundColor: homeCanvas,
         visualDensity: const VisualDensity(horizontal: -3, vertical: -3),
         materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-        fontFamily: GoogleFonts.nunitoSans().fontFamily,
+        fontFamily: GoogleFonts.plusJakartaSans().fontFamily,
         useMaterial3: true,
         textTheme: AppTypography.material3(
-          base: GoogleFonts.nunitoSansTextTheme(),
+          base: GoogleFonts.plusJakartaSansTextTheme(),
           textColor: homeText,
           mutedColor: homeMuted,
         ),
@@ -593,8 +598,17 @@ class _FoodDeliveryAppState extends State<FoodDeliveryApp> {
         if (orderId == null) {
           return _errorRoute('Invalid restaurant order ID.');
         }
+        final restaurantId = settings.arguments is Map
+            ? _parseOrderId(
+                (settings.arguments as Map)['restaurantId'] ??
+                    (settings.arguments as Map)['restaurant_id'],
+              )
+            : null;
         return MaterialPageRoute(
-          builder: (_) => RestaurantOrderDetailScreen(orderId: orderId),
+          builder: (_) => RestaurantOrderDetailScreen(
+            orderId: orderId,
+            restaurantId: restaurantId,
+          ),
         );
       case '/restaurant/order/chat':
         final orderId = _parseOrderId(

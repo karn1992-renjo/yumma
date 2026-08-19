@@ -13,11 +13,17 @@ class AppOrderOverlayService {
   AppOrderOverlayService._();
 
   static bool _isShowing = false;
+  static int? _activeOrderId;
 
   static Future<void> showRestaurantOrder(
     Map<String, dynamic> order, {
     Future<bool> Function(int orderId, int preparationMinutes)? onAccept,
     Future<bool> Function(int orderId, String reason)? onReject,
+    Future<bool> Function(
+      int orderId,
+      List<int> menuItemIds,
+      String availabilityOption,
+    )? onMarkOutOfStock,
     Future<bool> Function(int orderId)? onTimeout,
     VoidCallback? onViewDetails,
     int durationSeconds = 30,
@@ -36,9 +42,11 @@ class AppOrderOverlayService {
     await HapticFeedback.heavyImpact();
     SoundService.startIncomingOrderAlarm();
     _isShowing = true;
+    _activeOrderId = orderId;
     try {
       await showModalBottomSheet<void>(
         context: context,
+        useSafeArea: true,
         isScrollControlled: true,
         isDismissible: false,
         enableDrag: false,
@@ -68,6 +76,14 @@ class AppOrderOverlayService {
                 };
             return reject(orderId, 'Rejected by restaurant');
           },
+          onMarkOutOfStock: (menuItemIds, availabilityOption) async {
+            if (onMarkOutOfStock == null) return false;
+            return onMarkOutOfStock(
+              orderId,
+              menuItemIds,
+              availabilityOption,
+            );
+          },
           onTimeout: () async {
             final timeout = onTimeout ??
                 (id) async {
@@ -81,10 +97,14 @@ class AppOrderOverlayService {
                 };
             return timeout(orderId);
           },
-          onViewDetails: () {
+          onMinimize: () {
+            Navigator.of(context).pop();
             onViewDetails?.call();
+          },
+          onHelp: () {
+            Navigator.of(context).pop();
             appNavigatorKey.currentState?.pushNamed(
-              '/restaurant/order',
+              '/restaurant/profile/help',
               arguments: orderId,
             );
           },
@@ -93,6 +113,7 @@ class AppOrderOverlayService {
     } finally {
       await SoundService.stopIncomingOrderAlarm();
       _isShowing = false;
+      _activeOrderId = null;
     }
   }
 
@@ -118,6 +139,7 @@ class AppOrderOverlayService {
     await HapticFeedback.heavyImpact();
     SoundService.startIncomingOrderAlarm();
     _isShowing = true;
+    _activeOrderId = orderId;
     try {
       await showModalBottomSheet<void>(
         context: context,
@@ -174,6 +196,7 @@ class AppOrderOverlayService {
     } finally {
       await SoundService.stopIncomingOrderAlarm();
       _isShowing = false;
+      _activeOrderId = null;
     }
   }
 
@@ -183,10 +206,22 @@ class AppOrderOverlayService {
     int durationSeconds = 45,
   }) async {
     order = _normalizeOrder(order);
+    final orderId = _parseId(order['id'] ?? order['order_id']);
+    if (orderId == null) {
+      debugPrint('Could not show cancellation overlay: missing order ID');
+      return;
+    }
+
+    if (_isShowing && _activeOrderId == orderId) {
+      appNavigatorKey.currentState?.pop();
+      for (var attempt = 0; attempt < 12 && _isShowing; attempt++) {
+        await Future<void>.delayed(const Duration(milliseconds: 40));
+      }
+    }
+
     final context = appNavigatorKey.currentContext ??
         appNavigatorKey.currentState?.overlay?.context;
-    final orderId = _parseId(order['id'] ?? order['order_id']);
-    if (context == null || orderId == null || _isShowing) {
+    if (context == null || _isShowing) {
       debugPrint(
         'Could not show cancellation overlay: context=$context orderId=$orderId isShowing=$_isShowing',
       );
@@ -196,28 +231,36 @@ class AppOrderOverlayService {
     await HapticFeedback.heavyImpact();
     SoundService.startIncomingOrderAlarm();
     _isShowing = true;
+    _activeOrderId = orderId;
     try {
-      await showModalBottomSheet<void>(
+      final viewOrder = await showModalBottomSheet<bool>(
         context: context,
         isScrollControlled: true,
-        isDismissible: true,
-        enableDrag: true,
+        isDismissible: false,
+        enableDrag: false,
         backgroundColor: Colors.transparent,
         builder: (_) => _OrderCancelledSheet(
           order: order,
-          role: role,
           durationSeconds: durationSeconds,
-          onViewDetails: () {
-            appNavigatorKey.currentState?.pushNamed(
-              role == 'driver' ? '/driver/order' : '/restaurant/order',
-              arguments: orderId,
-            );
-          },
         ),
       );
+      if (viewOrder == true) {
+        await Future<void>.delayed(Duration.zero);
+        appNavigatorKey.currentState?.pushNamed(
+          role == 'driver' ? '/driver/order' : '/restaurant/order',
+          arguments: role == 'driver'
+              ? orderId
+              : <String, dynamic>{
+                  'orderId': orderId,
+                  if (_parseId(order['restaurant_id']) != null)
+                    'restaurantId': _parseId(order['restaurant_id']),
+                },
+        );
+      }
     } finally {
       await SoundService.stopIncomingOrderAlarm();
       _isShowing = false;
+      _activeOrderId = null;
     }
   }
 
@@ -245,36 +288,40 @@ class AppOrderOverlayService {
 class _OrderCancelledSheet extends StatefulWidget {
   const _OrderCancelledSheet({
     required this.order,
-    required this.role,
     required this.durationSeconds,
-    required this.onViewDetails,
   });
 
   final Map<String, dynamic> order;
-  final String role;
   final int durationSeconds;
-  final VoidCallback onViewDetails;
 
   @override
   State<_OrderCancelledSheet> createState() => _OrderCancelledSheetState();
 }
 
 class _OrderCancelledSheetState extends State<_OrderCancelledSheet> {
-  late int _remaining = widget.durationSeconds.clamp(10, 120);
+  late int _remaining;
   Timer? _timer;
+  bool _isClosing = false;
 
   @override
   void initState() {
     super.initState();
+    _remaining = widget.durationSeconds.clamp(10, 120).toInt();
     _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
-      if (!mounted) return;
+      if (!mounted || _isClosing) return;
       if (_remaining <= 1) {
-        timer.cancel();
-        Navigator.of(context).maybePop();
+        _close();
         return;
       }
       setState(() => _remaining--);
     });
+  }
+
+  void _close({bool viewOrder = false}) {
+    if (_isClosing || !mounted) return;
+    _isClosing = true;
+    _timer?.cancel();
+    Navigator.of(context).pop(viewOrder);
   }
 
   @override
@@ -291,192 +338,335 @@ class _OrderCancelledSheetState extends State<_OrderCancelledSheet> {
             : '${widget.order['id'] ?? widget.order['order_id'] ?? ''}';
     final reason = widget.order['cancellation_reason']?.toString().trim();
     final restaurantName = widget.order['restaurant_name']?.toString().trim();
+    final customerMap = widget.order['customer'];
+    final customerName = _textValue(
+      widget.order['customer_name'] ??
+          (customerMap is Map ? customerMap['name'] : null),
+      fallback: '',
+    );
+    final items = _itemsFrom(
+      widget.order['items'] ??
+          widget.order['order_items'] ??
+          widget.order['cart_items'],
+    );
+    final total = widget.order['total'] ??
+        widget.order['grand_total'] ??
+        widget.order['amount'];
 
-    return SafeArea(
-      top: false,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
-        child: Container(
-          padding: const EdgeInsets.fromLTRB(18, 16, 18, 18),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(28),
-            border: Border.all(color: FoodFlowTheme.crimson.withOpacity(0.18)),
-            boxShadow: [
-              BoxShadow(
-                color: FoodFlowTheme.crimson.withOpacity(0.22),
-                blurRadius: 34,
-                offset: const Offset(0, 18),
-              ),
-            ],
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Container(
-                    width: 58,
-                    height: 58,
-                    decoration: BoxDecoration(
-                      color: FoodFlowTheme.crimson.withOpacity(0.12),
-                      shape: BoxShape.circle,
-                    ),
-                    child: const Icon(
-                      Icons.cancel_rounded,
-                      color: FoodFlowTheme.crimson,
-                      size: 34,
+    return PopScope(
+      canPop: false,
+      child: SafeArea(
+        top: true,
+        child: Material(
+          color: const Color(0xFFF0F0F4),
+          child: SizedBox(
+            height: MediaQuery.sizeOf(context).height,
+            child: Column(
+              children: [
+                Container(
+                  constraints: const BoxConstraints(minHeight: 56),
+                  padding: const EdgeInsets.fromLTRB(6, 6, 10, 6),
+                  decoration: const BoxDecoration(
+                    color: Colors.white,
+                    border: Border(
+                      bottom: BorderSide(color: FoodFlowTheme.line),
                     ),
                   ),
-                  const SizedBox(width: 14),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text(
+                  child: Row(
+                    children: [
+                      IconButton(
+                        onPressed: _close,
+                        icon: const Icon(Icons.close_rounded),
+                        tooltip: 'Dismiss alert',
+                        visualDensity: VisualDensity.compact,
+                      ),
+                      const Expanded(
+                        child: Text(
                           'Order cancelled',
                           style: TextStyle(
                             color: FoodFlowTheme.ink,
-                            fontSize: 22,
+                            fontSize: 17,
                             fontWeight: FontWeight.w900,
                           ),
                         ),
-                        const SizedBox(height: 4),
-                        Text(
-                          'Order #$orderNumber needs attention',
-                          style: const TextStyle(
-                            color: FoodFlowTheme.muted,
-                            fontSize: 13,
-                            fontWeight: FontWeight.w800,
+                      ),
+                      _AlertDisc(
+                        seconds: _remaining,
+                        color: FoodFlowTheme.crimson,
+                      ),
+                    ],
+                  ),
+                ),
+                Expanded(
+                  child: ListView(
+                    padding: const EdgeInsets.fromLTRB(14, 14, 14, 18),
+                    children: [
+                      _IncomingOrderPanel(
+                        child: Row(
+                          children: [
+                            Container(
+                              width: 46,
+                              height: 46,
+                              decoration: BoxDecoration(
+                                color: FoodFlowTheme.crimson,
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: const Icon(
+                                Icons.cancel_rounded,
+                                color: Colors.white,
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    '#$orderNumber',
+                                    style: const TextStyle(
+                                      color: FoodFlowTheme.ink,
+                                      fontSize: 17,
+                                      fontWeight: FontWeight.w900,
+                                    ),
+                                  ),
+                                  if (restaurantName != null &&
+                                      restaurantName.isNotEmpty) ...[
+                                    const SizedBox(height: 3),
+                                    Text(
+                                      restaurantName,
+                                      style: const TextStyle(
+                                        color: FoodFlowTheme.muted,
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
+                                  ],
+                                ],
+                              ),
+                            ),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 9,
+                                vertical: 6,
+                              ),
+                              decoration: BoxDecoration(
+                                color: FoodFlowTheme.crimson.withOpacity(0.10),
+                                borderRadius: BorderRadius.circular(7),
+                              ),
+                              child: const Text(
+                                'CANCELLED',
+                                style: TextStyle(
+                                  color: FoodFlowTheme.crimson,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w900,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      if (reason != null && reason.isNotEmpty) ...[
+                        const SizedBox(height: 12),
+                        _IncomingOrderPanel(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const _IncomingSectionTitle(
+                                icon: Icons.info_outline_rounded,
+                                title: 'CANCELLATION REASON',
+                              ),
+                              const SizedBox(height: 10),
+                              Text(
+                                reason,
+                                style: const TextStyle(
+                                  color: FoodFlowTheme.ink,
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                      if (items.isNotEmpty || total != null) ...[
+                        const SizedBox(height: 12),
+                        _IncomingOrderPanel(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              _IncomingSectionTitle(
+                                icon: Icons.receipt_long_outlined,
+                                title: 'ORDER DETAILS',
+                                trailing: items.isEmpty
+                                    ? null
+                                    : '${items.length} ${items.length == 1 ? 'item' : 'items'}',
+                              ),
+                              if (items.isNotEmpty) ...[
+                                const SizedBox(height: 12),
+                                ...items.map((item) {
+                                  final name = _textValue(
+                                    item['name'] ?? item['item_name'],
+                                    fallback: '',
+                                  );
+                                  final quantity = _intValue(
+                                    item['quantity'],
+                                    fallback: 1,
+                                  );
+                                  final lineTotal = item['total'] ??
+                                      item['total_price'] ??
+                                      item['subtotal'] ??
+                                      item['price'];
+                                  return Padding(
+                                    padding: const EdgeInsets.only(bottom: 10),
+                                    child: Row(
+                                      children: [
+                                        const Icon(
+                                          Icons.crop_square_rounded,
+                                          color: FoodFlowTheme.success,
+                                          size: 14,
+                                        ),
+                                        const SizedBox(width: 8),
+                                        Expanded(
+                                          child: Text(
+                                            name,
+                                            style: const TextStyle(
+                                              color: FoodFlowTheme.ink,
+                                              fontSize: 14,
+                                              fontWeight: FontWeight.w800,
+                                            ),
+                                          ),
+                                        ),
+                                        Text(
+                                          'x$quantity',
+                                          style: const TextStyle(
+                                            color: FoodFlowTheme.ink,
+                                            fontWeight: FontWeight.w900,
+                                          ),
+                                        ),
+                                        if (lineTotal != null) ...[
+                                          const SizedBox(width: 12),
+                                          Text(
+                                            _money(lineTotal),
+                                            style: const TextStyle(
+                                              color: FoodFlowTheme.inkSoft,
+                                              fontWeight: FontWeight.w800,
+                                            ),
+                                          ),
+                                        ],
+                                      ],
+                                    ),
+                                  );
+                                }),
+                              ],
+                              if (total != null) ...[
+                                const Divider(height: 16),
+                                _IncomingBillRow(
+                                  'Bill Total',
+                                  total,
+                                  isTotal: true,
+                                ),
+                              ],
+                            ],
+                          ),
+                        ),
+                      ],
+                      if (customerName.isNotEmpty) ...[
+                        const SizedBox(height: 12),
+                        _IncomingOrderPanel(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const _IncomingSectionTitle(
+                                icon: Icons.person_outline_rounded,
+                                title: 'CUSTOMER DETAILS',
+                              ),
+                              const SizedBox(height: 10),
+                              Text(
+                                customerName,
+                                style: const TextStyle(
+                                  color: FoodFlowTheme.ink,
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w900,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                Container(
+                  decoration: const BoxDecoration(
+                    color: Colors.white,
+                    boxShadow: [
+                      BoxShadow(
+                        color: Color(0x14000000),
+                        blurRadius: 12,
+                        offset: Offset(0, -4),
+                      ),
+                    ],
+                  ),
+                  child: SafeArea(
+                    top: false,
+                    minimum: const EdgeInsets.fromLTRB(14, 8, 14, 10),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: SizedBox(
+                            height: 48,
+                            child: OutlinedButton(
+                              onPressed: _close,
+                              style: OutlinedButton.styleFrom(
+                                foregroundColor: FoodFlowTheme.ink,
+                                side: const BorderSide(
+                                  color: FoodFlowTheme.ink,
+                                ),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                textStyle: const TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w900,
+                                ),
+                              ),
+                              child: const Text('DISMISS'),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: SizedBox(
+                            height: 48,
+                            child: FilledButton.icon(
+                              onPressed: () => _close(viewOrder: true),
+                              style: FilledButton.styleFrom(
+                                backgroundColor: FoodFlowTheme.crimson,
+                                foregroundColor: Colors.white,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                textStyle: const TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w900,
+                                ),
+                              ),
+                              icon: const Icon(
+                                Icons.receipt_long_outlined,
+                                size: 18,
+                              ),
+                              label: const Text('VIEW ORDER'),
+                            ),
                           ),
                         ),
                       ],
                     ),
                   ),
-                  Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-                    decoration: BoxDecoration(
-                      color: FoodFlowTheme.crimson.withOpacity(0.10),
-                      borderRadius: BorderRadius.circular(999),
-                    ),
-                    child: Text(
-                      '${_remaining}s',
-                      style: const TextStyle(
-                        color: FoodFlowTheme.crimson,
-                        fontWeight: FontWeight.w900,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16),
-              if (restaurantName != null && restaurantName.isNotEmpty)
-                _CancelInfoRow(
-                  icon: Icons.storefront_rounded,
-                  label: 'Restaurant',
-                  value: restaurantName,
                 ),
-              if (reason != null && reason.isNotEmpty)
-                _CancelInfoRow(
-                  icon: Icons.info_rounded,
-                  label: 'Reason',
-                  value: reason,
-                ),
-              const SizedBox(height: 16),
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton(
-                      onPressed: () => Navigator.of(context).maybePop(),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: FoodFlowTheme.crimson,
-                        side: BorderSide(
-                          color: FoodFlowTheme.crimson.withOpacity(0.28),
-                        ),
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(16),
-                        ),
-                      ),
-                      child: const Text(
-                        'Dismiss',
-                        style: TextStyle(fontWeight: FontWeight.w900),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: FilledButton(
-                      onPressed: () {
-                        Navigator.of(context).maybePop();
-                        widget.onViewDetails();
-                      },
-                      style: FilledButton.styleFrom(
-                        backgroundColor: FoodFlowTheme.crimson,
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(16),
-                        ),
-                      ),
-                      child: const Text(
-                        'View order',
-                        style: TextStyle(fontWeight: FontWeight.w900),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ],
+              ],
+            ),
           ),
         ),
-      ),
-    );
-  }
-}
-
-class _CancelInfoRow extends StatelessWidget {
-  const _CancelInfoRow({
-    required this.icon,
-    required this.label,
-    required this.value,
-  });
-
-  final IconData icon;
-  final String label;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
-      child: Row(
-        children: [
-          Icon(icon, color: FoodFlowTheme.crimson, size: 18),
-          const SizedBox(width: 9),
-          Text(
-            '$label: ',
-            style: const TextStyle(
-              color: FoodFlowTheme.muted,
-              fontSize: 13,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-          Expanded(
-            child: Text(
-              value,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: FoodFlowTheme.ink,
-                fontSize: 13,
-                fontWeight: FontWeight.w900,
-              ),
-            ),
-          ),
-        ],
       ),
     );
   }
@@ -488,16 +678,23 @@ class _RestaurantIncomingOrderSheet extends StatefulWidget {
     required this.durationSeconds,
     required this.onAccept,
     required this.onReject,
+    required this.onMarkOutOfStock,
     required this.onTimeout,
-    required this.onViewDetails,
+    required this.onMinimize,
+    required this.onHelp,
   });
 
   final Map<String, dynamic> order;
   final int durationSeconds;
   final Future<bool> Function(int preparationMinutes) onAccept;
   final Future<bool> Function() onReject;
+  final Future<bool> Function(
+    List<int> menuItemIds,
+    String availabilityOption,
+  ) onMarkOutOfStock;
   final Future<bool> Function() onTimeout;
-  final VoidCallback onViewDetails;
+  final VoidCallback onMinimize;
+  final VoidCallback onHelp;
 
   @override
   State<_RestaurantIncomingOrderSheet> createState() =>
@@ -521,7 +718,7 @@ class _RestaurantIncomingOrderSheetState
   void initState() {
     super.initState();
     _minutes = _initialPreparationMinutes(widget.order);
-    _remainingSeconds = widget.durationSeconds;
+    _remainingSeconds = widget.durationSeconds.clamp(10, 120).toInt();
     _timer = Timer.periodic(const Duration(seconds: 1), (_) => _tick());
   }
 
@@ -534,213 +731,532 @@ class _RestaurantIncomingOrderSheetState
   @override
   Widget build(BuildContext context) {
     final order = widget.order;
-    final items = _itemsFrom(order['items']);
-    final total = _money(order['total']);
-    final orderNumber = order['order_number'] ?? order['id'] ?? '';
-    final customerName =
-        order['customer_name']?.toString().trim().isNotEmpty == true
-            ? order['customer_name'].toString().trim()
-            : 'Customer';
-    final deliveryAddress =
-        _textValue(order['delivery_address'], fallback: 'Delivery address');
-    final pickupLocation = _pickupLocationFromOrder(order);
-    final deliveryLocation = _deliveryLocationFromOrder(order);
+    final items = _itemsFrom(
+      order['items'] ?? order['order_items'] ?? order['cart_items'],
+    );
+    final orderNumber = _textValue(
+      order['order_number'] ?? order['order_no'] ?? order['id'],
+      fallback: 'Order',
+    );
+    final restaurantMap = order['restaurant'];
+    final customerMap = order['customer'];
+    final restaurantName = _textValue(
+      order['restaurant_name'] ??
+          (restaurantMap is Map ? restaurantMap['name'] : null),
+      fallback: 'Restaurant',
+    );
+    final customerName = _textValue(
+      order['customer_name'] ??
+          (customerMap is Map ? customerMap['name'] : null),
+      fallback: 'Customer',
+    );
+    final customerPhone = _textValue(
+      order['customer_phone'] ??
+          (customerMap is Map ? customerMap['phone'] : null),
+      fallback: '',
+    );
+    final deliveryAddress = _textValue(
+      order['delivery_address'] ?? order['address'],
+      fallback: order['order_type']?.toString() == 'takeaway'
+          ? 'Takeaway order'
+          : 'Delivery address unavailable',
+    );
+    final deliveryOtp = _textValue(
+      order['delivery_otp'] ?? order['otp'] ?? order['delivery_code'],
+      fallback: '',
+    );
+    final specialInstructions = _textValue(
+      order['special_instructions'] ?? order['notes'] ?? order['instruction'],
+      fallback: '',
+    );
+    final itemCount = items.fold<int>(
+      0,
+      (sum, item) => sum + _intValue(item['quantity'], fallback: 1),
+    );
+    final subtotal =
+        order['subtotal'] ?? order['sub_total'] ?? order['items_total'];
+    final deliveryFee = order['delivery_fee'] ?? order['shipping_fee'];
+    final tax = order['tax'] ?? order['tax_amount'] ?? order['gst_amount'];
+    final discount = order['discount'] ?? order['discount_amount'];
+    final total = order['total'] ?? order['grand_total'] ?? order['amount'];
+    final paymentMethod = _textValue(
+      order['payment_method'] ?? order['payment_type'],
+      fallback: 'Payment',
+    );
 
     return PopScope(
       canPop: false,
       child: SafeArea(
-        child: Container(
-          margin: const EdgeInsets.all(12),
-          constraints: BoxConstraints(
-            maxHeight: MediaQuery.of(context).size.height * 0.92,
-          ),
-          child: Stack(
-            clipBehavior: Clip.none,
-            children: [
-              const Positioned.fill(child: _IncomingMapBackdrop()),
-              Container(
-                padding: const EdgeInsets.fromLTRB(18, 18, 18, 18),
-                decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.96),
-                  borderRadius: BorderRadius.circular(28),
-                  border:
-                      Border.all(color: FoodFlowTheme.orange.withOpacity(0.22)),
-                  boxShadow: [
-                    BoxShadow(
-                      color: FoodFlowTheme.orange.withOpacity(0.18),
-                      blurRadius: 34,
-                      offset: const Offset(0, 18),
+        top: true,
+        child: Material(
+          color: const Color(0xFFF0F0F4),
+          child: SizedBox(
+            height: MediaQuery.of(context).size.height,
+            child: Column(
+              children: [
+                Container(
+                  constraints: const BoxConstraints(minHeight: 56),
+                  padding: const EdgeInsets.fromLTRB(6, 6, 10, 6),
+                  decoration: const BoxDecoration(
+                    color: Colors.white,
+                    border: Border(
+                      bottom: BorderSide(color: FoodFlowTheme.line),
                     ),
-                    const BoxShadow(
-                      color: Color(0x1F000000),
-                      blurRadius: 18,
-                      offset: Offset(0, 8),
-                    ),
-                  ],
-                ),
-                child: SingleChildScrollView(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const SizedBox(height: 12),
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                _NotificationLabel(
-                                  icon: Icons.shopping_bag_rounded,
-                                  text: 'New Order',
-                                  color: FoodFlowTheme.orange,
-                                ),
-                                const SizedBox(height: 16),
-                                const Text(
-                                  'Incoming Order!',
-                                  style: TextStyle(
-                                    color: FoodFlowTheme.ink,
-                                    fontSize: 32,
-                                    height: 1,
-                                    fontWeight: FontWeight.w900,
-                                  ),
-                                ),
-                                const SizedBox(height: 10),
-                                const Text(
-                                  'You have a new order to prepare',
-                                  style: TextStyle(
-                                    color: FoodFlowTheme.muted,
-                                    fontSize: 15,
-                                    fontWeight: FontWeight.w800,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                          const SizedBox(width: 4),
-                          const _HeroAsset(
-                            assetPath: 'assets/images/restauarant.png',
-                            size: 132,
-                            fallbackIcon: Icons.storefront_rounded,
-                          ),
-                        ],
+                    boxShadow: [
+                      BoxShadow(
+                        color: Color(0x0A000000),
+                        blurRadius: 8,
+                        offset: Offset(0, 2),
                       ),
-                      const SizedBox(height: 12),
-                      _OrderSummary3d(
-                        leadingIcon: Icons.restaurant_menu_rounded,
-                        orderNumber: '#$orderNumber',
-                        title: customerName,
-                        subtitle:
-                            '${items.length} item${items.length == 1 ? '' : 's'}',
-                        amount: total,
-                        amountLabel: _textValue(
-                          order['payment_method'] ?? order['payment_type'],
-                          fallback: 'Payment',
+                    ],
+                  ),
+                  child: Row(
+                    children: [
+                      IconButton(
+                        onPressed: _isBusy ? null : widget.onMinimize,
+                        icon: const Icon(Icons.arrow_back),
+                        tooltip: 'Minimize order',
+                        visualDensity: VisualDensity.compact,
+                      ),
+                      const Expanded(
+                        child: Text(
+                          'New order',
+                          style: TextStyle(
+                            color: FoodFlowTheme.ink,
+                            fontSize: 17,
+                            fontWeight: FontWeight.w900,
+                          ),
                         ),
                       ),
-                      const SizedBox(height: 12),
-                      _AddressPreview3d(
-                        icon: Icons.location_on_rounded,
-                        label: 'Deliver to',
-                        value: deliveryAddress,
-                        pickupLocation: pickupLocation,
-                        deliveryLocation: deliveryLocation,
+                      _AlertDisc(
+                        seconds: _remainingSeconds,
+                        color: FoodFlowTheme.orange,
                       ),
-                      if (items.isNotEmpty) ...[
-                        const SizedBox(height: 12),
-                        _ItemsPreview3d(items: items),
-                      ],
-                      const SizedBox(height: 12),
-                      _PrepSelector3d(
-                        minutes: _minutes,
-                        canDecrease: !_isBusy && _minutes > _minPrepMinutes,
-                        canIncrease: !_isBusy && _minutes < _maxPrepMinutes,
-                        onDecrease: () => _changeMinutes(-_prepStep),
-                        onIncrease: () => _changeMinutes(_prepStep),
-                      ),
-                      const SizedBox(height: 16),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: OutlinedButton.icon(
-                              onPressed: _isBusy
-                                  ? null
-                                  : () => _reject('Rejected by restaurant'),
-                              icon: _isRejecting
-                                  ? const SizedBox(
-                                      width: 18,
-                                      height: 18,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2,
-                                      ),
-                                    )
-                                  : const Icon(Icons.close_rounded),
-                              label: const Text('Reject'),
-                              style: OutlinedButton.styleFrom(
-                                foregroundColor: FoodFlowTheme.orange,
-                                side: BorderSide(
-                                  color: FoodFlowTheme.orange.withOpacity(0.18),
-                                ),
-                                backgroundColor:
-                                    FoodFlowTheme.orange.withOpacity(0.06),
-                                padding:
-                                    const EdgeInsets.symmetric(vertical: 16),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(18),
-                                ),
-                              ),
-                            ),
+                      TextButton.icon(
+                        onPressed: _isBusy ? null : widget.onHelp,
+                        style: TextButton.styleFrom(
+                          foregroundColor: FoodFlowTheme.success,
+                          padding: const EdgeInsets.symmetric(horizontal: 8),
+                          minimumSize: const Size(0, 40),
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          textStyle: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w900,
                           ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            flex: 2,
-                            child: FilledButton.icon(
-                              onPressed: _isBusy ? null : _accept,
-                              icon: _isAccepting
-                                  ? const SizedBox(
-                                      width: 18,
-                                      height: 18,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2,
-                                        color: Colors.white,
-                                      ),
-                                    )
-                                  : const Icon(Icons.check_circle_rounded),
-                              label: Text('Accept $_minutes min'),
-                              style: FilledButton.styleFrom(
-                                backgroundColor: FoodFlowTheme.orange,
-                                foregroundColor: Colors.white,
-                                padding:
-                                    const EdgeInsets.symmetric(vertical: 16),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(18),
-                                ),
-                                textStyle: const TextStyle(
-                                  fontWeight: FontWeight.w900,
-                                  fontSize: 15,
-                                ),
-                              ),
-                            ),
-                          ),
-                        ],
+                        ),
+                        icon: const Icon(Icons.headset_mic_outlined, size: 17),
+                        label: const Text('Help'),
                       ),
                     ],
                   ),
                 ),
-              ),
-              Positioned(
-                top: -28,
-                left: 0,
-                right: 0,
-                child: Center(
-                  child: _AlertDisc(
-                    seconds: _remainingSeconds,
-                    color: FoodFlowTheme.orange,
+                Expanded(
+                  child: ListView(
+                    padding: const EdgeInsets.fromLTRB(14, 14, 14, 18),
+                    children: [
+                      _IncomingOrderPanel(
+                        child: Row(
+                          children: [
+                            Container(
+                              width: 46,
+                              height: 46,
+                              decoration: BoxDecoration(
+                                color: FoodFlowTheme.orange,
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: const Icon(
+                                Icons.receipt_long_rounded,
+                                color: Colors.white,
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    '#$orderNumber',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      color: FoodFlowTheme.ink,
+                                      fontSize: 18,
+                                      fontWeight: FontWeight.w900,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    restaurantName,
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      color: FoodFlowTheme.muted,
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w800,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 10,
+                                vertical: 6,
+                              ),
+                              decoration: BoxDecoration(
+                                color: FoodFlowTheme.success.withOpacity(.12),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: const Text(
+                                'NEW',
+                                style: TextStyle(
+                                  color: FoodFlowTheme.success,
+                                  fontWeight: FontWeight.w900,
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      _IncomingOrderPanel(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            _IncomingSectionTitle(
+                              icon: Icons.fact_check_outlined,
+                              title: 'ORDER DETAILS',
+                              trailing:
+                                  '$itemCount ${itemCount == 1 ? 'item' : 'items'}',
+                            ),
+                            const SizedBox(height: 12),
+                            if (items.isEmpty)
+                              const Text(
+                                'Item details unavailable for this order.',
+                                style: TextStyle(
+                                  color: FoodFlowTheme.muted,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              )
+                            else
+                              ...items.map((item) {
+                                final quantity = _intValue(
+                                  item['quantity'],
+                                  fallback: 1,
+                                );
+                                final name = _textValue(
+                                  item['name'] ??
+                                      item['item_name'] ??
+                                      item['menu_name'],
+                                  fallback: 'Item',
+                                );
+                                final lineTotal = item['total'] ??
+                                    item['total_price'] ??
+                                    item['subtotal'] ??
+                                    item['price'];
+                                return Padding(
+                                  padding: const EdgeInsets.only(bottom: 10),
+                                  child: Row(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      const Padding(
+                                        padding: EdgeInsets.only(top: 3),
+                                        child: Icon(
+                                          Icons.crop_square_rounded,
+                                          color: FoodFlowTheme.success,
+                                          size: 14,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      Expanded(
+                                        child: Text(
+                                          name,
+                                          style: const TextStyle(
+                                            color: FoodFlowTheme.ink,
+                                            fontSize: 15,
+                                            fontWeight: FontWeight.w900,
+                                          ),
+                                        ),
+                                      ),
+                                      Text(
+                                        'x$quantity',
+                                        style: const TextStyle(
+                                          color: FoodFlowTheme.ink,
+                                          fontWeight: FontWeight.w900,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 12),
+                                      Text(
+                                        _money(lineTotal),
+                                        style: const TextStyle(
+                                          color: FoodFlowTheme.inkSoft,
+                                          fontWeight: FontWeight.w800,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                );
+                              }),
+                            if (specialInstructions.isNotEmpty) ...[
+                              const SizedBox(height: 4),
+                              Container(
+                                width: double.infinity,
+                                padding: const EdgeInsets.all(10),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFFF8F8FA),
+                                  borderRadius: BorderRadius.circular(8),
+                                  border: Border.all(color: FoodFlowTheme.line),
+                                ),
+                                child: Text(
+                                  specialInstructions,
+                                  style: const TextStyle(
+                                    color: FoodFlowTheme.inkSoft,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ),
+                            ],
+                            const SizedBox(height: 12),
+                            Container(
+                              width: double.infinity,
+                              padding: const EdgeInsets.all(12),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFF6F6F7),
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: Column(
+                                children: [
+                                  _IncomingBillRow('Item total', subtotal),
+                                  _IncomingBillRow(
+                                      'Delivery charges', deliveryFee),
+                                  _IncomingBillRow('Taxes', tax),
+                                  _IncomingBillRow('Discount', discount,
+                                      isDeduction: true),
+                                  const Divider(height: 16),
+                                  _IncomingBillRow('Bill Total', total,
+                                      isTotal: true),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      _IncomingOrderPanel(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const _IncomingSectionTitle(
+                              icon: Icons.person_outline,
+                              title: 'CUSTOMER DETAILS',
+                            ),
+                            const SizedBox(height: 10),
+                            Text(
+                              customerName,
+                              style: const TextStyle(
+                                color: FoodFlowTheme.ink,
+                                fontSize: 17,
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
+                            if (customerPhone.isNotEmpty) ...[
+                              const Divider(height: 22),
+                              Row(
+                                children: [
+                                  Icon(Icons.call,
+                                      color: FoodFlowTheme.orange, size: 18),
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    customerPhone,
+                                    style: TextStyle(
+                                      color: FoodFlowTheme.orange,
+                                      fontWeight: FontWeight.w900,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      _IncomingOrderPanel(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            _IncomingSectionTitle(
+                              icon: Icons.delivery_dining_outlined,
+                              title: 'DELIVERY DETAILS',
+                              trailing: deliveryOtp.isEmpty
+                                  ? null
+                                  : 'Passcode $deliveryOtp',
+                            ),
+                            const SizedBox(height: 12),
+                            Text(
+                              deliveryAddress,
+                              style: const TextStyle(
+                                color: FoodFlowTheme.inkSoft,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              paymentMethod,
+                              style: const TextStyle(
+                                color: FoodFlowTheme.muted,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-              ),
-            ],
+                Container(
+                  decoration: const BoxDecoration(
+                    color: Colors.white,
+                    boxShadow: [
+                      BoxShadow(
+                        color: Color(0x14000000),
+                        blurRadius: 12,
+                        offset: Offset(0, -4),
+                      ),
+                    ],
+                  ),
+                  child: SafeArea(
+                    top: false,
+                    minimum: const EdgeInsets.fromLTRB(14, 8, 14, 10),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFDFF8EC),
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                          child: Row(
+                            children: [
+                              _PrepTimeButton(
+                                icon: Icons.remove_rounded,
+                                enabled: !_isBusy && _minutes > _minPrepMinutes,
+                                onTap: () => _changeMinutes(-_prepStep),
+                              ),
+                              Expanded(
+                                child: Column(
+                                  children: [
+                                    Text(
+                                      '$_minutes',
+                                      style: const TextStyle(
+                                        color: FoodFlowTheme.success,
+                                        fontSize: 28,
+                                        height: 1,
+                                        fontWeight: FontWeight.w900,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 2),
+                                    const Text(
+                                      'Suggested Prep Time',
+                                      style: TextStyle(
+                                        color: FoodFlowTheme.ink,
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w900,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              _PrepTimeButton(
+                                icon: Icons.add_rounded,
+                                enabled: !_isBusy && _minutes < _maxPrepMinutes,
+                                onTap: () => _changeMinutes(_prepStep),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: SizedBox(
+                                height: 48,
+                                child: OutlinedButton.icon(
+                                  onPressed: _isBusy ? null : _markOutOfStock,
+                                  style: OutlinedButton.styleFrom(
+                                    foregroundColor: FoodFlowTheme.ink,
+                                    side: const BorderSide(
+                                      color: FoodFlowTheme.ink,
+                                    ),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(10),
+                                    ),
+                                    textStyle: const TextStyle(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w900,
+                                    ),
+                                  ),
+                                  icon: _isRejecting
+                                      ? const SizedBox(
+                                          width: 17,
+                                          height: 17,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                          ),
+                                        )
+                                      : const Icon(
+                                          Icons.inventory_2_outlined,
+                                          size: 17,
+                                        ),
+                                  label: const Text('OUT OF STOCK'),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: SizedBox(
+                                height: 48,
+                                child: FilledButton.icon(
+                                  onPressed: _isBusy ? null : _accept,
+                                  style: FilledButton.styleFrom(
+                                    backgroundColor: FoodFlowTheme.success,
+                                    foregroundColor: Colors.white,
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(10),
+                                    ),
+                                    textStyle: const TextStyle(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w900,
+                                    ),
+                                  ),
+                                  icon: _isAccepting
+                                      ? const SizedBox(
+                                          width: 17,
+                                          height: 17,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                            color: Colors.white,
+                                          ),
+                                        )
+                                      : const Icon(
+                                          Icons.check_rounded,
+                                          size: 19,
+                                        ),
+                                  label: const Text('CONFIRM NOW'),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -783,9 +1299,10 @@ class _RestaurantIncomingOrderSheetState
       });
       final ok = await widget.onTimeout();
       if (!mounted) return;
+      final messenger = ScaffoldMessenger.of(context);
       _timer?.cancel();
       Navigator.pop(context);
-      ScaffoldMessenger.of(context).showSnackBar(
+      messenger.showSnackBar(
         SnackBar(
           content: Text(ok ? 'Order auto rejected' : 'Order timer expired'),
         ),
@@ -800,17 +1317,84 @@ class _RestaurantIncomingOrderSheetState
     setState(() => _isAccepting = true);
     final ok = await widget.onAccept(_minutes);
     if (!mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
     setState(() => _isAccepting = false);
     if (ok) {
       Navigator.pop(context);
-      ScaffoldMessenger.of(context).showSnackBar(
+      messenger.showSnackBar(
         SnackBar(content: Text('Order accepted: $_minutes min')),
       );
     } else {
       Navigator.pop(context);
-      ScaffoldMessenger.of(context).showSnackBar(
+      messenger.showSnackBar(
         const SnackBar(
           content: Text('Order is no longer available or was cancelled'),
+        ),
+      );
+    }
+  }
+
+  void _startTimer() {
+    _timer?.cancel();
+    _timer = Timer.periodic(const Duration(seconds: 1), (_) => _tick());
+  }
+
+  Future<void> _markOutOfStock() async {
+    _timer?.cancel();
+    final orderItems = _itemsFrom(
+      widget.order['items'] ??
+          widget.order['order_items'] ??
+          widget.order['cart_items'],
+    )
+        .where((item) =>
+            AppOrderOverlayService._parseId(
+              item['menu_item_id'],
+            ) !=
+            null)
+        .toList(growable: false);
+
+    if (orderItems.isEmpty) {
+      _startTimer();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Menu item details are unavailable for this order'),
+        ),
+      );
+      return;
+    }
+
+    final selection = await showModalBottomSheet<_OutOfStockSelection>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => _OutOfStockPicker(items: orderItems),
+    );
+    if (!mounted) return;
+    if (selection == null) {
+      _startTimer();
+      return;
+    }
+
+    setState(() => _isRejecting = true);
+    final ok = await widget.onMarkOutOfStock(
+      selection.menuItemIds,
+      selection.availabilityOption,
+    );
+    if (!mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
+    setState(() => _isRejecting = false);
+    if (ok) {
+      Navigator.pop(context);
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text('Items marked out of stock and order rejected'),
+        ),
+      );
+    } else {
+      _startTimer();
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text('Could not update item availability. Please retry.'),
         ),
       );
     }
@@ -821,21 +1405,324 @@ class _RestaurantIncomingOrderSheetState
     setState(() => _isRejecting = true);
     final ok = await widget.onReject();
     if (!mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
     setState(() => _isRejecting = false);
     if (ok) {
       Navigator.pop(context);
-      ScaffoldMessenger.of(context).showSnackBar(
+      messenger.showSnackBar(
         const SnackBar(content: Text('Order rejected')),
       );
     } else {
       Navigator.pop(context);
-      ScaffoldMessenger.of(context).showSnackBar(
+      messenger.showSnackBar(
         const SnackBar(
           content: Text('Order is no longer available or was cancelled'),
         ),
       );
     }
   }
+}
+
+class _OutOfStockSelection {
+  const _OutOfStockSelection({
+    required this.menuItemIds,
+    required this.availabilityOption,
+  });
+
+  final List<int> menuItemIds;
+  final String availabilityOption;
+}
+
+class _OutOfStockPicker extends StatefulWidget {
+  const _OutOfStockPicker({required this.items});
+
+  final List<Map<String, dynamic>> items;
+
+  @override
+  State<_OutOfStockPicker> createState() => _OutOfStockPickerState();
+}
+
+class _OutOfStockPickerState extends State<_OutOfStockPicker> {
+  final Set<int> _selectedIds = <int>{};
+  String _availabilityOption = '30_minutes';
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      top: false,
+      child: Container(
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.sizeOf(context).height * .78,
+        ),
+        padding: const EdgeInsets.fromLTRB(18, 14, 18, 16),
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Expanded(
+                  child: Text(
+                    'Mark item out of stock',
+                    style: TextStyle(
+                      color: FoodFlowTheme.ink,
+                      fontSize: 18,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  onPressed: () => Navigator.pop(context),
+                  icon: const Icon(Icons.close_rounded),
+                  tooltip: 'Close',
+                ),
+              ],
+            ),
+            const Text(
+              'Select the unavailable item',
+              style: TextStyle(
+                color: FoodFlowTheme.muted,
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Flexible(child: _buildItemList()),
+            const Divider(height: 24),
+            const Text(
+              'When will it be available?',
+              style: TextStyle(
+                color: FoodFlowTheme.ink,
+                fontSize: 14,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+            const SizedBox(height: 10),
+            _buildAvailabilityOptions(),
+            const SizedBox(height: 16),
+            SizedBox(
+              width: double.infinity,
+              height: 48,
+              child: FilledButton(
+                onPressed: _selectedIds.isEmpty ? null : _confirm,
+                style: FilledButton.styleFrom(
+                  backgroundColor: FoodFlowTheme.success,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  textStyle: const TextStyle(
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                child: const Text('MARK OUT OF STOCK'),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildItemList() {
+    return SingleChildScrollView(
+      child: Column(
+        children: widget.items.map((item) {
+          final id = AppOrderOverlayService._parseId(item['menu_item_id'])!;
+          final name = _textValue(
+            item['item_name'] ?? item['name'] ?? item['menu_name'],
+            fallback: 'Menu item',
+          );
+          return CheckboxListTile(
+            value: _selectedIds.contains(id),
+            onChanged: (selected) => setState(() {
+              if (selected == true) {
+                _selectedIds.add(id);
+              } else {
+                _selectedIds.remove(id);
+              }
+            }),
+            dense: true,
+            contentPadding: EdgeInsets.zero,
+            activeColor: FoodFlowTheme.success,
+            controlAffinity: ListTileControlAffinity.leading,
+            title: Text(
+              name,
+              style: const TextStyle(
+                color: FoodFlowTheme.ink,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+          );
+        }).toList(),
+      ),
+    );
+  }
+
+  Widget _buildAvailabilityOptions() {
+    const options = <(String, String)>[
+      ('30_minutes', 'In 30 min'),
+      ('2_hours', 'In 2 hours'),
+      ('tomorrow', 'Tomorrow'),
+      ('manual', 'I will mark it myself'),
+    ];
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: options.map((option) {
+        final selected = _availabilityOption == option.$1;
+        return ChoiceChip(
+          label: Text(option.$2),
+          selected: selected,
+          onSelected: (_) => setState(() {
+            _availabilityOption = option.$1;
+          }),
+          selectedColor: FoodFlowTheme.success.withOpacity(.14),
+          labelStyle: TextStyle(
+            color: selected ? FoodFlowTheme.success : FoodFlowTheme.inkSoft,
+            fontWeight: FontWeight.w800,
+          ),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(8),
+          ),
+        );
+      }).toList(),
+    );
+  }
+
+  void _confirm() {
+    Navigator.pop(
+      context,
+      _OutOfStockSelection(
+        menuItemIds: _selectedIds.toList(growable: false),
+        availabilityOption: _availabilityOption,
+      ),
+    );
+  }
+}
+
+class _IncomingOrderPanel extends StatelessWidget {
+  const _IncomingOrderPanel({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: FoodFlowTheme.line),
+      ),
+      child: child,
+    );
+  }
+}
+
+class _IncomingSectionTitle extends StatelessWidget {
+  const _IncomingSectionTitle({
+    required this.icon,
+    required this.title,
+    this.trailing,
+  });
+
+  final IconData icon;
+  final String title;
+  final String? trailing;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Container(
+          width: 32,
+          height: 32,
+          decoration: BoxDecoration(
+            color: const Color(0xFFF1F1F3),
+            shape: BoxShape.circle,
+          ),
+          child: Icon(icon, size: 17, color: FoodFlowTheme.muted),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Text(
+            title,
+            style: const TextStyle(
+              color: FoodFlowTheme.muted,
+              fontSize: 12,
+              fontWeight: FontWeight.w900,
+              letterSpacing: 2,
+            ),
+          ),
+        ),
+        if (trailing != null)
+          Text(
+            trailing!,
+            style: const TextStyle(
+              color: FoodFlowTheme.ink,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _IncomingBillRow extends StatelessWidget {
+  const _IncomingBillRow(
+    this.label,
+    this.value, {
+    this.isTotal = false,
+    this.isDeduction = false,
+  });
+
+  final String label;
+  final dynamic value;
+  final bool isTotal;
+  final bool isDeduction;
+
+  @override
+  Widget build(BuildContext context) {
+    final hasValue = value != null && value.toString().trim().isNotEmpty;
+    if (!hasValue && !isTotal) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 7),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              label,
+              style: TextStyle(
+                color: isTotal ? FoodFlowTheme.ink : FoodFlowTheme.inkSoft,
+                fontSize: isTotal ? 13 : 12,
+                fontWeight: isTotal ? FontWeight.w900 : FontWeight.w700,
+              ),
+            ),
+          ),
+          Text(
+            isDeduction && hasValue ? '-${_money(value)}' : _money(value),
+            style: TextStyle(
+              color: isTotal ? FoodFlowTheme.ink : FoodFlowTheme.inkSoft,
+              fontSize: isTotal ? 13 : 12,
+              fontWeight: isTotal ? FontWeight.w900 : FontWeight.w700,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+int _intValue(dynamic value, {required int fallback}) {
+  if (value is int) return value;
+  if (value is num) return value.toInt();
+  return int.tryParse(value?.toString() ?? '') ?? fallback;
 }
 
 class _IncomingMapBackdrop extends StatelessWidget {
@@ -980,33 +1867,27 @@ class _AlertDisc extends StatelessWidget {
     final danger = seconds <= 10;
     final discColor = danger ? FoodFlowTheme.danger : color;
     return Container(
-      width: 64,
-      height: 64,
+      height: 34,
+      padding: const EdgeInsets.symmetric(horizontal: 10),
       decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [discColor.withOpacity(0.86), discColor],
-        ),
-        border: Border.all(color: Colors.white, width: 5),
-        boxShadow: [
-          BoxShadow(
-            color: discColor.withOpacity(0.30),
-            blurRadius: 18,
-            offset: const Offset(0, 10),
+        color: discColor.withOpacity(0.11),
+        borderRadius: BorderRadius.circular(17),
+        border: Border.all(color: discColor.withOpacity(0.28)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.timer_outlined, color: discColor, size: 15),
+          const SizedBox(width: 4),
+          Text(
+            '${seconds}s',
+            style: TextStyle(
+              color: discColor,
+              fontWeight: FontWeight.w900,
+              fontSize: 12,
+            ),
           ),
         ],
-      ),
-      child: Center(
-        child: Text(
-          '${seconds}s',
-          style: const TextStyle(
-            color: Colors.white,
-            fontWeight: FontWeight.w900,
-            fontSize: 16,
-          ),
-        ),
       ),
     );
   }
@@ -1498,11 +2379,11 @@ class _PrepTimeButton extends StatelessWidget {
       borderRadius: BorderRadius.circular(14),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 160),
-        width: 48,
-        height: 48,
+        width: 42,
+        height: 42,
         decoration: BoxDecoration(
           color: enabled ? Colors.white : FoodFlowTheme.line.withOpacity(0.5),
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(10),
           border: Border.all(
             color: enabled
                 ? FoodFlowTheme.orange.withOpacity(0.30)
@@ -1722,9 +2603,10 @@ class _DriverIncomingOrderSheetState extends State<_DriverIncomingOrderSheet> {
       });
       final ok = await widget.onTimeout();
       if (!mounted) return;
+      final messenger = ScaffoldMessenger.of(context);
       _timer?.cancel();
       Navigator.pop(context);
-      ScaffoldMessenger.of(context).showSnackBar(
+      messenger.showSnackBar(
         SnackBar(
           content:
               Text(ok ? 'Delivery auto rejected' : 'Delivery timer expired'),
@@ -1740,11 +2622,14 @@ class _DriverIncomingOrderSheetState extends State<_DriverIncomingOrderSheet> {
     setState(() => _isAccepting = true);
     final ok = await widget.onAccept();
     if (!mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
     setState(() => _isAccepting = false);
     if (ok) {
       Navigator.pop(context);
-      widget.onViewDetails();
-      ScaffoldMessenger.of(context).showSnackBar(
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        widget.onViewDetails();
+      });
+      messenger.showSnackBar(
         const SnackBar(content: Text('Delivery accepted')),
       );
     } else {
@@ -1759,10 +2644,11 @@ class _DriverIncomingOrderSheetState extends State<_DriverIncomingOrderSheet> {
     setState(() => _isRejecting = true);
     final ok = await widget.onReject();
     if (!mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
     setState(() => _isRejecting = false);
     if (ok) {
       Navigator.pop(context);
-      ScaffoldMessenger.of(context).showSnackBar(
+      messenger.showSnackBar(
         const SnackBar(content: Text('Delivery rejected')),
       );
     } else {

@@ -8,7 +8,7 @@ class AppConfig {
   );
   static const String appPackageName = String.fromEnvironment(
     'APP_PACKAGE_NAME',
-    defaultValue: 'com.adgraph.yumma_vendor',
+    defaultValue: 'com.renjo.app_vendor',
   );
 
   static const String appName = appRole == 'driver'
@@ -16,14 +16,14 @@ class AppConfig {
       : appRole == 'restaurant'
           ? 'Yumma! Resto'
           : 'Yumma!';
-  static const String brandName = 'Yumma';
-  static const String companyName = 'Adgraph Media Private Limited';
-  static const String privacyPolicyUrl = 'https://yumma.in/privacy-policy';
+  static const String brandName = 'Yumma!';
+  static const String companyName = 'RENJO TECHNOLOGY Private Limited';
+  static const String privacyPolicyUrl = 'https://yumma.online/privacy-policy';
   static const String accountDeletionPolicyUrl =
-      'https://yumma.in/delete-account-policy.html';
+      'https://yumma.online/delete-account-policy.html';
   static const String apiBaseUrl = String.fromEnvironment(
     'API_BASE_URL',
-    defaultValue: 'https://yumma.in/api',
+    defaultValue: 'https://yumma.online/api',
   );
   static const String googleMapsApiKey = String.fromEnvironment(
     'GOOGLE_MAPS_API_KEY',
@@ -36,7 +36,7 @@ class AppConfig {
   // Firebase Config (if using)
   static const String firebaseProjectId = String.fromEnvironment(
     'FIREBASE_PROJECT_ID',
-    defaultValue: 'yumma-458b0',
+    defaultValue: 'Yumma-458b0',
   );
 
   static const String supportPhone = String.fromEnvironment(
@@ -45,7 +45,7 @@ class AppConfig {
   );
   static const String supportEmail = String.fromEnvironment(
     'SUPPORT_EMAIL',
-    defaultValue: 'info@yumma.in',
+    defaultValue: 'info@yumma.online',
   );
 
   static bool get isCustomerApp => appRole == 'customer';

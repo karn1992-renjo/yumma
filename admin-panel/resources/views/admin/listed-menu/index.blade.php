@@ -1,7 +1,7 @@
 @extends('layouts.admin')
 
 @php
-    $currencySymbol = App\Models\AppSetting::getValue('currency_symbol', '?');
+    $currencySymbol = App\Models\AppSetting::sanitizedCurrencySymbol();
     $currencyDecimals = App\Models\AppSetting::currencyDecimals();
 @endphp
 

@@ -109,28 +109,28 @@
                     
                     <div class="col-md-6">
                         <label class="form-label fw-semibold">Pincode</label>
-                        <input type="text" name="pincode" 
-                               class="form-control @error('pincode') is-invalid @enderror" 
+                        <input type="text" name="pincode" id="pincode"
+                               class="form-control @error('pincode') is-invalid @enderror"
                                value="{{ old('pincode', $restaurant->pincode) }}">
                         @error('pincode')
                             <div class="invalid-feedback">{{ $message }}</div>
                         @enderror
                     </div>
-                    
+
                     <div class="col-md-6">
                         <label class="form-label fw-semibold">City <span class="text-danger">*</span></label>
-                        <input type="text" name="city" 
-                               class="form-control @error('city') is-invalid @enderror" 
+                        <input type="text" name="city" id="city"
+                               class="form-control @error('city') is-invalid @enderror"
                                value="{{ old('city', $restaurant->city) }}" required>
                         @error('city')
                             <div class="invalid-feedback">{{ $message }}</div>
                         @enderror
                     </div>
-                    
+
                     <div class="col-md-6">
                         <label class="form-label fw-semibold">State <span class="text-danger">*</span></label>
-                        <input type="text" name="state" 
-                               class="form-control @error('state') is-invalid @enderror" 
+                        <input type="text" name="state" id="state"
+                               class="form-control @error('state') is-invalid @enderror"
                                value="{{ old('state', $restaurant->state) }}" required>
                         @error('state')
                             <div class="invalid-feedback">{{ $message }}</div>
@@ -245,6 +245,7 @@
 
 @section('scripts')
 @include('partials.google-maps-shim')
+@include('partials.address-autocomplete')
 <script>
     document.addEventListener('DOMContentLoaded', function () {
         const searchBtn = document.getElementById('searchAddressBtn');
@@ -271,6 +272,12 @@
                 return;
             }
 
+            if (!window.L) {
+                mapContainer.innerHTML = '<div class="alert alert-warning m-0">Map is unavailable because the Google Maps API key is not configured. Contact your admin, or enter the address manually above.</div>';
+                updateStatus('Map disabled: Google Maps API key is not configured.');
+                return;
+            }
+
             const initialLat = parseFloat(latField.value) || 20;
             const initialLng = parseFloat(lngField.value) || 0;
             const initialZoom = latField.value && lngField.value ? 13 : 2;
@@ -285,6 +292,25 @@
                 updateMarker(e.latlng.lat, e.latlng.lng);
                 reverseGeocode(e.latlng.lat, e.latlng.lng);
             });
+
+            if (window.AddressAutocomplete) {
+                AddressAutocomplete.bind('searchAddress', {
+                    address: 'address',
+                    city: 'city',
+                    state: 'state',
+                    pincode: 'pincode',
+                    lat: 'latitude',
+                    lng: 'longitude',
+                }, {
+                    onPlace: function (place) {
+                        updateMarker(place.geometry.location.lat(), place.geometry.location.lng());
+                        updateStatus('Location selected from address search.');
+                    },
+                    onNoLocation: function () {
+                        updateStatus('Select a suggested address or try a more specific search.');
+                    },
+                });
+            }
         }
 
         function updateMarker(lat, lng) {

@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../config/app_config.dart';
+import 'navigation_service.dart';
 import 'local_cache_service.dart';
 
 class ApiException implements Exception {
@@ -24,6 +25,7 @@ class ApiService {
   ApiService._internal();
 
   String? _authToken;
+  static bool _isRedirectingToLogin = false;
 
   Future<String?> getToken() async {
     if (_authToken != null) return _authToken;
@@ -44,6 +46,21 @@ class ApiService {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('auth_token');
     await LocalCacheService.clear();
+  }
+
+  Future<void> _handleSessionExpired() async {
+    final hadToken = (await getToken()) != null;
+    await clearToken();
+    if (!hadToken || _isRedirectingToLogin) return;
+    _isRedirectingToLogin = true;
+    Future<void>.delayed(Duration.zero, () async {
+      appNavigatorKey.currentState?.pushNamedAndRemoveUntil(
+        '/login',
+        (route) => false,
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 600));
+      _isRedirectingToLogin = false;
+    });
   }
 
   Future<Map<String, String>> _getHeaders() async {
@@ -225,7 +242,7 @@ class ApiService {
         trimmedBody.startsWith('<!DOCTYPE html>') ||
         trimmedBody.startsWith('<html')) {
       if (trimmedBody.toLowerCase().contains('<title>login')) {
-        await clearToken();
+        await _handleSessionExpired();
         throw ApiException('Session expired. Please login again.');
       }
       if (kDebugMode) print('HTML response body: ${response.body}');
@@ -268,7 +285,7 @@ class ApiService {
     final normalizedMessage = message.toLowerCase();
     if (response.statusCode == 401 ||
         normalizedMessage.contains('unauthenticated')) {
-      await clearToken();
+      await _handleSessionExpired();
       throw ApiException('Session expired. Please login again.');
     }
 

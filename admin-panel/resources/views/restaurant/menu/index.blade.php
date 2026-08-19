@@ -1,6 +1,6 @@
 {{-- resources/views/restaurant/menu/index.blade.php --}}
 @extends('layouts.restaurant')
-@php $currencySymbol = App\Models\AppSetting::getValue('currency_symbol', '?'); @endphp
+@php $currencySymbol = App\Models\AppSetting::sanitizedCurrencySymbol(); @endphp
 @php $canManageMenu = auth()->user()->hasRestaurantPermission('manage_menu'); @endphp
 
 @section('title', 'Menu Items')

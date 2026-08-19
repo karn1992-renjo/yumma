@@ -63,6 +63,10 @@ class MenuItem {
   final String foodType;
   final String dietLabel;
   final bool isAvailable;
+  final DateTime? unavailableUntil;
+  final bool isScheduledAvailable;
+  final String approvalStatus;
+  final bool isPriceInclusiveGst;
   final int? preparationTime;
   final int totalOrders;
   final double? rating;
@@ -88,6 +92,10 @@ class MenuItem {
     this.foodType = 'veg',
     this.dietLabel = 'Veg',
     this.isAvailable = true,
+    this.unavailableUntil,
+    this.isScheduledAvailable = true,
+    this.approvalStatus = 'approved',
+    this.isPriceInclusiveGst = false,
     this.preparationTime,
     this.totalOrders = 0,
     this.rating,
@@ -122,6 +130,14 @@ class MenuItem {
                   parseBoolValue(json['is_veg'], true)))
           .toString(),
       isAvailable: parseBoolValue(json['is_available'], true),
+      unavailableUntil: DateTime.tryParse(
+        json['unavailable_until']?.toString() ?? '',
+      ),
+      isScheduledAvailable: parseBoolValue(json['is_scheduled_available'],
+          parseBoolValue(json['is_available'], true)),
+      approvalStatus: (json['approval_status'] ?? 'approved').toString(),
+      isPriceInclusiveGst:
+          parseBoolValue(json['is_price_inclusive_gst'], false),
       preparationTime: parseNullableInt(json['preparation_time']),
       totalOrders: parseIntValue(json['total_orders']),
       rating: parseNullableDouble(json['rating']),
@@ -151,6 +167,10 @@ class MenuItem {
       'food_type': foodType,
       'diet_label': dietLabel,
       'is_available': isAvailable,
+      'unavailable_until': unavailableUntil?.toIso8601String(),
+      'is_scheduled_available': isScheduledAvailable,
+      'approval_status': approvalStatus,
+      'is_price_inclusive_gst': isPriceInclusiveGst,
       'preparation_time': preparationTime,
       'total_orders': totalOrders,
       'rating': rating,
@@ -166,6 +186,8 @@ class MenuItem {
   double get finalPrice => discountedPrice ?? price;
   bool get hasCustomizations => variants.isNotEmpty || addOns.isNotEmpty;
   String get imageUrl => images.isNotEmpty ? _resolveImageUrl(images[0]) : '';
+  bool get isDisabled => approvalStatus.toLowerCase() != 'approved';
+  bool get isOutOfStock => !isDisabled && !isAvailable;
   bool get isEgg => foodType == 'egg';
   bool get isNonVeg => foodType == 'non_veg';
   bool get hasDiscount => discountedPrice != null && discountedPrice! < price;

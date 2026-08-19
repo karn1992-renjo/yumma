@@ -325,10 +325,10 @@ class _FoodDeliveryAppState extends State<FoodDeliveryApp> {
         scaffoldBackgroundColor: homeCanvas,
         visualDensity: const VisualDensity(horizontal: -3, vertical: -3),
         materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-        fontFamily: GoogleFonts.nunitoSans().fontFamily,
+        fontFamily: GoogleFonts.plusJakartaSans().fontFamily,
         useMaterial3: true,
         textTheme: AppTypography.material3(
-          base: GoogleFonts.nunitoSansTextTheme(),
+          base: GoogleFonts.plusJakartaSansTextTheme(),
           textColor: homeText,
           mutedColor: homeMuted,
         ),
@@ -842,7 +842,7 @@ class _FoodDeliveryAppState extends State<FoodDeliveryApp> {
   }
 
   bool _isFirebaseAuthCallbackUri(Uri uri) {
-    return uri.host == 'yumma-458b0.firebaseapp.com' &&
+    return uri.host == 'PLACE_AUTH_DOMAIN_HERE' &&
         uri.path == '/__/auth/callback' &&
         uri.queryParameters['authType'] == 'verifyApp';
   }

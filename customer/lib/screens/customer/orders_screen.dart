@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import '../../widgets/common/app_cached_image.dart';
+import '../../widgets/common/app_skeleton.dart';
 import 'package:provider/provider.dart';
 
 import '../../models/order.dart';
@@ -116,13 +117,21 @@ class _OrdersScreenState extends State<OrdersScreen>
 
   Future<void> _loadOrders() async {
     final orderProvider = context.read<OrderProvider>();
+    if (orderProvider.orders.isNotEmpty && mounted) {
+      setState(() => _isLoading = false);
+      unawaited(orderProvider.fetchMyOrders(
+        notifyLoading: false,
+        forceRefresh: true,
+      ));
+      return;
+    }
     await orderProvider.fetchMyOrders();
     if (!mounted) return;
     setState(() => _isLoading = false);
   }
 
   Future<void> _refreshOrders() async {
-    await context.read<OrderProvider>().fetchMyOrders();
+    await context.read<OrderProvider>().fetchMyOrders(forceRefresh: true);
   }
 
   void _handleBack() {
@@ -201,7 +210,7 @@ class _OrdersScreenState extends State<OrdersScreen>
                   _buildSearchRow(),
                   Expanded(
                     child: _isLoading || orderProvider.isLoading
-                        ? _buildLoadingState(_primary)
+                        ? _buildLoadingState()
                         : filteredOrders.isEmpty
                             ? _buildEmptyState(
                                 tabIndex: _tabController.index,
@@ -518,35 +527,11 @@ class _OrdersScreenState extends State<OrdersScreen>
     );
   }
 
-  Widget _buildLoadingState(Color primary) {
-    return Center(
-      child: Container(
-        margin: const EdgeInsets.all(22),
-        padding: const EdgeInsets.fromLTRB(22, 26, 22, 24),
-        decoration: _ordersPanelDecoration(context),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            SizedBox(
-              width: 30,
-              height: 30,
-              child: CircularProgressIndicator(
-                strokeWidth: 2.6,
-                color: primary,
-              ),
-            ),
-            const SizedBox(height: 14),
-            const Text(
-              'Loading your orders...',
-              style: TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w800,
-                color: _muted,
-              ),
-            ),
-          ],
-        ),
-      ),
+  Widget _buildLoadingState() {
+    return const AppSkeletonListView(
+      itemCount: 4,
+      itemHeight: 124,
+      padding: EdgeInsets.fromLTRB(14, 12, 14, 24),
     );
   }
 

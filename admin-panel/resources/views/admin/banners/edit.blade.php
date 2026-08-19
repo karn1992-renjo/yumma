@@ -36,6 +36,7 @@
 @php
     $currentMediaUrl = $banner->image ? \Illuminate\Support\Facades\Storage::disk('public')->url($banner->image) : '';
     $currentIsLottie = \Illuminate\Support\Str::endsWith(\Illuminate\Support\Str::lower((string) $banner->image), '.json');
+    $currentBadgeUrl = $banner->badge_image ? \Illuminate\Support\Facades\Storage::disk('public')->url($banner->badge_image) : '';
 @endphp
 
 <section class="bf-head">
@@ -66,7 +67,7 @@
                     @error('display_order') <div class="invalid-feedback">{{ $message }}</div> @enderror
                 </div>
                 <div class="col-12">
-                    <label class="form-label fw-bold">Description</label>
+                    <label class="form-label fw-bold">Description / Subtitle</label>
                     <textarea name="description" id="bannerDescription" class="form-control @error('description') is-invalid @enderror" rows="3">{{ old('description', $banner->description) }}</textarea>
                     @error('description') <div class="invalid-feedback">{{ $message }}</div> @enderror
                 </div>
@@ -75,12 +76,12 @@
                     <div class="bf-muted mb-2">{{ $currentIsLottie ? 'Lottie JSON' : 'Image' }}: {{ $banner->image }}</div>
                     <label class="form-label fw-bold">Replace Media</label>
                     <input type="file" name="image" id="bannerMedia" class="form-control @error('image') is-invalid @enderror" accept="image/*,.json,application/json">
-                    <div class="bf-muted mt-1">Leave empty to keep current media. Upload JPG, PNG, WebP, GIF, or Lottie JSON. Max 8MB.</div>
+                    <div class="bf-muted mt-1">Leave empty to keep current media. Upload JPG, PNG, WebP, GIF, or Lottie JSON.</div>
                     @error('image') <div class="invalid-feedback">{{ $message }}</div> @enderror
                 </div>
                 <div class="col-md-6">
                     <label class="form-label fw-bold">Banner Type <span class="text-danger">*</span></label>
-                    <select name="banner_type" class="form-select @error('banner_type') is-invalid @enderror" required>
+                    <select name="banner_type" id="bannerType" class="form-select @error('banner_type') is-invalid @enderror" required>
                         <option value="home" @selected(old('banner_type', $banner->banner_type) === 'home')>Home Banner</option>
                         <option value="promo" @selected(old('banner_type', $banner->banner_type) === 'promo')>Promo Banner</option>
                         <option value="search_bar" @selected(old('banner_type', $banner->banner_type) === 'search_bar')>Search Bar Banner</option>
@@ -93,18 +94,41 @@
                     <select name="layout_mode" id="layoutMode" class="form-select @error('layout_mode') is-invalid @enderror" required>
                         <option value="text_image" @selected(old('layout_mode', $banner->layout_mode ?? 'text_image') === 'text_image')>Text + Media</option>
                         <option value="full_image" @selected(old('layout_mode', $banner->layout_mode) === 'full_image')>Full Media</option>
+                        <option value="promo_card" @selected(old('layout_mode', $banner->layout_mode) === 'promo_card')>Promo Widget (Coupon Style)</option>
                     </select>
+                    <div class="bf-muted mt-1">Promo Widget shows title, subtitle, a CTA button, and a torn-card image panel with an optional badge/logo.</div>
                     @error('layout_mode') <div class="invalid-feedback">{{ $message }}</div> @enderror
                 </div>
-                <div class="col-md-6">
+                <div class="col-md-6" data-layout-field="text_image">
                     <label class="form-label fw-bold">Media Width</label>
                     <input type="range" name="image_ratio" id="imageRatio" class="form-range" min="35" max="70" value="{{ old('image_ratio', $banner->image_ratio ?? 46) }}">
                     <div class="bf-muted"><span id="imageRatioValue">{{ old('image_ratio', $banner->image_ratio ?? 46) }}</span>% media area in Text + Media mode.</div>
                     @error('image_ratio') <div class="invalid-feedback d-block">{{ $message }}</div> @enderror
                 </div>
+                <div class="col-md-6 d-none" data-layout-field="promo_card">
+                    <label class="form-label fw-bold">CTA Button Label</label>
+                    <input type="text" name="cta_label" id="ctaLabel" class="form-control @error('cta_label') is-invalid @enderror" value="{{ old('cta_label', $banner->cta_label ?? 'Order Now') }}" maxlength="40" placeholder="ORDER NOW">
+                    @error('cta_label') <div class="invalid-feedback">{{ $message }}</div> @enderror
+                </div>
+                <div class="col-md-6 d-none" data-layout-field="promo_card">
+                    <label class="form-label fw-bold">Badge / Logo Image</label>
+                    @if($currentBadgeUrl)
+                        <div class="bf-muted mb-2">Current: <img src="{{ $currentBadgeUrl }}" alt="" style="height:28px;width:28px;border-radius:50%;object-fit:cover;vertical-align:middle;"></div>
+                    @endif
+                    <input type="file" name="badge_image" id="badgeImage" class="form-control @error('badge_image') is-invalid @enderror" accept="image/*">
+                    <div class="bf-muted mt-1">Small circular logo overlaid on the image corner (optional). Leave empty to keep current.</div>
+                    @if($currentBadgeUrl)
+                        <div class="form-check mt-2">
+                            <input class="form-check-input" type="checkbox" id="removeBadgeImage" name="remove_badge_image" value="1">
+                            <label class="form-check-label" for="removeBadgeImage">Remove current badge image</label>
+                        </div>
+                    @endif
+                    @error('badge_image') <div class="invalid-feedback">{{ $message }}</div> @enderror
+                </div>
                 <div class="col-md-6">
                     <label class="form-label fw-bold">Link URL</label>
                     <input type="url" name="link" class="form-control @error('link') is-invalid @enderror" value="{{ old('link', $banner->link) }}" placeholder="https://example.com/promotion">
+                    <div class="bf-muted mt-1">Manual redirect. Leave blank and set an App Redirect below to send customers straight to a menu item, restaurant, or category instead.</div>
                     @error('link') <div class="invalid-feedback">{{ $message }}</div> @enderror
                 </div>
                 <div class="col-md-6">
@@ -187,6 +211,7 @@ const mediaInput = document.getElementById('bannerMedia');
 const titleInput = document.getElementById('bannerTitle');
 const descriptionInput = document.getElementById('bannerDescription');
 const layoutModeInput = document.getElementById('layoutMode');
+const bannerTypeInput = document.getElementById('bannerType');
 const imageRatioInput = document.getElementById('imageRatio');
 const imageRatioValue = document.getElementById('imageRatioValue');
 const preview = document.getElementById('bannerPreview');
@@ -211,6 +236,18 @@ function syncRedirectTargets() {
         target.querySelectorAll('select').forEach((select) => {
             select.disabled = !active;
             if (!active) select.value = '';
+        });
+    });
+}
+
+function syncLayoutFields() {
+    const mode = layoutModeInput?.value || 'text_image';
+    const bannerType = bannerTypeInput?.value || '';
+    document.querySelectorAll('[data-layout-field]').forEach((field) => {
+        const active = field.dataset.layoutField === mode || (field.dataset.layoutField === 'promo_card' && bannerType === 'promo');
+        field.classList.toggle('d-none', !active);
+        field.querySelectorAll('input, select').forEach((input) => {
+            input.disabled = !active;
         });
     });
 }
@@ -247,6 +284,25 @@ function renderPreview() {
     if (layoutModeInput.value === 'full_image') {
         preview.className = 'bf-preview';
         preview.innerHTML = `<img src="${mediaUrl}" alt="">`;
+        return;
+    }
+
+    if (layoutModeInput.value === 'promo_card' || bannerTypeInput?.value === 'promo') {
+        const title = titleInput.value || 'Biryani starting at ₹149*';
+        const description = descriptionInput.value || 'From The Biryani Life';
+        const ctaLabel = (document.getElementById('ctaLabel')?.value || 'Order Now').toUpperCase();
+        preview.className = 'bf-preview';
+        preview.innerHTML = `
+            <div class="d-flex h-100" style="background:#fff;">
+                <div class="p-3 d-flex flex-column justify-content-center" style="width:52%;">
+                    <div class="fw-bold mb-1" style="color:#111827;font-size:1.15rem;line-height:1.15;">${title}</div>
+                    <div class="bf-muted mb-2">${description}</div>
+                    <div class="d-inline-flex align-items-center justify-content-center fw-bold" style="background:#111827;color:#fff;border-radius:999px;padding:8px 16px;font-size:.8rem;width:fit-content;">${ctaLabel}</div>
+                </div>
+                <div style="width:48%;position:relative;background:linear-gradient(135deg,#b91c1c,#7f1d1d);clip-path:polygon(12% 0,100% 0,100% 100%,12% 100%,18% 82%,10% 64%,20% 46%,8% 28%,16% 12%);">
+                    <img src="${mediaUrl}" style="width:100%;height:100%;object-fit:cover;opacity:.92;" alt="">
+                </div>
+            </div>`;
         return;
     }
 
@@ -301,12 +357,16 @@ mediaInput?.addEventListener('change', (event) => {
     reader.readAsDataURL(file);
 });
 
-[titleInput, descriptionInput, layoutModeInput, imageRatioInput].forEach((element) => {
+const ctaLabelInput = document.getElementById('ctaLabel');
+[titleInput, descriptionInput, layoutModeInput, bannerTypeInput, imageRatioInput, ctaLabelInput].forEach((element) => {
     element?.addEventListener('input', renderPreview);
     element?.addEventListener('change', renderPreview);
 });
+layoutModeInput?.addEventListener('change', syncLayoutFields);
+bannerTypeInput?.addEventListener('change', syncLayoutFields);
 redirectTypeInput?.addEventListener('change', syncRedirectTargets);
 syncRedirectTargets();
+syncLayoutFields();
 renderPreview();
 </script>
 @endsection

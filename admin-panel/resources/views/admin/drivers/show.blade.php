@@ -1,6 +1,6 @@
 @extends('layouts.admin')
 @php
-    $currencySymbol = App\Models\AppSetting::getValue('currency_symbol', '?');
+    $currencySymbol = App\Models\AppSetting::sanitizedCurrencySymbol();
     $currencyDecimals = App\Models\AppSetting::currencyDecimals();
     $currencyStep = number_format(1 / pow(10, $currencyDecimals), $currencyDecimals, '.', '');
 @endphp
@@ -305,6 +305,41 @@
             </div>
         </div>
 
+        <!-- COD Cash Collection -->
+        <div class="table-card mb-4">
+            <div class="card-header bg-transparent">
+                <h5 class="mb-0 fw-bold"><i class="fas fa-money-bill-wave me-2"></i> COD Cash Collection</h5>
+            </div>
+            <div class="p-4">
+                <div class="d-flex justify-content-between align-items-end gap-3 mb-3">
+                    <div>
+                        <div class="text-muted small mb-1">Cash pending deposit</div>
+                        <div class="fw-bold fs-3 {{ $pendingCodAmount > 0 ? 'text-danger' : 'text-success' }}">
+                            {{ $currencySymbol }}{{ number_format($pendingCodAmount, $currencyDecimals) }}
+                        </div>
+                    </div>
+                    <span class="badge {{ $pendingCodOrders->isEmpty() ? 'bg-success' : 'bg-warning text-dark' }}">
+                        {{ $pendingCodOrders->count() }} order(s)
+                    </span>
+                </div>
+
+                @if($pendingCodOrders->isNotEmpty())
+                    <div class="small text-muted mb-3">
+                        This settles only delivered COD orders whose cash has been recorded and not previously deposited.
+                    </div>
+                    <form method="POST" action="{{ route('admin.drivers.cash-collection', $driver->id) }}">
+                        @csrf
+                        <button type="submit" class="btn btn-success w-100">
+                            <i class="fas fa-check-circle me-2"></i> Confirm Cash Received
+                        </button>
+                    </form>
+                @else
+                    <div class="alert alert-success mb-0 py-2 small">
+                        <i class="fas fa-check-circle me-1"></i> All recorded COD cash is settled.
+                    </div>
+                @endif
+            </div>
+        </div>
         <!-- Wallet Status -->
         <div class="table-card mb-4">
             <div class="card-header bg-transparent">
@@ -324,7 +359,7 @@
                 <hr>
                 <div class="mb-2">
                     <small class="text-muted">Currency</small>
-                    <div class="fw-semibold">{{ $wallet->currency ?? 'USD' }}</div>
+                    <div class="fw-semibold">{{ $wallet->currency ?? strtoupper(App\Models\AppSetting::getValue('currency_code', 'INR')) }}</div>
                 </div>
                 <hr>
                 <div>

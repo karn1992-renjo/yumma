@@ -1,6 +1,6 @@
-# Yumma Driver App
+# Yumma! Driver App
 
-This Flutter module is the driver app for the Yumma platform. It uses Firebase for authentication and messaging, and connects to the Laravel backend through API_BASE_URL.
+This Flutter module is the driver app for the Yumma! platform. It uses Firebase for authentication and messaging, and connects to the Laravel backend through API_BASE_URL.
 
 > For the full project installation guide, see ../README.md.
 

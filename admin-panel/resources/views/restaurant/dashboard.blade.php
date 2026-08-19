@@ -2,7 +2,7 @@
 @extends('layouts.restaurant')
 
 @php
-    $currencySymbol = App\Models\AppSetting::getValue('currency_symbol', html_entity_decode('&#8377;', ENT_QUOTES, 'UTF-8'));
+    $currencySymbol = App\Models\AppSetting::sanitizedCurrencySymbol();
     $currencyDecimals = App\Models\AppSetting::currencyDecimals();
 
     if (strpos((string) $currencySymbol, '{{') !== false || strpos((string) $currencySymbol, 'currencySymbol') !== false) {

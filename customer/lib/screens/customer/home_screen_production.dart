@@ -10,6 +10,7 @@ import 'package:flutter/rendering.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:http/http.dart' as http;
 import 'package:lottie/lottie.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -35,6 +36,7 @@ import '../../theme/foodflow_theme.dart';
 import '../../utils/currency_utils.dart';
 import '../../widgets/common/lucide_icon.dart';
 import '../../widgets/customer/menu_item_card.dart';
+import '../../widgets/customer/order_feedback_dialog.dart';
 import '../customer/cart_screen.dart';
 import '../customer/menu_price_filter_screen.dart';
 import '../customer/menu_taxonomy_filter_screen.dart';
@@ -519,182 +521,7 @@ class _CustomerHomeScreenProductionState
   }
 
   Future<void> _showFeedbackDialog(Order order) async {
-    int itemRating = 5;
-    int restaurantRating = 5;
-    int driverRating = 5;
-    int serviceRating = 5;
-    final itemController = TextEditingController();
-    final restaurantController = TextEditingController();
-    final driverController = TextEditingController();
-    final serviceController = TextEditingController();
-    final canRateDriver = !order.isTakeaway && order.driver != null;
-    var isSubmitting = false;
-    var feedbackSubmitted = false;
-
-    await showDialog<void>(
-      context: context,
-      barrierDismissible: false,
-      builder: (dialogContext) {
-        return StatefulBuilder(
-          builder: (context, setDialogState) {
-            Future<void> submit() async {
-              if (isSubmitting) return;
-              setDialogState(() => isSubmitting = true);
-              final success =
-                  await context.read<OrderProvider>().submitFeedback(
-                        orderId: order.id,
-                        itemRating: itemRating,
-                        restaurantRating: restaurantRating,
-                        driverRating: canRateDriver ? driverRating : null,
-                        serviceRating: serviceRating,
-                        itemFeedback: itemController.text,
-                        restaurantFeedback: restaurantController.text,
-                        driverFeedback:
-                            canRateDriver ? driverController.text : null,
-                        serviceFeedback: serviceController.text,
-                      );
-
-              if (!mounted || !dialogContext.mounted) return;
-
-              if (success) {
-                final prefs = await SharedPreferences.getInstance();
-                await prefs.setInt('dismissed_feedback_order_id', order.id);
-                feedbackSubmitted = true;
-                Navigator.of(dialogContext).pop();
-                return;
-              }
-
-              setDialogState(() => isSubmitting = false);
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Could not submit feedback.')),
-              );
-            }
-
-            return AlertDialog(
-              backgroundColor: Colors.white,
-              surfaceTintColor: Colors.white,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(28),
-              ),
-              icon: Container(
-                width: 58,
-                height: 58,
-                decoration: const BoxDecoration(
-                  color: _homeLightGreen,
-                  shape: BoxShape.circle,
-                ),
-                child: const Icon(
-                  Icons.check_circle_rounded,
-                  color: _homeGreen,
-                  size: 36,
-                ),
-              ),
-              title: const Text(
-                'Order completed!',
-                style: TextStyle(
-                  color: _homeText,
-                  fontWeight: FontWeight.w900,
-                ),
-              ),
-              content: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      'How was your order from ${order.restaurant?.name ?? 'the restaurant'}?',
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w600,
-                        color: _homeMuted,
-                      ),
-                    ),
-                    const SizedBox(height: 18),
-                    _FeedbackRatingSection(
-                      title: 'Items',
-                      rating: itemRating,
-                      controller: itemController,
-                      hint: 'How was the food?',
-                      onChanged: (value) =>
-                          setDialogState(() => itemRating = value),
-                    ),
-                    _FeedbackRatingSection(
-                      title: 'Restaurant',
-                      rating: restaurantRating,
-                      controller: restaurantController,
-                      hint: 'Packaging, freshness, restaurant experience',
-                      onChanged: (value) =>
-                          setDialogState(() => restaurantRating = value),
-                    ),
-                    if (canRateDriver)
-                      _FeedbackRatingSection(
-                        title: 'Delivery partner · ${order.driver!.name}',
-                        rating: driverRating,
-                        controller: driverController,
-                        hint: 'Delivery experience and behaviour',
-                        onChanged: (value) =>
-                            setDialogState(() => driverRating = value),
-                      ),
-                    _FeedbackRatingSection(
-                      title: 'Service',
-                      rating: serviceRating,
-                      controller: serviceController,
-                      hint: 'Delivery and overall service',
-                      onChanged: (value) =>
-                          setDialogState(() => serviceRating = value),
-                    ),
-                  ],
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: isSubmitting
-                      ? null
-                      : () async {
-                          final prefs = await SharedPreferences.getInstance();
-                          await prefs.setInt(
-                              'dismissed_feedback_order_id', order.id);
-                          if (dialogContext.mounted) {
-                            Navigator.of(dialogContext).pop();
-                          }
-                        },
-                  child: const Text(
-                    'Later',
-                    style: TextStyle(color: _homeMuted),
-                  ),
-                ),
-                ElevatedButton(
-                  onPressed: isSubmitting ? null : submit,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: _homeAccent,
-                    foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                  ),
-                  child: isSubmitting
-                      ? const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Text('Submit'),
-                ),
-              ],
-            );
-          },
-        );
-      },
-    );
-
-    // The dialog future resolves before the reverse route animation has fully
-    // removed its TextFields. Wait before disposing their controllers or
-    // opening the next dialog to avoid overlapping Flutter build scopes.
-    await Future<void>.delayed(const Duration(milliseconds: 350));
-    itemController.dispose();
-    restaurantController.dispose();
-    driverController.dispose();
-    serviceController.dispose();
-
+    final feedbackSubmitted = await showOrderFeedbackDialog(context, order);
     if (feedbackSubmitted && mounted) {
       await _loadPlayStoreCta();
     }
@@ -702,7 +529,15 @@ class _CustomerHomeScreenProductionState
 
   Future<void> _loadPlayStoreCta() async {
     final branding = await AppBrandingService.instance.loadBranding();
-    final playStoreUrl = branding.customerPlayStoreUrl.trim();
+    var playStoreUrl = branding.customerPlayStoreUrl.trim();
+    if (playStoreUrl.isEmpty) {
+      final packageInfo = await PackageInfo.fromPlatform();
+      final packageName = packageInfo.packageName.trim();
+      if (packageName.isNotEmpty) {
+        playStoreUrl =
+            'https://play.google.com/store/apps/details?id=$packageName';
+      }
+    }
     if (!mounted || playStoreUrl.isEmpty) return;
 
     final openStore = await showDialog<bool>(
@@ -2890,6 +2725,22 @@ class _CustomerHomeFeedState extends State<_CustomerHomeFeed> {
     return 'UP TO $value OFF';
   }
 
+  bool _isPromoBannerItem(dynamic item) {
+    if (item is! Map) return false;
+    final layoutMode = (item['layout_mode'] ?? item['layoutMode'] ?? '')
+        .toString()
+        .toLowerCase()
+        .trim();
+    final bannerType = (item['banner_type'] ?? item['bannerType'] ?? '')
+        .toString()
+        .toLowerCase()
+        .trim();
+    return layoutMode == 'promo_card' || bannerType == 'promo';
+  }
+
+  List<dynamic> _regularBannerItems(Iterable<dynamic> items) =>
+      items.where((item) => !_isPromoBannerItem(item)).toList(growable: false);
+
   List<dynamic> _resolveBannerItems(
     List<Map<String, dynamic>> sections,
     List<dynamic> fallback,
@@ -2898,17 +2749,19 @@ class _CustomerHomeFeedState extends State<_CustomerHomeFeed> {
       if (section['type']?.toString() == 'banner_carousel' &&
           section['items'] is List &&
           (section['items'] as List).isNotEmpty) {
-        return List<dynamic>.from(section['items'] as List);
+        final items = _regularBannerItems(section['items'] as List);
+        if (items.isNotEmpty) return items;
       }
     }
     for (final section in sections) {
       if (section['type']?.toString() == 'hero_banner' &&
           section['items'] is List &&
           (section['items'] as List).isNotEmpty) {
-        return List<dynamic>.from(section['items'] as List);
+        final items = _regularBannerItems(section['items'] as List);
+        if (items.isNotEmpty) return items;
       }
     }
-    return fallback;
+    return _regularBannerItems(fallback);
   }
 
   List<dynamic> _resolveCuisineItems(
@@ -3067,7 +2920,7 @@ class _CustomerHomeFeedState extends State<_CustomerHomeFeed> {
       final type = section['type']?.toString();
       if ((type == 'banner_carousel' || type == 'hero_banner') &&
           section['items'] is List &&
-          (section['items'] as List).isNotEmpty) {
+          _regularBannerItems(section['items'] as List).isNotEmpty) {
         return section['token']?.toString();
       }
     }
@@ -3086,19 +2939,22 @@ class _CustomerHomeFeedState extends State<_CustomerHomeFeed> {
   }
 
   List<dynamic> _heroBannerItems() {
-    if (_banners.isNotEmpty) return _banners;
+    final banners = _regularBannerItems(_banners);
+    if (banners.isNotEmpty) return banners;
     for (final section in _homeSections) {
       if (section['type']?.toString() == 'banner_carousel' &&
           section['items'] is List &&
           (section['items'] as List).isNotEmpty) {
-        return List<dynamic>.from(section['items'] as List);
+        final items = _regularBannerItems(section['items'] as List);
+        if (items.isNotEmpty) return items;
       }
     }
     for (final section in _homeSections) {
       if (section['type']?.toString() == 'hero_banner' &&
           section['items'] is List &&
           (section['items'] as List).isNotEmpty) {
-        return List<dynamic>.from(section['items'] as List);
+        final items = _regularBannerItems(section['items'] as List);
+        if (items.isNotEmpty) return items;
       }
     }
     return const <dynamic>[];
@@ -4398,9 +4254,6 @@ class _CustomerHomeFeedState extends State<_CustomerHomeFeed> {
 
   @override
   Widget build(BuildContext context) {
-    final orderProvider = context.watch<OrderProvider>();
-    final activeOrders =
-        orderProvider.orders.where(_isRunningOrder).toList(growable: false);
     final notificationCount = _notificationCount;
     final currentUser = context.watch<AuthProvider>().currentUser;
     final userName = currentUser?.name ?? '';
@@ -4468,13 +4321,26 @@ class _CustomerHomeFeedState extends State<_CustomerHomeFeed> {
                   onMore: _showAllCategoriesSheet,
                 ),
               ),
-              if (activeOrders.isNotEmpty)
-                SliverToBoxAdapter(
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(20, 14, 20, 0),
-                    child: _RunningOrderCard(order: activeOrders.first),
-                  ),
-                ),
+              // Scoped to a Consumer so only this card rebuilds when
+              // OrderProvider notifies (e.g. the 12s active-order poll) —
+              // the rest of the feed (sections/banners) must not rebuild
+              // on every order tick, which was causing scroll jank.
+              Consumer<OrderProvider>(
+                builder: (context, orderProvider, _) {
+                  final activeOrders = orderProvider.orders
+                      .where(_isRunningOrder)
+                      .toList(growable: false);
+                  if (activeOrders.isEmpty) {
+                    return const SliverToBoxAdapter(child: SizedBox.shrink());
+                  }
+                  return SliverToBoxAdapter(
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 14, 20, 0),
+                      child: _RunningOrderCard(order: activeOrders.first),
+                    ),
+                  );
+                },
+              ),
               if (hasCategoryFilter)
                 SliverToBoxAdapter(
                   child: Padding(
@@ -4491,12 +4357,11 @@ class _CustomerHomeFeedState extends State<_CustomerHomeFeed> {
                   SliverToBoxAdapter(
                     child: Padding(
                       padding: EdgeInsets.only(
-                        top: entry.key == 0
-                            ? (activeOrders.isNotEmpty ? 18 : 0)
-                            : 20,
+                        top: entry.key == 0 ? 18 : 20,
                       ),
                       child: RepaintBoundary(
                         child: _HomeSectionContainer(
+                          section: entry.value,
                           child: _buildSectionContent(entry.value),
                         ),
                       ),
@@ -4686,14 +4551,33 @@ class _CustomerHomeFeedState extends State<_CustomerHomeFeed> {
 
     switch (type) {
       case 'banner_carousel':
+        final bannerItems = items
+            .whereType<Map>()
+            .map((item) => Map<String, dynamic>.from(item))
+            .toList(growable: false);
+        final isPromoCarousel = bannerItems.isNotEmpty &&
+            bannerItems.every((banner) {
+              final layoutMode =
+                  (banner['layout_mode'] ?? banner['layoutMode'] ?? '')
+                      .toString()
+                      .toLowerCase()
+                      .trim();
+              final bannerType =
+                  (banner['banner_type'] ?? banner['bannerType'] ?? '')
+                      .toString()
+                      .toLowerCase()
+                      .trim();
+              return layoutMode == 'promo_card' || bannerType == 'promo';
+            });
         return Column(
           children: <Widget>[
-            _SectionHeader(
-              title: section['title']?.toString() ?? 'Special Offers',
-              subtitle: section['subtitle']?.toString(),
-            ),
+            if (!isPromoCarousel)
+              _SectionHeader(
+                title: section['title']?.toString() ?? 'Special Offers',
+                subtitle: section['subtitle']?.toString(),
+              ),
             Padding(
-              padding: const EdgeInsets.fromLTRB(20, 0, 20, 0),
+              padding: EdgeInsets.fromLTRB(20, isPromoCarousel ? 18 : 0, 20, 0),
               child: _HomePromoBanner(
                 banners: items,
                 onTapRestaurant: _openRestaurant,
@@ -5056,12 +4940,7 @@ class _CustomerHomeFeedState extends State<_CustomerHomeFeed> {
                   final dish = items[index] as _HomeDishCardData;
                   return _DishPreviewCard(
                     dish: dish,
-                    onTap: () => _openRestaurant(
-                      <String, dynamic>{
-                        'id': dish.effectiveRestaurantId,
-                        'name': dish.restaurantName,
-                      },
-                    ),
+                    onTap: () => _showDishDetailsPopup(dish),
                     onAdd: () => _addDishToCart(dish),
                   );
                 },
@@ -5629,6 +5508,199 @@ class _CustomerHomeFeedState extends State<_CustomerHomeFeed> {
                   ),
                 ),
               ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  void _showDishDetailsPopup(_HomeDishCardData dish) {
+    final etaText = dish.etaMinutes > 0
+        ? '${dish.etaMinutes}-${dish.etaMinutes + 5} mins'
+        : 'Ready near you';
+    final priceText =
+        dish.price > 0 ? formatCurrency(context, dish.price) : 'Menu price';
+
+    Widget infoChip(IconData icon, String label) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+        decoration: BoxDecoration(
+          color: _homeLightGreen,
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(color: _homeGreen.withOpacity(0.16)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            Icon(icon, size: 15, color: _homeGreen),
+            const SizedBox(width: 5),
+            Text(
+              label,
+              style: const TextStyle(
+                color: _homeText,
+                fontSize: 12,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    Widget fallback() {
+      return Container(
+        color: _homePeach,
+        child: const Center(
+          child: Icon(Icons.fastfood_rounded, size: 46, color: _homeAccent),
+        ),
+      );
+    }
+
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      builder: (sheetContext) {
+        return SafeArea(
+          top: false,
+          child: SingleChildScrollView(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(20, 10, 20, 24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Center(
+                    child: Container(
+                      width: 54,
+                      height: 6,
+                      margin: const EdgeInsets.only(bottom: 18),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFD7DCE4),
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                    ),
+                  ),
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(20),
+                        child: SizedBox(
+                          width: 118,
+                          height: 118,
+                          child: _buildImageOrFallback(
+                            dish.imageUrl,
+                            fit: BoxFit.cover,
+                            placeholder: fallback(),
+                            errorWidget: fallback(),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: <Widget>[
+                            Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: <Widget>[
+                                Expanded(
+                                  child: Text(
+                                    dish.name,
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      color: _homeText,
+                                      fontSize: 20,
+                                      height: 1.1,
+                                      fontWeight: FontWeight.w900,
+                                    ),
+                                  ),
+                                ),
+                                IconButton(
+                                  visualDensity: VisualDensity.compact,
+                                  onPressed: () => Navigator.pop(sheetContext),
+                                  icon: const Icon(Icons.close_rounded),
+                                ),
+                              ],
+                            ),
+                            if (dish.restaurantName.trim().isNotEmpty) ...[
+                              const SizedBox(height: 6),
+                              Text(
+                                dish.restaurantName,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  color: _homeMuted,
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ],
+                            const SizedBox(height: 10),
+                            Wrap(
+                              spacing: 8,
+                              runSpacing: 8,
+                              children: <Widget>[
+                                infoChip(
+                                  dish.isVeg
+                                      ? Icons.eco_rounded
+                                      : Icons.restaurant_rounded,
+                                  dish.isVeg ? 'Veg' : 'Dish',
+                                ),
+                                infoChip(Icons.timer_outlined, etaText),
+                                if (dish.rating > 0)
+                                  infoChip(
+                                    Icons.star_rounded,
+                                    dish.rating.toStringAsFixed(1),
+                                  ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 22),
+                  Row(
+                    children: <Widget>[
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: <Widget>[
+                            const Text(
+                              'Price',
+                              style: TextStyle(
+                                color: _homeMuted,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            const SizedBox(height: 3),
+                            Text(
+                              priceText,
+                              style: const TextStyle(
+                                color: _homeText,
+                                fontSize: 22,
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      _DishAddButton(
+                        dish: dish,
+                        onAdd: () => _addDishToCart(dish),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
             ),
           ),
         );
@@ -8064,6 +8136,221 @@ class _HomePromoBannerState extends State<_HomePromoBanner> {
     return layoutMode == 'full_image' || layoutMode == 'image_only';
   }
 
+  bool _isPromoCardBanner(Map<String, dynamic> banner) {
+    final mode = (banner['layout_mode'] ?? banner['layoutMode'] ?? '')
+        .toString()
+        .trim()
+        .toLowerCase();
+    final type = (banner['banner_type'] ?? banner['bannerType'] ?? '')
+        .toString()
+        .trim()
+        .toLowerCase();
+    return mode == 'promo_card' || type == 'promo';
+  }
+
+  String _badgeImageUrl(Map<String, dynamic> banner) {
+    for (final key in const <String>[
+      'badge_image_url',
+      'badge_image',
+      'badge',
+      'logo_image',
+      'logo_url',
+      'logo',
+    ]) {
+      final value = banner[key];
+      if (value is String && value.trim().isNotEmpty) {
+        return _resolveHomeAssetUrl(value);
+      }
+    }
+    return '';
+  }
+
+  String _promoCtaLabel(Map<String, dynamic> banner) => _bannerText(
+        banner,
+        const <String>[
+          'cta_label',
+          'ctaLabel',
+          'cta',
+          'cta_text',
+          'button_text',
+          'action_text',
+        ],
+      );
+
+  Widget _buildPromoCardBanner(
+    Map<String, dynamic> banner,
+    String mediaUrl, {
+    required int index,
+    required bool isActive,
+    required double height,
+  }) {
+    final title =
+        _bannerText(banner, const <String>['headline', 'title', 'name']);
+    final subtitle = _bannerText(
+      banner,
+      const <String>['subtitle', 'description', 'caption'],
+    );
+    final ctaLabel = _promoCtaLabel(banner);
+    final badgeUrl = _badgeImageUrl(banner);
+    final compact = height < 150;
+
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(widget.borderRadius),
+      child: Container(
+        width: double.infinity,
+        height: height,
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(widget.borderRadius),
+          border: Border.all(color: const Color(0xFFE8E8EE)),
+          boxShadow: <BoxShadow>[
+            BoxShadow(
+              color: Colors.black.withOpacity(0.08),
+              blurRadius: 18,
+              offset: const Offset(0, 8),
+            ),
+          ],
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: Stack(
+          children: <Widget>[
+            Row(
+              children: <Widget>[
+                Expanded(
+                  flex: 52,
+                  child: Padding(
+                    padding: EdgeInsets.fromLTRB(
+                      compact ? 14 : 18,
+                      compact ? 10 : 14,
+                      compact ? 10 : 14,
+                      compact ? 10 : 14,
+                    ),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: <Widget>[
+                        if (title.isNotEmpty)
+                          Text(
+                            title,
+                            maxLines: compact ? 2 : 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: const Color(0xFF111827),
+                              fontSize: compact ? 20 : 24,
+                              height: 1.02,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                        if (subtitle.isNotEmpty) ...<Widget>[
+                          SizedBox(height: compact ? 5 : 7),
+                          Text(
+                            subtitle,
+                            maxLines: compact ? 2 : 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: const Color(0xFF6B7280),
+                              fontSize: compact ? 12 : 14,
+                              height: 1.22,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                        if (ctaLabel.isNotEmpty) ...<Widget>[
+                          SizedBox(height: compact ? 8 : 10),
+                          Container(
+                            padding: EdgeInsets.symmetric(
+                              horizontal: compact ? 14 : 18,
+                              vertical: compact ? 7 : 9,
+                            ),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF111827),
+                              borderRadius: BorderRadius.circular(999),
+                            ),
+                            child: Text(
+                              ctaLabel.toUpperCase(),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ),
+                Expanded(
+                  flex: 48,
+                  child: ClipPath(
+                    clipper: _PromoTornEdgeClipper(),
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: <Widget>[
+                        const DecoratedBox(
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
+                              colors: <Color>[
+                                Color(0xFFB91C1C),
+                                Color(0xFF7F1D1D),
+                              ],
+                            ),
+                          ),
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.only(left: 16),
+                          child: _buildBannerMedia(
+                            mediaUrl,
+                            banner,
+                            index: index,
+                            isActive: isActive,
+                            fit: BoxFit.cover,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            if (badgeUrl.isNotEmpty)
+              Positioned(
+                right: 12,
+                top: 12,
+                child: Container(
+                  width: compact ? 34 : 40,
+                  height: compact ? 34 : 40,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: Colors.white,
+                    border:
+                        Border.all(color: const Color(0xFFB91C1C), width: 1.5),
+                    boxShadow: <BoxShadow>[
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.18),
+                        blurRadius: 6,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                  clipBehavior: Clip.antiAlias,
+                  child: _buildHomeNetworkImage(
+                    badgeUrl,
+                    fit: BoxFit.cover,
+                    errorWidget: const SizedBox.shrink(),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildBannerMedia(
     String mediaUrl,
     Map<String, dynamic> banner, {
@@ -8227,7 +8514,18 @@ class _HomePromoBannerState extends State<_HomePromoBanner> {
 
   @override
   Widget build(BuildContext context) {
-    final bannerHeight = widget.height ?? 238;
+    final availableWidth = max(0.0, MediaQuery.sizeOf(context).width - 40);
+    final isPromoCarousel = widget.banners.isNotEmpty &&
+        widget.banners.every((banner) {
+          final item = banner is Map<String, dynamic>
+              ? banner
+              : Map<String, dynamic>.from(banner as Map);
+          return _isPromoCardBanner(item);
+        });
+    final bannerHeight = widget.height ??
+        (isPromoCarousel
+            ? (availableWidth / 3.0).clamp(118.0, 150.0).toDouble()
+            : (availableWidth / 3.0).clamp(128.0, 190.0).toDouble());
     if (widget.banners.isEmpty) {
       return Container(
         width: double.infinity,
@@ -8262,6 +8560,18 @@ class _HomePromoBannerState extends State<_HomePromoBanner> {
                   ? widget.banners[index] as Map<String, dynamic>
                   : Map<String, dynamic>.from(widget.banners[index] as Map);
               final mediaUrl = _resolveImageUrl(banner);
+              if (_isPromoCardBanner(banner)) {
+                return GestureDetector(
+                  onTap: () => _handleBannerTap(banner),
+                  child: _buildPromoCardBanner(
+                    banner,
+                    mediaUrl,
+                    index: index,
+                    isActive: index == _currentPage,
+                    height: bannerHeight,
+                  ),
+                );
+              }
               final eyebrow = _bannerText(
                 banner,
                 const ['eyebrow', 'badge', 'tag', 'label'],
@@ -8408,7 +8718,7 @@ class _HomePromoBannerState extends State<_HomePromoBanner> {
                                 ],
                               ],
                             ),
-                          )
+                          ),
                       ],
                     ),
                   ),
@@ -8447,15 +8757,259 @@ class _HomePromoBannerState extends State<_HomePromoBanner> {
   }
 }
 
+class _PromoTornEdgeClipper extends CustomClipper<Path> {
+  static const List<Offset> _points = <Offset>[
+    Offset(1.0, 1.0),
+    Offset(0.3, 0.86),
+    Offset(0.78, 0.72),
+    Offset(0.18, 0.58),
+    Offset(0.82, 0.44),
+    Offset(0.28, 0.3),
+    Offset(0.85, 0.16),
+    Offset(0.0, 0.0),
+  ];
+
+  @override
+  Path getClip(Size size) {
+    final notch = size.width * 0.22;
+    final path = Path()
+      ..moveTo(size.width, 0)
+      ..lineTo(size.width, size.height);
+    for (final point in _points) {
+      path.lineTo(point.dx * notch, point.dy * size.height);
+    }
+    path.close();
+    return path;
+  }
+
+  @override
+  bool shouldReclip(covariant CustomClipper<Path> oldClipper) => false;
+}
+
+const double _sectionArtworkHeight = 170;
+const double _sectionArtworkHeaderOffset = 48;
+
 class _HomeSectionContainer extends StatelessWidget {
   const _HomeSectionContainer({
     required this.child,
+    this.section,
   });
 
   final Widget child;
+  final Map<String, dynamic>? section;
 
   @override
-  Widget build(BuildContext context) => child;
+  Widget build(BuildContext context) {
+    final backgroundImageUrl = _sectionBackgroundImage(section);
+    final backgroundColor = _sectionBackgroundColor(section);
+    final backgroundOpacity =
+        _sectionBackgroundOpacity(section).clamp(0.0, 1.0).toDouble();
+
+    if (backgroundImageUrl.isEmpty && backgroundColor == null) return child;
+
+    final hasArtwork = backgroundImageUrl.isNotEmpty;
+    final tintColor = backgroundColor ?? Colors.white;
+    final colorLayer = tintColor.withOpacity(backgroundOpacity);
+    final backgroundLayer = IgnorePointer(
+      child: ClipPath(
+        clipper: const _SectionArtworkClipper(),
+        child: Stack(
+          fit: StackFit.expand,
+          children: <Widget>[
+            ColoredBox(color: backgroundColor ?? _homeBg),
+            if (hasArtwork)
+              _buildHomeNetworkImage(
+                backgroundImageUrl,
+                fit: BoxFit.cover,
+                placeholder: ColoredBox(color: backgroundColor ?? _homeBg),
+                errorWidget: ColoredBox(color: backgroundColor ?? _homeBg),
+              ),
+            DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: hasArtwork
+                      ? <Color>[
+                          colorLayer.withOpacity(
+                            min(backgroundOpacity * 0.62, 0.72),
+                          ),
+                          colorLayer,
+                        ]
+                      : <Color>[colorLayer, colorLayer],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    return Stack(
+      children: <Widget>[
+        if (hasArtwork)
+          const SizedBox(height: _sectionArtworkHeight)
+        else
+          Positioned.fill(child: backgroundLayer),
+        if (hasArtwork)
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            height: _sectionArtworkHeight,
+            child: backgroundLayer,
+          ),
+        Padding(
+          padding: hasArtwork
+              ? const EdgeInsets.only(top: _sectionArtworkHeaderOffset)
+              : EdgeInsets.zero,
+          child: child,
+        ),
+      ],
+    );
+  }
+
+  static String _sectionBackgroundImage(Map<String, dynamic>? section) {
+    const keys = <String>[
+      'background_image',
+      'backgroundImage',
+      'section_background_image',
+      'sectionBackgroundImage',
+      'background_url',
+      'backgroundUrl',
+      'artwork_image',
+      'artworkImage',
+      'cover_image',
+      'coverImage',
+      'hero_image',
+      'heroImage',
+      'banner_image',
+      'bannerImage',
+    ];
+    for (final map in _sectionMaps(section)) {
+      final value = _stringForKeys(map, keys);
+      if (value.isNotEmpty) return _resolveHomeAssetUrl(value);
+    }
+    return '';
+  }
+
+  static Color? _sectionBackgroundColor(Map<String, dynamic>? section) {
+    const keys = <String>[
+      'background_color',
+      'backgroundColor',
+      'section_background_color',
+      'sectionBackgroundColor',
+      'artwork_color',
+      'artworkColor',
+    ];
+    for (final map in _sectionMaps(section)) {
+      final value = _stringForKeys(map, keys);
+      if (value.isNotEmpty) {
+        final color = _tryParseColor(value);
+        if (color != null) return color;
+      }
+    }
+    return null;
+  }
+
+  static double _sectionBackgroundOpacity(Map<String, dynamic>? section) {
+    const keys = <String>[
+      'background_opacity',
+      'backgroundOpacity',
+      'section_background_opacity',
+      'sectionBackgroundOpacity',
+      'artwork_opacity',
+      'artworkOpacity',
+    ];
+    for (final map in _sectionMaps(section)) {
+      for (final key in keys) {
+        final value = _tryParseDouble(map[key]);
+        if (value != null) return value > 1 ? value / 100 : value;
+      }
+    }
+    return 0.86;
+  }
+
+  static Iterable<Map<String, dynamic>> _sectionMaps(
+    Map<String, dynamic>? section,
+  ) sync* {
+    final root = _asMap(section);
+    if (root == null) return;
+    yield root;
+    for (final key in <String>[
+      'style',
+      'styles',
+      'settings',
+      'appearance',
+      'metadata',
+      'meta',
+      'config',
+      'configuration',
+    ]) {
+      final nested = _asMap(root[key]);
+      if (nested != null) yield nested;
+    }
+  }
+
+  static Map<String, dynamic>? _asMap(dynamic value) {
+    if (value is Map<String, dynamic>) return value;
+    if (value is Map) {
+      return value.map((key, dynamic value) => MapEntry(key.toString(), value));
+    }
+    return null;
+  }
+
+  static String _stringForKeys(Map<String, dynamic> map, List<String> keys) {
+    for (final key in keys) {
+      final value = map[key];
+      if (value == null) continue;
+      final text = value.toString().trim();
+      if (text.isNotEmpty && text.toLowerCase() != 'null') return text;
+    }
+    return '';
+  }
+
+  static Color? _tryParseColor(String value) {
+    final normalized = value.trim().replaceFirst('#', '');
+    if (normalized.length != 6 && normalized.length != 8) return null;
+    final argb = normalized.length == 6 ? 'FF$normalized' : normalized;
+    final parsed = int.tryParse(argb, radix: 16);
+    return parsed == null ? null : Color(parsed);
+  }
+
+  static double? _tryParseDouble(dynamic value) {
+    if (value is num) return value.toDouble();
+    if (value is String)
+      return double.tryParse(value.trim().replaceAll('%', ''));
+    return null;
+  }
+}
+
+class _SectionArtworkClipper extends CustomClipper<Path> {
+  const _SectionArtworkClipper();
+
+  @override
+  Path getClip(Size size) {
+    final path = Path()..lineTo(0, 16);
+    final segment = size.width / 8;
+    for (var i = 0; i < 8; i++) {
+      final start = segment * i;
+      path.quadraticBezierTo(
+        start + segment / 2,
+        i.isEven ? 0 : 32,
+        start + segment,
+        16,
+      );
+    }
+    path
+      ..lineTo(size.width, size.height)
+      ..lineTo(0, size.height)
+      ..close();
+    return path;
+  }
+
+  @override
+  bool shouldReclip(covariant CustomClipper<Path> oldClipper) => false;
 }
 
 class _SectionHeader extends StatelessWidget {
@@ -8507,7 +9061,7 @@ class _SectionHeader extends StatelessWidget {
               style: const TextStyle(
                 color: _homeText,
                 fontSize: 21,
-                fontWeight: FontWeight.w800,
+                fontWeight: FontWeight.w900,
               ),
             ),
           TextSpan(
@@ -8515,7 +9069,7 @@ class _SectionHeader extends StatelessWidget {
             style: TextStyle(
               color: _accentColor(),
               fontSize: 21,
-              fontWeight: FontWeight.w800,
+              fontWeight: FontWeight.w900,
             ),
           ),
         ],
@@ -8532,7 +9086,7 @@ class _SectionHeader extends StatelessWidget {
             style: const TextStyle(
               color: _homeText,
               fontSize: 21,
-              fontWeight: FontWeight.w800,
+              fontWeight: FontWeight.w900,
             ),
           ),
         );
@@ -8543,7 +9097,7 @@ class _SectionHeader extends StatelessWidget {
           style: TextStyle(
             color: _tryParseColor(match.group(1) ?? '') ?? _homeAccent,
             fontSize: 21,
-            fontWeight: FontWeight.w800,
+            fontWeight: FontWeight.w900,
           ),
         ),
       );
@@ -8556,7 +9110,7 @@ class _SectionHeader extends StatelessWidget {
           style: const TextStyle(
             color: _homeText,
             fontSize: 21,
-            fontWeight: FontWeight.w700,
+            fontWeight: FontWeight.w900,
           ),
         ),
       );
@@ -13035,7 +13589,6 @@ class _RunningOrderCard extends StatefulWidget {
 
 class _RunningOrderCardState extends State<_RunningOrderCard>
     with SingleTickerProviderStateMixin {
-  bool _expanded = false;
   late final AnimationController _pulseController;
 
   @override
@@ -13053,226 +13606,192 @@ class _RunningOrderCardState extends State<_RunningOrderCard>
     super.dispose();
   }
 
+  void _openTracking() {
+    Navigator.pushNamed(context, '/order/track', arguments: widget.order.id);
+  }
+
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final steps = _runningOrderSteps(widget.order);
-    final progress = _runningOrderProgress(widget.order);
 
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 240),
-      curve: Curves.easeOutCubic,
-      padding: const EdgeInsets.all(16),
+    return Container(
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(26),
+        borderRadius: BorderRadius.circular(20),
         border: Border.all(color: _homeBorder),
         boxShadow: <BoxShadow>[
           BoxShadow(
-            color: scheme.primary.withOpacity(0.12),
-            blurRadius: 24,
-            offset: const Offset(0, 10),
+            color: scheme.primary.withOpacity(0.10),
+            blurRadius: 20,
+            offset: const Offset(0, 8),
           ),
         ],
       ),
-      child: Column(
-        children: <Widget>[
-          InkWell(
-            onTap: () => setState(() => _expanded = !_expanded),
-            borderRadius: BorderRadius.circular(22),
-            child: Row(
-              children: <Widget>[
-                AnimatedBuilder(
-                  animation: _pulseController,
-                  builder: (context, _) {
-                    final scale = 1 + (_pulseController.value * 0.06);
-                    return Transform.scale(
-                      scale: scale,
-                      child: Container(
-                        width: 46,
-                        height: 46,
-                        decoration: BoxDecoration(
-                          color: scheme.primary.withOpacity(0.12),
-                          borderRadius: BorderRadius.circular(16),
-                        ),
-                        child: Icon(
-                          Icons.delivery_dining_rounded,
-                          color: scheme.primary,
-                          size: 24,
-                        ),
-                      ),
-                    );
-                  },
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: <Widget>[
-                      Text(
-                        _runningOrderTitle(widget.order),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: _homeText,
-                          fontSize: 15,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                      const SizedBox(height: 3),
-                      Text(
-                        '${_runningOrderEta(widget.order)} | ${_runningOrderItemSummary(widget.order)}',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: _homeMuted,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 10),
-                SizedBox(
-                  width: 36,
-                  height: 36,
-                  child: Stack(
-                    alignment: Alignment.center,
-                    children: <Widget>[
-                      CircularProgressIndicator(
-                        value: progress,
-                        strokeWidth: 4,
-                        backgroundColor: const Color(0xFFE8EDF6),
-                        valueColor:
-                            AlwaysStoppedAnimation<Color>(scheme.primary),
-                      ),
-                      Icon(
-                        _expanded
-                            ? Icons.keyboard_arrow_down_rounded
-                            : Icons.keyboard_arrow_up_rounded,
-                        size: 18,
-                        color: _homeText,
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-          if (_expanded) ...[
-            const SizedBox(height: 14),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(999),
-              child: LinearProgressIndicator(
-                value: progress,
-                minHeight: 8,
-                backgroundColor: const Color(0xFFEFF2F6),
-                valueColor: AlwaysStoppedAnimation<Color>(scheme.primary),
-              ),
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: List<Widget>.generate(
-                steps.length,
-                (index) => Expanded(
-                  child: Row(
-                    children: <Widget>[
-                      Container(
-                        width: 14,
-                        height: 14,
-                        decoration: BoxDecoration(
-                          color:
-                              steps[index].$2 ? scheme.primary : Colors.white,
-                          shape: BoxShape.circle,
-                          border: Border.all(
-                            color:
-                                steps[index].$2 ? scheme.primary : _homeBorder,
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: _openTracking,
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Row(
+                children: <Widget>[
+                  AnimatedBuilder(
+                    animation: _pulseController,
+                    builder: (context, _) {
+                      final scale = 1 + (_pulseController.value * 0.06);
+                      return Transform.scale(
+                        scale: scale,
+                        child: Container(
+                          width: 44,
+                          height: 44,
+                          decoration: BoxDecoration(
+                            color: scheme.primary.withOpacity(0.12),
+                            shape: BoxShape.circle,
+                          ),
+                          child: Icon(
+                            Icons.delivery_dining_rounded,
+                            color: scheme.primary,
+                            size: 22,
                           ),
                         ),
-                      ),
-                      if (index != steps.length - 1)
-                        Expanded(
-                          child: Container(
-                            height: 3,
-                            margin: const EdgeInsets.symmetric(horizontal: 4),
-                            decoration: BoxDecoration(
+                      );
+                    },
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: <Widget>[
+                        Row(
+                          children: <Widget>[
+                            Container(
+                              width: 6,
+                              height: 6,
+                              decoration: const BoxDecoration(
+                                color: _homeGreen,
+                                shape: BoxShape.circle,
+                              ),
+                            ),
+                            const SizedBox(width: 6),
+                            Expanded(
+                              child: Text(
+                                _runningOrderTitle(widget.order),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  color: _homeText,
+                                  fontSize: 14.5,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          '${_runningOrderEta(widget.order)} • ${_runningOrderItemSummary(widget.order)}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: _homeMuted,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Icon(Icons.chevron_right_rounded,
+                      color: _homeMuted, size: 24),
+                ],
+              ),
+              const SizedBox(height: 16),
+              Row(
+                children: List<Widget>.generate(
+                  steps.length,
+                  (index) => Expanded(
+                    child: Row(
+                      children: <Widget>[
+                        Container(
+                          width: 8,
+                          height: 8,
+                          decoration: BoxDecoration(
+                            color:
+                                steps[index].$2 ? scheme.primary : Colors.white,
+                            shape: BoxShape.circle,
+                            border: Border.all(
                               color: steps[index].$2
-                                  ? scheme.primary.withOpacity(0.25)
-                                  : const Color(0xFFE8EDF6),
-                              borderRadius: BorderRadius.circular(999),
+                                  ? scheme.primary
+                                  : _homeBorder,
+                              width: 1.5,
                             ),
                           ),
                         ),
-                    ],
+                        if (index != steps.length - 1)
+                          Expanded(
+                            child: Container(
+                              height: 2,
+                              margin:
+                                  const EdgeInsets.symmetric(horizontal: 4),
+                              decoration: BoxDecoration(
+                                color: steps[index].$2
+                                    ? scheme.primary.withOpacity(0.3)
+                                    : const Color(0xFFE8EDF6),
+                                borderRadius: BorderRadius.circular(999),
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
                   ),
                 ),
               ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              steps.map((step) => step.$1).join('  |  '),
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: _homeMuted,
-                fontSize: 11,
-                fontWeight: FontWeight.w600,
+              const SizedBox(height: 7),
+              Text(
+                steps.map((step) => step.$1).join('   ·   '),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: _homeMuted,
+                  fontSize: 10.5,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
-            ),
-            const SizedBox(height: 14),
-            Row(
-              children: <Widget>[
-                Expanded(
-                  child: ElevatedButton(
-                    onPressed: () => Navigator.pushNamed(
-                      context,
-                      '/order/track',
-                      arguments: widget.order.id,
+              const SizedBox(height: 12),
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton.icon(
+                  onPressed: () => Navigator.pushNamed(
+                    context,
+                    '/support',
+                    arguments: <String, dynamic>{
+                      'order': widget.order,
+                      'openChat': true,
+                    },
+                  ),
+                  icon: const Icon(Icons.support_agent_rounded, size: 15),
+                  label: const Text('Need help?'),
+                  style: TextButton.styleFrom(
+                    foregroundColor: _homeMuted,
+                    padding: EdgeInsets.zero,
+                    minimumSize: Size.zero,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    textStyle: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
                     ),
-                    child: const Text('Track Order'),
                   ),
                 ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: OutlinedButton(
-                    onPressed: () => Navigator.pushNamed(
-                      context,
-                      '/support',
-                      arguments: <String, dynamic>{
-                        'order': widget.order,
-                        'openChat': true,
-                      },
-                    ),
-                    child: const Text('Support'),
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ],
+              ),
+            ],
+          ),
+        ),
       ),
     );
-  }
-}
-
-double _runningOrderProgress(Order order) {
-  switch (order.status) {
-    case 'pending':
-      return 0.2;
-    case 'confirmed':
-      return 0.35;
-    case 'preparing':
-      return 0.58;
-    case 'ready_for_pickup':
-    case 'reached_pickup':
-      return 0.75;
-    case 'picked_up':
-      return 0.88;
-    case 'on_the_way':
-      return 0.96;
-    default:
-      return 0.28;
   }
 }
 
@@ -13359,82 +13878,6 @@ List<(String, bool)> _runningOrderSteps(Order order) {
     ('Picked up', picked),
     ('On the way', onWay),
   ];
-}
-
-class _FeedbackRatingSection extends StatelessWidget {
-  const _FeedbackRatingSection({
-    required this.title,
-    required this.rating,
-    required this.controller,
-    required this.hint,
-    required this.onChanged,
-  });
-
-  final String title;
-  final int rating;
-  final TextEditingController controller;
-  final String hint;
-  final ValueChanged<int> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 18),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            title,
-            style: const TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.w800,
-              color: _homeText,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Row(
-            children: List.generate(5, (index) {
-              final value = index + 1;
-              return IconButton(
-                visualDensity: VisualDensity.compact,
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints.tightFor(
-                  width: 36,
-                  height: 36,
-                ),
-                onPressed: () => onChanged(value),
-                icon: Icon(
-                  value <= rating
-                      ? Icons.star_rounded
-                      : Icons.star_border_rounded,
-                  color: _homeGreen,
-                  size: 30,
-                ),
-              );
-            }),
-          ),
-          const SizedBox(height: 8),
-          TextField(
-            controller: controller,
-            maxLines: 2,
-            decoration: InputDecoration(
-              hintText: hint,
-              filled: true,
-              fillColor: const Color(0xFFF8FAFC),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(14),
-                borderSide: const BorderSide(color: _homeBorder),
-              ),
-              enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(14),
-                borderSide: const BorderSide(color: _homeBorder),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
 }
 
 class _FloatingCartBar extends StatelessWidget {

@@ -123,68 +123,71 @@ class _RestaurantWalletScreenState extends State<RestaurantWalletScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: FoodFlowTheme.canvas,
-      body: RefreshIndicator(
-        color: FoodFlowTheme.orange,
-        onRefresh: _loadWallet,
-        child: _isLoading
-            ? ListView(
-                physics: const AlwaysScrollableScrollPhysics(),
-                children: const [
-                  SizedBox(height: 180),
-                  Center(child: CircularProgressIndicator()),
-                ],
-              )
-            : ListView(
-                physics: const AlwaysScrollableScrollPhysics(),
-                padding: const EdgeInsets.fromLTRB(16, 14, 16, 26),
-                children: [
-                  _WalletHeader(
-                    balance: _balance,
-                    isRequesting: _isRequestingWithdrawal,
-                    onRefresh: _loadWallet,
-                    onWithdraw: _balance <= 0 || _isRequestingWithdrawal
-                        ? null
-                        : _requestWithdrawal,
-                  ),
-                  const SizedBox(height: 12),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: _WalletMetric(
-                          title: 'Available',
-                          value: formatCurrency(context, _balance),
-                          icon: Icons.savings_rounded,
-                          color: FoodFlowTheme.success,
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: _WalletMetric(
-                          title: 'Reserved',
-                          value: formatCurrency(context, _lockedBalance),
-                          icon: Icons.lock_clock_rounded,
-                          color: FoodFlowTheme.orange,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 18),
-                  _SectionHeading(
-                    title: 'Wallet Activity',
-                    subtitle: '${_transactions.length} latest entries',
-                  ),
-                  const SizedBox(height: 10),
-                  if (_transactions.isEmpty)
-                    const _WalletEmptyState()
-                  else
-                    ..._transactions.map(
-                      (transaction) => _TransactionTile(
-                        transaction: transaction,
-                        onOpenPayout: _openPayoutDetails,
-                      ),
+      body: SafeArea(
+        bottom: false,
+        child: RefreshIndicator(
+          color: FoodFlowTheme.orange,
+          onRefresh: _loadWallet,
+          child: _isLoading
+              ? ListView(
+                  physics: const AlwaysScrollableScrollPhysics(),
+                  children: const [
+                    SizedBox(height: 180),
+                    Center(child: CircularProgressIndicator()),
+                  ],
+                )
+              : ListView(
+                  physics: const AlwaysScrollableScrollPhysics(),
+                  padding: const EdgeInsets.fromLTRB(16, 14, 16, 26),
+                  children: [
+                    _WalletHeader(
+                      balance: _balance,
+                      isRequesting: _isRequestingWithdrawal,
+                      onRefresh: _loadWallet,
+                      onWithdraw: _balance <= 0 || _isRequestingWithdrawal
+                          ? null
+                          : _requestWithdrawal,
                     ),
-                ],
-              ),
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: _WalletMetric(
+                            title: 'Available',
+                            value: formatCurrency(context, _balance),
+                            icon: Icons.savings_rounded,
+                            color: FoodFlowTheme.success,
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: _WalletMetric(
+                            title: 'Reserved',
+                            value: formatCurrency(context, _lockedBalance),
+                            icon: Icons.lock_clock_rounded,
+                            color: FoodFlowTheme.orange,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 18),
+                    _SectionHeading(
+                      title: 'Wallet Activity',
+                      subtitle: '${_transactions.length} latest entries',
+                    ),
+                    const SizedBox(height: 10),
+                    if (_transactions.isEmpty)
+                      const _WalletEmptyState()
+                    else
+                      ..._transactions.map(
+                        (transaction) => _TransactionTile(
+                          transaction: transaction,
+                          onOpenPayout: _openPayoutDetails,
+                        ),
+                      ),
+                  ],
+                ),
+        ),
       ),
     );
   }

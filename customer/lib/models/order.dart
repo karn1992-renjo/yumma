@@ -26,6 +26,8 @@ class Order {
   final double tax;
   final double discount;
   final double total;
+  final double? tip;
+  final DateTime? tipPaidAt;
   String status;
   final String paymentMethod;
   final String paymentStatus;
@@ -98,6 +100,8 @@ class Order {
     required this.tax,
     required this.discount,
     required this.total,
+    this.tip,
+    this.tipPaidAt,
     required this.status,
     required this.paymentMethod,
     required this.paymentStatus,
@@ -202,6 +206,10 @@ class Order {
       tax: parseDoubleValue(json['tax']),
       discount: parseDoubleValue(json['discount']),
       total: parseDoubleValue(json['total']),
+      tip: parseNullableDouble(json['tip_amount']),
+      tipPaidAt: json['tip_paid_at'] != null
+          ? DateTime.tryParse(json['tip_paid_at'].toString())
+          : null,
       status: (json['status'] ?? 'pending')
           .toString()
           .trim()
@@ -557,6 +565,7 @@ class OrderItem {
   final double totalPrice;
   final double price; // Non-nullable, defaults to unitPrice
   final String imageUrl;
+  final int? rating;
 
   OrderItem({
     this.menuItemId,
@@ -566,6 +575,7 @@ class OrderItem {
     required this.totalPrice,
     double? price,
     this.imageUrl = '',
+    this.rating,
   }) : price = price ?? unitPrice;
 
   factory OrderItem.fromJson(Map<String, dynamic> json) {
@@ -607,6 +617,7 @@ class OrderItem {
       totalPrice: parseDoubleValue(json['total'] ?? json['total_price']),
       price: unitPrice,
       imageUrl: imageUrl.isNotEmpty ? imageUrl : nestedImageUrl,
+      rating: parseNullableInt(json['rating']),
     );
   }
 
@@ -629,6 +640,7 @@ class OrderItem {
       'unit_price': unitPrice,
       'total_price': totalPrice,
       'image_url': imageUrl,
+      'rating': rating,
     };
   }
 }

@@ -4,7 +4,43 @@ import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'native_config_service.dart';
 
 class DirectionsService {
+  static final http.Client _client = http.Client();
+  static final Map<String, _RouteCacheEntry> _cache =
+      <String, _RouteCacheEntry>{};
+  static final Map<String, Future<List<LatLng>>> _inFlight =
+      <String, Future<List<LatLng>>>{};
+  static const Duration _routeMaxAge = Duration(minutes: 2);
+
   static Future<List<LatLng>> fetchRoutePoints(
+    LatLng origin,
+    LatLng destination,
+  ) async {
+    final cacheKey = _routeKey(origin, destination);
+    final cached = _cache[cacheKey];
+    if (cached != null &&
+        DateTime.now().difference(cached.savedAt) < _routeMaxAge) {
+      return cached.points;
+    }
+    final pending = _inFlight[cacheKey];
+    if (pending != null) return pending;
+
+    final request = _fetchRoutePoints(origin, destination);
+    _inFlight[cacheKey] = request;
+    try {
+      final points = await request;
+      if (points.isNotEmpty) {
+        _cache[cacheKey] = _RouteCacheEntry(points, DateTime.now());
+        if (_cache.length > 24) _cache.remove(_cache.keys.first);
+      }
+      return points;
+    } finally {
+      if (identical(_inFlight[cacheKey], request)) {
+        _inFlight.remove(cacheKey);
+      }
+    }
+  }
+
+  static Future<List<LatLng>> _fetchRoutePoints(
     LatLng origin,
     LatLng destination,
   ) async {
@@ -21,7 +57,7 @@ class DirectionsService {
       '&key=$googleMapsApiKey',
     );
 
-    final response = await http.get(url);
+    final response = await _client.get(url);
     if (response.statusCode != 200) {
       return [];
     }
@@ -40,6 +76,12 @@ class DirectionsService {
     }
 
     return decodePolyline(polyline);
+  }
+
+  static String _routeKey(LatLng origin, LatLng destination) {
+    String point(LatLng value) =>
+        '${value.latitude.toStringAsFixed(4)},${value.longitude.toStringAsFixed(4)}';
+    return '${point(origin)}>${point(destination)}';
   }
 
   static List<LatLng> decodePolyline(String encoded) {
@@ -77,4 +119,11 @@ class DirectionsService {
 
     return points;
   }
+}
+
+class _RouteCacheEntry {
+  const _RouteCacheEntry(this.points, this.savedAt);
+
+  final List<LatLng> points;
+  final DateTime savedAt;
 }

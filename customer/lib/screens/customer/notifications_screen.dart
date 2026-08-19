@@ -4,6 +4,7 @@ import 'package:flutter_lucide/flutter_lucide.dart';
 import '../../config/api_constants.dart';
 import '../../services/api_service.dart';
 import '../../theme/foodflow_theme.dart';
+import '../../widgets/common/app_skeleton.dart';
 import '../../widgets/customer/profile_screen_chrome.dart';
 
 class NotificationsScreen extends StatefulWidget {
@@ -26,28 +27,23 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     _load();
   }
 
-  Future<void> _load() async {
+  Future<void> _load({bool forceRefresh = false}) async {
     if (mounted) {
       setState(() {
         _error = null;
-        _loading = true;
+        _loading = _notifications.isEmpty;
       });
     }
     try {
       final response = await _api.get(
         ApiConstants.notifications,
         queryParams: const {'limit': 100, 'target_app': 'customer'},
+        cachePolicy: ApiCachePolicy.screen,
+        cacheFirst: !forceRefresh,
+        refreshCached: !forceRefresh,
+        onCacheRefreshed: _applyNotifications,
       );
-      final payload = response['data'];
-      final items = payload is Map ? payload['notifications'] as List? : null;
-      if (!mounted) return;
-      setState(() {
-        _notifications = (items ?? const [])
-            .whereType<Map>()
-            .map((item) => Map<String, dynamic>.from(item))
-            .toList(growable: false);
-        _loading = false;
-      });
+      _applyNotifications(response);
       if (_notifications.any((item) => item['read_at'] == null)) {
         await _api.post(
           ApiConstants.markNotificationsRead,
@@ -70,6 +66,21 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
         _error = error.toString();
       });
     }
+  }
+
+  void _applyNotifications(dynamic response) {
+    if (!mounted || response is! Map) return;
+    final payload = response['data'];
+    final items = payload is Map ? payload['notifications'] : null;
+    if (items is! List) return;
+    setState(() {
+      _notifications = items
+          .whereType<Map>()
+          .map((item) => Map<String, dynamic>.from(item))
+          .toList(growable: false);
+      _loading = false;
+      _error = null;
+    });
   }
 
   Future<void> _open(Map<String, dynamic> item) async {
@@ -156,7 +167,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       backgroundColor: profileCanvasColor(context),
       body: SafeArea(
         child: RefreshIndicator(
-          onRefresh: _load,
+          onRefresh: () => _load(forceRefresh: true),
           color: profileAccentColor(context),
           child: _body(context),
         ),
@@ -190,8 +201,8 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
         padding: const EdgeInsets.fromLTRB(18, 14, 18, 32),
         children: [
           _header(),
-          const SizedBox(height: 140),
-          const Center(child: CircularProgressIndicator()),
+          const SizedBox(height: 24),
+          const AppSkeletonColumn(itemCount: 5, itemHeight: 86),
         ],
       );
     }

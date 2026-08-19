@@ -7,6 +7,7 @@ use App\Models\Restaurant;
 use App\Models\PartnerApplication;
 use App\Models\DeliveryArea;
 use App\Rules\UniqueUserContactForRole;
+use App\Services\CashfreeVerificationService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Mail;
@@ -16,6 +17,10 @@ use Illuminate\Validation\ValidationException;
 
 class PartnerController extends Controller
 {
+    public function __construct(private CashfreeVerificationService $verification)
+    {
+    }
+
     /**
      * Show partner registration page
      */
@@ -58,6 +63,7 @@ class PartnerController extends Controller
                     'contact_phone' => 'required|string|max:20',
                     // Documents
                     'gst_certificate' => 'nullable|file|mimes:pdf,jpg,jpeg,png|max:5120',
+                    'gstin_number' => ['nullable', 'string', 'regex:/^\d{2}[A-Z]{5}\d{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/i'],
                     'fssai_license' => 'nullable|file|mimes:pdf,jpg,jpeg,png|max:5120',
                     // Bank Details
                     'bank_holder_name' => 'nullable|string',
@@ -84,6 +90,7 @@ class PartnerController extends Controller
                     'vehicle_number' => 'required|string|max:20',
                     'license_number' => 'required|string|max:50',
                     'license_expiry' => 'nullable|date',
+                    'dob' => 'required|date|before:-18 years',
                     // Documents
                     'license_document' => 'nullable|file|mimes:pdf,jpg,jpeg,png|max:5120',
                     'aadhar_card' => 'nullable|file|mimes:pdf,jpg,jpeg,png|max:5120',
@@ -151,6 +158,7 @@ class PartnerController extends Controller
                 $applicationData['contact_email'] = $request->contact_email;
                 $applicationData['contact_phone'] = $request->contact_phone;
                 $applicationData['gst_certificate'] = $gstPath;
+                $applicationData['gstin_number'] = $request->gstin_number ? strtoupper($request->gstin_number) : null;
                 $applicationData['fssai_license'] = $fssaiPath;
             } else {
                 $applicationData['full_name'] = $request->full_name;
@@ -163,6 +171,7 @@ class PartnerController extends Controller
                 $applicationData['vehicle_number'] = $request->vehicle_number;
                 $applicationData['license_number'] = $request->license_number;
                 $applicationData['license_expiry'] = $request->license_expiry;
+                $applicationData['dob'] = $request->dob;
                 $applicationData['license_document'] = $licensePath;
                 $applicationData['aadhar_card'] = $aadharPath;
             }
@@ -170,6 +179,10 @@ class PartnerController extends Controller
             $application = PartnerApplication::create($applicationData);
 
             DB::commit();
+
+            // Run document verification after commit so a slow/failed Cashfree
+            // call never blocks the registration transaction or the applicant.
+            $this->runDocumentVerification($application);
 
             // Send email notifications
             $this->sendApplicationEmails($application);
@@ -197,6 +210,20 @@ class PartnerController extends Controller
                 'message' => 'Something went wrong. Please try again later.',
                 'error' => $e->getMessage()
             ], 500);
+        }
+    }
+
+    /**
+     * Run Cashfree document verification for whatever documents/numbers were
+     * submitted, and persist the results on the application. Never throws -
+     * a failed or unreachable Cashfree call just leaves that document
+     * "unverified" for the admin to review manually.
+     */
+    private function runDocumentVerification(PartnerApplication $application): void
+    {
+        $results = $this->verification->verifyPartnerApplication($application);
+        if (! empty($results)) {
+            $application->update(['document_verification' => $results]);
         }
     }
 

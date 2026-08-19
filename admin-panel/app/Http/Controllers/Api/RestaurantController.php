@@ -2,15 +2,16 @@
 
 namespace App\Http\Controllers\Api;
 
+use App\Events\OrderStatusUpdatedEvent;
 use App\Http\Controllers\Controller;
 use App\Http\Resources\RestaurantResource;
-use App\Models\Cuisine;
-use App\Models\Restaurant;
-use App\Models\RestaurantLocationChangeRequest;
-use App\Models\MenuItem;
+use App\Jobs\AutoMarkOrderPreparingJob;
+use App\Models\AppSetting;
 use App\Models\Category;
-use App\Models\DeliveryChargeSetting;
+use App\Models\Cuisine;
 use App\Models\DeliveryArea;
+use App\Models\DeliveryChargeSetting;
+use App\Models\MenuItem;
 use App\Models\Order;
 use App\Models\OrderCancellationLimit;
 use App\Models\OrderItem;
@@ -18,34 +19,35 @@ use App\Models\PartnerApplication;
 use App\Models\PrinterSetting;
 use App\Models\Promotion;
 use App\Models\PromotionCouponCode;
+use App\Models\Restaurant;
+use App\Models\RestaurantLocationChangeRequest;
+use App\Models\RestaurantStaff;
 use App\Models\Review;
-use App\Models\SupportTicket;
+use App\Models\SupportConversation;
+use App\Models\SupportMessage;
 use App\Models\User;
 use App\Rules\UniqueUserContactForRole;
-use App\Models\AppSetting;
-use App\Models\RestaurantStaff;
-use App\Events\NewOrderEvent;
-use App\Events\OrderStatusUpdatedEvent;
-use App\Jobs\AutoMarkOrderPreparingJob;
 use App\Services\AutoAssignDriverService;
 use App\Services\GoogleMapsEtaService;
 use App\Services\MediaStorage;
 use App\Services\OrderStatusPushService;
 use App\Services\PrinterService;
-use App\Services\PromotionEngineService;
 use App\Services\RefundService;
 use App\Services\ScratchCardService;
 use App\Support\GatewayRegistry;
 use App\Support\PromotionTypeRegistry;
+use Carbon\Carbon;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\Request;
-use Illuminate\Validation\Rule;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
-use Carbon\Carbon;
+use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
 use Spatie\Permission\Models\Permission;
 use Spatie\Permission\Models\Role;
 use Spatie\Permission\PermissionRegistrar;
@@ -86,28 +88,28 @@ class RestaurantController extends Controller
     }
 
     /**
-     * Get restaurant dashboard data
+     * Get restaurant dashboard data.
      */
     public function dashboard(Request $request)
     {
         try {
             $user = auth()->user();
-            
-            if (!$user) {
+
+            if (! $user) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'User not authenticated'
+                    'message' => 'User not authenticated',
                 ], 401);
             }
-            
+
             $restaurants = $this->resolveRestaurantScope($request, $user);
             $restaurantIds = $restaurants->pluck('id');
             $restaurant = $restaurants->count() === 1 ? $restaurants->first() : null;
-            
+
             if ($restaurants->isEmpty()) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Restaurant not found for current user.'
+                    'message' => 'Restaurant not found for current user.',
                 ], 404);
             }
 
@@ -120,7 +122,7 @@ class RestaurantController extends Controller
                 ->with('restaurant')
                 ->orderBy('created_at', 'asc')
                 ->get()
-                ->map(function($order) {
+                ->map(function ($order) {
                     return $this->formatOrderForApi($order);
                 });
 
@@ -131,7 +133,7 @@ class RestaurantController extends Controller
                 ->with('restaurant')
                 ->orderBy('created_at', 'asc')
                 ->get()
-                ->map(function($order) {
+                ->map(function ($order) {
                     return $this->formatOrderForApi($order);
                 });
 
@@ -140,29 +142,29 @@ class RestaurantController extends Controller
             $todayOrders = (clone $baseOrders)
                 ->whereDate('created_at', $today)
                 ->count();
-            
-            $todayRevenue = (float)(clone $baseOrders)
+
+            $todayRevenue = (float) (clone $baseOrders)
                 ->whereDate('created_at', $today)
                 ->where('status', 'delivered')
                 ->sum('total');
-            
+
             // Calculate total stats
             $totalOrders = (clone $baseOrders)->count();
-            $totalRevenue = (float)(clone $baseOrders)->where('status', 'delivered')->sum('total');
+            $totalRevenue = (float) (clone $baseOrders)->where('status', 'delivered')->sum('total');
             $totalCustomers = (clone $baseOrders)->distinct('customer_id')->count('customer_id');
             $totalMenuItems = MenuItem::whereIn('restaurant_id', $restaurantIds)->count();
-            
+
             $restaurantData = [
                 'id' => $restaurant?->id,
                 'name' => $restaurant?->name ?? 'All Restaurants',
-                'logo' => \App\Services\MediaStorage::url($restaurant?->logo_image),
-                'is_open' => $restaurant ? (bool)$restaurant->is_open : $restaurants->contains(fn ($item) => (bool)$item->is_open),
-                'rating' => $restaurant && (int)($restaurant->total_ratings ?? 0) >= 3
-                    ? (float)($restaurant->rating ?? 0)
+                'logo' => MediaStorage::url($restaurant?->logo_image),
+                'is_open' => $restaurant ? (bool) $restaurant->is_open : $restaurants->contains(fn ($item) => (bool) $item->is_open),
+                'rating' => $restaurant && (int) ($restaurant->total_ratings ?? 0) >= 3
+                    ? (float) ($restaurant->rating ?? 0)
                     : null,
-                'total_reviews' => $restaurant ? (int)($restaurant->total_ratings ?? $restaurant->reviews()->count() ?? 0) : 0,
+                'total_reviews' => $restaurant ? (int) ($restaurant->total_ratings ?? $restaurant->reviews()->count() ?? 0) : 0,
                 'restaurant_type' => $restaurant?->restaurant_type ?? 'multiple',
-                'dining_charge' => (float)($restaurant?->dining_charge ?? 0),
+                'dining_charge' => (float) ($restaurant?->dining_charge ?? 0),
                 'accepts_delivery' => $restaurant ? $restaurant->acceptsService('delivery') : $restaurants->contains(fn ($item) => $item->acceptsService('delivery')),
                 'accepts_dining' => $restaurant ? $restaurant->acceptsService('dining') : $restaurants->contains(fn ($item) => $item->acceptsService('dining')),
                 'accepts_takeaway' => $restaurant ? $restaurant->acceptsService('takeaway') : $restaurants->contains(fn ($item) => $item->acceptsService('takeaway')),
@@ -206,11 +208,11 @@ class RestaurantController extends Controller
                             ->get()
                             ->map(fn ($order) => $this->formatOrderForApi($order)),
                     ],
-                ]
+                ],
             ]);
-            
         } catch (\Exception $e) {
             Log::error('Dashboard error: ' . $e->getMessage());
+
             return response()->json([
                 'success' => false,
                 'message' => 'An unexpected error occurred while processing the request.',
@@ -219,7 +221,7 @@ class RestaurantController extends Controller
     }
 
     /**
-     * Get restaurant stats
+     * Get restaurant stats.
      */
     public function getStats(Request $request)
     {
@@ -230,7 +232,7 @@ class RestaurantController extends Controller
             if ($restaurants->isEmpty()) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Restaurant not found.'
+                    'message' => 'Restaurant not found.',
                 ], 404);
             }
 
@@ -239,7 +241,7 @@ class RestaurantController extends Controller
             $restaurantIds = $restaurants->pluck('id');
             $restaurant = $restaurants->count() === 1 ? $restaurants->first() : null;
             $baseOrders = Order::whereIn('restaurant_id', $restaurantIds)->visibleToRestaurant();
-            
+
             return response()->json([
                 'success' => true,
                 'data' => [
@@ -250,9 +252,8 @@ class RestaurantController extends Controller
                     'active_orders_count' => (clone $baseOrders)->whereIn('status', ['confirmed', 'preparing', 'ready_for_pickup'])->count(),
                     'today_orders_count' => (clone $baseOrders)->whereDate('created_at', Carbon::today())->count(),
                     'today_revenue' => (float) (clone $baseOrders)->whereDate('created_at', Carbon::today())->where('status', 'delivered')->sum('total'),
-                ]
+                ],
             ]);
-            
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
@@ -262,7 +263,7 @@ class RestaurantController extends Controller
     }
 
     /**
-     * Toggle restaurant open/closed status - FIXED
+     * Toggle restaurant open/closed status - FIXED.
      */
     public function toggleStatus(Request $request)
     {
@@ -273,14 +274,14 @@ class RestaurantController extends Controller
             if ($restaurants->isEmpty()) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Restaurant not found.'
+                    'message' => 'Restaurant not found.',
                 ], 404);
             }
 
             if ($restaurants->count() !== 1) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Select one restaurant to change open/closed status.'
+                    'message' => 'Select one restaurant to change open/closed status.',
                 ], 422);
             }
 
@@ -288,27 +289,27 @@ class RestaurantController extends Controller
 
             // Get is_open from request body
             $isOpen = $request->input('is_open');
-            
+
             // If is_open is provided in request
             if ($isOpen !== null) {
                 $restaurant->is_open = filter_var($isOpen, FILTER_VALIDATE_BOOLEAN);
             } else {
                 // Toggle if no value provided
-                $restaurant->is_open = !$restaurant->is_open;
+                $restaurant->is_open = ! $restaurant->is_open;
             }
-            
+
             $restaurant->save();
 
             return response()->json([
                 'success' => true,
                 'data' => [
-                    'is_open' => (bool)$restaurant->is_open,
+                    'is_open' => (bool) $restaurant->is_open,
                 ],
-                'message' => $restaurant->is_open ? 'Restaurant is now open' : 'Restaurant is now closed'
+                'message' => $restaurant->is_open ? 'Restaurant is now open' : 'Restaurant is now closed',
             ]);
-            
         } catch (\Exception $e) {
             Log::error('Toggle status error: ' . $e->getMessage());
+
             return response()->json([
                 'success' => false,
                 'message' => 'An unexpected error occurred while processing the request.',
@@ -317,7 +318,149 @@ class RestaurantController extends Controller
     }
 
     /**
-     * Get all orders - FIXED
+     * Get customer reviews for the selected restaurant scope.
+     */
+    public function getReviews(Request $request)
+    {
+        try {
+            $user = auth()->user();
+            $restaurants = $this->resolveRestaurantScope($request, $user);
+
+            if ($restaurants->isEmpty()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Restaurant not found.',
+                ], 404);
+            }
+
+            $restaurantIds = $restaurants->pluck('id');
+            $baseQuery = Review::query()
+                ->whereIn('restaurant_id', $restaurantIds)
+                ->approved();
+
+            $reviews = (clone $baseQuery)
+                ->with(['user:id,name', 'restaurant:id,name', 'order:id,order_number'])
+                ->latest()
+                ->limit((int) $request->input('limit', 50))
+                ->get()
+                ->map(fn (Review $review) => [
+                    'id' => $review->id,
+                    'restaurant_id' => $review->restaurant_id,
+                    'restaurant_name' => $review->restaurant?->name,
+                    'order_id' => $review->order_id,
+                    'order_number' => $review->order?->order_number,
+                    'customer_name' => $review->user?->name ?? 'Customer',
+                    'rating' => (int) $review->rating,
+                    'comment' => $review->comment,
+                    'is_verified' => (bool) $review->is_verified,
+                    'created_at' => optional($review->created_at)->toIso8601String(),
+                ])
+                ->values();
+
+            $summary = (clone $baseQuery)
+                ->selectRaw('AVG(rating) as average_rating, COUNT(*) as total_reviews')
+                ->first();
+
+            $breakdown = (clone $baseQuery)
+                ->select('rating', DB::raw('COUNT(*) as total'))
+                ->groupBy('rating')
+                ->pluck('total', 'rating');
+
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'summary' => [
+                        'average_rating' => $summary && $summary->total_reviews
+                            ? round((float) $summary->average_rating, 1)
+                            : null,
+                        'total_reviews' => (int) ($summary->total_reviews ?? 0),
+                        'rating_breakdown' => collect([5, 4, 3, 2, 1])
+                            ->mapWithKeys(fn ($rating) => [(string) $rating => (int) ($breakdown[$rating] ?? 0)]),
+                    ],
+                    'reviews' => $reviews,
+                ],
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Restaurant reviews error: ' . $e->getMessage());
+
+            return response()->json([
+                'success' => false,
+                'message' => 'An unexpected error occurred while processing the request.',
+            ], 500);
+        }
+    }
+
+    /**
+     * Get customer complaint/support tickets linked to the selected restaurant scope.
+     */
+    public function getComplaints(Request $request)
+    {
+        try {
+            $user = auth()->user();
+            $restaurants = $this->resolveRestaurantScope($request, $user);
+
+            if ($restaurants->isEmpty()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Restaurant not found.',
+                ], 404);
+            }
+
+            $restaurantIds = $restaurants->pluck('id');
+            $baseQuery = SupportConversation::query()
+                ->whereIn('restaurant_id', $restaurantIds)
+                ->where('requester_role', 'customer');
+
+            if ($request->filled('status') && $request->input('status') !== 'all') {
+                $baseQuery->where('status', $request->input('status'));
+            }
+
+            $complaints = (clone $baseQuery)
+                ->with(['user:id,name,phone', 'restaurant:id,name', 'firstMessage', 'latestMessage'])
+                ->latest()
+                ->limit((int) $request->input('limit', 50))
+                ->get()
+                ->map(fn (SupportConversation $conversation) => [
+                    'id' => $conversation->id,
+                    'ticket_number' => $conversation->conversation_number,
+                    'restaurant_id' => $conversation->restaurant_id,
+                    'restaurant_name' => $conversation->restaurant?->name,
+                    'customer_name' => $conversation->user?->name ?? 'Customer',
+                    'customer_phone' => $conversation->user?->phone,
+                    'subject' => ucfirst(str_replace('_', ' ', $conversation->category)),
+                    'category' => $conversation->category,
+                    'priority' => $conversation->priority,
+                    'description' => $conversation->firstMessage?->message,
+                    'status' => $conversation->status,
+                    'latest_reply' => $conversation->latestMessage?->message,
+                    'created_at' => optional($conversation->created_at)->toIso8601String(),
+                    'updated_at' => optional($conversation->updated_at)->toIso8601String(),
+                ])
+                ->values();
+
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'summary' => [
+                        'total_complaints' => (clone $baseQuery)->count(),
+                        'open_complaints' => (clone $baseQuery)->whereIn('status', ['open', 'in_progress'])->count(),
+                        'resolved_complaints' => (clone $baseQuery)->whereIn('status', ['resolved', 'closed'])->count(),
+                    ],
+                    'complaints' => $complaints,
+                ],
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Restaurant complaints error: ' . $e->getMessage());
+
+            return response()->json([
+                'success' => false,
+                'message' => 'An unexpected error occurred while processing the request.',
+            ], 500);
+        }
+    }
+
+    /**
+     * Get all orders - FIXED.
      */
     public function getOrders(Request $request)
     {
@@ -328,7 +471,7 @@ class RestaurantController extends Controller
             if ($restaurants->isEmpty()) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Restaurant not found.'
+                    'message' => 'Restaurant not found.',
                 ], 404);
             }
 
@@ -338,7 +481,7 @@ class RestaurantController extends Controller
 
             $query = Order::whereIn('restaurant_id', $restaurants->pluck('id'))
                 ->visibleToRestaurant()
-                ->with('restaurant');
+                ->with(['restaurant', 'driver']);
 
             // Filter by status
             if ($request->status && $request->status != 'all') {
@@ -347,16 +490,16 @@ class RestaurantController extends Controller
 
             // Search
             if ($request->search) {
-                $query->where(function($q) use ($request) {
+                $query->where(function ($q) use ($request) {
                     $q->where('order_number', 'like', "%{$request->search}%")
-                      ->orWhere('customer_name', 'like', "%{$request->search}%")
-                      ->orWhere('customer_phone', 'like', "%{$request->search}%");
+                        ->orWhere('customer_name', 'like', "%{$request->search}%")
+                        ->orWhere('customer_phone', 'like', "%{$request->search}%");
                 });
             }
 
             $orders = $query->orderBy('created_at', 'desc')->paginate(20);
 
-            $formattedOrders = collect($orders->items())->map(function($order) {
+            $formattedOrders = collect($orders->items())->map(function ($order) {
                 return $this->formatOrderForApi($order);
             });
 
@@ -368,9 +511,8 @@ class RestaurantController extends Controller
                     'current_page' => $orders->currentPage(),
                     'last_page' => $orders->lastPage(),
                     'per_page' => $orders->perPage(),
-                ]
+                ],
             ]);
-            
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
@@ -380,7 +522,7 @@ class RestaurantController extends Controller
     }
 
     /**
-     * Get a single order details for the authenticated restaurant owner
+     * Get a single order details for the authenticated restaurant owner.
      */
     public function getOrderDetails($id)
     {
@@ -389,10 +531,10 @@ class RestaurantController extends Controller
             $restaurants = $this->getAccessibleRestaurants($user);
             $restaurant = $this->getAuthenticatedRestaurant($user);
 
-            if (!$restaurant) {
+            if (! $restaurant) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Restaurant not found.'
+                    'message' => 'Restaurant not found.',
                 ], 404);
             }
 
@@ -402,21 +544,25 @@ class RestaurantController extends Controller
 
             $order = Order::whereIn('restaurant_id', $restaurants->pluck('id'))
                 ->visibleToRestaurant()
-                ->with(['customer:id,name,phone,email', 'driver:id,name,phone'])
+                ->with([
+                    'restaurant:id,name,address,city,latitude,longitude',
+                    'customer:id,name,phone,email',
+                    'driver:id,name,phone,profile_photo_path,latitude,longitude',
+                ])
                 ->findOrFail($id);
 
             return response()->json([
                 'success' => true,
-                'data' => $this->formatOrderForApi($order)
+                'data' => $this->formatOrderForApi($order),
             ]);
-            
-        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+        } catch (ModelNotFoundException $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Order not found.'
+                'message' => 'Order not found.',
             ], 404);
         } catch (\Exception $e) {
             Log::error('Get order details error: ' . $e->getMessage());
+
             return response()->json([
                 'success' => false,
                 'message' => 'An unexpected error occurred while processing the request.',
@@ -425,7 +571,7 @@ class RestaurantController extends Controller
     }
 
     /**
-     * Get categories - ADD THIS MISSING METHOD
+     * Get categories - ADD THIS MISSING METHOD.
      */
     public function getCategories(Request $request)
     {
@@ -436,7 +582,7 @@ class RestaurantController extends Controller
             if ($restaurants->isEmpty()) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Restaurant not found.'
+                    'message' => 'Restaurant not found.',
                 ], 404);
             }
 
@@ -445,10 +591,10 @@ class RestaurantController extends Controller
             }
 
             $restaurant = $this->resolveSingleRestaurantForFeature($request, $user, $restaurants);
-            if (!$restaurant) {
+            if (! $restaurant) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Please select a restaurant to manage categories.'
+                    'message' => 'Please select a restaurant to manage categories.',
                 ], 422);
             }
 
@@ -460,9 +606,8 @@ class RestaurantController extends Controller
 
             return response()->json([
                 'success' => true,
-                'data' => $categories
+                'data' => $categories,
             ]);
-            
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
@@ -472,7 +617,7 @@ class RestaurantController extends Controller
     }
 
     /**
-     * Create category
+     * Create category.
      */
     public function createCategory(Request $request)
     {
@@ -480,10 +625,10 @@ class RestaurantController extends Controller
             $user = auth()->user();
             $restaurant = $this->getAuthenticatedRestaurant($user);
 
-            if (!$restaurant) {
+            if (! $restaurant) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Restaurant not found.'
+                    'message' => 'Restaurant not found.',
                 ], 404);
             }
 
@@ -513,9 +658,8 @@ class RestaurantController extends Controller
             return response()->json([
                 'success' => true,
                 'data' => $this->formatCategoryForApi($category),
-                'message' => 'Category created successfully.'
+                'message' => 'Category created successfully.',
             ], 201);
-            
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
@@ -525,7 +669,7 @@ class RestaurantController extends Controller
     }
 
     /**
-     * Update category
+     * Update category.
      */
     public function updateCategory(Request $request, $id)
     {
@@ -533,10 +677,10 @@ class RestaurantController extends Controller
             $user = auth()->user();
             $restaurant = $this->getAuthenticatedRestaurant($user);
 
-            if (!$restaurant) {
+            if (! $restaurant) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Restaurant not found.'
+                    'message' => 'Restaurant not found.',
                 ], 404);
             }
 
@@ -550,7 +694,7 @@ class RestaurantController extends Controller
                 'name' => 'sometimes|string|max:255',
                 'description' => 'nullable|string',
                 'image' => 'nullable|image|mimes:jpeg,png,jpg,webp|max:2048',
-                'is_active' => 'nullable|boolean'
+                'is_active' => 'nullable|boolean',
             ]);
 
             $data = $request->only(['name', 'description', 'is_active']);
@@ -568,9 +712,8 @@ class RestaurantController extends Controller
             return response()->json([
                 'success' => true,
                 'data' => $this->formatCategoryForApi($category->fresh()),
-                'message' => 'Category updated successfully.'
+                'message' => 'Category updated successfully.',
             ]);
-            
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
@@ -580,7 +723,7 @@ class RestaurantController extends Controller
     }
 
     /**
-     * Delete category
+     * Delete category.
      */
     public function deleteCategory($id)
     {
@@ -588,10 +731,10 @@ class RestaurantController extends Controller
             $user = auth()->user();
             $restaurant = $this->getAuthenticatedRestaurant($user);
 
-            if (!$restaurant) {
+            if (! $restaurant) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Restaurant not found.'
+                    'message' => 'Restaurant not found.',
                 ], 404);
             }
 
@@ -604,7 +747,7 @@ class RestaurantController extends Controller
             if ($category->menuItems()->count() > 0) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Cannot delete category with menu items.'
+                    'message' => 'Cannot delete category with menu items.',
                 ], 400);
             }
 
@@ -616,9 +759,8 @@ class RestaurantController extends Controller
 
             return response()->json([
                 'success' => true,
-                'message' => 'Category deleted successfully.'
+                'message' => 'Category deleted successfully.',
             ]);
-            
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
@@ -628,7 +770,7 @@ class RestaurantController extends Controller
     }
 
     /**
-     * Accept an order
+     * Accept an order.
      */
     public function acceptOrder(Request $request, $id)
     {
@@ -641,10 +783,10 @@ class RestaurantController extends Controller
             $restaurants = $this->getAccessibleRestaurants($user);
             $restaurant = $this->getAuthenticatedRestaurant($user);
 
-            if (!$restaurant) {
+            if (! $restaurant) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Restaurant not found.'
+                    'message' => 'Restaurant not found.',
                 ], 404);
             }
 
@@ -668,6 +810,7 @@ class RestaurantController extends Controller
 
             if (! OrderCancellationLimit::isWithinWindow($order, 'restaurant', 15)) {
                 $minutes = OrderCancellationLimit::windowMinutesFor('restaurant', 15);
+
                 return response()->json([
                     'success' => false,
                     'message' => "Restaurant cancellation window expired. Pending orders can only be rejected within {$minutes} minutes of placement.",
@@ -687,7 +830,7 @@ class RestaurantController extends Controller
             }
             $order->save();
 
-            if (!$order->driver_id) {
+            if (! $order->driver_id) {
                 app(AutoAssignDriverService::class)->autoAssignOrder($order);
                 $order->refresh();
             }
@@ -707,14 +850,14 @@ class RestaurantController extends Controller
             return response()->json([
                 'success' => true,
                 'message' => 'Order accepted successfully',
-                'data' => $this->formatOrderForApi($order)
+                'data' => $this->formatOrderForApi($order),
             ]);
-            
         } catch (\Exception $e) {
             if (DB::transactionLevel() > 0) {
                 DB::rollBack();
             }
             Log::error('Accept order error: ' . $e->getMessage());
+
             return response()->json([
                 'success' => false,
                 'message' => 'An unexpected error occurred while processing the request.',
@@ -723,7 +866,7 @@ class RestaurantController extends Controller
     }
 
     /**
-     * Reject an order
+     * Reject an order.
      */
     public function rejectOrder(Request $request, $id)
     {
@@ -734,7 +877,7 @@ class RestaurantController extends Controller
             if ($restaurants->isEmpty()) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Restaurant not found.'
+                    'message' => 'Restaurant not found.',
                 ], 404);
             }
 
@@ -743,7 +886,7 @@ class RestaurantController extends Controller
             }
 
             $request->validate([
-                'reason' => 'required|string|max:500'
+                'reason' => 'required|string|max:500',
             ]);
 
             $order = Order::whereIn('restaurant_id', $restaurants->pluck('id'))
@@ -775,11 +918,11 @@ class RestaurantController extends Controller
             return response()->json([
                 'success' => true,
                 'message' => 'Order rejected successfully',
-                'data' => $this->formatOrderForApi($order)
+                'data' => $this->formatOrderForApi($order),
             ]);
-            
         } catch (\Exception $e) {
             DB::rollback();
+
             return response()->json([
                 'success' => false,
                 'message' => 'An unexpected error occurred while processing the request.',
@@ -788,7 +931,59 @@ class RestaurantController extends Controller
     }
 
     /**
-     * Update order status
+     * Mark selected items from a pending order unavailable and reject the order.
+     */
+    public function markOrderItemsOutOfStock(Request $request, $id)
+    {
+        $validated = $request->validate([
+            'menu_item_ids' => ['required', 'array', 'min:1'],
+            'menu_item_ids.*' => ['required', 'integer', 'distinct'],
+            'availability_option' => ['required', Rule::in(['30_minutes', '2_hours', 'tomorrow', 'manual'])],
+        ]);
+        $user = auth()->user();
+        $restaurants = $this->getAccessibleRestaurants($user);
+
+        if ($restaurants->isEmpty()) {
+            return response()->json(['success' => false, 'message' => 'Restaurant not found.'], 404);
+        }
+        if ($response = $this->ensureRestaurantPermission($user, 'orders')) {
+            return $response;
+        }
+        if (! $user->restaurants()->exists() && ! $user->can('manage_menu')) {
+            return response()->json([
+                'success' => false,
+                'message' => 'You do not have permission to update menu availability.',
+            ], 403);
+        }
+
+        try {
+            $result = $this->disableOrderItemsAndReject(
+                (int) $id,
+                $restaurants,
+                $validated['menu_item_ids'],
+                $validated['availability_option']
+            );
+
+            return $this->finalizeOutOfStockOrder($result, $validated['availability_option']);
+        } catch (ValidationException $e) {
+            throw $e;
+        } catch (ModelNotFoundException $e) {
+            return response()->json(['success' => false, 'message' => 'Pending order not found.'], 404);
+        } catch (\Throwable $e) {
+            Log::error('Mark order items out of stock error', [
+                'order_id' => $id,
+                'message' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'An unexpected error occurred while processing the request.',
+            ], 500);
+        }
+    }
+
+    /**
+     * Update order status.
      */
     public function updateOrderStatus(Request $request, $id)
     {
@@ -799,7 +994,7 @@ class RestaurantController extends Controller
             if ($restaurants->isEmpty()) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Restaurant not found.'
+                    'message' => 'Restaurant not found.',
                 ], 404);
             }
 
@@ -814,7 +1009,7 @@ class RestaurantController extends Controller
 
             $request->validate([
                 'status' => 'required|in:confirmed,preparing,ready_for_pickup,cancelled',
-                'reason' => 'nullable|string|max:500'
+                'reason' => 'nullable|string|max:500',
             ]);
 
             $order = Order::whereIn('restaurant_id', $restaurants->pluck('id'))
@@ -825,7 +1020,7 @@ class RestaurantController extends Controller
             if ($request->status === 'cancelled' && $order->status !== 'pending') {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Accepted orders can only be cancelled by an admin.'
+                    'message' => 'Accepted orders can only be cancelled by an admin.',
                 ], 422);
             }
 
@@ -837,7 +1032,7 @@ class RestaurantController extends Controller
             ) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Order will move to preparing automatically 2 minutes after acceptance.'
+                    'message' => 'Order will move to preparing automatically 2 minutes after acceptance.',
                 ], 422);
             }
 
@@ -869,7 +1064,7 @@ class RestaurantController extends Controller
 
             $order->save();
 
-            if (in_array($request->status, ['confirmed', 'preparing', 'ready_for_pickup'], true) && !$order->driver_id) {
+            if (in_array($request->status, ['confirmed', 'preparing', 'ready_for_pickup'], true) && ! $order->driver_id) {
                 app(AutoAssignDriverService::class)->autoAssignOrder($order);
                 $order->refresh();
             }
@@ -898,11 +1093,11 @@ class RestaurantController extends Controller
             return response()->json([
                 'success' => true,
                 'message' => 'Order status updated successfully',
-                'data' => $this->formatOrderForApi($order)
+                'data' => $this->formatOrderForApi($order),
             ]);
-            
         } catch (\Exception $e) {
             DB::rollback();
+
             return response()->json([
                 'success' => false,
                 'message' => 'An unexpected error occurred while processing the request.',
@@ -911,7 +1106,7 @@ class RestaurantController extends Controller
     }
 
     /**
-     * Mark an order as ready for pickup
+     * Mark an order as ready for pickup.
      */
     public function markOrderReady($id)
     {
@@ -922,7 +1117,7 @@ class RestaurantController extends Controller
             if ($restaurants->isEmpty()) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Restaurant not found.'
+                    'message' => 'Restaurant not found.',
                 ], 404);
             }
 
@@ -946,7 +1141,7 @@ class RestaurantController extends Controller
             );
             $order->save();
 
-            if (!$order->driver_id) {
+            if (! $order->driver_id) {
                 app(AutoAssignDriverService::class)->autoAssignOrder($order);
                 $order->refresh();
             }
@@ -962,12 +1157,12 @@ class RestaurantController extends Controller
             return response()->json([
                 'success' => true,
                 'message' => 'Order marked ready successfully',
-                'data' => $this->formatOrderForApi($order)
+                'data' => $this->formatOrderForApi($order),
             ]);
-            
         } catch (\Exception $e) {
             DB::rollback();
             Log::error('Mark order ready error: ' . $e->getMessage());
+
             return response()->json([
                 'success' => false,
                 'message' => 'An unexpected error occurred while processing the request.',
@@ -989,7 +1184,7 @@ class RestaurantController extends Controller
             if ($restaurants->isEmpty()) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Restaurant not found.'
+                    'message' => 'Restaurant not found.',
                 ], 404);
             }
 
@@ -998,7 +1193,7 @@ class RestaurantController extends Controller
             }
 
             $request->validate([
-                'otp' => 'required|string|min:4|max:8'
+                'otp' => 'required|string|min:4|max:8',
             ]);
 
             $order = Order::whereIn('restaurant_id', $restaurants->pluck('id'))
@@ -1009,21 +1204,21 @@ class RestaurantController extends Controller
             if (($order->order_type ?? 'delivery') !== 'takeaway') {
                 return response()->json([
                     'success' => false,
-                    'message' => 'OTP pickup verification is available for takeaway orders only.'
+                    'message' => 'OTP pickup verification is available for takeaway orders only.',
                 ], 422);
             }
 
-            if (!in_array($order->status, ['ready_for_pickup', 'picked_up'], true)) {
+            if (! in_array($order->status, ['ready_for_pickup', 'picked_up'], true)) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Order must be ready before pickup OTP can be verified.'
+                    'message' => 'Order must be ready before pickup OTP can be verified.',
                 ], 422);
             }
 
-            if (!$order->delivery_otp || !hash_equals((string) $order->delivery_otp, (string) $request->otp)) {
+            if (! $order->delivery_otp || ! hash_equals((string) $order->delivery_otp, (string) $request->otp)) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Invalid pickup OTP.'
+                    'message' => 'Invalid pickup OTP.',
                 ], 422);
             }
 
@@ -1050,15 +1245,16 @@ class RestaurantController extends Controller
             return response()->json([
                 'success' => true,
                 'message' => 'Pickup OTP verified. Takeaway order completed.',
-                'data' => $this->formatOrderForApi($order)
+                'data' => $this->formatOrderForApi($order),
             ]);
-        } catch (\Illuminate\Validation\ValidationException $e) {
+        } catch (ValidationException $e) {
             throw $e;
         } catch (\Exception $e) {
             if ($transactionStarted) {
                 DB::rollBack();
             }
             Log::error('Takeaway OTP verification error: ' . $e->getMessage());
+
             return response()->json([
                 'success' => false,
                 'message' => 'An unexpected error occurred while processing the request.',
@@ -1067,7 +1263,7 @@ class RestaurantController extends Controller
     }
 
     /**
-     * Get restaurant profile details for owner app
+     * Get restaurant profile details for owner app.
      */
     public function getRestaurantInfo(Request $request)
     {
@@ -1075,18 +1271,17 @@ class RestaurantController extends Controller
             $user = auth()->user();
             $restaurant = $this->getAuthenticatedRestaurant($user);
 
-            if (!$restaurant) {
+            if (! $restaurant) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Restaurant not found.'
+                    'message' => 'Restaurant not found.',
                 ], 404);
             }
 
             return response()->json([
                 'success' => true,
-                'data' => $this->formatRestaurantInfo($restaurant)
+                'data' => $this->formatRestaurantInfo($restaurant),
             ]);
-            
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
@@ -1096,7 +1291,7 @@ class RestaurantController extends Controller
     }
 
     /**
-     * Update restaurant profile details for owner app
+     * Update restaurant profile details for owner app.
      */
     public function updateRestaurantInfo(Request $request)
     {
@@ -1104,10 +1299,10 @@ class RestaurantController extends Controller
             $user = auth()->user();
             $restaurant = $this->getAuthenticatedRestaurant($user);
 
-            if (!$restaurant) {
+            if (! $restaurant) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Restaurant not found.'
+                    'message' => 'Restaurant not found.',
                 ], 404);
             }
 
@@ -1148,9 +1343,8 @@ class RestaurantController extends Controller
             return response()->json([
                 'success' => true,
                 'data' => $this->formatRestaurantInfo($restaurant->fresh()),
-                'message' => 'Restaurant information updated successfully.'
+                'message' => 'Restaurant information updated successfully.',
             ]);
-            
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
@@ -1160,7 +1354,7 @@ class RestaurantController extends Controller
     }
 
     /**
-     * Get restaurant staff members
+     * Get restaurant staff members.
      */
     public function getStaff(Request $request)
     {
@@ -1168,10 +1362,10 @@ class RestaurantController extends Controller
             $user = auth()->user();
             $restaurant = $this->getAuthenticatedRestaurant($user);
 
-            if (!$restaurant) {
+            if (! $restaurant) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Restaurant not found.'
+                    'message' => 'Restaurant not found.',
                 ], 404);
             }
 
@@ -1188,9 +1382,8 @@ class RestaurantController extends Controller
 
             return response()->json([
                 'success' => true,
-                'data' => $staff
+                'data' => $staff,
             ]);
-            
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
@@ -1200,7 +1393,7 @@ class RestaurantController extends Controller
     }
 
     /**
-     * Create restaurant staff member
+     * Create restaurant staff member.
      */
     public function createStaff(Request $request)
     {
@@ -1208,10 +1401,10 @@ class RestaurantController extends Controller
             $user = auth()->user();
             $restaurant = $this->getAuthenticatedRestaurant($user);
 
-            if (!$restaurant) {
+            if (! $restaurant) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Restaurant not found.'
+                    'message' => 'Restaurant not found.',
                 ], 404);
             }
 
@@ -1264,13 +1457,13 @@ class RestaurantController extends Controller
                         'temporary_password' => $plainPassword,
                     ],
                 ],
-                'message' => 'Staff member account created successfully.'
+                'message' => 'Staff member account created successfully.',
             ], 201);
-            
         } catch (\Exception $e) {
             if (DB::transactionLevel() > 0) {
                 DB::rollBack();
             }
+
             return response()->json([
                 'success' => false,
                 'message' => 'An unexpected error occurred while processing the request.',
@@ -1279,7 +1472,7 @@ class RestaurantController extends Controller
     }
 
     /**
-     * Update restaurant staff member
+     * Update restaurant staff member.
      */
     public function updateStaff(Request $request, $id)
     {
@@ -1287,10 +1480,10 @@ class RestaurantController extends Controller
             $user = auth()->user();
             $restaurant = $this->getAuthenticatedRestaurant($user);
 
-            if (!$restaurant) {
+            if (! $restaurant) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Restaurant not found.'
+                    'message' => 'Restaurant not found.',
                 ], 404);
             }
 
@@ -1322,13 +1515,13 @@ class RestaurantController extends Controller
             return response()->json([
                 'success' => true,
                 'data' => $this->formatStaffForApi($staff->fresh('user.roles')),
-                'message' => 'Staff member updated successfully.'
+                'message' => 'Staff member updated successfully.',
             ]);
-            
         } catch (\Exception $e) {
             if (DB::transactionLevel() > 0) {
                 DB::rollBack();
             }
+
             return response()->json([
                 'success' => false,
                 'message' => 'An unexpected error occurred while processing the request.',
@@ -1337,7 +1530,7 @@ class RestaurantController extends Controller
     }
 
     /**
-     * Toggle restaurant staff active status
+     * Toggle restaurant staff active status.
      */
     public function toggleStaff($id)
     {
@@ -1345,10 +1538,10 @@ class RestaurantController extends Controller
             $user = auth()->user();
             $restaurant = $this->getAuthenticatedRestaurant($user);
 
-            if (!$restaurant) {
+            if (! $restaurant) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Restaurant not found.'
+                    'message' => 'Restaurant not found.',
                 ], 404);
             }
 
@@ -1357,7 +1550,7 @@ class RestaurantController extends Controller
             }
 
             $staff = RestaurantStaff::with('user')->where('restaurant_id', $restaurant->id)->findOrFail($id);
-            $staff->is_active = !$staff->is_active;
+            $staff->is_active = ! $staff->is_active;
             $staff->save();
             if ($staff->user) {
                 $staff->user->update(['is_active' => $staff->is_active]);
@@ -1366,9 +1559,8 @@ class RestaurantController extends Controller
             return response()->json([
                 'success' => true,
                 'data' => $this->formatStaffForApi($staff->fresh('user.roles')),
-                'message' => 'Staff status updated successfully.'
+                'message' => 'Staff status updated successfully.',
             ]);
-            
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
@@ -1378,7 +1570,7 @@ class RestaurantController extends Controller
     }
 
     /**
-     * Delete restaurant staff member
+     * Delete restaurant staff member.
      */
     public function deleteStaff($id)
     {
@@ -1386,10 +1578,10 @@ class RestaurantController extends Controller
             $user = auth()->user();
             $restaurant = $this->getAuthenticatedRestaurant($user);
 
-            if (!$restaurant) {
+            if (! $restaurant) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Restaurant not found.'
+                    'message' => 'Restaurant not found.',
                 ], 404);
             }
 
@@ -1408,13 +1600,13 @@ class RestaurantController extends Controller
 
             return response()->json([
                 'success' => true,
-                'message' => 'Staff member deleted successfully.'
+                'message' => 'Staff member deleted successfully.',
             ]);
-            
         } catch (\Exception $e) {
             if (DB::transactionLevel() > 0) {
                 DB::rollBack();
             }
+
             return response()->json([
                 'success' => false,
                 'message' => 'An unexpected error occurred while processing the request.',
@@ -1423,7 +1615,7 @@ class RestaurantController extends Controller
     }
 
     /**
-     * Get restaurant settings
+     * Get restaurant settings.
      */
     public function getSettings(Request $request)
     {
@@ -1431,10 +1623,10 @@ class RestaurantController extends Controller
             $user = auth()->user();
             $restaurant = $this->getAuthenticatedRestaurant($user);
 
-            if (!$restaurant) {
+            if (! $restaurant) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Restaurant not found.'
+                    'message' => 'Restaurant not found.',
                 ], 404);
             }
 
@@ -1452,21 +1644,21 @@ class RestaurantController extends Controller
                     'city' => $restaurant->city,
                     'state' => $restaurant->state,
                     'pincode' => $restaurant->pincode,
-                    'latitude' => $restaurant->latitude !== null ? (float)$restaurant->latitude : null,
-                    'longitude' => $restaurant->longitude !== null ? (float)$restaurant->longitude : null,
+                    'latitude' => $restaurant->latitude !== null ? (float) $restaurant->latitude : null,
+                    'longitude' => $restaurant->longitude !== null ? (float) $restaurant->longitude : null,
                     'pending_location_request' => $restaurant->locationChangeRequests()
                         ->where('status', 'pending')
                         ->latest()
                         ->first(),
-                    'delivery_fee' => (float)$restaurant->delivery_fee,
-                    'min_order_amount' => (float)$restaurant->min_order_amount,
+                    'delivery_fee' => (float) $restaurant->delivery_fee,
+                    'min_order_amount' => (float) $restaurant->min_order_amount,
                     'amount_for_one' => $restaurant->amountForOne(),
                     'delivery_time' => $restaurant->delivery_time,
-                    'logo_image' => \App\Services\MediaStorage::url($restaurant->logo_image),
-                    'banner_image' => \App\Services\MediaStorage::url($restaurant->banner_image),
+                    'logo_image' => MediaStorage::url($restaurant->logo_image),
+                    'banner_image' => MediaStorage::url($restaurant->banner_image),
                     'description' => $restaurant->description,
                     'cuisine' => $restaurant->cuisine,
-                    'is_open' => (bool)$restaurant->is_open,
+                    'is_open' => (bool) $restaurant->is_open,
                     'account_holder_name' => $user->account_holder_name,
                     'bank_name' => $user->bank_name,
                     'account_number' => $user->account_number,
@@ -1483,9 +1675,8 @@ class RestaurantController extends Controller
                         AppSetting::getValue('country_code'),
                         $payoutGateway
                     ),
-                ]
+                ],
             ]);
-            
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
@@ -1495,7 +1686,7 @@ class RestaurantController extends Controller
     }
 
     /**
-     * Update restaurant settings
+     * Update restaurant settings.
      */
     public function updateSettings(Request $request)
     {
@@ -1503,10 +1694,10 @@ class RestaurantController extends Controller
             $user = auth()->user();
             $restaurant = $this->getAuthenticatedRestaurant($user);
 
-            if (!$restaurant) {
+            if (! $restaurant) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Restaurant not found.'
+                    'message' => 'Restaurant not found.',
                 ], 404);
             }
 
@@ -1533,7 +1724,7 @@ class RestaurantController extends Controller
 
             $restaurant->update($request->only([
                 'name', 'email', 'phone', 'address', 'city', 'state', 'pincode',
-                'min_order_amount', 'delivery_time', 'description'
+                'min_order_amount', 'delivery_time', 'description',
             ]));
 
             $user->update($request->only([
@@ -1552,9 +1743,8 @@ class RestaurantController extends Controller
             return response()->json([
                 'success' => true,
                 'data' => $restaurant,
-                'message' => 'Settings updated successfully.'
+                'message' => 'Settings updated successfully.',
             ]);
-            
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
@@ -1569,10 +1759,10 @@ class RestaurantController extends Controller
             $user = auth()->user();
             $restaurant = $this->getAuthenticatedRestaurant($user);
 
-            if (!$restaurant) {
+            if (! $restaurant) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Restaurant not found.'
+                    'message' => 'Restaurant not found.',
                 ], 404);
             }
 
@@ -1599,7 +1789,7 @@ class RestaurantController extends Controller
             if ($pending) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'A location change request is already pending admin approval.'
+                    'message' => 'A location change request is already pending admin approval.',
                 ], 422);
             }
 
@@ -1618,14 +1808,24 @@ class RestaurantController extends Controller
                 'status' => 'pending',
             ]);
 
-            SupportTicket::create([
+            $locationConversation = SupportConversation::create([
+                'conversation_number' => 'SUP-' . now()->format('YmdHis') . '-' . strtoupper(substr((string) $restaurant->id, -4)),
                 'restaurant_id' => $restaurant->id,
                 'user_id' => $user->id,
-                'ticket_number' => 'SUP-' . now()->format('YmdHis') . '-' . strtoupper(substr((string) $restaurant->id, -4)),
-                'subject' => 'Restaurant location update request',
+                'requester_role' => 'restaurant',
                 'category' => 'location_change',
+                'stage' => 'human',
+                'status' => 'open',
                 'priority' => 'high',
-                'description' => implode("\n", array_filter([
+                'last_message_at' => now(),
+            ]);
+
+            SupportMessage::create([
+                'conversation_id' => $locationConversation->id,
+                'sender_id' => $user->id,
+                'sender_type' => 'restaurant',
+                'message_type' => $path ? 'image' : 'text',
+                'message' => implode("\n", array_filter([
                     'Restaurant has requested a location update.',
                     'Current latitude: ' . ($restaurant->latitude ?? 'N/A'),
                     'Current longitude: ' . ($restaurant->longitude ?? 'N/A'),
@@ -1633,16 +1833,16 @@ class RestaurantController extends Controller
                     'Requested longitude: ' . $validated['longitude'],
                     'FSSAI attachment: ' . ($path ?: 'Approved license already on file'),
                 ])),
-                'attachment' => $path,
-                'status' => 'open',
+                'attachment_path' => $path,
+                'delivered_at' => now(),
             ]);
 
             return response()->json([
                 'success' => true,
                 'data' => $locationRequest,
-                'message' => 'Location change request submitted for admin approval.'
+                'message' => 'Location change request submitted for admin approval.',
             ], 201);
-        } catch (\Illuminate\Validation\ValidationException $e) {
+        } catch (ValidationException $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Invalid location change request.',
@@ -1661,7 +1861,7 @@ class RestaurantController extends Controller
     }
 
     /**
-     * Get restaurant promo codes
+     * Get restaurant promo codes.
      */
     public function getPromos(Request $request)
     {
@@ -1669,10 +1869,10 @@ class RestaurantController extends Controller
             $user = auth()->user();
             $restaurant = $this->getAuthenticatedRestaurant($user);
 
-            if (!$restaurant) {
+            if (! $restaurant) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Restaurant not found.'
+                    'message' => 'Restaurant not found.',
                 ], 404);
             }
 
@@ -1688,9 +1888,8 @@ class RestaurantController extends Controller
 
             return response()->json([
                 'success' => true,
-                'data' => $promos
+                'data' => $promos,
             ]);
-            
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
@@ -1700,7 +1899,7 @@ class RestaurantController extends Controller
     }
 
     /**
-     * Create restaurant promo code
+     * Create restaurant promo code.
      */
     public function createPromo(Request $request)
     {
@@ -1708,10 +1907,10 @@ class RestaurantController extends Controller
             $user = auth()->user();
             $restaurant = $this->getAuthenticatedRestaurant($user);
 
-            if (!$restaurant) {
+            if (! $restaurant) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Restaurant not found.'
+                    'message' => 'Restaurant not found.',
                 ], 404);
             }
 
@@ -1734,10 +1933,9 @@ class RestaurantController extends Controller
             return response()->json([
                 'success' => true,
                 'data' => $this->restaurantPromotionPayload($promo),
-                'message' => 'Promotion created successfully.'
+                'message' => 'Promotion created successfully.',
             ], 201);
-            
-        } catch (\Illuminate\Validation\ValidationException $e) {
+        } catch (ValidationException $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Validation failed',
@@ -1767,7 +1965,7 @@ class RestaurantController extends Controller
     }
 
     /**
-     * Show restaurant promo details
+     * Show restaurant promo details.
      */
     public function showPromo($id)
     {
@@ -1775,10 +1973,10 @@ class RestaurantController extends Controller
             $user = auth()->user();
             $restaurant = $this->getAuthenticatedRestaurant($user);
 
-            if (!$restaurant) {
+            if (! $restaurant) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Restaurant not found.'
+                    'message' => 'Restaurant not found.',
                 ], 404);
             }
 
@@ -1801,7 +1999,7 @@ class RestaurantController extends Controller
     }
 
     /**
-     * Update restaurant promo details
+     * Update restaurant promo details.
      */
     public function updatePromo(Request $request, $id)
     {
@@ -1809,10 +2007,10 @@ class RestaurantController extends Controller
             $user = auth()->user();
             $restaurant = $this->getAuthenticatedRestaurant($user);
 
-            if (!$restaurant) {
+            if (! $restaurant) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Restaurant not found.'
+                    'message' => 'Restaurant not found.',
                 ], 404);
             }
 
@@ -1843,9 +2041,9 @@ class RestaurantController extends Controller
             return response()->json([
                 'success' => true,
                 'data' => $this->restaurantPromotionPayload($promo),
-                'message' => 'Promotion updated successfully.'
+                'message' => 'Promotion updated successfully.',
             ]);
-        } catch (\Illuminate\Validation\ValidationException $e) {
+        } catch (ValidationException $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Validation failed',
@@ -1860,7 +2058,7 @@ class RestaurantController extends Controller
     }
 
     /**
-     * Toggle restaurant promo status
+     * Toggle restaurant promo status.
      */
     public function togglePromo($id)
     {
@@ -1868,10 +2066,10 @@ class RestaurantController extends Controller
             $user = auth()->user();
             $restaurant = $this->getAuthenticatedRestaurant($user);
 
-            if (!$restaurant) {
+            if (! $restaurant) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Restaurant not found.'
+                    'message' => 'Restaurant not found.',
                 ], 404);
             }
 
@@ -1887,9 +2085,8 @@ class RestaurantController extends Controller
             return response()->json([
                 'success' => true,
                 'data' => $this->restaurantPromotionPayload($promo->fresh('couponCodes')),
-                'message' => 'Promotion status updated successfully.'
+                'message' => 'Promotion status updated successfully.',
             ]);
-            
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
@@ -1899,7 +2096,7 @@ class RestaurantController extends Controller
     }
 
     /**
-     * Delete restaurant promo
+     * Delete restaurant promo.
      */
     public function deletePromo($id)
     {
@@ -1907,10 +2104,10 @@ class RestaurantController extends Controller
             $user = auth()->user();
             $restaurant = $this->getAuthenticatedRestaurant($user);
 
-            if (!$restaurant) {
+            if (! $restaurant) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Restaurant not found.'
+                    'message' => 'Restaurant not found.',
                 ], 404);
             }
 
@@ -1925,9 +2122,8 @@ class RestaurantController extends Controller
 
             return response()->json([
                 'success' => true,
-                'message' => 'Promotion deleted successfully.'
+                'message' => 'Promotion deleted successfully.',
             ]);
-            
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
@@ -2023,7 +2219,7 @@ class RestaurantController extends Controller
 
         $validated['application_mode'] = $applicationMode;
         if ($applicationMode === 'coupon' && trim((string) ($validated['code'] ?? '')) === '') {
-            throw \Illuminate\Validation\ValidationException::withMessages([
+            throw ValidationException::withMessages([
                 'code' => 'Coupon code is required for coupon promotions.',
             ]);
         }
@@ -2033,6 +2229,7 @@ class RestaurantController extends Controller
         }
 
         $this->applyPromoShapeDefaults($validated);
+        $this->validateRestaurantPromotionValue($validated);
         $validated['audience_type'] = $validated['audience_type'] ?? 'all';
         $validated['target_type'] = $validated['target_type'] ?? 'restaurant';
         $validated['coupon_type'] = $validated['coupon_type'] ?? 'public';
@@ -2244,6 +2441,7 @@ class RestaurantController extends Controller
     {
         if ($promotion->application_mode !== 'coupon' || empty($validated['code'])) {
             $promotion->couponCodes()->delete();
+
             return;
         }
 
@@ -2291,6 +2489,41 @@ class RestaurantController extends Controller
     private function restaurantPromotionTypes(): array
     {
         return PromotionTypeRegistry::restaurantTypes();
+    }
+
+    private function validateRestaurantPromotionValue(array $validated): void
+    {
+        $promotionType = (string) ($validated['promotion_type'] ?? '');
+        $meta = $this->restaurantPromotionTypes()[$promotionType] ?? [];
+        $value = (float) ($validated['discount_value'] ?? 0);
+        $valueIsOptional = (bool) data_get($meta, 'defaults.no_value_required', false);
+        $comboGroups = (array) ($validated['combo_groups'] ?? []);
+        $hasPricedComboGroup = collect($comboGroups)
+            ->contains(fn ($group) => is_array($group) && (float) ($group['price'] ?? 0) > 0);
+
+        if (! $valueIsOptional
+            && ! ($hasPricedComboGroup && in_array($promotionType, ['combo_deal', 'meal_deal'], true))
+            && $value <= 0) {
+            throw ValidationException::withMessages([
+                'discount_value' => 'Enter a value greater than zero for this promotion type.',
+            ]);
+        }
+
+        if (! $valueIsOptional
+            && ($meta['discount_type'] ?? null) === 'percentage'
+            && $value > 100) {
+            throw ValidationException::withMessages([
+                'discount_value' => 'Percentage discounts cannot exceed 100%.',
+            ]);
+        }
+
+        if (array_key_exists('max_discount_amount', $validated)
+            && $validated['max_discount_amount'] !== null
+            && (float) $validated['max_discount_amount'] <= 0) {
+            throw ValidationException::withMessages([
+                'max_discount_amount' => 'Maximum discount must be greater than zero when provided.',
+            ]);
+        }
     }
 
     private function sanitizePromoTargetIds(string $targetType, array $targetIds, ?int $restaurantId = null): array
@@ -2386,7 +2619,7 @@ class RestaurantController extends Controller
     }
 
     /**
-     * Get restaurant printers
+     * Get restaurant printers.
      */
     public function getPrinters(Request $request)
     {
@@ -2394,10 +2627,10 @@ class RestaurantController extends Controller
             $user = auth()->user();
             $restaurant = $this->getAuthenticatedRestaurant($user);
 
-            if (!$restaurant) {
+            if (! $restaurant) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Restaurant not found.'
+                    'message' => 'Restaurant not found.',
                 ], 404);
             }
 
@@ -2413,7 +2646,6 @@ class RestaurantController extends Controller
                     'auto_print_new_orders' => (bool) $restaurant->auto_print_new_orders,
                 ],
             ]);
-            
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
@@ -2423,7 +2655,7 @@ class RestaurantController extends Controller
     }
 
     /**
-     * Create restaurant printer
+     * Create restaurant printer.
      */
     public function createPrinter(Request $request)
     {
@@ -2431,10 +2663,10 @@ class RestaurantController extends Controller
             $user = auth()->user();
             $restaurant = $this->getAuthenticatedRestaurant($user);
 
-            if (!$restaurant) {
+            if (! $restaurant) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Restaurant not found.'
+                    'message' => 'Restaurant not found.',
                 ], 404);
             }
 
@@ -2450,7 +2682,7 @@ class RestaurantController extends Controller
                 'is_active' => 'nullable|boolean',
             ]);
 
-            if (!empty($validated['is_default'])) {
+            if (! empty($validated['is_default'])) {
                 PrinterSetting::where('restaurant_id', $restaurant->id)->update(['is_default' => false]);
             }
 
@@ -2463,16 +2695,15 @@ class RestaurantController extends Controller
                 'usb_path' => $validated['usb_path'] ?? null,
                 'bluetooth_mac' => $validated['bluetooth_mac'] ?? null,
                 'paper_size' => $validated['paper_size'],
-                'is_default' => (bool)($validated['is_default'] ?? false),
-                'is_active' => (bool)($validated['is_active'] ?? true),
+                'is_default' => (bool) ($validated['is_default'] ?? false),
+                'is_active' => (bool) ($validated['is_active'] ?? true),
             ]);
 
             return response()->json([
                 'success' => true,
                 'data' => $printer,
-                'message' => 'Printer added successfully.'
+                'message' => 'Printer added successfully.',
             ], 201);
-            
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
@@ -2482,7 +2713,7 @@ class RestaurantController extends Controller
     }
 
     /**
-     * Test restaurant printer
+     * Test restaurant printer.
      */
     public function testPrinter($id)
     {
@@ -2490,28 +2721,27 @@ class RestaurantController extends Controller
             $user = auth()->user();
             $restaurant = $this->getAuthenticatedRestaurant($user);
 
-            if (!$restaurant) {
+            if (! $restaurant) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Restaurant not found.'
+                    'message' => 'Restaurant not found.',
                 ], 404);
             }
 
             $printer = PrinterSetting::where('restaurant_id', $restaurant->id)->findOrFail($id);
             $printed = app(PrinterService::class)->printTest($printer);
 
-            if (!$printed) {
+            if (! $printed) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Failed to connect to printer.'
+                    'message' => 'Failed to connect to printer.',
                 ], 500);
             }
 
             return response()->json([
                 'success' => true,
-                'message' => 'Test print sent successfully.'
+                'message' => 'Test print sent successfully.',
             ]);
-            
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
@@ -2521,7 +2751,7 @@ class RestaurantController extends Controller
     }
 
     /**
-     * Set default restaurant printer
+     * Set default restaurant printer.
      */
     public function setDefaultPrinter($id)
     {
@@ -2529,10 +2759,10 @@ class RestaurantController extends Controller
             $user = auth()->user();
             $restaurant = $this->getAuthenticatedRestaurant($user);
 
-            if (!$restaurant) {
+            if (! $restaurant) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Restaurant not found.'
+                    'message' => 'Restaurant not found.',
                 ], 404);
             }
 
@@ -2542,9 +2772,8 @@ class RestaurantController extends Controller
 
             return response()->json([
                 'success' => true,
-                'message' => 'Default printer updated.'
+                'message' => 'Default printer updated.',
             ]);
-            
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
@@ -2554,7 +2783,7 @@ class RestaurantController extends Controller
     }
 
     /**
-     * Update restaurant printer settings
+     * Update restaurant printer settings.
      */
     public function updatePrinterSettings(Request $request)
     {
@@ -2562,10 +2791,10 @@ class RestaurantController extends Controller
             $user = auth()->user();
             $restaurant = $this->getAuthenticatedRestaurant($user);
 
-            if (!$restaurant) {
+            if (! $restaurant) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Restaurant not found.'
+                    'message' => 'Restaurant not found.',
                 ], 404);
             }
 
@@ -2595,7 +2824,7 @@ class RestaurantController extends Controller
     }
 
     /**
-     * Delete restaurant printer
+     * Delete restaurant printer.
      */
     public function deletePrinter($id)
     {
@@ -2603,10 +2832,10 @@ class RestaurantController extends Controller
             $user = auth()->user();
             $restaurant = $this->getAuthenticatedRestaurant($user);
 
-            if (!$restaurant) {
+            if (! $restaurant) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Restaurant not found.'
+                    'message' => 'Restaurant not found.',
                 ], 404);
             }
 
@@ -2615,9 +2844,8 @@ class RestaurantController extends Controller
 
             return response()->json([
                 'success' => true,
-                'message' => 'Printer deleted successfully.'
+                'message' => 'Printer deleted successfully.',
             ]);
-            
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
@@ -2627,18 +2855,23 @@ class RestaurantController extends Controller
     }
 
     /**
-     * Get analytics data
+     * Get analytics data.
      */
     public function getAnalytics(Request $request)
     {
         try {
             $user = auth()->user();
-            $restaurant = $this->getAuthenticatedRestaurant($user);
+            $restaurants = $this->resolveRestaurantScope($request, $user);
 
-            if (!$restaurant) {
+            if ($request->filled('city')) {
+                $city = trim((string) $request->get('city'));
+                $restaurants = $restaurants->filter(fn (Restaurant $restaurant) => strcasecmp((string) $restaurant->city, $city) === 0)->values();
+            }
+
+            if ($restaurants->isEmpty()) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Restaurant not found.'
+                    'message' => 'Restaurant not found.',
                 ], 404);
             }
 
@@ -2646,19 +2879,14 @@ class RestaurantController extends Controller
                 return $response;
             }
 
-            $period = $request->get('period', 'week');
-            $endDate = Carbon::now()->endOfDay();
-            $startDate = match ($period) {
-                'month' => Carbon::now()->subDays(29)->startOfDay(),
-                'year' => Carbon::now()->subDays(364)->startOfDay(),
-                default => Carbon::now()->subDays(6)->startOfDay(),
-            };
+            [$startDate, $endDate] = $this->resolveAnalyticsDateRange($request);
+            $restaurantIds = $restaurants->pluck('id')->map(fn ($id) => (int) $id)->values();
 
-            $orders = $restaurant->orders()
+            $orders = Order::query()
+                ->whereIn('restaurant_id', $restaurantIds)
                 ->visibleToRestaurant()
                 ->whereBetween('created_at', [$startDate, $endDate])
                 ->get();
-
             $revenueOrders = $orders->whereNotIn('status', ['cancelled']);
             $deliveredOrders = $orders->where('status', 'delivered');
 
@@ -2681,13 +2909,14 @@ class RestaurantController extends Controller
             $totalOrdersForRate = max($orders->count(), 1);
             $cancellationRate = round(($cancelledOrders / $totalOrdersForRate) * 100, 2);
 
-            $topItems = $this->buildTopSellingItems($restaurant->id, $startDate, $endDate);
+            $topItems = $this->buildTopSellingItemsForRestaurants($restaurantIds, $startDate, $endDate);
 
             $hourlyGroups = $revenueOrders->groupBy(function ($order) {
                 return (int) Carbon::parse($order->created_at)->format('G');
             });
             $hourlyData = collect(range(0, 23))->map(function ($hour) use ($hourlyGroups) {
                 $hourOrders = $hourlyGroups->get($hour, collect());
+
                 return [
                     'hour' => $hour,
                     'orders' => (int) $hourOrders->count(),
@@ -2698,8 +2927,8 @@ class RestaurantController extends Controller
             $totalRevenue = round((float) $revenueOrders->sum('total'), 2);
             $totalOrders = (int) $revenueOrders->count();
             $avgOrderValue = $totalOrders > 0 ? $totalRevenue / $totalOrders : 0;
-            $promotionPerformance = $this->buildPromotionPerformance(
-                $restaurant->id,
+            $promotionPerformance = $this->buildPromotionPerformanceForRestaurants(
+                $restaurantIds,
                 $startDate,
                 $endDate,
                 $revenueOrders
@@ -2719,15 +2948,342 @@ class RestaurantController extends Controller
                     'top_items' => $topItems,
                     'hourly_data' => $hourlyData,
                     'promotion_performance' => $promotionPerformance,
-                ]
+                ],
             ]);
-            
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'An unexpected error occurred while processing the request.',
             ], 500);
         }
+    }
+
+    /**
+     * Compare one accessible restaurant with other restaurants in the same delivery zone.
+     */
+    public function getAnalyticsCompare(Request $request)
+    {
+        try {
+            $user = auth()->user();
+            $accessibleRestaurants = $this->getAccessibleRestaurants($user);
+            $allAccessibleRestaurantIds = $accessibleRestaurants->pluck('id')->map(fn ($id) => (int) $id)->all();
+
+            if ($request->filled('city')) {
+                $city = trim((string) $request->get('city'));
+                $accessibleRestaurants = $accessibleRestaurants->filter(fn (Restaurant $restaurant) => strcasecmp((string) $restaurant->city, $city) === 0)->values();
+            }
+
+            if ($accessibleRestaurants->isEmpty()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Restaurant not found.',
+                ], 404);
+            }
+
+            if ($response = $this->ensureRestaurantPermission($user, 'reports')) {
+                return $response;
+            }
+
+            $restaurant = $this->resolveSingleRestaurantForFeature($request, $user, $accessibleRestaurants);
+            if (! $restaurant) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Select one outlet to compare.',
+                ], 422);
+            }
+
+            [$startDate, $endDate, $periodLabel] = $this->resolveAnalyticsDateRange($request);
+            $deliveryArea = $this->deliveryAreaForRestaurant($restaurant);
+            $ownRestaurantIds = $allAccessibleRestaurantIds;
+
+            $peerQuery = Restaurant::query()
+                ->where('is_verified', true)
+                ->whereNotIn('id', $ownRestaurantIds);
+
+            if (! $deliveryArea && $restaurant->city) {
+                $peerQuery->where('city', $restaurant->city);
+            }
+
+            $peerRestaurants = $this->filterRestaurantsToSameDeliveryArea(
+                $peerQuery->limit($deliveryArea ? 250 : 100)->get(),
+                $deliveryArea
+            )->values();
+
+            $yourMetrics = $this->buildRestaurantComparisonMetrics(
+                collect([(int) $restaurant->id]),
+                $startDate,
+                $endDate
+            );
+
+            $peerMetricRows = $peerRestaurants->map(fn (Restaurant $peer) => $this->buildRestaurantComparisonMetrics(
+                collect([(int) $peer->id]),
+                $startDate,
+                $endDate
+            ));
+
+            $peerAverages = $this->averageComparisonMetrics($peerMetricRows);
+            $metrics = collect($yourMetrics)->map(function (array $metric) use ($peerAverages) {
+                $peerValue = $peerAverages[$metric['key']] ?? 0;
+                $direction = $metric['direction'];
+                $you = (float) $metric['value'];
+                $diff = $you - (float) $peerValue;
+                $better = $direction === 'lower' ? $diff <= 0 : $diff >= 0;
+
+                return [
+                    'key' => $metric['key'],
+                    'label' => $metric['label'],
+                    'group' => $metric['group'],
+                    'unit' => $metric['unit'],
+                    'direction' => $direction,
+                    'you' => round($you, 2),
+                    'delivery_zone_average' => round((float) $peerValue, 2),
+                    'difference' => round($diff, 2),
+                    'is_better' => $better,
+                ];
+            })->values();
+
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'restaurant' => [
+                        'id' => $restaurant->id,
+                        'name' => $restaurant->name,
+                        'city' => $restaurant->city,
+                        'area' => $restaurant->area ?? null,
+                    ],
+                    'delivery_zone' => $deliveryArea ? [
+                        'id' => $deliveryArea->id,
+                        'name' => $deliveryArea->name,
+                    ] : null,
+                    'filters' => [
+                        'period' => $periodLabel,
+                        'start_date' => $startDate->toDateString(),
+                        'end_date' => $endDate->toDateString(),
+                    ],
+                    'peer_restaurant_count' => $peerRestaurants->count(),
+                    'metrics' => $metrics,
+                    'needs_improvement' => $metrics->filter(fn ($metric) => ! $metric['is_better'])->values(),
+                    'doing_great' => $metrics->filter(fn ($metric) => $metric['is_better'])->values(),
+                ],
+            ]);
+        } catch (ValidationException $e) {
+            throw $e;
+        } catch (\Exception $e) {
+            Log::error('Restaurant analytics compare error: ' . $e->getMessage());
+
+            return response()->json([
+                'success' => false,
+                'message' => 'An unexpected error occurred while processing the request.',
+            ], 500);
+        }
+    }
+
+    private function resolveAnalyticsDateRange(Request $request): array
+    {
+        $period = (string) $request->get('period', 'week');
+        $now = Carbon::now();
+
+        if ($period === 'custom') {
+            $request->validate([
+                'start_date' => 'required|date',
+                'end_date' => 'required|date|after_or_equal:start_date',
+            ]);
+
+            return [
+                Carbon::parse($request->get('start_date'))->startOfDay(),
+                Carbon::parse($request->get('end_date'))->endOfDay(),
+                'custom',
+            ];
+        }
+
+        return match ($period) {
+            'today' => [$now->copy()->startOfDay(), $now->copy()->endOfDay(), 'today'],
+            'yesterday' => [$now->copy()->subDay()->startOfDay(), $now->copy()->subDay()->endOfDay(), 'yesterday'],
+            'last_week' => [$now->copy()->subWeek()->startOfWeek(), $now->copy()->subWeek()->endOfWeek(), 'last_week'],
+            'month', 'this_month' => [$now->copy()->startOfMonth(), $now->copy()->endOfDay(), 'month'],
+            'year' => [$now->copy()->subDays(364)->startOfDay(), $now->copy()->endOfDay(), 'year'],
+            default => [$now->copy()->subDays(6)->startOfDay(), $now->copy()->endOfDay(), 'week'],
+        };
+    }
+
+    private function buildRestaurantComparisonMetrics($restaurantIds, Carbon $startDate, Carbon $endDate): array
+    {
+        $ids = collect($restaurantIds)->map(fn ($id) => (int) $id)->filter()->values();
+        if ($ids->isEmpty()) {
+            return [];
+        }
+
+        $orders = Order::query()
+            ->whereIn('restaurant_id', $ids)
+            ->visibleToRestaurant()
+            ->whereBetween('created_at', [$startDate, $endDate])
+            ->get();
+
+        $revenueOrders = $orders->whereNotIn('status', ['cancelled']);
+        $deliveredOrders = $orders->where('status', 'delivered');
+        $totalOrders = max((int) $orders->count(), 1);
+        $revenueOrderCount = (int) $revenueOrders->count();
+        $netSales = round((float) $revenueOrders->sum('total'), 2);
+        $cancelledOrders = (int) $orders->where('status', 'cancelled')->count();
+        $complaints = SupportConversation::query()
+            ->whereIn('restaurant_id', $ids)
+            ->whereBetween('created_at', [$startDate, $endDate])
+            ->count();
+        $openComplaints = SupportConversation::query()
+            ->whereIn('restaurant_id', $ids)
+            ->whereIn('status', ['open', 'in_progress'])
+            ->whereBetween('created_at', [$startDate, $endDate])
+            ->count();
+        $ratedOrders = Review::query()
+            ->whereIn('restaurant_id', $ids)
+            ->where('status', 'approved')
+            ->whereBetween('created_at', [$startDate, $endDate]);
+        $reviewCount = (int) (clone $ratedOrders)->count();
+        $avgRating = $reviewCount > 0 ? round((float) (clone $ratedOrders)->avg('rating'), 2) : 0;
+        $poorRatedOrders = (int) (clone $ratedOrders)->where('rating', '<=', 2)->count();
+        $menuItems = MenuItem::query()->whereIn('restaurant_id', $ids);
+        $menuItemCount = (int) (clone $menuItems)->count();
+        $availableItems = (int) (clone $menuItems)->where('is_available', true)->count();
+        $itemsWithPhotos = (int) (clone $menuItems)->whereNotNull('images')->where('images', '!=', '[]')->count();
+        $itemsWithDescriptions = (int) (clone $menuItems)->whereNotNull('description')->where('description', '!=', '')->count();
+        $avgPrepMinutes = $deliveredOrders->whereNotNull('preparation_time_minutes')->avg('preparation_time_minutes');
+        if ($avgPrepMinutes === null) {
+            $avgPrepMinutes = MenuItem::query()->whereIn('restaurant_id', $ids)->avg('preparation_time') ?? 0;
+        }
+
+        return [
+            ['key' => 'net_sales', 'group' => 'Sales', 'label' => 'Net Sales', 'value' => $netSales, 'unit' => 'currency', 'direction' => 'higher'],
+            ['key' => 'delivered_orders', 'group' => 'Sales', 'label' => 'Delivered Orders', 'value' => (int) $deliveredOrders->count(), 'unit' => 'number', 'direction' => 'higher'],
+            ['key' => 'average_order_value', 'group' => 'Sales', 'label' => 'Average Order Value', 'value' => $revenueOrderCount > 0 ? round($netSales / $revenueOrderCount, 2) : 0, 'unit' => 'currency', 'direction' => 'higher'],
+            ['key' => 'cancellation_rate', 'group' => 'Operations', 'label' => 'Cancellations', 'value' => round(($cancelledOrders / $totalOrders) * 100, 2), 'unit' => 'percent', 'direction' => 'lower'],
+            ['key' => 'complaint_rate', 'group' => 'Complaints', 'label' => 'Orders with Complaints', 'value' => round(($complaints / $totalOrders) * 100, 2), 'unit' => 'percent', 'direction' => 'lower'],
+            ['key' => 'open_complaints', 'group' => 'Complaints', 'label' => 'Unresolved Complaints', 'value' => $openComplaints, 'unit' => 'number', 'direction' => 'lower'],
+            ['key' => 'average_rating', 'group' => 'Ratings', 'label' => 'Average Rating', 'value' => $avgRating, 'unit' => 'rating', 'direction' => 'higher'],
+            ['key' => 'poor_rated_orders', 'group' => 'Ratings', 'label' => 'Poor Rated Orders', 'value' => $poorRatedOrders, 'unit' => 'number', 'direction' => 'lower'],
+            ['key' => 'menu_availability', 'group' => 'Menu', 'label' => 'Menu Availability', 'value' => $menuItemCount > 0 ? round(($availableItems / $menuItemCount) * 100, 2) : 0, 'unit' => 'percent', 'direction' => 'higher'],
+            ['key' => 'items_with_photos', 'group' => 'Menu', 'label' => 'Items with Photos', 'value' => $menuItemCount > 0 ? round(($itemsWithPhotos / $menuItemCount) * 100, 2) : 0, 'unit' => 'percent', 'direction' => 'higher'],
+            ['key' => 'items_with_descriptions', 'group' => 'Menu', 'label' => 'Items with Descriptions', 'value' => $menuItemCount > 0 ? round(($itemsWithDescriptions / $menuItemCount) * 100, 2) : 0, 'unit' => 'percent', 'direction' => 'higher'],
+            ['key' => 'preparation_time', 'group' => 'Operations', 'label' => 'Preparation Time', 'value' => round((float) $avgPrepMinutes, 2), 'unit' => 'minutes', 'direction' => 'lower'],
+        ];
+    }
+
+    private function averageComparisonMetrics($metricRows): array
+    {
+        $totals = [];
+        $counts = [];
+
+        foreach ($metricRows as $row) {
+            foreach ($row as $metric) {
+                $key = $metric['key'];
+                $totals[$key] = ($totals[$key] ?? 0) + (float) $metric['value'];
+                $counts[$key] = ($counts[$key] ?? 0) + 1;
+            }
+        }
+
+        $averages = [];
+        foreach ($totals as $key => $value) {
+            $averages[$key] = $counts[$key] > 0 ? round($value / $counts[$key], 2) : 0;
+        }
+
+        return $averages;
+    }
+
+    private function buildPromotionPerformanceForRestaurants($restaurantIds, Carbon $startDate, Carbon $endDate, $orders): array
+    {
+        $ids = collect($restaurantIds)->map(fn ($id) => (int) $id)->filter()->values();
+        if ($ids->isEmpty()) {
+            return [
+                'total_promotions' => 0,
+                'active_promotions' => 0,
+                'coupon_orders' => 0,
+                'discount_given' => 0,
+                'avg_discount' => 0,
+                'top_promos' => collect(),
+            ];
+        }
+
+        if ($ids->count() === 1) {
+            return $this->buildPromotionPerformance((int) $ids->first(), $startDate, $endDate, $orders);
+        }
+
+        $totalPromotions = Promotion::whereIn('restaurant_id', $ids)->count();
+        $activePromotions = Promotion::whereIn('restaurant_id', $ids)
+            ->active()
+            ->where(function ($query) use ($endDate) {
+                $query->whereNull('starts_at')->orWhere('starts_at', '<=', $endDate);
+            })
+            ->where(function ($query) use ($startDate) {
+                $query->whereNull('ends_at')->orWhere('ends_at', '>=', $startDate);
+            })
+            ->count();
+
+        $usageCount = 0;
+        $discountGiven = 0.0;
+        $topPromos = collect();
+
+        if (Schema::hasTable('promotion_usage')) {
+            $usageCount = (int) DB::table('promotion_usage')
+                ->whereIn('restaurant_id', $ids)
+                ->whereBetween('created_at', [$startDate, $endDate])
+                ->distinct('order_id')
+                ->count('order_id');
+
+            $discountGiven = round((float) DB::table('promotion_usage')
+                ->whereIn('restaurant_id', $ids)
+                ->whereBetween('created_at', [$startDate, $endDate])
+                ->sum('discount_amount'), 2);
+
+            $topPromos = DB::table('promotion_usage')
+                ->leftJoin('promotions', 'promotion_usage.promotion_id', '=', 'promotions.id')
+                ->whereIn('promotion_usage.restaurant_id', $ids)
+                ->whereBetween('promotion_usage.created_at', [$startDate, $endDate])
+                ->groupBy('promotion_usage.promotion_id', 'promotion_usage.coupon_code', 'promotions.title')
+                ->selectRaw("COALESCE(promotions.title, promotion_usage.coupon_code, 'Promotion') as title")
+                ->selectRaw('promotion_usage.coupon_code as code')
+                ->selectRaw('COUNT(DISTINCT promotion_usage.order_id) as usage_count')
+                ->selectRaw('SUM(promotion_usage.discount_amount) as discount_given')
+                ->orderByDesc('usage_count')
+                ->limit(5)
+                ->get()
+                ->map(fn ($row) => [
+                    'title' => $row->title,
+                    'code' => $row->code,
+                    'usage_count' => (int) $row->usage_count,
+                    'discount_given' => round((float) $row->discount_given, 2),
+                ]);
+        }
+
+        if ($usageCount === 0) {
+            $discountedOrders = $orders->filter(fn ($order) => (float) ($order->discount ?? 0) > 0);
+            $usageCount = (int) $discountedOrders->count();
+            $discountGiven = round((float) $discountedOrders->sum('discount'), 2);
+        }
+
+        return [
+            'total_promotions' => (int) $totalPromotions,
+            'active_promotions' => (int) $activePromotions,
+            'coupon_orders' => (int) $usageCount,
+            'discount_given' => round((float) $discountGiven, 2),
+            'avg_discount' => $usageCount > 0 ? round($discountGiven / $usageCount, 2) : 0,
+            'top_promos' => $topPromos->values(),
+        ];
+    }
+
+    private function buildTopSellingItemsForRestaurants($restaurantIds, Carbon $startDate, Carbon $endDate)
+    {
+        return collect($restaurantIds)
+            ->map(fn ($id) => (int) $id)
+            ->filter()
+            ->flatMap(fn ($id) => $this->buildTopSellingItems($id, $startDate, $endDate))
+            ->groupBy('name')
+            ->map(fn ($items, $name) => [
+                'name' => $name,
+                'total_orders' => (int) $items->sum('total_orders'),
+                'revenue' => round((float) $items->sum('revenue'), 2),
+            ])
+            ->sortByDesc('total_orders')
+            ->take(10)
+            ->values();
     }
 
     private function buildPromotionPerformance(int $restaurantId, Carbon $startDate, Carbon $endDate, $orders)
@@ -2884,10 +3440,14 @@ class RestaurantController extends Controller
             $orderItems = is_string($order->items)
                 ? json_decode($order->items, true)
                 : $order->items;
-            if (!is_array($orderItems)) continue;
+            if (! is_array($orderItems)) {
+                continue;
+            }
 
             foreach ($orderItems as $item) {
-                if (!is_array($item)) continue;
+                if (! is_array($item)) {
+                    continue;
+                }
                 $name = (string) ($item['name'] ?? $item['item_name'] ?? 'Menu item');
                 $quantity = (int) ($item['quantity'] ?? 1);
                 $total = (float) ($item['total'] ?? $item['total_price'] ?? (($item['price'] ?? $item['unit_price'] ?? 0) * $quantity));
@@ -2909,7 +3469,7 @@ class RestaurantController extends Controller
     }
 
     /**
-     * Get nearby restaurants for customer discovery
+     * Get nearby restaurants for customer discovery.
      */
     public function nearby(Request $request)
     {
@@ -2922,23 +3482,23 @@ class RestaurantController extends Controller
                 'open_now' => 'nullable|boolean',
             ]);
 
-            $latitude = (float)$validated['lat'];
-            $longitude = (float)$validated['lng'];
-            $radius = isset($validated['radius']) ? min(100.0, (float)$validated['radius']) : 100.0;
+            $latitude = (float) $validated['lat'];
+            $longitude = (float) $validated['lng'];
+            $radius = isset($validated['radius']) ? min(100.0, (float) $validated['radius']) : 100.0;
 
             $restaurantsQuery = Restaurant::query()->where('is_verified', true);
 
-            if (!empty($validated['query'])) {
+            if (! empty($validated['query'])) {
                 $search = $validated['query'];
                 $restaurantsQuery->where(function ($query) use ($search) {
                     $query->where('name', 'like', "%{$search}%")
-                          ->orWhere('city', 'like', "%{$search}%")
-                          ->orWhere('address', 'like', "%{$search}%")
-                          ->orWhere('cuisine', 'like', "%{$search}%");
+                        ->orWhere('city', 'like', "%{$search}%")
+                        ->orWhere('address', 'like', "%{$search}%")
+                        ->orWhere('cuisine', 'like', "%{$search}%");
                 });
             }
 
-            if (!empty($validated['open_now'])) {
+            if (! empty($validated['open_now'])) {
                 $restaurantsQuery->where('is_open', true);
             }
 
@@ -2966,8 +3526,7 @@ class RestaurantController extends Controller
                     'next_page' => null,
                 ],
             ]);
-
-        } catch (\Illuminate\Validation\ValidationException $e) {
+        } catch (ValidationException $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Invalid location parameters provided.',
@@ -2975,6 +3534,7 @@ class RestaurantController extends Controller
             ], 422);
         } catch (\Exception $e) {
             Log::error('Nearby restaurants error: ' . $e->getMessage());
+
             return response()->json([
                 'success' => false,
                 'message' => 'An unexpected error occurred while processing the request.',
@@ -2983,7 +3543,7 @@ class RestaurantController extends Controller
     }
 
     /**
-     * Search restaurants by query
+     * Search restaurants by query.
      */
     public function search(Request $request)
     {
@@ -3013,14 +3573,14 @@ class RestaurantController extends Controller
                 ? Cuisine::query()->find($cuisineId)
                 : Cuisine::query()
                     ->where('name', 'like', "%{$search}%")
-                    ->orWhere('slug', 'like', "%" . \Illuminate\Support\Str::slug($search) . "%")
+                    ->orWhere('slug', 'like', '%' . Str::slug($search) . '%')
                     ->first();
             if (($cuisineId === null || $cuisineId <= 0) && $resolvedCuisine) {
                 $cuisineId = (int) $resolvedCuisine->id;
             }
             $cuisineTerms = collect([
                 $search,
-                \Illuminate\Support\Str::slug($search),
+                Str::slug($search),
                 $cuisineId,
                 $cuisineId !== null ? (string) $cuisineId : null,
                 $resolvedCuisine?->id,
@@ -3036,7 +3596,7 @@ class RestaurantController extends Controller
                 || $request->filled('category')
                 || $request->filled('cuisine')
                 || $cuisineFilter;
-            if (!empty($validated['delivery_zone_only']) &&
+            if (! empty($validated['delivery_zone_only']) &&
                 (empty($validated['lat']) || empty($validated['lng']))) {
                 return response()->json([
                     'success' => true,
@@ -3075,34 +3635,36 @@ class RestaurantController extends Controller
                                         });
                                 });
                         });
+
                         return;
                     }
 
                     if (! $categorySearch) {
                         $query->where('name', 'like', "%{$search}%")
-                              ->orWhere('city', 'like', "%{$search}%")
-                              ->orWhere('address', 'like', "%{$search}%")
-                              ->orWhereHas('menuItems', function ($menuQuery) use ($search) {
-                                  $menuQuery->where('is_available', true)
-                                      ->where(function ($statusQuery) {
-                                          $statusQuery->whereNull('approval_status')
-                                              ->orWhere('approval_status', 'approved');
-                                      })
-                                      ->where(function ($itemQuery) use ($search) {
-                                          $itemQuery->where('name', 'like', "%{$search}%")
-                                              ->orWhere('description', 'like', "%{$search}%")
-                                              ->orWhereHas('category', function ($categoryQuery) use ($search) {
-                                                  $categoryQuery->where('name', 'like', "%{$search}%");
-                                              })
-                                              ->orWhereHas('cuisine', function ($cuisineQuery) use ($search) {
-                                                  $cuisineQuery->where('name', 'like', "%{$search}%");
-                                              });
-                                      });
-                              });
+                            ->orWhere('city', 'like', "%{$search}%")
+                            ->orWhere('address', 'like', "%{$search}%")
+                            ->orWhereHas('menuItems', function ($menuQuery) use ($search) {
+                                $menuQuery->where('is_available', true)
+                                    ->where(function ($statusQuery) {
+                                        $statusQuery->whereNull('approval_status')
+                                            ->orWhere('approval_status', 'approved');
+                                    })
+                                    ->where(function ($itemQuery) use ($search) {
+                                        $itemQuery->where('name', 'like', "%{$search}%")
+                                            ->orWhere('description', 'like', "%{$search}%")
+                                            ->orWhereHas('category', function ($categoryQuery) use ($search) {
+                                                $categoryQuery->where('name', 'like', "%{$search}%");
+                                            })
+                                            ->orWhereHas('cuisine', function ($cuisineQuery) use ($search) {
+                                                $cuisineQuery->where('name', 'like', "%{$search}%");
+                                            });
+                                    });
+                            });
                         foreach ($cuisineTerms as $term) {
                             $query->orWhere('cuisine', 'like', "%{$term}%")
                                 ->orWhereJsonContains('cuisine', $term);
                         }
+
                         return;
                     }
 
@@ -3141,13 +3703,13 @@ class RestaurantController extends Controller
                     }
                 });
 
-            if (!empty($validated['open_now'])) {
+            if (! empty($validated['open_now'])) {
                 $restaurantsQuery->where('is_open', true);
             }
 
-            if (!empty($validated['lat']) && !empty($validated['lng'])) {
-                $radius = isset($validated['radius']) ? min(100.0, (float)$validated['radius']) : 100.0;
-                $restaurantsQuery = $restaurantsQuery->nearby((float)$validated['lat'], (float)$validated['lng'], $radius);
+            if (! empty($validated['lat']) && ! empty($validated['lng'])) {
+                $radius = isset($validated['radius']) ? min(100.0, (float) $validated['radius']) : 100.0;
+                $restaurantsQuery = $restaurantsQuery->nearby((float) $validated['lat'], (float) $validated['lng'], $radius);
             } else {
                 $restaurantsQuery->orderByDesc('is_open')->orderByDesc('rating');
             }
@@ -3180,6 +3742,7 @@ class RestaurantController extends Controller
                                     $categoryQuery->orWhere('name', 'like', "%{$term}%");
                                 }
                             });
+
                         return;
                     }
 
@@ -3189,6 +3752,7 @@ class RestaurantController extends Controller
                         })->orWhereHas('cuisine', function ($cuisineQuery) use ($search) {
                             $cuisineQuery->where('name', 'like', "%{$search}%");
                         });
+
                         return;
                     }
 
@@ -3225,6 +3789,7 @@ class RestaurantController extends Controller
             $matchedMenuItems = $matchedItems
                 ->map(function ($item) use ($restaurantsById) {
                     $restaurant = $restaurantsById->get($item->restaurant_id);
+
                     return $restaurant
                         ? $this->formatSearchMenuItemPayload($item, $restaurant)
                         : null;
@@ -3253,8 +3818,7 @@ class RestaurantController extends Controller
                     'next_page' => null,
                 ],
             ]);
-
-        } catch (\Illuminate\Validation\ValidationException $e) {
+        } catch (ValidationException $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Invalid search parameters provided.',
@@ -3262,6 +3826,7 @@ class RestaurantController extends Controller
             ], 422);
         } catch (\Exception $e) {
             Log::error('Restaurant search error: ' . $e->getMessage());
+
             return response()->json([
                 'success' => false,
                 'message' => 'An unexpected error occurred while processing the request.',
@@ -3270,17 +3835,17 @@ class RestaurantController extends Controller
     }
 
     /**
-     * Show restaurant details by ID
+     * Show restaurant details by ID.
      */
     public function show(Request $request, $id)
     {
         try {
             $restaurant = Restaurant::with('owner')->find($id);
 
-            if (!$restaurant) {
+            if (! $restaurant) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Restaurant not found.'
+                    'message' => 'Restaurant not found.',
                 ], 404);
             }
 
@@ -3340,9 +3905,9 @@ class RestaurantController extends Controller
                     'similar_restaurants' => RestaurantResource::collection($similarRestaurants)->resolve(),
                 ]),
             ]);
-
         } catch (\Exception $e) {
             Log::error('Restaurant show error: ' . $e->getMessage());
+
             return response()->json([
                 'success' => false,
                 'message' => 'An unexpected error occurred while processing the request.',
@@ -3351,7 +3916,7 @@ class RestaurantController extends Controller
     }
 
     /**
-     * Format order for API response
+     * Format order for API response.
      */
     private function formatCategoryForApi(Category $category): array
     {
@@ -3360,7 +3925,7 @@ class RestaurantController extends Controller
             'name' => $category->name,
             'description' => $category->description,
             'image' => $category->image,
-            'image_url' => \App\Services\MediaStorage::url($category->image),
+            'image_url' => MediaStorage::url($category->image),
             'display_order' => $category->display_order,
             'is_active' => (bool) $category->is_active,
             'item_count' => $category->relationLoaded('menuItems')
@@ -3371,10 +3936,39 @@ class RestaurantController extends Controller
 
     private function formatOrderForApi($order)
     {
-        $order->loadMissing('branch');
+        $order->loadMissing(['branch', 'restaurant', 'driver']);
 
         $items = is_string($order->items) ? json_decode($order->items, true) : $order->items;
-        
+        $driverLocation = null;
+        if ($order->driver_id) {
+            $cachedLocation = Cache::get('driver_location_' . $order->driver_id);
+            $latitude = data_get($cachedLocation, 'lat', $order->driver?->latitude);
+            $longitude = data_get($cachedLocation, 'lng', $order->driver?->longitude);
+            if ($latitude !== null && $longitude !== null) {
+                $driverLocation = [
+                    'lat' => (float) $latitude,
+                    'lng' => (float) $longitude,
+                    'updated_at' => data_get($cachedLocation, 'updated_at'),
+                ];
+            }
+        }
+
+        $restaurantLocation = null;
+        if ($order->restaurant?->latitude !== null && $order->restaurant?->longitude !== null) {
+            $restaurantLocation = [
+                'lat' => (float) $order->restaurant->latitude,
+                'lng' => (float) $order->restaurant->longitude,
+            ];
+        }
+
+        $driverHasArrived = in_array($order->status, [
+            'reached_pickup',
+            'picked_up',
+            'on_the_way',
+            'delivered',
+            'completed',
+        ], true);
+
         return [
             'id' => $order->id,
             'order_number' => $order->order_number,
@@ -3382,15 +3976,21 @@ class RestaurantController extends Controller
             'customer_name' => $order->customer_name ?? 'Guest',
             'customer_phone' => $order->customer_phone ?? '',
             'delivery_address' => $order->delivery_address ?? '',
-            'total' => (float)($order->total ?? 0),
-            'subtotal' => (float)($order->subtotal ?? 0),
-            'delivery_fee' => (float)($order->delivery_fee ?? 0),
-            'tax' => (float)($order->tax ?? 0),
-            'discount' => (float)($order->discount ?? 0),
+            'total' => (float) ($order->total ?? 0),
+            'subtotal' => (float) ($order->subtotal ?? 0),
+            'delivery_fee' => (float) ($order->delivery_fee ?? 0),
+            'tax' => (float) ($order->tax ?? 0),
+            'discount' => (float) ($order->discount ?? 0),
             'status' => $order->status ?? 'pending',
-            'driver_assignment_attempts' => (int)($order->driver_assignment_attempts ?? 0),
+            'driver_assignment_attempts' => (int) ($order->driver_assignment_attempts ?? 0),
             'driver_assigned_at' => $order->driver_assigned_at ? $order->driver_assigned_at->toIso8601String() : null,
             'driver_accepted_at' => $order->driver_accepted_at ? $order->driver_accepted_at->toIso8601String() : null,
+            'driver_id' => $order->driver_id,
+            'driver_name' => $order->driver?->name,
+            'driver_phone' => $order->driver?->phone,
+            'driver_location' => $driverLocation,
+            'restaurant_location' => $restaurantLocation,
+            'driver_arrived_at_restaurant' => $driverHasArrived,
             'items' => $items ?? [],
             'items_count' => count($items ?? []),
             'payment_method' => $order->payment_method ?? 'cod',
@@ -3418,10 +4018,13 @@ class RestaurantController extends Controller
                 'id' => $order->driver->id,
                 'name' => $order->driver->name,
                 'phone' => $order->driver->phone,
+                'profile_photo_url' => $order->driver->profile_photo_url,
+                'latitude' => $order->driver->latitude !== null ? (float) $order->driver->latitude : null,
+                'longitude' => $order->driver->longitude !== null ? (float) $order->driver->longitude : null,
             ] : null,
             'customer_address' => $order->customer_address,
-            'delivery_lat' => $order->delivery_lat !== null ? (float)$order->delivery_lat : null,
-            'delivery_lng' => $order->delivery_lng !== null ? (float)$order->delivery_lng : null,
+            'delivery_lat' => $order->delivery_lat !== null ? (float) $order->delivery_lat : null,
+            'delivery_lng' => $order->delivery_lng !== null ? (float) $order->delivery_lng : null,
             'special_instructions' => $order->special_instructions,
             'cancellation_reason' => $order->cancellation_reason,
             'created_at' => $order->created_at ? $order->created_at->toIso8601String() : Carbon::now()->toIso8601String(),
@@ -3458,39 +4061,39 @@ class RestaurantController extends Controller
             'city' => $restaurant->city,
             'state' => $restaurant->state,
             'pincode' => $restaurant->pincode,
-            'latitude' => $restaurant->latitude !== null ? (float)$restaurant->latitude : null,
-            'longitude' => $restaurant->longitude !== null ? (float)$restaurant->longitude : null,
+            'latitude' => $restaurant->latitude !== null ? (float) $restaurant->latitude : null,
+            'longitude' => $restaurant->longitude !== null ? (float) $restaurant->longitude : null,
             'cuisine' => $this->resolveCuisineNamesForPayload($restaurant->cuisine ?? []),
             'cuisine_ids' => $this->resolveCuisineIdsForPayload($restaurant->cuisine ?? []),
             'cuisine_text' => implode(', ', $this->resolveCuisineNamesForPayload($restaurant->cuisine ?? [])),
             'is_open' => $restaurant->isOpenNow(),
-            'manual_is_open' => (bool)$restaurant->is_open,
+            'manual_is_open' => (bool) $restaurant->is_open,
             'is_open_now' => $restaurant->isOpenNow(),
-            'is_pure_veg' => (bool)$restaurant->is_pure_veg,
-            'min_order_amount' => (float)($restaurant->min_order_amount ?? 0),
+            'is_pure_veg' => (bool) $restaurant->is_pure_veg,
+            'min_order_amount' => (float) ($restaurant->min_order_amount ?? 0),
             'amount_for_one' => $restaurant->amountForOne(),
-            'delivery_fee' => (float)($restaurant->delivery_fee ?? 0),
-            'delivery_time' => (int)($restaurant->delivery_time ?? 30),
-            'delivery_radius' => $restaurant->delivery_radius !== null ? (float)$restaurant->delivery_radius : null,
-            'rating' => (int)($restaurant->total_ratings ?? 0) >= 3
-                ? (float)($restaurant->rating ?? 0)
+            'delivery_fee' => (float) ($restaurant->delivery_fee ?? 0),
+            'delivery_time' => (int) ($restaurant->delivery_time ?? 30),
+            'delivery_radius' => $restaurant->delivery_radius !== null ? (float) $restaurant->delivery_radius : null,
+            'rating' => (int) ($restaurant->total_ratings ?? 0) >= 3
+                ? (float) ($restaurant->rating ?? 0)
                 : null,
-            'total_ratings' => (int)($restaurant->total_ratings ?? 0),
-            'is_verified' => (bool)$restaurant->is_verified,
+            'total_ratings' => (int) ($restaurant->total_ratings ?? 0),
+            'is_verified' => (bool) $restaurant->is_verified,
             'fssai_license_number' => $restaurant->fssai_license_number ?: $restaurantApplication?->license_number,
             'has_approved_fssai_license' => $hasApprovedFssaiLicense,
-            'auto_accept_orders' => (bool)($restaurant->auto_accept_orders ?? false),
-            'order_lead_time' => (int)($restaurant->order_lead_time ?? 0),
-            'same_day_delivery' => (bool)($restaurant->same_day_delivery ?? true),
+            'auto_accept_orders' => (bool) ($restaurant->auto_accept_orders ?? false),
+            'order_lead_time' => (int) ($restaurant->order_lead_time ?? 0),
+            'same_day_delivery' => (bool) ($restaurant->same_day_delivery ?? true),
             'restaurant_type' => $restaurant->restaurant_type ?? 'delivery',
-            'dining_charge' => (float)($restaurant->dining_charge ?? 0),
+            'dining_charge' => (float) ($restaurant->dining_charge ?? 0),
             'dining_settings' => $restaurant->dining_settings ?? [],
             'accepts_delivery' => $restaurant->acceptsService('delivery'),
             'accepts_dining' => $restaurant->acceptsService('dining'),
             'accepts_takeaway' => $restaurant->acceptsService('takeaway'),
-            'logo_image' => \App\Services\MediaStorage::url($restaurant->logo_image),
-            'banner_image' => \App\Services\MediaStorage::url($restaurant->banner_image),
-            'cover_image' => \App\Services\MediaStorage::url($restaurant->cover_image),
+            'logo_image' => MediaStorage::url($restaurant->logo_image),
+            'banner_image' => MediaStorage::url($restaurant->banner_image),
+            'cover_image' => MediaStorage::url($restaurant->cover_image),
         ];
     }
 
@@ -3515,11 +4118,11 @@ class RestaurantController extends Controller
      */
     private function normalizeRestaurantOrderStatus($status)
     {
-        if (!$status) {
+        if (! $status) {
             return null;
         }
 
-        $status = strtolower(trim((string)$status));
+        $status = strtolower(trim((string) $status));
         $status = str_replace([' ', '-'], '_', $status);
 
         $aliases = [
@@ -3545,7 +4148,7 @@ class RestaurantController extends Controller
 
     private function getAuthenticatedRestaurant(?User $user): ?Restaurant
     {
-        if (!$user) {
+        if (! $user) {
             return null;
         }
 
@@ -3647,8 +4250,8 @@ class RestaurantController extends Controller
                 ? (float) ($restaurant->rating ?? 0)
                 : null,
             'total_ratings' => (int) ($restaurant->total_ratings ?? 0),
-            'banner_image' => \App\Services\MediaStorage::url($restaurant->banner_image),
-            'logo_image' => \App\Services\MediaStorage::url($restaurant->logo_image),
+            'banner_image' => MediaStorage::url($restaurant->banner_image),
+            'logo_image' => MediaStorage::url($restaurant->logo_image),
             'distance' => $distance !== null ? round((float) $distance, 2) : null,
             'matched_item_names' => $matchedItemNames,
             'matched_menu_items' => $matchedMenuItems,
@@ -3693,8 +4296,8 @@ class RestaurantController extends Controller
             'restaurant' => [
                 'id' => $restaurant->id,
                 'name' => $restaurant->name,
-                'logo_image' => \App\Services\MediaStorage::url($restaurant->logo_image),
-                'banner_image' => \App\Services\MediaStorage::url($restaurant->banner_image),
+                'logo_image' => MediaStorage::url($restaurant->logo_image),
+                'banner_image' => MediaStorage::url($restaurant->banner_image),
                 'is_open' => $restaurant->isOpenNow(),
                 'manual_is_open' => (bool) $restaurant->is_open,
                 'is_open_now' => $restaurant->isOpenNow(),
@@ -3723,7 +4326,7 @@ class RestaurantController extends Controller
         }
 
         return collect($images)
-            ->map(fn ($image) => \App\Services\MediaStorage::url((string) $image))
+            ->map(fn ($image) => MediaStorage::url((string) $image))
             ->filter()
             ->values()
             ->all();
@@ -3889,9 +4492,118 @@ class RestaurantController extends Controller
         });
     }
 
+    private function disableOrderItemsAndReject(
+        int $orderId,
+        $restaurants,
+        array $menuItemIds,
+        string $availabilityOption
+    ): array {
+        return DB::transaction(function () use (
+            $orderId,
+            $restaurants,
+            $menuItemIds,
+            $availabilityOption
+        ) {
+            $order = Order::whereIn('restaurant_id', $restaurants->pluck('id'))
+                ->visibleToRestaurant()
+                ->where('status', 'pending')
+                ->lockForUpdate()
+                ->findOrFail($orderId);
+            $restaurant = $restaurants->firstWhere('id', $order->restaurant_id);
+            $orderMenuItemIds = OrderItem::where('order_id', $order->id)
+                ->whereNotNull('menu_item_id')
+                ->pluck('menu_item_id')
+                ->map(fn ($menuItemId) => (int) $menuItemId)
+                ->unique();
+            $selectedMenuItemIds = collect($menuItemIds)
+                ->map(fn ($menuItemId) => (int) $menuItemId)
+                ->unique()
+                ->values();
+
+            if ($selectedMenuItemIds->diff($orderMenuItemIds)->isNotEmpty()) {
+                throw ValidationException::withMessages([
+                    'menu_item_ids' => ['One or more selected items do not belong to this order.'],
+                ]);
+            }
+
+            $menuItems = MenuItem::where('restaurant_id', $order->restaurant_id)
+                ->whereIn('id', $selectedMenuItemIds)
+                ->lockForUpdate()
+                ->get();
+            if ($menuItems->count() !== $selectedMenuItemIds->count()) {
+                throw ValidationException::withMessages([
+                    'menu_item_ids' => ['One or more selected menu items could not be found.'],
+                ]);
+            }
+
+            $restaurantTimezone = $restaurant->timezone ?: 'Asia/Kolkata';
+            $unavailableUntil = match ($availabilityOption) {
+                '30_minutes' => Carbon::now($restaurantTimezone)->addMinutes(30),
+                '2_hours' => Carbon::now($restaurantTimezone)->addHours(2),
+                'tomorrow' => Carbon::now($restaurantTimezone)->addDay()->startOfDay(),
+                default => null,
+            };
+            $databaseUnavailableUntil = $unavailableUntil?->copy()->setTimezone(config('app.timezone'));
+
+            MenuItem::whereIn('id', $menuItems->pluck('id'))->update([
+                'is_available' => false,
+                'unavailable_until' => $databaseUnavailableUntil,
+                'updated_at' => now(),
+            ]);
+
+            $order->status = 'cancelled';
+            $this->setOrderColumnIfExists($order, 'cancelled_at', Carbon::now());
+            $this->setOrderColumnIfExists(
+                $order,
+                'cancellation_reason',
+                'Selected menu item unavailable'
+            );
+            $order->save();
+
+            return [
+                'order' => $order,
+                'restaurant' => $restaurant,
+                'menu_item_ids' => $selectedMenuItemIds->all(),
+                'unavailable_until' => $unavailableUntil,
+            ];
+        });
+    }
+
+    private function finalizeOutOfStockOrder(array $result, string $availabilityOption)
+    {
+        $order = $result['order'];
+        $restaurant = $result['restaurant'];
+
+        if ($order->payment_status === 'success') {
+            app(RefundService::class)->processRefund(
+                $order,
+                'Order rejected because an item is out of stock'
+            );
+            $order->refresh();
+        }
+
+        broadcast(new OrderStatusUpdatedEvent($order, $restaurant->id));
+
+        app(OrderStatusPushService::class)->notifyParticipants(
+            $order,
+            sprintf('Your order #%s was rejected because an item is unavailable.', $order->order_number)
+        );
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Selected menu items marked out of stock and order rejected.',
+            'data' => [
+                'order' => $this->formatOrderForApi($order),
+                'menu_item_ids' => $result['menu_item_ids'],
+                'availability_option' => $availabilityOption,
+                'unavailable_until' => $result['unavailable_until']?->toIso8601String(),
+            ],
+        ]);
+    }
+
     private function getAccessibleRestaurants(?User $user)
     {
-        if (!$user) {
+        if (! $user) {
             return collect();
         }
 
@@ -3925,6 +4637,7 @@ class RestaurantController extends Controller
         }
 
         $selectedId = (int) $selectedId;
+
         return $restaurants->where('id', $selectedId)->values();
     }
 
@@ -3955,7 +4668,7 @@ class RestaurantController extends Controller
             'accepts_delivery' => $restaurant->acceptsService('delivery'),
             'accepts_dining' => $restaurant->acceptsService('dining'),
             'accepts_takeaway' => $restaurant->acceptsService('takeaway'),
-            'logo' => \App\Services\MediaStorage::url($restaurant->logo_image),
+            'logo' => MediaStorage::url($restaurant->logo_image),
         ];
     }
 
@@ -4007,7 +4720,7 @@ class RestaurantController extends Controller
 
         return response()->json([
             'success' => false,
-            'message' => 'Only the restaurant owner can manage staff accounts.'
+            'message' => 'Only the restaurant owner can manage staff accounts.',
         ], 403);
     }
 
@@ -4031,7 +4744,7 @@ class RestaurantController extends Controller
 
         return response()->json([
             'success' => false,
-            'message' => 'You do not have permission to access this section.'
+            'message' => 'You do not have permission to access this section.',
         ], 403);
     }
 
@@ -4083,11 +4796,12 @@ class RestaurantController extends Controller
             Permission::findOrCreate($permission, 'web');
         }
 
-        if (!empty($requiredPermissions)) {
+        if (! empty($requiredPermissions)) {
             $role->givePermissionTo($requiredPermissions);
         }
 
         app(PermissionRegistrar::class)->forgetCachedPermissions();
+
         return $role;
     }
 
@@ -4102,7 +4816,7 @@ class RestaurantController extends Controller
         $permissions = $attributes['permissions'] ?? ($staff->permissions ?? []);
         $staffRole = $this->ensureStaffAccessControlSeeded(is_array($permissions) ? $permissions : []);
 
-        if (!$staffUser) {
+        if (! $staffUser) {
             if (empty($staff->email) || empty($staff->phone)) {
                 throw new \RuntimeException('Staff account requires both email and phone number.');
             }
@@ -4127,7 +4841,7 @@ class RestaurantController extends Controller
             'current_restaurant_id' => $restaurant->id,
         ]);
 
-        if (!empty($attributes['password'])) {
+        if (! empty($attributes['password'])) {
             $staffUser->update([
                 'password' => Hash::make($attributes['password']),
             ]);
@@ -4174,4 +4888,3 @@ class RestaurantController extends Controller
         }
     }
 }
-

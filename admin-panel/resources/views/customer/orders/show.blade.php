@@ -58,7 +58,7 @@
 
 @section('content')
 @php
-    $currencySymbol = App\Models\AppSetting::getValue('currency_symbol', '₹');
+    $currencySymbol = App\Models\AppSetting::sanitizedCurrencySymbol();
 @endphp
 <div class="container py-4">
     <div class="row">

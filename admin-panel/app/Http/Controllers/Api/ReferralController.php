@@ -17,7 +17,7 @@ class ReferralController extends Controller
     {
         $user = $request->user();
         $code = $user->referral_code ?: '';
-        $currencySymbol = AppSetting::getValue('currency_symbol', 'Rs');
+        $currencySymbol = AppSetting::sanitizedCurrencySymbol();
         $referrals = UserReferral::query()
             ->with(['referredUser:id,name,phone,created_at'])
             ->where('referrer_id', $user->id)
@@ -91,7 +91,7 @@ class ReferralController extends Controller
         $domain = preg_replace('#^https?://#', '', trim((string) config('services.appsflyer.onelink_domain')));
         $domain = rtrim((string) $domain, '/');
         if ($domain === '') {
-            $domain = 'yumma.onelink.me';
+            $domain = 'Swado.onelink.me';
         }
 
         $path = trim((string) config('services.appsflyer.onelink_path'), '/');
@@ -120,7 +120,7 @@ class ReferralController extends Controller
             'referral_code' => $code,
             'link' => $webLink,
             'af_web_dp' => $webLink,
-            'af_og_title' => 'Join ' . AppSetting::getValue('app_name', config('app.name', 'Yumma!')),
+            'af_og_title' => 'Join ' . AppSetting::getValue('app_name', config('app.name', 'Swado')),
             'af_og_description' => $description,
         ];
 

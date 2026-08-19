@@ -400,6 +400,12 @@ class SettingController extends Controller
             $settings['currency_decimals'] = max(2, min(5, (int) $settings['currency_decimals']));
         }
 
+        if (array_key_exists('currency_symbol', $settings)) {
+            $settings['currency_symbol'] = AppSetting::normalizeCurrencySymbol(
+                $settings['currency_symbol']
+            );
+        }
+
         if (array_key_exists('default_mobile_country_code', $settings)) {
             $settings['default_mobile_country_code'] = PhoneNumber::normalizeCountryCode(
                 $settings['default_mobile_country_code']
@@ -599,6 +605,10 @@ class SettingController extends Controller
             'cashfree_key' => 'nullable|string',
             'cashfree_secret' => 'nullable|string',
             'cashfree_mode' => 'nullable|in:test,live',
+            'cashfree_vrs_enabled' => 'nullable|in:0,1',
+            'cashfree_vrs_client_id' => 'nullable|string',
+            'cashfree_vrs_client_secret' => 'nullable|string',
+            'cashfree_vrs_mode' => 'nullable|in:test,live',
             'paystack_public_key' => 'nullable|string',
             'paystack_secret_key' => 'nullable|string',
             'paystack_mode' => 'nullable|in:test,live',
@@ -649,6 +659,10 @@ class SettingController extends Controller
             'cashfree_key',
             'cashfree_secret',
             'cashfree_mode',
+            'cashfree_vrs_enabled',
+            'cashfree_vrs_client_id',
+            'cashfree_vrs_client_secret',
+            'cashfree_vrs_mode',
             'paystack_public_key',
             'paystack_secret_key',
             'paystack_mode',
@@ -707,11 +721,18 @@ class SettingController extends Controller
             $settings['currency_decimals'] = max(2, min(5, (int) $settings['currency_decimals']));
         }
 
+        if (array_key_exists('currency_symbol', $settings)) {
+            $settings['currency_symbol'] = AppSetting::normalizeCurrencySymbol(
+                $settings['currency_symbol']
+            );
+        }
+
         foreach ([
             'razorpay_secret',
             'stripe_secret',
             'stripe_webhook_secret',
             'cashfree_secret',
+            'cashfree_vrs_client_secret',
             'paystack_secret_key',
             'sslcommerz_store_password',
             'mollie_key',

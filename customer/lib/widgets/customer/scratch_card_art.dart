@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart' show DateFormat;
 import 'package:lottie/lottie.dart';
+import 'package:shimmer/shimmer.dart';
 
 import '../../models/scratch_card.dart';
 import '../../theme/foodflow_theme.dart';
@@ -10,7 +11,8 @@ import '../../utils/currency_utils.dart';
 
 const String scratchGiftLottie = 'assets/animations/gift_box_white.json';
 const Color _scratchOrange = Color(0xFFFF5A00);
-const Color _scratchAmber = Color(0xFFFF9800);
+const Color _scratchAmber = Color(0xFFFFB300);
+const Color _scratchGold = Color(0xFFFFD54A);
 const Color _scratchPeach = Color(0xFFFFF2E8);
 
 class ScratchRewardText {
@@ -95,7 +97,9 @@ class ScratchGiftBox extends StatelessWidget {
   }
 }
 
-class ScratchCardFace extends StatelessWidget {
+/// The static/idle card face used in lists and previews — a foil "ticket"
+/// with a torn/wavy edge, shimmering while unrevealed (Paytm-style).
+class ScratchCardFace extends StatefulWidget {
   const ScratchCardFace({
     super.key,
     required this.card,
@@ -110,12 +114,36 @@ class ScratchCardFace extends StatelessWidget {
   final bool showOrderTag;
 
   @override
+  State<ScratchCardFace> createState() => _ScratchCardFaceState();
+}
+
+class _ScratchCardFaceState extends State<ScratchCardFace>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _pulse;
+
+  @override
+  void initState() {
+    super.initState();
+    _pulse = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1400),
+    )..repeat(reverse: true);
+  }
+
+  @override
+  void dispose() {
+    _pulse.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final card = widget.card;
     return SizedBox(
-      height: height,
+      height: widget.height,
       width: double.infinity,
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(compact ? 18 : 20),
+      child: ClipPath(
+        clipper: _TornEdgeClipper(radius: widget.compact ? 18 : 20),
         child: Stack(
           fit: StackFit.expand,
           children: [
@@ -133,16 +161,20 @@ class ScratchCardFace extends StatelessWidget {
             CustomPaint(
               painter: _ScratchConfettiPainter(
                 muted: card.isExpired,
-                dense: !compact,
+                dense: !widget.compact,
               ),
             ),
             if (card.isRevealed)
-              _RevealedRewardPanel(card: card, compact: compact)
+              _RevealedRewardPanel(card: card, compact: widget.compact)
             else if (card.isExpired)
-              _ExpiredPanel(card: card, compact: compact)
+              _ExpiredPanel(card: card, compact: widget.compact)
             else
-              _UnrevealedPanel(card: card, compact: compact),
-            if (showOrderTag && card.orderNumber?.isNotEmpty == true)
+              _UnrevealedPanel(
+                card: card,
+                compact: widget.compact,
+                pulse: _pulse,
+              ),
+            if (widget.showOrderTag && card.orderNumber?.isNotEmpty == true)
               Positioned(
                 left: 12,
                 top: 10,
@@ -155,17 +187,62 @@ class ScratchCardFace extends StatelessWidget {
   }
 }
 
+/// Clips a rounded-rect with a torn/scalloped bottom edge — the classic
+/// coupon/scratch-ticket silhouette.
+class _TornEdgeClipper extends CustomClipper<Path> {
+  const _TornEdgeClipper({required this.radius});
+
+  final double radius;
+
+  @override
+  Path getClip(Size size) {
+    const waveWidth = 16.0;
+    const waveDepth = 5.0;
+    final path = Path()
+      ..moveTo(0, radius)
+      ..quadraticBezierTo(0, 0, radius, 0)
+      ..lineTo(size.width - radius, 0)
+      ..quadraticBezierTo(size.width, 0, size.width, radius)
+      ..lineTo(size.width, size.height - waveDepth);
+
+    final waves = (size.width / waveWidth).ceil();
+    for (var i = waves; i >= 1; i--) {
+      final x2 = i * waveWidth;
+      final x1 = x2 - waveWidth / 2;
+      path.quadraticBezierTo(
+        x1,
+        size.height - waveDepth * (i.isEven ? 2 : 0),
+        x2.clamp(0, size.width),
+        size.height - waveDepth,
+      );
+    }
+
+    path.lineTo(0, size.height - waveDepth);
+    path.close();
+    return path;
+  }
+
+  @override
+  bool shouldReclip(covariant _TornEdgeClipper oldClipper) =>
+      oldClipper.radius != radius;
+}
+
 class _UnrevealedPanel extends StatelessWidget {
-  const _UnrevealedPanel({required this.card, required this.compact});
+  const _UnrevealedPanel({
+    required this.card,
+    required this.compact,
+    required this.pulse,
+  });
 
   final ScratchCard card;
   final bool compact;
+  final Animation<double> pulse;
 
   @override
   Widget build(BuildContext context) {
     return Padding(
       padding:
-          EdgeInsets.fromLTRB(14, compact ? 12 : 22, 14, compact ? 12 : 16),
+          EdgeInsets.fromLTRB(14, compact ? 10 : 18, 14, compact ? 14 : 20),
       child: Column(
         children: [
           Text(
@@ -173,44 +250,76 @@ class _UnrevealedPanel extends StatelessWidget {
             textAlign: TextAlign.center,
             style: TextStyle(
               color: Colors.white,
-              fontSize: compact ? 20 : 25,
+              fontSize: compact ? 18 : 23,
               fontWeight: FontWeight.w900,
+              letterSpacing: 0.5,
               height: 1,
             ),
           ),
-          SizedBox(height: compact ? 8 : 14),
+          SizedBox(height: compact ? 6 : 10),
           Expanded(
             child: Stack(
               alignment: Alignment.center,
               children: [
-                CustomPaint(
-                  painter: _FoilPatchPainter(),
-                  child: Center(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
+                Positioned.fill(
+                  child: Shimmer.fromColors(
+                    baseColor: const Color(0xFFE7E9EC),
+                    highlightColor: Colors.white,
+                    period: const Duration(milliseconds: 1600),
+                    child: Stack(
+                      fit: StackFit.expand,
                       children: [
-                        Icon(
-                          Icons.touch_app_outlined,
-                          color: FoodFlowTheme.ink.withOpacity(0.68),
-                          size: compact ? 30 : 40,
-                        ),
-                        const SizedBox(height: 5),
-                        Text(
-                          'Scratch Here',
-                          style: TextStyle(
-                            color: FoodFlowTheme.ink,
-                            fontSize: compact ? 12 : 15,
-                            fontWeight: FontWeight.w900,
-                          ),
+                        CustomPaint(painter: _FoilPatchPainter()),
+                        CustomPaint(
+                          painter: _FoilCoinPatternPainter(muted: compact),
                         ),
                       ],
                     ),
                   ),
                 ),
-                Positioned.fill(
-                  child: IgnorePointer(
-                    child: CustomPaint(
-                      painter: _FoilGiftPatternPainter(muted: compact),
+                IgnorePointer(
+                  child: AnimatedBuilder(
+                    animation: pulse,
+                    builder: (context, child) => Transform.scale(
+                      scale: 0.94 + pulse.value * 0.1,
+                      child: child,
+                    ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Container(
+                          width: compact ? 40 : 52,
+                          height: compact ? 40 : 52,
+                          decoration: const BoxDecoration(
+                            shape: BoxShape.circle,
+                            gradient: LinearGradient(
+                              colors: [_scratchGold, _scratchAmber],
+                            ),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black26,
+                                blurRadius: 6,
+                                offset: Offset(0, 2),
+                              ),
+                            ],
+                          ),
+                          child: Icon(
+                            Icons.touch_app_rounded,
+                            color: Colors.white,
+                            size: compact ? 20 : 26,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          'SCRATCH HERE',
+                          style: TextStyle(
+                            color: FoodFlowTheme.ink,
+                            fontSize: compact ? 11 : 13,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: 1,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ),
@@ -218,7 +327,7 @@ class _UnrevealedPanel extends StatelessWidget {
             ),
           ),
           if (card.expiresAt != null) ...[
-            const SizedBox(height: 8),
+            SizedBox(height: compact ? 6 : 8),
             _CardPill(label: ScratchRewardText.expiresLabel(card), dark: true),
           ],
         ],
@@ -250,43 +359,53 @@ class _RevealedRewardPanel extends StatelessWidget {
             borderRadius: BorderRadius.circular(18),
             border: Border.all(color: const Color(0xFFFFD5A6)),
           ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
+          child: Stack(
+            alignment: Alignment.topCenter,
             children: [
-              const Text(
-                'Congratulations!',
-                style: TextStyle(
-                  color: FoodFlowTheme.ink,
-                  fontSize: 13,
-                  fontWeight: FontWeight.w900,
+              Positioned.fill(
+                child: IgnorePointer(
+                  child: CustomPaint(painter: _SunburstPainter()),
                 ),
               ),
-              const SizedBox(height: 2),
-              const Text(
-                'You won',
-                style: TextStyle(
-                  color: FoodFlowTheme.muted,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w800,
-                ),
+              Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text(
+                    'Congratulations! \u{1F389}',
+                    style: TextStyle(
+                      color: FoodFlowTheme.ink,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  const Text(
+                    'You won',
+                    style: TextStyle(
+                      color: FoodFlowTheme.muted,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 7),
+                  Text(
+                    ScratchRewardText.title(context, card),
+                    textAlign: TextAlign.center,
+                    maxLines: compact ? 1 : 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: _scratchOrange,
+                      fontSize: compact ? 22 : 28,
+                      fontWeight: FontWeight.w900,
+                      height: 1,
+                    ),
+                  ),
+                  if (code.isNotEmpty) ...[
+                    const SizedBox(height: 10),
+                    _CardPill(label: 'Code: $code', dark: false),
+                  ],
+                ],
               ),
-              const SizedBox(height: 7),
-              Text(
-                ScratchRewardText.title(context, card),
-                textAlign: TextAlign.center,
-                maxLines: compact ? 1 : 2,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: _scratchOrange,
-                  fontSize: compact ? 22 : 28,
-                  fontWeight: FontWeight.w900,
-                  height: 1,
-                ),
-              ),
-              if (code.isNotEmpty) ...[
-                const SizedBox(height: 10),
-                _CardPill(label: 'Code: $code', dark: false),
-              ],
             ],
           ),
         ),
@@ -378,6 +497,25 @@ class _CardPill extends StatelessWidget {
   }
 }
 
+class _SunburstPainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = Offset(size.width / 2, 0);
+    final paint = Paint()
+      ..color = _scratchGold.withOpacity(0.16)
+      ..strokeWidth = 3;
+    for (var i = 0; i < 16; i++) {
+      final angle = (i / 16) * math.pi;
+      final dx = math.cos(angle) * size.width;
+      final dy = math.sin(angle) * size.width;
+      canvas.drawLine(center, Offset(center.dx + dx, dy), paint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _SunburstPainter oldDelegate) => false;
+}
+
 class _ScratchConfettiPainter extends CustomPainter {
   const _ScratchConfettiPainter({required this.muted, required this.dense});
 
@@ -423,7 +561,7 @@ class _FoilPatchPainter extends CustomPainter {
     final path = Path();
     final center = Offset(size.width / 2, size.height / 2);
     final rx = size.width * 0.43;
-    final ry = size.height * 0.31;
+    final ry = size.height * 0.34;
     for (var i = 0; i <= 42; i++) {
       final angle = i / 42 * math.pi * 2;
       final jitter = 1 + math.sin(i * 1.7) * 0.06 + math.cos(i * 2.1) * 0.04;
@@ -445,10 +583,10 @@ class _FoilPatchPainter extends CustomPainter {
         begin: Alignment.topLeft,
         end: Alignment.bottomRight,
         colors: [
-          Color(0xFFF5F6F7),
-          Color(0xFFD9DDE1),
-          Color(0xFFFFFFFF),
-          Color(0xFFC3C8CE),
+          _scratchGold,
+          Color(0xFFFFF3C4),
+          _scratchAmber,
+          Color(0xFFE59400),
         ],
       ).createShader(bounds);
     canvas.drawPath(path, fill);
@@ -471,8 +609,8 @@ class _FoilPatchPainter extends CustomPainter {
   bool shouldRepaint(covariant _FoilPatchPainter oldDelegate) => false;
 }
 
-class _FoilGiftPatternPainter extends CustomPainter {
-  const _FoilGiftPatternPainter({required this.muted});
+class _FoilCoinPatternPainter extends CustomPainter {
+  const _FoilCoinPatternPainter({required this.muted});
 
   final bool muted;
 
@@ -481,63 +619,21 @@ class _FoilGiftPatternPainter extends CustomPainter {
     final paint = Paint()
       ..style = PaintingStyle.stroke
       ..strokeWidth = muted ? 1.1 : 1.35
-      ..color = const Color(0xFF9CA3AF).withOpacity(muted ? 0.18 : 0.24);
-    final count = muted ? 8 : 13;
+      ..color = const Color(0xFFB5761C).withOpacity(muted ? 0.16 : 0.22);
+    final count = muted ? 7 : 11;
     for (var i = 0; i < count; i++) {
-      final maxX = math.max(size.width.toInt() - 48, 1);
-      final maxY = math.max(size.height.toInt() - 40, 1);
-      final x = 24.0 + ((i * 67) % maxX);
-      final y = 20.0 + ((i * 43) % maxY);
-      canvas.save();
-      canvas.translate(x, y);
-      canvas.rotate((i % 5 - 2) * 0.14);
-      final box = Rect.fromCenter(
-        center: Offset.zero,
-        width: muted ? 20 : 24,
-        height: muted ? 18 : 22,
-      );
-      canvas.drawRRect(
-        RRect.fromRectAndRadius(box, const Radius.circular(4)),
-        paint,
-      );
-      canvas.drawLine(
-        Offset(-box.width / 2, 0),
-        Offset(box.width / 2, 0),
-        paint,
-      );
-      canvas.drawLine(
-        Offset(0, -box.height / 2),
-        Offset(0, box.height / 2),
-        paint,
-      );
-      canvas.drawArc(
-        Rect.fromCenter(
-          center: Offset(-box.width * 0.18, -box.height * 0.58),
-          width: 12,
-          height: 10,
-        ),
-        math.pi * 0.2,
-        math.pi * 1.35,
-        false,
-        paint,
-      );
-      canvas.drawArc(
-        Rect.fromCenter(
-          center: Offset(box.width * 0.18, -box.height * 0.58),
-          width: 12,
-          height: 10,
-        ),
-        -math.pi * 0.55,
-        math.pi * 1.35,
-        false,
-        paint,
-      );
-      canvas.restore();
+      final maxX = math.max(size.width.toInt() - 40, 1);
+      final maxY = math.max(size.height.toInt() - 36, 1);
+      final x = 20.0 + ((i * 67) % maxX);
+      final y = 18.0 + ((i * 43) % maxY);
+      final radius = muted ? 7.0 : 9.0;
+      canvas.drawCircle(Offset(x, y), radius, paint);
+      canvas.drawCircle(Offset(x, y), radius * 0.55, paint);
     }
   }
 
   @override
-  bool shouldRepaint(covariant _FoilGiftPatternPainter oldDelegate) {
+  bool shouldRepaint(covariant _FoilCoinPatternPainter oldDelegate) {
     return oldDelegate.muted != muted;
   }
 }

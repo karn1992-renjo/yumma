@@ -404,9 +404,9 @@ class AppsFlyerDeepLinkDestination {
     if (segments.isEmpty) return null;
 
     final isSupportedAppLink = uri.scheme == 'foodflow' ||
-        uri.scheme == 'yumma' ||
+        uri.scheme == 'Yumma' ||
         uri.host == 'foodflow.in' ||
-        uri.host == 'yumma.in';
+        uri.host == 'yumma.online';
     if (isSupportedAppLink) {
       if (segments.isNotEmpty &&
           (segments[0] == 'referral' || segments[0] == 'invite')) {

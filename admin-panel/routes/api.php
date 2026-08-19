@@ -26,6 +26,7 @@ use App\Http\Controllers\Api\ScratchCardController;
 use App\Http\Controllers\Api\SupportController;
 use App\Http\Controllers\Api\RecaptchaController;
 use App\Http\Controllers\Api\PartnerApplicationController;
+use App\Http\Controllers\Api\VerificationController;
 use App\Http\Controllers\Api\PromotionController;
 use App\Http\Controllers\Api\ReferralController;
 use App\Http\Controllers\DirectChatController;
@@ -53,6 +54,14 @@ Route::post('/forgot-password', [AuthController::class, 'sendPasswordResetLink']
 Route::post('/forgot-password/reset-by-phone', [AuthController::class, 'resetPasswordByPhone'])->middleware('throttle:20,1');
 Route::post('/partner-applications', [PartnerApplicationController::class, 'submit'])->middleware('throttle:3,1');
 Route::get('/partner-applications/{applicationNumber}', [PartnerApplicationController::class, 'status'])->middleware('throttle:10,1');
+
+// Realtime field-level document verification (used while filling the driver/restaurant registration form)
+Route::post('/verification/gstin', [VerificationController::class, 'gstin'])->middleware('throttle:12,1');
+Route::post('/verification/pan', [VerificationController::class, 'pan'])->middleware('throttle:12,1');
+Route::post('/verification/vehicle-rc', [VerificationController::class, 'vehicleRc'])->middleware('throttle:12,1');
+Route::post('/verification/driving-license', [VerificationController::class, 'drivingLicense'])->middleware('throttle:12,1');
+Route::post('/verification/pan-document', [VerificationController::class, 'panDocument'])->middleware('throttle:6,1');
+Route::post('/verification/aadhaar-document', [VerificationController::class, 'aadhaarDocument'])->middleware('throttle:6,1');
 Route::get('/delivery-areas/active', function () {
     return response()->json([
         'success' => true,
@@ -189,9 +198,15 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/wallet/top-up', [WalletController::class, 'topUp']);
     Route::post('/wallet/top-up/verify', [WalletController::class, 'verifyTopUp']);
     Route::post('/wallet/gift-card/redeem', [WalletController::class, 'redeemGiftCard']);
-    Route::get('/support/tickets', [SupportController::class, 'index']);
-    Route::post('/support/tickets', [SupportController::class, 'store']);
-    Route::post('/support/tickets/{ticket}/reply', [SupportController::class, 'reply']);
+    Route::prefix('support')->group(function () {
+        Route::get('/conversations', [SupportController::class, 'index']);
+        Route::post('/conversations', [SupportController::class, 'store']);
+        Route::get('/conversations/{id}', [SupportController::class, 'show']);
+        Route::post('/conversations/{id}/messages', [SupportController::class, 'sendMessage']);
+        Route::post('/conversations/{id}/escalate', [SupportController::class, 'escalate']);
+        Route::post('/conversations/{id}/read', [SupportController::class, 'markRead']);
+        Route::post('/conversations/{id}/csat', [SupportController::class, 'submitCsat']);
+    });
     Route::prefix('direct-chat')->group(function () {
         Route::get('/conversations', [DirectChatController::class, 'index']);
         Route::get('/users', [DirectChatController::class, 'searchUsers']);
@@ -245,6 +260,9 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/restaurants', [RestaurantController::class, 'myRestaurants']);
         Route::get('/dashboard', [RestaurantController::class, 'dashboard']);
         Route::get('/stats', [RestaurantController::class, 'getStats']);
+        Route::get('/reviews', [RestaurantController::class, 'getReviews'])->middleware('restaurant.permission:view_reports');
+        Route::get('/analytics/compare', [RestaurantController::class, 'getAnalyticsCompare'])->middleware('restaurant.permission:view_reports');
+        Route::get('/complaints', [RestaurantController::class, 'getComplaints'])->middleware('restaurant.permission:view_orders,manage_orders');
         Route::post('/toggle-status', [RestaurantController::class, 'toggleStatus'])
             ->middleware('restaurant.permission:view_dashboard');
         
@@ -257,6 +275,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/orders/{orderId}/chat/typing', [OrderChatController::class, 'typing'])->middleware('restaurant.permission:view_orders,manage_orders');
         Route::post('/orders/{id}/accept', [RestaurantController::class, 'acceptOrder'])->middleware('restaurant.permission:manage_orders,update_order_status');
         Route::post('/orders/{id}/reject', [RestaurantController::class, 'rejectOrder'])->middleware('restaurant.permission:manage_orders,update_order_status');
+        Route::post('/orders/{id}/out-of-stock', [RestaurantController::class, 'markOrderItemsOutOfStock'])->middleware('restaurant.permission:manage_orders,update_order_status');
         Route::post('/orders/{id}/status', [RestaurantController::class, 'updateOrderStatus'])->middleware('restaurant.permission:manage_orders,update_order_status');
         Route::post('/orders/{id}/ready', [RestaurantController::class, 'markOrderReady'])->middleware('restaurant.permission:manage_orders,update_order_status');
         Route::post('/orders/{id}/takeaway/verify-otp', [RestaurantController::class, 'verifyTakeawayOtp'])->middleware('restaurant.permission:manage_orders,update_order_status');
@@ -346,6 +365,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/orders/{orderId}/chat/read', [OrderChatController::class, 'markRead']);
     Route::post('/orders/{orderId}/chat/typing', [OrderChatController::class, 'typing']);
     Route::post('/orders/{id}/feedback', [OrderController::class, 'submitFeedback']);
+    Route::post('/orders/{id}/tip', [OrderController::class, 'tip'])->middleware('throttle:20,1');
     Route::post('/orders/{id}/cancel', [OrderController::class, 'cancel']);
     Route::get('/orders/{id}/track', [OrderController::class, 'track']);
     Route::post('/orders/{id}/refund-request', [OrderController::class, 'requestRefund']);
@@ -417,4 +437,3 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/toggle-status', [DriverController::class, 'toggleStatus']);
     });
 });
-

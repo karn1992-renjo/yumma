@@ -12,6 +12,7 @@ import 'app_order_overlay_service.dart';
 import 'foreground_service_manager.dart';
 import 'navigation_service.dart';
 import 'order_alert_permission_manager.dart';
+import 'restaurant_order_realtime_service.dart';
 import 'sound_service.dart';
 
 enum IncomingOrderSource { fcmForeground, notificationTap, websocket, restored }
@@ -116,7 +117,7 @@ class IncomingOrderAlertService with WidgetsBindingObserver {
   }) async {
     final normalized = normalizeOrderData(data);
     if (isCancellationAlert(normalized)) {
-      return _handleCancellationAlert(normalized);
+      return _handleCancellationAlert(normalized, source: source);
     }
     if (!isIncomingOrder(normalized)) return false;
 
@@ -134,6 +135,40 @@ class IncomingOrderAlertService with WidgetsBindingObserver {
 
     final duration = timerDuration(normalized);
     _startIncomingOrderAlarm(duration);
+    final canUseFlutterUi =
+        _hasFlutterUiContext() && _state == AppLifecycleState.resumed;
+
+    if (canUseFlutterUi) {
+      final pendingStateWrite = persistIncomingOrder(
+        normalized,
+        durationSeconds: duration,
+      ).catchError((Object error) {
+        debugPrint('Incoming order state persistence failed: $error');
+      });
+      unawaited(pendingStateWrite);
+      unawaited(
+        ForegroundServiceManager.startForegroundService(
+          status: 'Incoming order #${normalized['order_number'] ?? orderId}',
+        ).catchError((Object error) {
+          debugPrint('Incoming order foreground service failed: $error');
+        }),
+      );
+
+      final future = _showIncomingOrderOverlay(
+        normalized,
+        durationSeconds: duration,
+      ).whenComplete(() async {
+        _activeLocks.remove(key);
+        _stopIncomingOrderAlarm();
+        await pendingStateWrite;
+        await clearPendingOrder(orderId);
+      });
+
+      _activeLocks[key] = future;
+      await future;
+      return true;
+    }
+
     await persistIncomingOrder(normalized, durationSeconds: duration);
     await ForegroundServiceManager.startForegroundService(
       status: 'Incoming order #${normalized['order_number'] ?? orderId}',
@@ -141,43 +176,26 @@ class IncomingOrderAlertService with WidgetsBindingObserver {
     final overlayPermissionGranted =
         await OrderAlertPermissionManager.checkOverlayPermission();
 
-    final canUseFlutterUi =
-        _hasFlutterUiContext() && _state == AppLifecycleState.resumed;
-
-    if (!canUseFlutterUi) {
-      if (source == IncomingOrderSource.restored && overlayPermissionGranted) {
-        return _retryShowRestoredOverlay(normalized, duration);
-      }
-
-      if (!overlayPermissionGranted) {
-        await OrderAlertPermissionManager.requestOverlayPermission();
-        await ForegroundServiceManager.updateServiceNotification(
-          'Incoming order waiting. Tap the full-screen alert. Please enable overlay permission in app settings.',
-          fullScreen: true,
-        );
-      } else {
-        await ForegroundServiceManager.startForegroundService(
-          status: 'Incoming order waiting',
-          fullScreen: true,
-        );
-        await ForegroundServiceManager.bringAppToFront();
-        return _retryShowRestoredOverlay(normalized, duration);
-      }
-      return false;
+    if (source == IncomingOrderSource.restored && overlayPermissionGranted) {
+      return _retryShowRestoredOverlay(normalized, duration);
     }
 
-    final future = _showIncomingOrderOverlay(
-      normalized,
-      durationSeconds: duration,
-    ).whenComplete(() {
-      _activeLocks.remove(key);
-      _stopIncomingOrderAlarm();
-      unawaited(clearPendingOrder(orderId));
-    });
+    if (!overlayPermissionGranted) {
+      await OrderAlertPermissionManager.requestOverlayPermission();
+      await ForegroundServiceManager.updateServiceNotification(
+        'Incoming order waiting. Tap the full-screen alert. Please enable overlay permission in app settings.',
+        fullScreen: true,
+      );
+    } else {
+      await ForegroundServiceManager.startForegroundService(
+        status: 'Incoming order waiting',
+        fullScreen: true,
+      );
+      await ForegroundServiceManager.bringAppToFront();
+      return _retryShowRestoredOverlay(normalized, duration);
+    }
 
-    _activeLocks[key] = future;
-    await future;
-    return true;
+    return false;
   }
 
   Future<void> restorePendingOrderState() async {
@@ -280,8 +298,15 @@ class IncomingOrderAlertService with WidgetsBindingObserver {
     Map<String, dynamic> data, {
     required int durationSeconds,
   }) async {
-    final order = orderFromData(data);
     final role = roleFor(data);
+    var order = orderFromData(data);
+    final items = order['items'];
+    final hasRealtimeDetails = items is List &&
+        items.isNotEmpty &&
+        (order['total'] != null || order['amount'] != null);
+    if (role != 'driver' && !hasRealtimeDetails) {
+      order = await _loadRestaurantOrderDetails(order);
+    }
 
     if (role == 'driver') {
       await AppOrderOverlayService.showDriverOrder(
@@ -301,12 +326,52 @@ class IncomingOrderAlertService with WidgetsBindingObserver {
           preparationMinutes: minutes,
         ),
         onReject: (id, reason) => rejectOrder(id, role: role, reason: reason),
+        onMarkOutOfStock: (id, menuItemIds, availabilityOption) =>
+            markOrderItemsOutOfStock(
+          id,
+          menuItemIds: menuItemIds,
+          availabilityOption: availabilityOption,
+          restaurantId: parseOrderId(order['restaurant_id']),
+        ),
         onTimeout: (id) => autoRejectOnTimeout(id, role: role),
       );
     }
   }
 
-  Future<bool> _handleCancellationAlert(Map<String, dynamic> data) async {
+  Future<Map<String, dynamic>> _loadRestaurantOrderDetails(
+    Map<String, dynamic> order,
+  ) async {
+    final orderId = parseOrderId(order['id'] ?? order['order_id']);
+    if (orderId == null) return order;
+
+    try {
+      final response = await ApiService().get(
+        ApiConstants.restaurantOrderDetails(orderId),
+        queryParams: {
+          if (parseOrderId(order['restaurant_id']) != null)
+            'restaurant_id': parseOrderId(order['restaurant_id']),
+        },
+      );
+      final details = response['data'];
+      if (details is Map<String, dynamic>) {
+        return <String, dynamic>{...order, ...details};
+      }
+      if (details is Map) {
+        return <String, dynamic>{
+          ...order,
+          ...Map<String, dynamic>.from(details),
+        };
+      }
+    } catch (error) {
+      debugPrint('Incoming restaurant order details error: $error');
+    }
+    return order;
+  }
+
+  Future<bool> _handleCancellationAlert(
+    Map<String, dynamic> data, {
+    required IncomingOrderSource source,
+  }) async {
     final normalized = normalizeOrderData(data);
     final orderId = parseOrderId(normalized['order_id'] ?? normalized['id']);
     if (orderId == null) return false;
@@ -318,12 +383,22 @@ class IncomingOrderAlertService with WidgetsBindingObserver {
       return false;
     }
 
-    final duration = timerDuration(normalized).clamp(10, 120);
+    final duration = timerDuration(normalized).clamp(10, 120).toInt();
     _startIncomingOrderAlarm(duration);
-    final future = AppOrderOverlayService.showOrderCancelled(
-      orderFromData(normalized),
+    await ForegroundServiceManager.startForegroundService(
+      status: 'Order #${normalized['order_number'] ?? orderId} was cancelled',
+      fullScreen: true,
+    );
+
+    if (!_hasFlutterUiContext() || _state != AppLifecycleState.resumed) {
+      await ForegroundServiceManager.bringAppToFront();
+    }
+
+    final future = _showCancellationOverlayWhenReady(
+      normalized,
       role: role,
       durationSeconds: duration,
+      source: source,
     ).whenComplete(() {
       _activeLocks.remove(key);
       _stopIncomingOrderAlarm();
@@ -331,6 +406,39 @@ class IncomingOrderAlertService with WidgetsBindingObserver {
     _activeLocks[key] = future;
     await future;
     return true;
+  }
+
+  Future<void> _showCancellationOverlayWhenReady(
+    Map<String, dynamic> data, {
+    required String role,
+    required int durationSeconds,
+    required IncomingOrderSource source,
+  }) async {
+    for (var attempt = 0; attempt < 8; attempt++) {
+      if (_hasFlutterUiContext() && _state == AppLifecycleState.resumed) {
+        var order = orderFromData(data);
+        if (role != 'driver') {
+          order = await _loadRestaurantOrderDetails(order);
+        }
+        await AppOrderOverlayService.showOrderCancelled(
+          order,
+          role: role,
+          durationSeconds: durationSeconds,
+        );
+        return;
+      }
+      await Future<void>.delayed(
+        Duration(milliseconds: 250 * (attempt + 1)),
+      );
+    }
+
+    debugPrint(
+      'Cancellation alert remained in the system notification: source=$source',
+    );
+    await ForegroundServiceManager.updateServiceNotification(
+      'An order was cancelled. Tap to review it.',
+      fullScreen: true,
+    );
   }
 
   Future<bool> acceptOrder(
@@ -350,6 +458,9 @@ class IncomingOrderAlertService with WidgetsBindingObserver {
                 },
               );
         final ok = response['success'] == true;
+        if (ok && role != 'driver') {
+          RestaurantOrderRealtimeService.instance.publish(response['data']);
+        }
         if (ok) await clearPendingOrder(orderId);
         return ok;
       });
@@ -375,6 +486,9 @@ class IncomingOrderAlertService with WidgetsBindingObserver {
                 data: {'reason': reason},
               );
         final ok = response['success'] == true;
+        if (ok && role != 'driver') {
+          RestaurantOrderRealtimeService.instance.publish(response['data']);
+        }
         if (ok) await clearPendingOrder(orderId);
         return ok;
       });
@@ -389,6 +503,39 @@ class IncomingOrderAlertService with WidgetsBindingObserver {
       role: role,
       reason: 'Auto rejected: incoming order timer expired',
     );
+  }
+
+  Future<bool> markOrderItemsOutOfStock(
+    int orderId, {
+    required List<int> menuItemIds,
+    required String availabilityOption,
+    int? restaurantId,
+  }) async {
+    try {
+      return await lockOrderInteraction(orderId, () async {
+        final response = await ApiService().post(
+          ApiConstants.restaurantOrderOutOfStock(orderId),
+          queryParams: {
+            if (restaurantId != null) 'restaurant_id': restaurantId,
+          },
+          data: {
+            'menu_item_ids': menuItemIds,
+            'availability_option': availabilityOption,
+          },
+        );
+        final ok = response['success'] == true;
+        if (ok) {
+          RestaurantOrderRealtimeService.instance.publish(
+            response['data']?['order'] ?? response['data'],
+          );
+        }
+        if (ok) await clearPendingOrder(orderId);
+        return ok;
+      });
+    } catch (error) {
+      debugPrint('Mark order items out of stock error: $error');
+      return false;
+    }
   }
 
   Future<T> lockOrderInteraction<T>(
@@ -552,15 +699,16 @@ class IncomingOrderAlertService with WidgetsBindingObserver {
         ? orderId.toInt()
         : int.tryParse(orderId?.toString() ?? '');
     if (parsed != null) return 100000 + parsed.abs() % 900000;
-    return 100000 +
-        (orderId?.toString().hashCode ?? 0).abs().remainder(900000);
+    return 100000 + (orderId?.toString().hashCode ?? 0).abs().remainder(900000);
   }
 
   static Map<String, dynamic> orderFromData(Map<String, dynamic> data) {
     data = normalizeOrderData(data);
     return {
+      ...data,
       'id': data['order_id'] ?? data['id'],
       'order_number': data['order_number'],
+      'restaurant_id': data['restaurant_id'],
       'restaurant_name': data['restaurant_name'],
       'status': data['status'],
       'cancellation_reason': data['cancellation_reason'],

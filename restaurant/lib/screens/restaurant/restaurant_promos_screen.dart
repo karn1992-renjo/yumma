@@ -95,6 +95,17 @@ const Map<String, _PromoShape> _promoShapes = {
     defaultBuy: 2,
     defaultFree: 1,
   ),
+  'buy_3_get_1': _PromoShape(
+    label: 'Buy 3 Get 1',
+    rewardType: 'buy_3_get_1',
+    icon: Icons.filter_3,
+    hint: 'Buy three eligible items, get one.',
+    preferredTarget: 'items',
+    noValueRequired: true,
+    needsBuyFree: true,
+    defaultBuy: 3,
+    defaultFree: 1,
+  ),
   'buy_3_get_2': _PromoShape(
     label: 'Buy 3 Get 2',
     rewardType: 'buy_3_get_2',
@@ -127,6 +138,7 @@ const List<String> _restaurantPromotionTypeKeys = [
   'bogo',
   'buy_x_get_y',
   'buy_2_get_1',
+  'buy_3_get_1',
   'buy_3_get_2',
   'free_item',
 ];
@@ -505,6 +517,7 @@ class _PromotionEditorScreenState extends State<PromotionEditorScreen> {
   List<Map<String, dynamic>> _categories = [];
   List<Map<String, dynamic>> _menuItems = [];
   final Set<int> _selectedTargetIds = {};
+  int _freeItemId = 0;
   DateTime _startDate = DateTime.now();
   DateTime _endDate = DateTime.now().add(const Duration(days: 7));
   TimeOfDay _startTime = const TimeOfDay(hour: 0, minute: 0);
@@ -578,6 +591,10 @@ class _PromotionEditorScreenState extends State<PromotionEditorScreen> {
     _buyQuantity.text = _numText(config['buy_quantity'] ?? _shape.defaultBuy);
     _freeQuantity.text =
         _numText(config['free_quantity'] ?? _shape.defaultFree);
+    _freeItemId = int.tryParse(
+            (config['free_item_id'] ?? reward?['free_item_id'] ?? 0)
+                .toString()) ??
+        0;
     _minOrder.text = _numText(
         promo['min_order_amount'] ?? conditions?['min_order_amount'] ?? 199);
     _usageLimit.text = _numText(promo['usage_limit'] ?? 1000);
@@ -760,6 +777,7 @@ class _PromotionEditorScreenState extends State<PromotionEditorScreen> {
         'valid_on': _validOn,
         'valid_time': _validTime,
         'show_usage': _showUsage,
+        if (_freeItemId > 0) 'free_item_id': _freeItemId,
         if (comboGroups.isNotEmpty) 'combo_groups': comboGroups,
       },
       if (comboGroups.isNotEmpty) 'combo_groups': comboGroups,
@@ -1135,6 +1153,7 @@ class _PromotionEditorScreenState extends State<PromotionEditorScreen> {
                   _discountType = shape.rewardType;
                   _buyQuantity.text = shape.defaultBuy.toString();
                   _freeQuantity.text = shape.defaultFree.toString();
+                  _freeItemId = 0;
                   if (shape.preferredTarget != null) {
                     _promotionFor = shape.preferredTarget!;
                     _selectedTargetIds.clear();
@@ -1184,6 +1203,13 @@ class _PromotionEditorScreenState extends State<PromotionEditorScreen> {
               ],
             ),
           ],
+          if (_shape.needsBuyFree || _promotionType == 'free_item')
+            _PromoDropdown<int>(
+              label: 'Reward Item',
+              value: _freeItemId,
+              items: _rewardItemOptions(),
+              onChanged: (value) => setState(() => _freeItemId = value),
+            ),
           _InfoBox(
             text: _rewardInfoText(),
           ),
@@ -1549,8 +1575,15 @@ class _PromotionEditorScreenState extends State<PromotionEditorScreen> {
   }
 
   String _rewardInfoText() {
+    final rewardItem = _freeItemId > 0
+        ? _menuItems
+            .where((item) => _rowId(item) == _freeItemId)
+            .map(_rowTitle)
+            .firstOrNull
+        : null;
     if (_shape.needsBuyFree) {
-      return 'Customer must buy ${_buyQuantity.text.trim().isEmpty ? _shape.defaultBuy : _buyQuantity.text} and gets ${_freeQuantity.text.trim().isEmpty ? _shape.defaultFree : _freeQuantity.text} free from the selected content.';
+      final rewardDescription = rewardItem ?? 'the same eligible item';
+      return 'Customer must buy ${_buyQuantity.text.trim().isEmpty ? _shape.defaultBuy : _buyQuantity.text} and gets ${_freeQuantity.text.trim().isEmpty ? _shape.defaultFree : _freeQuantity.text} $rewardDescription free.';
     }
     if (!_rewardNeedsValue) return _shape.hint;
     final value = double.tryParse(_discountValue.text) ?? 0;
@@ -1562,6 +1595,18 @@ class _PromotionEditorScreenState extends State<PromotionEditorScreen> {
       return 'Customer will get ${value.toStringAsFixed(0)}% OFF upto ${formatCurrencyValue(context, max)} on eligible orders.';
     }
     return 'Customer will get ${formatCurrencyValue(context, value)} benefit on eligible orders.';
+  }
+
+  Map<int, String> _rewardItemOptions() {
+    final options = <int, String>{0: 'Same as eligible item'};
+    for (final item in _menuItems) {
+      final id = _rowId(item);
+      if (id > 0) options[id] = _rowTitle(item);
+    }
+    if (_freeItemId > 0 && !options.containsKey(_freeItemId)) {
+      options[_freeItemId] = 'Selected menu item';
+    }
+    return options;
   }
 
   String _rewardPreview() {

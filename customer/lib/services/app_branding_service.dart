@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:async';
 
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -28,6 +29,8 @@ class AppBrandingService {
         final decoded = jsonDecode(cachedJson);
         if (decoded is Map<String, dynamic>) {
           _memoryCache = AppBranding.fromJson(decoded);
+          unawaited(loadBranding(forceRefresh: true));
+          return _memoryCache!;
         }
       } catch (_) {
         // Ignore cache decode issues and refetch.
@@ -38,6 +41,8 @@ class AppBrandingService {
       final response = await _api.get(
         ApiConstants.appBranding,
         includeAuth: false,
+        cachePolicy: ApiCachePolicy.staticContent,
+        cacheFirst: !forceRefresh,
       );
       if (response is Map<String, dynamic> &&
           response['success'] == true &&

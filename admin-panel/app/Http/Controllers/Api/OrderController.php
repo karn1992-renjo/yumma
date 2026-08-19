@@ -4,8 +4,6 @@
 
 namespace App\Http\Controllers\Api;
 
-use App\Events\NewOrderEvent;
-use App\Helpers\FirebaseHelper;
 use App\Http\Controllers\Controller;
 use App\Models\Address;
 use App\Models\AppSetting;
@@ -17,23 +15,21 @@ use App\Models\OrderItem;
 use App\Models\PaymentAttempt;
 use App\Models\RefundPolicy;
 use App\Models\Restaurant;
-use App\Models\RestaurantStaff;
 use App\Models\Review;
 use App\Models\TaxSetting;
 use App\Models\Transaction;
 use App\Models\Wallet;
 use App\Models\WalletTransaction;
-use App\Notifications\AppDatabaseNotification;
-use App\Services\GoogleMapsEtaService;
 use App\Services\DeliveryAreaResolver;
-use App\Services\OrderPaymentService;
+use App\Services\GoogleMapsEtaService;
 use App\Services\MediaStorage;
+use App\Services\OrderPaymentService;
 use App\Services\OrderReleaseService;
-use App\Services\OrderStatusPushService;
-use App\Services\PrinterService;
-use App\Services\PromotionEngineService;
-use App\Services\PromotionRewardSettlementService;
 use App\Services\OrderRewardPointService;
+use App\Services\OrderStatusPushService;
+use App\Services\PromotionEngineService;
+use App\Services\PromotionRewardOrderItemService;
+use App\Services\PromotionRewardSettlementService;
 use App\Services\RefundService;
 use App\Services\ScratchCardService;
 use App\Support\PhoneNumber;
@@ -46,9 +42,12 @@ class OrderController extends Controller
 {
     protected $refundService;
 
-    public function __construct(RefundService $refundService)
+    protected PromotionRewardOrderItemService $rewardOrderItemService;
+
+    public function __construct(RefundService $refundService, PromotionRewardOrderItemService $rewardOrderItemService)
     {
         $this->refundService = $refundService;
+        $this->rewardOrderItemService = $rewardOrderItemService;
     }
 
     public function store(Request $request)
@@ -99,12 +98,16 @@ class OrderController extends Controller
         try {
             $restaurant = Restaurant::find($request->restaurant_id);
             if (! $restaurant) {
+                DB::rollBack();
+
                 return response()->json([
                     'success' => false,
                     'message' => 'Restaurant not found.',
                 ], 404);
             }
             if (! $restaurant->isOpenNow()) {
+                DB::rollBack();
+
                 return response()->json([
                     'success' => false,
                     'message' => 'Restaurant is currently closed. Orders cannot be placed until it reopens.',
@@ -113,6 +116,8 @@ class OrderController extends Controller
 
             $orderType = strtolower($request->input('order_type', 'delivery'));
             if (! $restaurant->acceptsService($orderType)) {
+                DB::rollBack();
+
                 return response()->json([
                     'success' => false,
                     'message' => $orderType === 'takeaway'
@@ -122,6 +127,8 @@ class OrderController extends Controller
             }
 
             if ($orderType === 'delivery' && ! $request->delivery_address_id && ! $request->filled('delivery_address')) {
+                DB::rollBack();
+
                 return response()->json([
                     'success' => false,
                     'message' => 'Please select or enter a delivery address.',
@@ -145,7 +152,7 @@ class OrderController extends Controller
                     'id' => $menuItem->id,
                     'menu_item_id' => $menuItem->id,
                     'name' => $menuItem->name,
-                'image_url' => $menuItem->image_url ?? MediaStorage::url($menuItem->image),
+                    'image_url' => $menuItem->image_url ?? MediaStorage::url($menuItem->image),
                     'category_id' => $menuItem->category_id,
                     'brand_id' => $menuItem->brand_id ?? null,
                     'variant_id' => $variant['id'] ?? null,
@@ -206,6 +213,10 @@ class OrderController extends Controller
                     $request->payment_method
                 );
             } catch (\InvalidArgumentException $e) {
+                if (DB::transactionLevel() > 0) {
+                    DB::rollBack();
+                }
+
                 return response()->json([
                     'success' => false,
                     'message' => $e->getMessage(),
@@ -221,10 +232,16 @@ class OrderController extends Controller
             $discount = $pricing['order_discount'] ?? $pricing['discount'];
             $total = $pricing['total'];
             $promo = $pricing['promo'];
-            $orderItems = $this->applyRewardLinesToOrderItems($orderItems, $pricing['reward_lines'] ?? []);
+            $orderItems = $this->rewardOrderItemService->applyRewardLines(
+                $orderItems,
+                $pricing['reward_lines'] ?? [],
+                (int) $restaurant->id
+            );
             $customerName = $request->customer_name ?: auth()->user()->name;
             $customerPhone = $request->customer_phone ?: auth()->user()->phone;
             if (preg_match('/[A-Za-z]/', (string) $customerPhone)) {
+                DB::rollBack();
+
                 return response()->json([
                     'success' => false,
                     'message' => 'Enter a valid mobile number for the selected country code.',
@@ -235,6 +252,8 @@ class OrderController extends Controller
                 AppSetting::getValue('default_mobile_country_code', '+91')
             );
             if ($customerPhone === '') {
+                DB::rollBack();
+
                 return response()->json([
                     'success' => false,
                     'message' => 'Enter a valid mobile number for the selected country code.',
@@ -357,24 +376,24 @@ class OrderController extends Controller
                         'payment_method' => $resolvedPaymentMethod,
                     ]
                 );
-                    if ($confirmedOnlinePayment) {
-                        PaymentAttempt::create([
-                            'order_id' => $order->id,
-                            'gateway' => $confirmedOnlinePayment['payment_method'],
-                            'source' => PaymentAttempt::SOURCE_CUSTOMER_APP,
-                            'status' => PaymentAttempt::STATUS_SUCCESS,
-                            'amount' => $order->total,
-                            'currency' => strtoupper(AppSetting::getValue('currency_code', 'INR') ?: 'INR'),
-                            'transaction_id' => $verifiedOnlinePaymentId,
-                            'gateway_reference' => $confirmedOnlinePayment['gateway_reference'] ?? null,
-                            'payment_link_id' => $confirmedOnlinePayment['gateway_reference'] ?? null,
-                            'created_by' => auth()->id(),
-                            'gateway_payload' => $confirmedOnlinePayment['payload'] ?? null,
-                            'paid_at' => now(),
-                            'idempotency_key' => 'checkout_paid_' . $verifiedOnlinePaymentId,
-                        ]);
-                        $order->increment('payment_attempts_count');
-                    }
+                if ($confirmedOnlinePayment) {
+                    PaymentAttempt::create([
+                        'order_id' => $order->id,
+                        'gateway' => $confirmedOnlinePayment['payment_method'],
+                        'source' => PaymentAttempt::SOURCE_CUSTOMER_APP,
+                        'status' => PaymentAttempt::STATUS_SUCCESS,
+                        'amount' => $order->total,
+                        'currency' => strtoupper(AppSetting::getValue('currency_code', 'INR') ?: 'INR'),
+                        'transaction_id' => $verifiedOnlinePaymentId,
+                        'gateway_reference' => $confirmedOnlinePayment['gateway_reference'] ?? null,
+                        'payment_link_id' => $confirmedOnlinePayment['gateway_reference'] ?? null,
+                        'created_by' => auth()->id(),
+                        'gateway_payload' => $confirmedOnlinePayment['payload'] ?? null,
+                        'paid_at' => now(),
+                        'idempotency_key' => 'checkout_paid_' . $verifiedOnlinePaymentId,
+                    ]);
+                    $order->increment('payment_attempts_count');
+                }
             }
 
             foreach ($orderItems as $item) {
@@ -399,6 +418,18 @@ class OrderController extends Controller
             DB::commit();
             $transactionCommitted = true;
 
+            // Release the order before any non-essential enrichment or customer
+            // notification work so the restaurant receives it immediately.
+            try {
+                $releasedToRestaurant = app(OrderReleaseService::class)->releaseToRestaurant($order);
+            } catch (\Throwable $e) {
+                $releasedToRestaurant = false;
+                Log::warning('Order restaurant release failed after placement.', [
+                    'order_id' => $order->id,
+                    'message' => $e->getMessage(),
+                ]);
+            }
+
             $this->warmConfirmedRouteEta($order->fresh(['restaurant', 'driver']));
 
             if ($order->payment_status === 'success') {
@@ -413,16 +444,6 @@ class OrderController extends Controller
                         'message' => $e->getMessage(),
                     ]);
                 }
-            }
-
-            try {
-                $releasedToRestaurant = app(OrderReleaseService::class)->releaseToRestaurant($order);
-            } catch (\Throwable $e) {
-                $releasedToRestaurant = false;
-                Log::warning('Order restaurant release failed after placement.', [
-                    'order_id' => $order->id,
-                    'message' => $e->getMessage(),
-                ]);
             }
 
             $scratchCardService = app(ScratchCardService::class);
@@ -460,7 +481,7 @@ class OrderController extends Controller
                     'requires_payment' => $requiresPayment,
                     'reward_points_earned' => (int) floor((float) $order->total),
                     'reward_points_balance' => (int) (auth()->user()?->reward_points_balance ?? 0),
-                    'reward_points_message' => 'You will earn '.((int) floor((float) $order->total)).' points after delivery.',
+                    'reward_points_message' => 'You will earn ' . ((int) floor((float) $order->total)) . ' points after delivery.',
                     'refund_policy' => $this->getRefundPolicySummary(),
                 ],
             ], 201);
@@ -471,14 +492,23 @@ class OrderController extends Controller
 
             return response()->json([
                 'success' => false,
-                'message' => 'Failed to place order: ' . $e->getMessage(),
-            ], 500);
+                'message' => $e instanceof \InvalidArgumentException
+                    ? $e->getMessage()
+                    : 'Failed to place order: ' . $e->getMessage(),
+            ], $e instanceof \InvalidArgumentException ? 409 : 500);
         }
     }
 
     public function show($id)
     {
-        $order = Order::with(['restaurant', 'driver'])
+        $order = Order::with([
+            'restaurant',
+            'driver' => function ($query) {
+                $query->withCount(['orders as delivered_orders_count' => function ($orderQuery) {
+                    $orderQuery->where('status', 'delivered');
+                }]);
+            },
+        ])
             ->where('customer_id', auth()->id())
             ->findOrFail($id);
 
@@ -589,6 +619,7 @@ class OrderController extends Controller
             'delivery_lng' => $deliveryLng,
         ];
     }
+
     public function summary(Request $request)
     {
         $validator = Validator::make($request->all(), [
@@ -768,6 +799,9 @@ class OrderController extends Controller
             'driver_feedback' => 'nullable|string|max:1000',
             'item_feedback' => 'nullable|string|max:1000',
             'service_feedback' => 'nullable|string|max:1000',
+            'items' => 'nullable|array',
+            'items.*.menu_item_id' => 'required_with:items|integer',
+            'items.*.rating' => 'required_with:items|integer|min:1|max:5',
         ]);
 
         DB::beginTransaction();
@@ -815,6 +849,42 @@ class OrderController extends Controller
                 ]);
             }
 
+            $itemRatings = $validated['items'] ?? [];
+            if (! empty($itemRatings)) {
+                $orderItemsPayload = $order->items ?? [];
+
+                foreach ($itemRatings as $itemInput) {
+                    $menuItemId = (int) $itemInput['menu_item_id'];
+                    $rating = (int) $itemInput['rating'];
+
+                    OrderItem::where('order_id', $order->id)
+                        ->where('menu_item_id', $menuItemId)
+                        ->update(['rating' => $rating]);
+
+                    foreach ($orderItemsPayload as &$itemRow) {
+                        $rowMenuItemId = (int) ($itemRow['menu_item_id'] ?? $itemRow['id'] ?? 0);
+                        if ($rowMenuItemId === $menuItemId) {
+                            $itemRow['rating'] = $rating;
+                        }
+                    }
+                    unset($itemRow);
+
+                    $menuRatingSummary = OrderItem::where('menu_item_id', $menuItemId)
+                        ->whereNotNull('rating')
+                        ->selectRaw('AVG(rating) as average_rating, COUNT(*) as total_ratings')
+                        ->first();
+
+                    if ($menuRatingSummary) {
+                        MenuItem::where('id', $menuItemId)->update([
+                            'rating' => round((float) $menuRatingSummary->average_rating, 1),
+                            'total_ratings' => (int) $menuRatingSummary->total_ratings,
+                        ]);
+                    }
+                }
+
+                $order->update(['items' => $orderItemsPayload]);
+            }
+
             DB::commit();
 
             return response()->json([
@@ -829,6 +899,130 @@ class OrderController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to submit feedback: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Tip the delivery partner for a delivered order. The full amount is
+     * credited to the driver's wallet with no commission deducted.
+     */
+    public function tip(Request $request, $id)
+    {
+        $order = Order::where('customer_id', auth()->id())->findOrFail($id);
+
+        if ($order->status !== 'delivered') {
+            return response()->json([
+                'success' => false,
+                'message' => 'You can tip your delivery partner only after the order is delivered.',
+            ], 422);
+        }
+
+        if (! $order->driver_id) {
+            return response()->json([
+                'success' => false,
+                'message' => 'This order does not have a delivery partner to tip.',
+            ], 422);
+        }
+
+        if ((float) ($order->tip_amount ?? 0) > 0) {
+            return response()->json([
+                'success' => false,
+                'message' => 'You have already tipped your delivery partner for this order.',
+            ], 422);
+        }
+
+        $validated = $request->validate([
+            'amount' => 'required|numeric|min:1|max:500',
+        ]);
+        $amount = (float) $validated['amount'];
+
+        DB::beginTransaction();
+
+        try {
+            $order = Order::where('customer_id', auth()->id())->lockForUpdate()->findOrFail($id);
+
+            if ((float) ($order->tip_amount ?? 0) > 0) {
+                DB::rollBack();
+
+                return response()->json([
+                    'success' => false,
+                    'message' => 'You have already tipped your delivery partner for this order.',
+                ], 422);
+            }
+
+            $customerWallet = Wallet::where('user_id', auth()->id())->lockForUpdate()->first();
+            if (! $customerWallet || $customerWallet->balance < $amount) {
+                DB::rollBack();
+
+                $shortfall = round($amount - (float) ($customerWallet->balance ?? 0), 2);
+
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Insufficient wallet balance to add this tip.',
+                    'data' => ['shortfall' => max(0, $shortfall)],
+                ], 422);
+            }
+
+            $customerWallet->decrement('balance', $amount);
+            $customerWallet->refresh();
+
+            WalletTransaction::create([
+                'wallet_id' => $customerWallet->id,
+                'user_id' => auth()->id(),
+                'type' => 'debit',
+                'amount' => $amount,
+                'balance_after' => $customerWallet->balance,
+                'reference_type' => 'order_tip',
+                'reference_id' => $order->id,
+                'description' => "Tip for order #{$order->order_number}",
+            ]);
+
+            $driverWallet = Wallet::where('user_id', $order->driver_id)->lockForUpdate()->first()
+                ?: Wallet::create([
+                    'user_id' => $order->driver_id,
+                    'balance' => 0,
+                    'locked_balance' => 0,
+                    'currency' => 'INR',
+                    'is_active' => true,
+                ]);
+
+            // Full amount credited — deliberately not passed through
+            // CommissionSetting::calculate(), unlike delivery-fee earnings.
+            $driverWallet->increment('balance', $amount);
+            $driverWallet->refresh();
+
+            WalletTransaction::create([
+                'wallet_id' => $driverWallet->id,
+                'user_id' => $order->driver_id,
+                'type' => 'credit',
+                'amount' => $amount,
+                'balance_after' => $driverWallet->balance,
+                'reference_type' => 'driver_tip_earning',
+                'reference_id' => $order->id,
+                'description' => "Tip from customer for order #{$order->order_number}",
+                'meta' => ['source' => 'tip'],
+            ]);
+
+            $order->update([
+                'tip_amount' => $amount,
+                'tip_paid_at' => now(),
+            ]);
+
+            DB::commit();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Thanks! Your tip has been sent to your delivery partner.',
+                'data' => $order->fresh(['restaurant', 'driver']),
+            ]);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error('Order tip error: ' . $e->getMessage());
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to process tip: ' . $e->getMessage(),
             ], 500);
         }
     }
@@ -1159,6 +1353,9 @@ class OrderController extends Controller
         }
         $baseTax = $tax;
         $baseTaxBreakdown = $taxBreakdown;
+        $packagingFee = round((float) collect($taxBreakdown)
+            ->where('type', 'packaging_charge')
+            ->sum('amount'), 2);
 
         $discount = 0.0;
         $promo = null;
@@ -1188,8 +1385,11 @@ class OrderController extends Controller
             'subtotal' => $subtotal,
             'delivery_fee' => $originalDeliveryFee,
             'platform_fee' => $platformFee,
-            'packaging_fee' => 0,
-            'tax' => $tax,
+            'packaging_fee' => $packagingFee,
+            // Packaging charges are already part of the tax breakdown. Split
+            // them here because the promotion engine models that bucket
+            // independently and would otherwise count it twice.
+            'tax' => max(0, round($tax - $packagingFee, 2)),
             'distance_km' => $deliveryDistanceKm,
             'coupon_code' => $couponCode,
             'order_type' => $orderType,
@@ -1232,6 +1432,7 @@ class OrderController extends Controller
             AppSetting::currencyDecimals()
         );
         $displayDiscount = round($orderDiscount + $deliveryDiscount, AppSetting::currencyDecimals());
+        $billDiscount = round($displayDiscount + $embeddedDiscount, AppSetting::currencyDecimals());
 
         if ($activeTaxes->isNotEmpty()) {
             // Free-delivery coupons subsidize only the customer delivery line.
@@ -1269,17 +1470,21 @@ class OrderController extends Controller
             'tax_label' => $taxLabel,
             'tax_breakdown' => $taxBreakdown,
             'discount' => $displayDiscount,
+            'bill_discount' => $billDiscount,
+            'total_discount' => $billDiscount,
             'order_discount' => $orderDiscount,
             'promotion_discount' => round((float) ($promotionResult['promotion_discount'] ?? 0), 2),
             'item_discount' => round((float) ($promotionResult['item_discount'] ?? 0), 2),
             'coupon_discount' => round((float) ($promotionResult['coupon_discount'] ?? 0), 2),
+            'packaging_discount' => round((float) ($promotionResult['packaging_discount'] ?? 0), 2),
             'cashback_earned' => round((float) ($promotionResult['cashback_earned'] ?? 0), 2),
             'reward_points_earned' => $orderEarnedPoints,
             'promotion_reward_points_earned' => (int) ($promotionResult['reward_points_earned'] ?? 0),
             'reward_points_balance' => (int) (auth()->user()?->reward_points_balance ?? 0),
-            'reward_points_message' => $orderEarnedPoints > 0 ? 'You will earn '.$orderEarnedPoints.' points after delivery.' : null,
+            'reward_points_message' => $orderEarnedPoints > 0 ? 'You will earn ' . $orderEarnedPoints . ' points after delivery.' : null,
             'gift_voucher_amount' => round((float) ($promotionResult['gift_voucher_amount'] ?? 0), 2),
             'reward_lines' => $promotionResult['reward_lines'] ?? [],
+            'free_items' => $promotionResult['free_items'] ?? [],
             'promotion_progress' => $promotionResult['promotion_progress'] ?? [],
             'reward_actions' => $promotionResult['reward_actions'] ?? [],
             'reward_candidates' => $promotionResult['reward_candidates'] ?? [],
@@ -1310,6 +1515,7 @@ class OrderController extends Controller
             $promotionId = $item['promotion_id'] ?? null;
             if ($dealPrice <= 0 || empty($promotionId)) {
                 $floor += ((float) ($item['price'] ?? 0)) * max(1, (int) ($item['quantity'] ?? 1));
+
                 continue;
             }
 
@@ -1344,6 +1550,7 @@ class OrderController extends Controller
                 foreach ($lines as $line) {
                     $floor += ((float) ($line['price'] ?? 0)) * max(1, (int) ($line['quantity'] ?? 1));
                 }
+
                 continue;
             }
 
@@ -1454,141 +1661,6 @@ class OrderController extends Controller
             'admin' => $admin,
             'restaurant' => $restaurant,
         ];
-    }
-
-    private function rewardOrderItems(array $rewardLines): array
-    {
-        return collect($rewardLines)
-            ->filter(fn (array $line) => (! empty($line['menu_item_id']) || ! empty($line['item_id'])) && ! ($line['included_in_cart'] ?? false))
-            ->map(function (array $line) {
-                $quantity = $this->rewardLineQuantityForOrder($line);
-
-                return [
-                    'id' => (int) ($line['menu_item_id'] ?? $line['item_id']),
-                    'menu_item_id' => (int) ($line['menu_item_id'] ?? $line['item_id']),
-                    'name' => $line['name'] ?? $line['title'] ?? 'Promotion reward',
-                    'category_id' => $line['category_id'] ?? null,
-                    'brand_id' => null,
-                    'variant_id' => $line['variant_id'] ?? null,
-                    'addon_ids' => (array) ($line['addon_ids'] ?? []),
-                    'tags' => ['promotion_reward'],
-                    'food_type' => null,
-                    'price' => 0,
-                    'quantity' => $quantity,
-                    'selected_variant' => [
-                        'name' => 'Promotion reward',
-                        'price' => 0,
-                        'custom_fields' => [
-                            'line_type' => 'promotion_reward',
-                            'promotion_id' => (string) ($line['promotion_id'] ?? ''),
-                            'promotion_title' => (string) ($line['title'] ?? 'Promotion'),
-                        ],
-                    ],
-                    'selected_add_ons' => [],
-                    'total' => 0,
-                    'line_type' => 'promotion_reward',
-                    'promotion_id' => $line['promotion_id'] ?? null,
-                    'promotion_title' => $line['title'] ?? 'Promotion',
-                    'special_instructions' => 'Promotion reward: ' . ($line['title'] ?? 'Promotion'),
-                ];
-            })
-            ->values()
-            ->all();
-    }
-
-    private function applyRewardLinesToOrderItems(array $orderItems, iterable $rewardLines): array
-    {
-        $items = array_values($orderItems);
-
-        foreach ($rewardLines as $line) {
-            if (! is_array($line)) {
-                continue;
-            }
-
-            $menuItemId = (int) ($line['menu_item_id'] ?? $line['item_id'] ?? 0);
-            if ($menuItemId <= 0) {
-                continue;
-            }
-
-            $quantity = $this->rewardLineQuantityForOrder($line);
-            $matchedIndex = null;
-
-            foreach ($items as $index => $item) {
-                $itemId = (int) ($item['menu_item_id'] ?? $item['id'] ?? 0);
-                $isRewardLine = ($item['line_type'] ?? null) === 'promotion_reward'
-                    || in_array('promotion_reward', (array) ($item['tags'] ?? []), true);
-
-                if ($itemId === $menuItemId && ! $isRewardLine) {
-                    $matchedIndex = $index;
-                    break;
-                }
-            }
-
-            if ($matchedIndex === null) {
-                $items = array_merge($items, $this->rewardOrderItems([$line]));
-                continue;
-            }
-
-            if (! ($line['included_in_cart'] ?? false)) {
-                $items[$matchedIndex]['quantity'] = max(1, (int) ($items[$matchedIndex]['quantity'] ?? 1)) + $quantity;
-            }
-
-            $items[$matchedIndex] = $this->annotatePromotionFreeQuantity($items[$matchedIndex], $line, $quantity);
-        }
-
-        return array_values($items);
-    }
-
-    private function annotatePromotionFreeQuantity(array $item, array $line, int $freeQuantity): array
-    {
-        $selectedVariant = is_array($item['selected_variant'] ?? null)
-            ? $item['selected_variant']
-            : [];
-        $customFields = is_array($selectedVariant['custom_fields'] ?? null)
-            ? $selectedVariant['custom_fields']
-            : [];
-
-        $currentFreeQuantity = (int) ($item['promotion_free_quantity']
-            ?? ($customFields['promotion_free_quantity'] ?? 0));
-        $freeQuantity = $currentFreeQuantity + max(1, $freeQuantity);
-        $totalQuantity = max(1, (int) ($item['quantity'] ?? 1));
-        $paidQuantity = max(0, $totalQuantity - $freeQuantity);
-        $promotionTitle = (string) ($line['title'] ?? $line['promotion_title'] ?? 'Promotion');
-
-        $customFields = array_merge($customFields, [
-            'promotion_line_type' => 'buy_get_free',
-            'promotion_id' => (string) ($line['promotion_id'] ?? ''),
-            'promotion_title' => $promotionTitle,
-            'promotion_free_quantity' => (string) $freeQuantity,
-            'promotion_paid_quantity' => (string) $paidQuantity,
-        ]);
-
-        $selectedVariant['custom_fields'] = $customFields;
-        if (empty($selectedVariant['name'])) {
-            $selectedVariant['name'] = 'Promotion info';
-            $selectedVariant['price'] = 0;
-        }
-
-        $tags = array_values(array_unique(array_merge((array) ($item['tags'] ?? []), ['promotion_free_units'])));
-        $promotionNote = 'Promotion: '.$promotionTitle.' includes '.$freeQuantity.' free item'.($freeQuantity === 1 ? '' : 's');
-
-        return array_merge($item, [
-            'selected_variant' => $selectedVariant,
-            'tags' => $tags,
-            'promotion_line_type' => 'buy_get_free',
-            'promotion_id' => $line['promotion_id'] ?? null,
-            'promotion_title' => $promotionTitle,
-            'promotion_free_quantity' => $freeQuantity,
-            'promotion_paid_quantity' => $paidQuantity,
-            'special_instructions' => trim((string) ($item['special_instructions'] ?? '')) !== ''
-                ? trim((string) $item['special_instructions']).' | '.$promotionNote
-                : $promotionNote,
-        ]);
-    }
-
-    private function rewardLineQuantityForOrder(array $line): int
-    {
-        return max(1, (int) ($line['quantity'] ?? 1));
     }
 
     private function calculateDistance($lat1, $lon1, $lat2, $lon2)
@@ -1759,8 +1831,8 @@ class OrderController extends Controller
         $payload['reward_points_balance'] = (int) ($order->customer?->reward_points_balance ?? auth()->user()?->reward_points_balance ?? 0);
         $payload['reward_points_message'] = $orderPoints > 0
             ? ($order->status === 'delivered'
-                ? 'You earned '.$orderPoints.' points for this order.'
-                : 'You will earn '.$orderPoints.' points after delivery.')
+                ? 'You earned ' . $orderPoints . ' points for this order.'
+                : 'You will earn ' . $orderPoints . ' points after delivery.')
             : null;
 
         if (isset($payload['restaurant']) && is_array($payload['restaurant'])) {
@@ -1915,4 +1987,3 @@ class OrderController extends Controller
         }
     }
 }
-

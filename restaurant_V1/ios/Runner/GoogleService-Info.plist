@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CLIENT_ID</key>
+	<string>596992936599-fna05786je4lpos901b2rn7fpgpg8mu0.apps.googleusercontent.com</string>
+	<key>REVERSED_CLIENT_ID</key>
+	<string>com.googleusercontent.apps.596992936599-fna05786je4lpos901b2rn7fpgpg8mu0</string>
+	<key>ANDROID_CLIENT_ID</key>
+	<string>596992936599-aesnamft1jb0dkv4v9tlct4kevt2u492.apps.googleusercontent.com</string>
+	<key>API_KEY</key>
+	<string>AIzaSyDhZCVKvFQmun_wXebEFKgaP6zzjQn-c4I</string>
+	<key>GCM_SENDER_ID</key>
+	<string>596992936599</string>
+	<key>PLIST_VERSION</key>
+	<string>1</string>
+	<key>BUNDLE_ID</key>
+	<string>com.adgraph.vendor</string>
+	<key>PROJECT_ID</key>
+	<string>yumma-458b0</string>
+	<key>STORAGE_BUCKET</key>
+	<string>yumma-458b0.firebasestorage.app</string>
+	<key>IS_ADS_ENABLED</key>
+	<false></false>
+	<key>IS_ANALYTICS_ENABLED</key>
+	<false></false>
+	<key>IS_APPINVITE_ENABLED</key>
+	<true></true>
+	<key>IS_GCM_ENABLED</key>
+	<true></true>
+	<key>IS_SIGNIN_ENABLED</key>
+	<true></true>
+	<key>GOOGLE_APP_ID</key>
+	<string>1:596992936599:ios:ba6b318258c26980f6b7d2</string>
+	<key>DATABASE_URL</key>
+	<string>https://yumma-458b0-default-rtdb.firebaseio.com</string>
+</dict>
+</plist>

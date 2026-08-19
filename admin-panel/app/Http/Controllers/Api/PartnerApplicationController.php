@@ -8,6 +8,7 @@ use App\Models\DeliveryArea;
 use App\Models\PartnerApplication;
 use App\Models\User;
 use App\Rules\UniqueUserContactForRole;
+use App\Services\CashfreeVerificationService;
 use App\Services\DeliveryAreaResolver;
 use App\Support\PhoneNumber;
 use Illuminate\Http\Request;
@@ -22,7 +23,8 @@ use Illuminate\Validation\ValidationException;
 class PartnerApplicationController extends Controller
 {
     public function __construct(
-        private readonly DeliveryAreaResolver $deliveryAreaResolver
+        private readonly DeliveryAreaResolver $deliveryAreaResolver,
+        private readonly CashfreeVerificationService $verification
     ) {
     }
 
@@ -93,6 +95,8 @@ class PartnerApplicationController extends Controller
 
             DB::commit();
 
+            $this->runDocumentVerification($application);
+
             return response()->json([
                 'success' => true,
                 'message' => 'Application submitted successfully. It is now pending admin approval.',
@@ -142,6 +146,7 @@ class PartnerApplicationController extends Controller
                 'phone' => $application->phone ?: $application->business_phone,
                 'bank_details' => $application->bank_details ? json_decode($application->bank_details, true) : null,
                 'onboarding_meta' => $application->onboarding_meta,
+                'document_verification' => $application->document_verification,
                 'delivery_area' => $application->deliveryArea ? [
                     'id' => $application->deliveryArea->id,
                     'name' => $application->deliveryArea->name,
@@ -171,6 +176,8 @@ class PartnerApplicationController extends Controller
                 'contact_email' => 'required|email',
                 'contact_phone' => 'required|string|max:20',
                     'gst_certificate' => 'nullable|file|mimes:pdf,jpg,jpeg,png|max:5120',
+                'gstin_number' => ['nullable', 'string', 'regex:/^\d{2}[A-Z]{5}\d{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/i'],
+                'pan_number' => ['nullable', 'string', 'regex:/^[A-Z]{5}\d{4}[A-Z]{1}$/i'],
                 'fssai_license' => 'nullable|file|mimes:pdf,jpg,jpeg,png|max:5120',
                 'terms' => 'accepted',
             ];
@@ -312,6 +319,8 @@ class PartnerApplicationController extends Controller
                 'contact_email' => $request->input('contact_email'),
                 'contact_phone' => $request->input('contact_phone'),
                 'gst_certificate' => $documents['gst_certificate'],
+                'gstin_number' => $request->input('gstin_number') ? strtoupper($request->input('gstin_number')) : null,
+                'pan_number' => $request->input('pan_number') ? strtoupper($request->input('pan_number')) : null,
                 'fssai_license' => $documents['fssai_license'],
             ];
         }
@@ -352,6 +361,14 @@ class PartnerApplicationController extends Controller
         $request->merge(['area_id' => $area->id]);
 
         return $area;
+    }
+
+    private function runDocumentVerification(PartnerApplication $application): void
+    {
+        $results = $this->verification->verifyPartnerApplication($application);
+        if (! empty($results)) {
+            $application->update(['document_verification' => $results]);
+        }
     }
 
     private function statusMessage(PartnerApplication $application): string

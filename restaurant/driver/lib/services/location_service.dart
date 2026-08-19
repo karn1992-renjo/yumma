@@ -63,7 +63,7 @@ class LocationService {
       final response = await http.get(
         Uri.parse('https://nominatim.openstreetmap.org/reverse?lat=$lat&lon=$lng&format=json&accept-language=en'),
         headers: {
-          'User-Agent': 'YummaDriver/1.0 (https://yumma.in)',
+          'User-Agent': 'YummaDriver/1.0 (https://yumma.online)',
           'Accept-Language': 'en',
         },
       );
@@ -92,7 +92,7 @@ class LocationService {
       final response = await http.get(
         Uri.parse('https://nominatim.openstreetmap.org/reverse?lat=$lat&lon=$lng&format=json&addressdetails=1&accept-language=en'),
         headers: {
-          'User-Agent': 'YummaDriver/1.0 (https://yumma.in)',
+          'User-Agent': 'YummaDriver/1.0 (https://yumma.online)',
           'Accept-Language': 'en',
         },
       );
@@ -141,7 +141,7 @@ class LocationService {
       final response = await http.get(
         Uri.parse('https://nominatim.openstreetmap.org/search?q=${Uri.encodeComponent(address)}&format=json&limit=1'),
         headers: {
-          'User-Agent': 'YummaDriver/1.0 (https://yumma.in)',
+          'User-Agent': 'YummaDriver/1.0 (https://yumma.online)',
           'Accept-Language': 'en',
         },
       );

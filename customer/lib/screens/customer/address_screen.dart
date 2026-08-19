@@ -6,6 +6,7 @@ import '../../config/api_constants.dart';
 import '../../models/address.dart';
 import '../../services/api_service.dart';
 import '../../theme/foodflow_theme.dart';
+import '../../widgets/common/app_skeleton.dart';
 import '../../widgets/customer/profile_screen_chrome.dart';
 
 class AddressScreen extends StatefulWidget {
@@ -26,19 +27,18 @@ class _AddressScreenState extends State<AddressScreen> {
     _loadAddresses();
   }
 
-  Future<void> _loadAddresses() async {
-    if (mounted) setState(() => _isLoading = true);
+  Future<void> _loadAddresses({bool forceRefresh = false}) async {
+    if (mounted) setState(() => _isLoading = _addresses.isEmpty);
 
     try {
-      final response = await _api.get(ApiConstants.addresses);
-      if (response['success'] == true) {
-        final List<dynamic> addressesData = response['data'];
-        if (!mounted) return;
-        setState(() {
-          _addresses =
-              addressesData.map((json) => Address.fromJson(json)).toList();
-        });
-      }
+      final response = await _api.get(
+        ApiConstants.addresses,
+        cachePolicy: ApiCachePolicy.screen,
+        cacheFirst: !forceRefresh,
+        refreshCached: !forceRefresh,
+        onCacheRefreshed: _applyAddresses,
+      );
+      _applyAddresses(response);
     } catch (e) {
       debugPrint('Load addresses error: $e');
     }
@@ -46,9 +46,21 @@ class _AddressScreenState extends State<AddressScreen> {
     if (mounted) setState(() => _isLoading = false);
   }
 
+  void _applyAddresses(dynamic response) {
+    if (!mounted || response is! Map || response['success'] != true) return;
+    final data = response['data'];
+    if (data is! List) return;
+    setState(() {
+      _addresses = data
+          .whereType<Map>()
+          .map((json) => Address.fromJson(Map<String, dynamic>.from(json)))
+          .toList();
+    });
+  }
+
   Future<void> _openAddAddress() async {
     await Navigator.pushNamed(context, '/addresses/add');
-    if (mounted) await _loadAddresses();
+    if (mounted) await _loadAddresses(forceRefresh: true);
   }
 
   Future<void> _openEditAddress(Address address) async {
@@ -57,7 +69,7 @@ class _AddressScreenState extends State<AddressScreen> {
       '/addresses/edit',
       arguments: address,
     );
-    if (mounted) await _loadAddresses();
+    if (mounted) await _loadAddresses(forceRefresh: true);
   }
 
   Future<void> _setDefaultAddress(int addressId) async {
@@ -65,7 +77,7 @@ class _AddressScreenState extends State<AddressScreen> {
       final response =
           await _api.post('${ApiConstants.setDefaultAddress}/$addressId');
       if (response['success'] == true) {
-        await _loadAddresses();
+        await _loadAddresses(forceRefresh: true);
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Default address updated')),
@@ -117,7 +129,7 @@ class _AddressScreenState extends State<AddressScreen> {
     try {
       final response = await _api.post(ApiConstants.deleteAddress(addressId));
       if (response['success'] == true) {
-        await _loadAddresses();
+        await _loadAddresses(forceRefresh: true);
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Address deleted successfully')),
@@ -134,7 +146,7 @@ class _AddressScreenState extends State<AddressScreen> {
       backgroundColor: profileCanvasColor(context),
       body: SafeArea(
         child: RefreshIndicator(
-          onRefresh: _loadAddresses,
+          onRefresh: () => _loadAddresses(forceRefresh: true),
           color: profileAccentColor(context),
           child: Stack(
             children: [
@@ -203,7 +215,9 @@ class _AddressScreenState extends State<AddressScreen> {
                         _addresses.isEmpty ? 'Get started' : 'Saved locations',
                   ),
                   const SizedBox(height: 10),
-                  if (_addresses.isEmpty)
+                  if (_isLoading && _addresses.isEmpty)
+                    const AppSkeletonColumn(itemCount: 4, itemHeight: 104)
+                  else if (_addresses.isEmpty)
                     _EmptyAddresses(onAdd: _openAddAddress)
                   else
                     ..._addresses.map(
@@ -219,7 +233,7 @@ class _AddressScreenState extends State<AddressScreen> {
                     ),
                 ],
               ),
-              if (_isLoading)
+              if (_isLoading && _addresses.isNotEmpty)
                 const Positioned(
                   left: 0,
                   right: 0,

@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Privacy Policy | foodflow</title>
-    <meta name="description" content="Privacy Policy for foodflow, foodflow Resto, and foodflow Go by Adgraph Media Private Limited.">
+    <meta name="description" content="Privacy Policy for foodflow, foodflow Resto, and foodflow Go by RENJO TECHNOLOGY Private Limited.">
     <style>
         :root {
             --brand: #0e9f6e;
@@ -175,7 +175,7 @@
 <body>
     <header>
         <div class="header-inner">
-            <p class="eyebrow">Adgraph Media Private Limited</p>
+            <p class="eyebrow">RENJO TECHNOLOGY Private Limited</p>
             <h1>foodflow Privacy Policy</h1>
             <p>Last updated: June 8, 2026</p>
         </div>
@@ -185,7 +185,7 @@
         <div class="intro">
             <h2>Overview</h2>
             <p>
-                This Privacy Policy explains how Adgraph Media Private Limited collects, uses, stores,
+                This Privacy Policy explains how RENJO TECHNOLOGY Private Limited collects, uses, stores,
                 shares, and protects personal information when you use foodflow, foodflow Resto, foodflow Go,
                 our website, APIs, support channels, and related services.
             </p>
@@ -200,7 +200,7 @@
                 </div>
                 <div>
                     <strong>Company</strong>
-                    Adgraph Media Private Limited
+                    RENJO TECHNOLOGY Private Limited
                 </div>
                 <div>
                     <strong>Contact</strong>
@@ -350,7 +350,7 @@
             <div class="contact-grid">
                 <div class="contact-card">
                     <h3>Company</h3>
-                    <p class="muted">Adgraph Media Private Limited</p>
+                    <p class="muted">RENJO TECHNOLOGY Private Limited</p>
                 </div>
                 <div class="contact-card">
                     <h3>Privacy Contact</h3>
@@ -364,7 +364,7 @@
     </main>
 
     <footer>
-        This Privacy Policy applies to foodflow services operated by Adgraph Media Private Limited.
+        This Privacy Policy applies to foodflow services operated by RENJO TECHNOLOGY Private Limited.
     </footer>
 </body>
 </html>

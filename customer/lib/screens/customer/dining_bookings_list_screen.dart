@@ -13,7 +13,8 @@ class DiningBookingsListScreen extends StatefulWidget {
   const DiningBookingsListScreen({super.key});
 
   @override
-  State<DiningBookingsListScreen> createState() => _DiningBookingsListScreenState();
+  State<DiningBookingsListScreen> createState() =>
+      _DiningBookingsListScreenState();
 }
 
 class _DiningBookingsListScreenState extends State<DiningBookingsListScreen>
@@ -34,9 +35,9 @@ class _DiningBookingsListScreenState extends State<DiningBookingsListScreen>
     super.dispose();
   }
 
-  Future<void> _loadBookings() async {
+  Future<void> _loadBookings({bool forceRefresh = false}) async {
     final provider = context.read<DiningProvider>();
-    await provider.fetchMyBookings();
+    await provider.fetchMyBookings(forceRefresh: forceRefresh);
   }
 
   @override
@@ -90,7 +91,7 @@ class _DiningBookingsListScreenState extends State<DiningBookingsListScreen>
       body: Consumer<DiningProvider>(
         builder: (context, diningProvider, child) {
           return RefreshIndicator(
-            onRefresh: _loadBookings,
+            onRefresh: () => _loadBookings(forceRefresh: true),
             child: TabBarView(
               controller: _tabController,
               children: [
@@ -136,34 +137,34 @@ class _DiningBookingsListScreenState extends State<DiningBookingsListScreen>
             margin: const EdgeInsets.fromLTRB(0, 8, 0, 18),
           ),
           Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              isUpcoming ? Icons.event_busy : Icons.history,
-              size: 64,
-              color: Colors.grey.shade400,
-            ),
-            const SizedBox(height: 16),
-            Text(
-              isUpcoming
-                  ? 'No upcoming reservations'
-                  : 'No past reservations',
-              style: const TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.w600,
-                color: Colors.grey,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                isUpcoming ? Icons.event_busy : Icons.history,
+                size: 64,
+                color: Colors.grey.shade400,
               ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Book a table at your favorite restaurant',
-              style: TextStyle(
-                fontSize: 14,
-                color: Colors.grey.shade600,
+              const SizedBox(height: 16),
+              Text(
+                isUpcoming
+                    ? 'No upcoming reservations'
+                    : 'No past reservations',
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.grey,
+                ),
               ),
-            ),
-          ],
-        ),
+              const SizedBox(height: 8),
+              Text(
+                'Book a table at your favorite restaurant',
+                style: TextStyle(
+                  fontSize: 14,
+                  color: Colors.grey.shade600,
+                ),
+              ),
+            ],
+          ),
         ],
       );
     }

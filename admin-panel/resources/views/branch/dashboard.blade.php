@@ -4,7 +4,7 @@
 @section('header', 'Branch Dashboard')
 
 @php
-    $currencySymbol = App\Models\AppSetting::getValue('currency_symbol', 'Rs');
+    $currencySymbol = App\Models\AppSetting::sanitizedCurrencySymbol();
     $decimals = App\Models\AppSetting::currencyDecimals();
     $avgOrderValue = $stats['orders'] > 0 ? $stats['revenue'] / max($stats['orders'], 1) : 0;
     $statusClass = fn ($status) => str_replace('_', '-', strtolower($status ?? 'pending'));

@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import '../../widgets/common/app_cached_image.dart';
+import '../../widgets/common/app_skeleton.dart';
 import 'package:provider/provider.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -100,24 +101,14 @@ class _OrderChatScreenState extends State<OrderChatScreen>
 
   Future<void> _loadChat() async {
     try {
-      final response = await _api.get(ApiConstants.orderChat(_orderId));
-      final data = Map<String, dynamic>.from(response['data'] as Map);
-      final messages = (data['messages'] as List? ?? const [])
-          .whereType<Map>()
-          .map((item) => Map<String, dynamic>.from(item))
-          .toList();
-
-      if (!mounted) return;
-      setState(() {
-        _messages = messages;
-        _participants = Map<String, dynamic>.from(
-          data['participants'] as Map? ?? const {},
-        );
-        _summary = Map<String, dynamic>.from(
-          data['summary'] as Map? ?? const {},
-        );
-        _isLoading = false;
-      });
+      final response = await _api.get(
+        ApiConstants.orderChat(_orderId),
+        cachePolicy: ApiCachePolicy.screen,
+        cacheFirst: true,
+        refreshCached: true,
+        onCacheRefreshed: _applyChatResponse,
+      );
+      _applyChatResponse(response);
       await _markRead();
       _scrollToBottom();
     } catch (e) {
@@ -129,9 +120,32 @@ class _OrderChatScreenState extends State<OrderChatScreen>
     }
   }
 
+  void _applyChatResponse(dynamic response) {
+    if (!mounted || response is! Map || response['data'] is! Map) return;
+    final data = Map<String, dynamic>.from(response['data'] as Map);
+    final messages = (data['messages'] as List? ?? const [])
+        .whereType<Map>()
+        .map((item) => Map<String, dynamic>.from(item))
+        .toList();
+
+    if (!mounted) return;
+    setState(() {
+      _messages = messages;
+      _participants = Map<String, dynamic>.from(
+        data['participants'] as Map? ?? const {},
+      );
+      _summary = Map<String, dynamic>.from(
+        data['summary'] as Map? ?? const {},
+      );
+      _isLoading = false;
+    });
+    _scrollToBottom();
+  }
+
   Future<void> _markRead() async {
     try {
-      final response = await _api.post('${ApiConstants.orderChat(_orderId)}/read');
+      final response =
+          await _api.post('${ApiConstants.orderChat(_orderId)}/read');
       final data = response['data'];
       if (data is! Map) return;
       final ids = (data['message_ids'] as List? ?? const [])
@@ -183,7 +197,8 @@ class _OrderChatScreenState extends State<OrderChatScreen>
       return;
     }
 
-    final nextMessage = payload.map((key, value) => MapEntry(key.toString(), value));
+    final nextMessage =
+        payload.map((key, value) => MapEntry(key.toString(), value));
     if (!mounted) return;
     setState(() {
       final exists = _messages.any(
@@ -317,7 +332,8 @@ class _OrderChatScreenState extends State<OrderChatScreen>
           'message': address?['address'] ?? 'Shared a live location',
           'location_lat': position.latitude,
           'location_lng': position.longitude,
-          'location_label': address?['address'] ?? address?['city'] ?? 'Live location',
+          'location_label':
+              address?['address'] ?? address?['city'] ?? 'Live location',
         },
       );
 
@@ -380,7 +396,8 @@ class _OrderChatScreenState extends State<OrderChatScreen>
 
   String _participantName(String role) {
     final participant = _participants[role];
-    if (participant is Map && (participant['name']?.toString().isNotEmpty ?? false)) {
+    if (participant is Map &&
+        (participant['name']?.toString().isNotEmpty ?? false)) {
       return participant['name'].toString();
     }
     return role == 'driver' ? 'Delivery partner' : 'Restaurant';
@@ -401,7 +418,8 @@ class _OrderChatScreenState extends State<OrderChatScreen>
     if (raw == null || raw.isEmpty) return '';
     final date = DateTime.tryParse(raw)?.toLocal();
     if (date == null) return '';
-    final hour = date.hour > 12 ? date.hour - 12 : (date.hour == 0 ? 12 : date.hour);
+    final hour =
+        date.hour > 12 ? date.hour - 12 : (date.hour == 0 ? 12 : date.hour);
     final minute = date.minute.toString().padLeft(2, '0');
     final suffix = date.hour >= 12 ? 'PM' : 'AM';
     return '$hour:$minute $suffix';
@@ -460,7 +478,8 @@ class _OrderChatScreenState extends State<OrderChatScreen>
                 ),
                 child: SegmentedButton<String>(
                   segments: const [
-                    ButtonSegment(value: 'restaurant', label: Text('Restaurant')),
+                    ButtonSegment(
+                        value: 'restaurant', label: Text('Restaurant')),
                     ButtonSegment(value: 'driver', label: Text('Driver')),
                   ],
                   selected: {_recipientRole},
@@ -496,7 +515,11 @@ class _OrderChatScreenState extends State<OrderChatScreen>
         ),
         Expanded(
           child: _isLoading
-              ? const Center(child: CircularProgressIndicator())
+              ? const AppSkeletonListView(
+                  itemCount: 5,
+                  itemHeight: 72,
+                  padding: EdgeInsets.fromLTRB(16, 4, 16, 16),
+                )
               : ListView.builder(
                   controller: _scrollController,
                   padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
@@ -608,16 +631,13 @@ class _OrderChatScreenState extends State<OrderChatScreen>
   }
 
   Widget _buildOrderStatusCard() {
-    final statusLabel =
-        _summary['status_label']?.toString() ??
+    final statusLabel = _summary['status_label']?.toString() ??
         _resolvedOrder?.statusText ??
         'Live order communication';
-    final restaurantName =
-        _summary['restaurant_name']?.toString() ??
+    final restaurantName = _summary['restaurant_name']?.toString() ??
         _resolvedOrder?.restaurant?.name ??
         'Restaurant';
-    final driverName =
-        _summary['driver_name']?.toString() ??
+    final driverName = _summary['driver_name']?.toString() ??
         _resolvedOrder?.driver?.name ??
         'Awaiting driver';
 
@@ -708,8 +728,8 @@ class _OrderChatScreenState extends State<OrderChatScreen>
   Widget _buildMessageBubble(Map<String, dynamic> message) {
     final senderRole = message['sender_role']?.toString() ?? '';
     final isMine = senderRole == 'customer';
-    final isSystem =
-        senderRole == 'system' || message['message_type']?.toString() == 'system';
+    final isSystem = senderRole == 'system' ||
+        message['message_type']?.toString() == 'system';
     final bubbleColor = isMine ? _primary : Colors.white;
 
     if (isSystem) {
@@ -801,7 +821,8 @@ class _OrderChatScreenState extends State<OrderChatScreen>
     final textColor = isMine ? Colors.white : _ink;
     final mutedColor = isMine ? Colors.white70 : _muted;
 
-    if (type == 'image' && (message['attachment_url']?.toString().isNotEmpty ?? false)) {
+    if (type == 'image' &&
+        (message['attachment_url']?.toString().isNotEmpty ?? false)) {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -833,13 +854,16 @@ class _OrderChatScreenState extends State<OrderChatScreen>
     }
 
     if (type == 'location') {
-      final meta = Map<String, dynamic>.from(message['meta'] as Map? ?? const {});
+      final meta =
+          Map<String, dynamic>.from(message['meta'] as Map? ?? const {});
       return InkWell(
         onTap: () => _openSharedLocation(message),
         child: Container(
           padding: const EdgeInsets.all(14),
           decoration: BoxDecoration(
-            color: isMine ? Colors.white.withOpacity(0.14) : const Color(0xFFF3F4F6),
+            color: isMine
+                ? Colors.white.withOpacity(0.14)
+                : const Color(0xFFF3F4F6),
             borderRadius: BorderRadius.circular(18),
           ),
           child: Row(
@@ -886,5 +910,4 @@ class _OrderChatScreenState extends State<OrderChatScreen>
       ),
     );
   }
-
 }

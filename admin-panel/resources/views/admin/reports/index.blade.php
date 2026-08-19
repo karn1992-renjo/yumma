@@ -140,7 +140,7 @@
 
 @section('content')
 @php
-    $currencySymbol = \App\Models\AppSetting::getValue('currency_symbol', 'Rs');
+    $currencySymbol = \App\Models\AppSetting::sanitizedCurrencySymbol();
     $decimals = \App\Models\AppSetting::currencyDecimals();
     $statusLabels = \App\Models\Order::getStatuses();
     $paymentStatusLabels = \App\Models\Order::getPaymentStatuses();

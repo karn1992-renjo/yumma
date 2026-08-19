@@ -7,6 +7,7 @@ import '../../services/api_service.dart';
 import '../../theme/foodflow_theme.dart';
 import '../../utils/currency_utils.dart';
 import '../../widgets/common/app_cached_image.dart';
+import '../../widgets/common/app_skeleton.dart';
 import '../../widgets/customer/scratch_card_art.dart';
 import '../../widgets/customer/scratch_card_reveal_dialog.dart';
 
@@ -38,12 +39,25 @@ class _ScratchCardsScreenState extends State<ScratchCardsScreen> {
     _loadCards();
   }
 
-  Future<void> _loadCards() async {
-    setState(() => _loading = true);
+  Future<void> _loadCards({bool forceRefresh = false}) async {
+    setState(() => _loading = _cards.isEmpty && _pointTransactions.isEmpty);
     try {
       final responses = await Future.wait([
-        _api.get(ApiConstants.scratchCards),
-        _api.get(ApiConstants.rewardPoints),
+        _api.get(
+          ApiConstants.scratchCards,
+          cachePolicy: ApiCachePolicy.screen,
+          cacheFirst: !forceRefresh,
+          refreshCached: !forceRefresh,
+          onCacheRefreshed: (_) {
+            if (mounted) _loadCards(forceRefresh: true);
+          },
+        ),
+        _api.get(
+          ApiConstants.rewardPoints,
+          cachePolicy: ApiCachePolicy.screen,
+          cacheFirst: !forceRefresh,
+          refreshCached: !forceRefresh,
+        ),
       ]);
       final response = responses.first;
       final pointsResponse = responses.last;
@@ -105,7 +119,11 @@ class _ScratchCardsScreenState extends State<ScratchCardsScreen> {
 
   Future<void> _loadRewardPoints() async {
     try {
-      final response = await _api.get(ApiConstants.rewardPoints);
+      final response = await _api.get(
+        ApiConstants.rewardPoints,
+        cachePolicy: ApiCachePolicy.screen,
+        cacheFirst: false,
+      );
       final data = response is Map && response['data'] is Map
           ? Map<String, dynamic>.from(response['data'] as Map)
           : const <String, dynamic>{};
@@ -220,9 +238,9 @@ class _ScratchCardsScreenState extends State<ScratchCardsScreen> {
         ],
       ),
       body: _loading
-          ? const Center(child: CircularProgressIndicator())
+          ? const AppSkeletonListView(itemCount: 4, itemHeight: 126)
           : RefreshIndicator(
-              onRefresh: _loadCards,
+              onRefresh: () => _loadCards(forceRefresh: true),
               child: ListView(
                 padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
                 children: [
@@ -286,8 +304,31 @@ class _ScratchCardsScreenState extends State<ScratchCardsScreen> {
   }
 }
 
-class _ScratchHero extends StatelessWidget {
+class _ScratchHero extends StatefulWidget {
   const _ScratchHero();
+
+  @override
+  State<_ScratchHero> createState() => _ScratchHeroState();
+}
+
+class _ScratchHeroState extends State<_ScratchHero>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _float;
+
+  @override
+  void initState() {
+    super.initState();
+    _float = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 2200),
+    )..repeat(reverse: true);
+  }
+
+  @override
+  void dispose() {
+    _float.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -335,10 +376,17 @@ class _ScratchHero extends StatelessWidget {
               ],
             ),
           ),
-          const Positioned(
+          Positioned(
             right: 8,
             top: 50,
-            child: ScratchGiftBox(size: 94),
+            child: AnimatedBuilder(
+              animation: _float,
+              builder: (context, child) => Transform.translate(
+                offset: Offset(0, -6 * _float.value),
+                child: child,
+              ),
+              child: const ScratchGiftBox(size: 94),
+            ),
           ),
         ],
       ),
@@ -778,6 +826,33 @@ class _RewardThumb extends StatelessWidget {
 
   final ScratchCard card;
 
+  String get _rewardType {
+    final reward = card.reward ?? const <String, dynamic>{};
+    return card.rewardType ?? reward['type']?.toString() ?? '';
+  }
+
+  IconData get _icon {
+    if (!card.isRevealed) return Icons.card_giftcard_rounded;
+    switch (_rewardType) {
+      case 'wallet_cashback':
+      case 'wallet_credit':
+      case 'cashback':
+        return Icons.account_balance_wallet_rounded;
+      case 'reward_points':
+        return Icons.stars_rounded;
+      case 'gift_voucher':
+      case 'gift_card':
+        return Icons.card_giftcard_rounded;
+      case 'no_reward':
+        return Icons.sentiment_neutral_rounded;
+      default:
+        return Icons.local_offer_rounded;
+    }
+  }
+
+  Color get _color =>
+      card.isRevealed ? const Color(0xFF0E8F45) : _scratchOrange;
+
   @override
   Widget build(BuildContext context) {
     return Container(
@@ -799,11 +874,7 @@ class _RewardThumb extends StatelessWidget {
   }
 
   Widget _fallbackIcon() {
-    return Icon(
-      card.isRevealed ? Icons.redeem_rounded : Icons.card_giftcard_rounded,
-      color: card.isRevealed ? const Color(0xFF0E8F45) : _scratchOrange,
-      size: 24,
-    );
+    return Icon(_icon, color: _color, size: 24);
   }
 }
 
@@ -1052,94 +1123,6 @@ class _HeroConfettiPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _HeroConfettiPainter oldDelegate) => false;
-}
-
-class _ScratchCardList extends StatelessWidget {
-  const _ScratchCardList({
-    required this.cards,
-    required this.emptyTitle,
-    required this.emptySubtitle,
-    required this.onRefresh,
-    required this.onTap,
-  });
-
-  final List<ScratchCard> cards;
-  final String emptyTitle;
-  final String emptySubtitle;
-  final Future<void> Function() onRefresh;
-  final ValueChanged<ScratchCard> onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    if (cards.isEmpty) {
-      return RefreshIndicator(
-        onRefresh: onRefresh,
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(24, 60, 24, 24),
-          children: [
-            const ScratchGiftBox(size: 166),
-            const SizedBox(height: 16),
-            Text(
-              emptyTitle,
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                color: FoodFlowTheme.ink,
-                fontSize: 20,
-                fontWeight: FontWeight.w900,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              emptySubtitle,
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                color: FoodFlowTheme.muted,
-                fontSize: 13,
-                fontWeight: FontWeight.w700,
-                height: 1.35,
-              ),
-            ),
-            const SizedBox(height: 22),
-            ElevatedButton(
-              onPressed: () => Navigator.pushNamedAndRemoveUntil(
-                context,
-                '/home',
-                (route) => false,
-              ),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: FoodFlowTheme.tagOrange,
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(vertical: 14),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(14),
-                ),
-              ),
-              child: const Text(
-                'Order Now',
-                style: TextStyle(fontWeight: FontWeight.w900),
-              ),
-            ),
-          ],
-        ),
-      );
-    }
-
-    return RefreshIndicator(
-      onRefresh: onRefresh,
-      child: ListView.separated(
-        padding: const EdgeInsets.fromLTRB(14, 14, 14, 22),
-        itemCount: cards.length,
-        separatorBuilder: (_, __) => const SizedBox(height: 14),
-        itemBuilder: (context, index) {
-          final card = cards[index];
-          return _ScratchCardTile(
-            card: card,
-            onTap: () => onTap(card),
-          );
-        },
-      ),
-    );
-  }
 }
 
 class _RewardPointsPanel extends StatelessWidget {
@@ -1470,172 +1453,5 @@ class _RewardPointsRedeemSheetState extends State<_RewardPointsRedeemSheet> {
         .toStringAsFixed(4)
         .replaceFirst(RegExp(r'0+$'), '')
         .replaceFirst(RegExp(r'\.$'), '');
-  }
-}
-
-class _ScratchCardTile extends StatelessWidget {
-  const _ScratchCardTile({
-    required this.card,
-    required this.onTap,
-  });
-
-  final ScratchCard card;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final disabled = card.isExpired || card.isRevealLocked;
-    final statusLabel = card.isRevealLocked
-        ? (card.revealLockedReason ?? 'Available after order delivery')
-        : ScratchRewardText.expiresLabel(card);
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: FoodFlowTheme.surface(radius: 18),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _ScratchRestaurantHeader(card: card),
-          const SizedBox(height: 10),
-          ScratchCardFace(card: card, height: 176),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              Expanded(
-                child: Row(
-                  children: [
-                    Icon(
-                      Icons.schedule_rounded,
-                      size: 15,
-                      color: disabled
-                          ? FoodFlowTheme.faint
-                          : FoodFlowTheme.tagOrange,
-                    ),
-                    const SizedBox(width: 5),
-                    Expanded(
-                      child: Text(
-                        statusLabel,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: disabled
-                              ? FoodFlowTheme.faint
-                              : FoodFlowTheme.inkSoft,
-                          fontSize: 11,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 10),
-              ElevatedButton(
-                onPressed: disabled ? null : onTap,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: FoodFlowTheme.tagOrange,
-                  foregroundColor: Colors.white,
-                  disabledBackgroundColor: const Color(0xFFC9C9C9),
-                  disabledForegroundColor: Colors.white,
-                  elevation: disabled ? 0 : 6,
-                  shadowColor: FoodFlowTheme.tagOrange.withOpacity(0.22),
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 15,
-                    vertical: 11,
-                  ),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(13),
-                  ),
-                ),
-                child: Text(
-                  card.isRevealed
-                      ? 'View Reward'
-                      : (card.isRevealLocked
-                          ? 'After Delivery'
-                          : 'Scratch Now'),
-                  style: const TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _ScratchRestaurantHeader extends StatelessWidget {
-  const _ScratchRestaurantHeader({required this.card});
-
-  final ScratchCard card;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Container(
-          width: 36,
-          height: 36,
-          decoration: BoxDecoration(
-            color: FoodFlowTheme.tagOrangeSoft,
-            borderRadius: BorderRadius.circular(14),
-          ),
-          clipBehavior: Clip.antiAlias,
-          child: card.restaurantLogoUrl?.isNotEmpty == true
-              ? AppCachedImage(
-                  imageUrl: card.restaurantLogoUrl!,
-                  fit: BoxFit.cover,
-                  errorBuilder: (_, __, ___) => _fallbackLogo(),
-                )
-              : _fallbackLogo(),
-        ),
-        const SizedBox(width: 10),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                card.restaurantName?.isNotEmpty == true
-                    ? card.restaurantName!
-                    : 'Order reward',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: FoodFlowTheme.ink,
-                  fontSize: 13,
-                  fontWeight: FontWeight.w900,
-                ),
-              ),
-              const SizedBox(height: 2),
-              Text(
-                [
-                  if (card.orderNumber?.isNotEmpty == true)
-                    'Order #${card.orderNumber}',
-                  if (card.issuedAt != null)
-                    DateFormat('d MMM yyyy').format(card.issuedAt!),
-                ].join(' - '),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: FoodFlowTheme.muted,
-                  fontSize: 10,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _fallbackLogo() {
-    return const Icon(
-      Icons.card_giftcard_rounded,
-      color: FoodFlowTheme.tagOrange,
-      size: 19,
-    );
   }
 }

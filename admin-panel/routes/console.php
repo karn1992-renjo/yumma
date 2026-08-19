@@ -11,6 +11,7 @@ use App\Services\GigIncentiveService;
 use App\Models\AppSetting;
 use App\Models\Wallet;
 use App\Models\WalletTransaction;
+use App\Models\MenuItem;
 
 $cronTaskEnabled = static function (string $key): bool {
     try {
@@ -47,6 +48,19 @@ Schedule::call(function () {
         ->pluck('id')
         ->each(fn ($orderId) => AutoMarkOrderPreparingJob::dispatch((int) $orderId));
 })->when(fn () => $cronTaskEnabled('auto_mark_confirmed_orders_preparing'))->everyMinute();
+
+// Restore menu items after a restaurant-selected out-of-stock period.
+Schedule::call(function () {
+    MenuItem::query()
+        ->where('is_available', false)
+        ->whereNotNull('unavailable_until')
+        ->where('unavailable_until', '<=', now())
+        ->update([
+            'is_available' => true,
+            'unavailable_until' => null,
+            'updated_at' => now(),
+        ]);
+})->when(fn () => $cronTaskEnabled('restore_timed_menu_items'))->everyMinute();
 
 // Mark completed gigs
 Schedule::call(function () {

@@ -4,7 +4,7 @@ import '../config/app_config.dart';
 
 class NativeConfigService {
   static const MethodChannel _channel =
-      MethodChannel('com.adgraph.yumma/app_config');
+      MethodChannel('com.renjo.app/app_config');
   static String? _googleMapsApiKey;
 
   static Future<String> getGoogleMapsApiKey() async {

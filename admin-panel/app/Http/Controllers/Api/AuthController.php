@@ -1886,7 +1886,7 @@ class AuthController extends Controller
     public function deleteAccount(Request $request)
     {
         $user = $request->user();
-        $deletedEmail = sprintf('deleted-user-%d-%s@yumma.deleted', $user->id, Str::lower(Str::random(8)));
+        $deletedEmail = sprintf('deleted-user-%d-%s@Swado.deleted', $user->id, Str::lower(Str::random(8)));
 
         DB::transaction(function () use ($user, $deletedEmail) {
             $user->tokens()->delete();

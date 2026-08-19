@@ -31,7 +31,7 @@ class AccountDeletionPolicyScreen extends StatelessWidget {
           const _PolicySection(
             title: 'Verification and processing',
             body:
-                'Adgraph Media Private Limited may verify account ownership before processing deletion. Verified requests are generally completed within 30 days.',
+                'RENJO TECHNOLOGY Private Limited may verify account ownership before processing deletion. Verified requests are generally completed within 30 days.',
             bullets: [
               'Open orders, pending refunds, unsettled payouts, chargebacks, disputes, or legal obligations may delay final deletion.',
               'After verification, account access may be disabled while deletion or anonymization is completed.',

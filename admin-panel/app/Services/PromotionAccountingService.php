@@ -7,6 +7,7 @@ use App\Models\Promotion;
 use App\Models\PromotionSettlementLedger;
 use App\Models\PromotionUsage;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
 class PromotionAccountingService
 {
@@ -205,6 +206,10 @@ class PromotionAccountingService
 
     private function ledgerUsed(Promotion $promotion, $date = null, ?int $restaurantId = null): float
     {
+        if (! Schema::hasTable('promotion_settlement_ledgers')) {
+            return 0.0;
+        }
+
         return round((float) PromotionSettlementLedger::query()
             ->where('promotion_id', $promotion->id)
             ->when($date, fn ($query) => $query->whereDate('created_at', $date))

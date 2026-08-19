@@ -11,12 +11,12 @@
                 <a href="{{ route('restaurant.support.index') }}" class="btn btn-sm btn-light rounded-3">
                     <i class="fas fa-arrow-left me-1"></i> Back
                 </a>
-                <h1 class="mb-0">{{ $ticket->ticket_number }}</h1>
+                <h1 class="mb-0">{{ $ticket->conversation_number }}</h1>
                 <span class="badge badge-{{ $ticket->status === 'open' ? 'warning' : ($ticket->status === 'resolved' ? 'success' : 'info') }}">
                     {{ ucfirst(str_replace('_', ' ', $ticket->status)) }}
                 </span>
             </div>
-            <p class="mb-0">{{ $ticket->subject }}</p>
+            <p class="mb-0">{{ ucfirst(str_replace('_', ' ', $ticket->category)) }}</p>
         </div>
         @if($ticket->status != 'closed')
         <form action="{{ route('restaurant.support.close', $ticket->id) }}" method="POST"
@@ -57,12 +57,12 @@
             </div>
             
             <div class="bg-light rounded-3 p-4 mb-3">
-                <p class="mb-0">{{ $ticket->description }}</p>
+                <p class="mb-0" style="white-space: pre-line;">{{ $ticket->firstMessage?->message }}</p>
             </div>
-            
-            @if($ticket->attachment)
+
+            @if($ticket->firstMessage?->attachment_path)
                 <div class="mb-0">
-                    <a href="{{ asset('storage/' . $ticket->attachment) }}" 
+                    <a href="{{ asset('storage/' . $ticket->firstMessage->attachment_path) }}"
                        class="btn btn-outline-primary btn-sm rounded-3" target="_blank">
                         <i class="fas fa-download me-2"></i> View Attachment
                     </a>
@@ -79,23 +79,24 @@
         
         <!-- Replies -->
         <div class="stat-card">
+            @php $replies = $ticket->messages->skip(1); @endphp
             <h5 class="mb-4 fw-bold">
                 <i class="fas fa-comments me-2 text-primary"></i> Conversation
-                ({{ $ticket->replies->count() }} replies)
+                ({{ $replies->count() }} replies)
             </h5>
-            
-            @forelse($ticket->replies as $reply)
+
+            @forelse($replies as $reply)
             <div class="d-flex gap-3 mb-4">
-                <div class="rounded-circle bg-{{ $reply->user_id == auth()->id() ? 'primary' : 'secondary' }} bg-opacity-10 d-flex align-items-center justify-content-center flex-shrink-0"
+                <div class="rounded-circle bg-{{ $reply->sender_id == auth()->id() ? 'primary' : 'secondary' }} bg-opacity-10 d-flex align-items-center justify-content-center flex-shrink-0"
                      style="width: 40px; height: 40px; font-weight: 600; font-size: 14px;
-                            color: var(--{{ $reply->user_id == auth()->id() ? 'primary' : 'secondary' }});">
-                    {{ strtoupper(substr($reply->user->name ?? 'U', 0, 1)) }}
+                            color: var(--{{ $reply->sender_id == auth()->id() ? 'primary' : 'secondary' }});">
+                    {{ strtoupper(substr($reply->sender->name ?? ucfirst($reply->sender_type), 0, 1)) }}
                 </div>
                 <div class="flex-fill">
                     <div class="d-flex justify-content-between align-items-center mb-1">
                         <span class="fw-semibold">
-                            {{ $reply->user->name ?? 'User' }}
-                            @if($reply->user_id == auth()->id())
+                            {{ $reply->sender->name ?? ($reply->sender_type === 'admin' ? 'Support Team' : ucfirst($reply->sender_type)) }}
+                            @if($reply->sender_id == auth()->id())
                                 <small class="text-muted">(You)</small>
                             @endif
                         </span>
@@ -104,8 +105,8 @@
                     <div class="bg-light rounded-3 p-3">
                         <p class="mb-0">{{ $reply->message }}</p>
                     </div>
-                    @if($reply->attachment)
-                        <a href="{{ asset('storage/' . $reply->attachment) }}" 
+                    @if($reply->attachment_path)
+                        <a href="{{ asset('storage/' . $reply->attachment_path) }}"
                            class="btn btn-sm btn-light rounded-3 mt-2" target="_blank">
                             <i class="fas fa-paperclip me-1"></i> Attachment
                         </a>
@@ -156,7 +157,7 @@
             </h5>
             <div class="mb-2">
                 <small class="text-muted d-block">Ticket Number</small>
-                <span class="fw-semibold">{{ $ticket->ticket_number }}</span>
+                <span class="fw-semibold">{{ $ticket->conversation_number }}</span>
             </div>
             <div class="mb-2">
                 <small class="text-muted d-block">Status</small>

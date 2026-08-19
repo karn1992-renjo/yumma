@@ -70,7 +70,7 @@ class WalletRechargePaymentService {
         'key': data['key'],
         'amount': data['amount'],
         'currency': data['currency'] ?? 'INR',
-        'name': 'Yumma',
+        'name': 'Yumma!',
         'description': 'Wallet recharge',
         'order_id': data['order_id'],
         'prefill': {
@@ -109,7 +109,7 @@ class WalletRechargePaymentService {
     await Stripe.instance.initPaymentSheet(
       paymentSheetParameters: SetupPaymentSheetParameters(
         paymentIntentClientSecret: clientSecret,
-        merchantDisplayName: 'Yumma',
+        merchantDisplayName: 'Yumma!',
         style: ThemeMode.system,
         googlePay: const PaymentSheetGooglePay(merchantCountryCode: 'IN'),
         applePay: const PaymentSheetApplePay(merchantCountryCode: 'IN'),

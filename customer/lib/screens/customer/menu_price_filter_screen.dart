@@ -13,6 +13,7 @@ import '../../services/location_service.dart';
 import '../../theme/foodflow_theme.dart';
 import '../../utils/currency_utils.dart';
 import '../../widgets/common/app_cached_image.dart';
+import '../../widgets/common/app_skeleton.dart';
 import '../../widgets/customer/floating_cart_bar.dart';
 
 const _priceFilterText = FoodFlowTheme.ink;
@@ -477,8 +478,9 @@ class _MenuPriceFilterScreenState extends State<MenuPriceFilterScreen> {
               ),
             ),
             if (_isLoading)
-              const SliverFillRemaining(
-                child: Center(child: CircularProgressIndicator()),
+              const AppSkeletonSliverList(
+                itemCount: 5,
+                itemHeight: 112,
               )
             else if (_error != null)
               SliverFillRemaining(

@@ -1,7 +1,7 @@
 {{-- resources/views/restaurant/promos/create.blade.php --}}
 @extends('layouts.restaurant')
 @php
-    $currencySymbol = App\Models\AppSetting::getValue('currency_symbol', '?');
+    $currencySymbol = App\Models\AppSetting::sanitizedCurrencySymbol();
     $currentTargetType = old('target_type', 'restaurant');
     $selectedTargetIds = old('target_ids', []);
 @endphp

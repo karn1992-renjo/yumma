@@ -302,7 +302,7 @@ class _OrderConfirmationScreenState extends State<OrderConfirmationScreen>
       }
 
       final tempDir = await getTemporaryDirectory();
-      final file = File('${tempDir.path}/yumma-savings-${widget.orderId}.png');
+      final file = File('${tempDir.path}/Yumma-savings-${widget.orderId}.png');
       await file.writeAsBytes(bytes, flush: true);
       await Share.shareXFiles(
         [XFile(file.path)],

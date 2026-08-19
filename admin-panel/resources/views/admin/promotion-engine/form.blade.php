@@ -429,6 +429,7 @@
         'bogo' => 'BOGO',
         'buy_x_get_y' => 'Buy X Get Y',
         'buy_2_get_1' => 'Buy 2 Get 1',
+        'buy_3_get_1' => 'Buy 3 Get 1',
         'buy_3_get_2' => 'Buy 3 Get 2',
         'free_item' => 'Free Item',
         'wallet_credit' => 'Wallet Cashback',
@@ -438,6 +439,12 @@
         'referral_bonus' => 'Referral Bonus',
         'custom_rule' => 'Custom Rule',
     ];
+
+    $legacyRewardValue = (float) ($reward['value'] ?? 0);
+    $rewardValueType = old(
+        'reward_value_type',
+        $reward['value_type'] ?? ($legacyRewardValue > 100 ? 'fixed' : 'percentage')
+    );
 
     $scratchSettings = (array) ($reward['settings'] ?? []);
     $defaultScratchRows = collect($reward['pool'] ?? [])
@@ -692,6 +699,14 @@
                                 <label class="form-label">Value</label>
                                 <input class="form-control" type="number" step="0.01" min="0" name="reward_value" value="{{ old('reward_value', $reward['value'] ?? null) }}" data-summary-field="value">
                                 <div class="form-text" data-value-help></div>
+                            </div>
+                            <div class="col-md-4" data-reward-field="value-mode">
+                                <label class="form-label">Value Type</label>
+                                <select class="form-select" name="reward_value_type">
+                                    <option value="percentage" {{ $selected($rewardValueType === 'percentage') }}>Percentage</option>
+                                    <option value="fixed" {{ $selected($rewardValueType === 'fixed') }}>Fixed amount</option>
+                                </select>
+                                <div class="form-text">Choose how the charge discount value is calculated.</div>
                             </div>
                             <div class="col-md-4" data-reward-field="max-discount">
                                 <label class="form-label">Maximum Discount</label>
@@ -1332,8 +1347,8 @@ document.addEventListener('DOMContentLoaded', function () {
 
     const rewardFieldMatrix = {
         free_delivery: [],
-        delivery_discount: ['value', 'max-discount'],
-        packaging_discount: ['value', 'max-discount'],
+        delivery_discount: ['value', 'value-mode', 'max-discount'],
+        packaging_discount: ['value', 'value-mode', 'max-discount'],
         wallet_cashback: ['value'],
         reward_points: ['value'],
         scratch_card: [],
@@ -1352,6 +1367,7 @@ document.addEventListener('DOMContentLoaded', function () {
         bogo: ['menu-finder', 'buy-free', 'items', 'categories', 'free-item'],
         buy_x_get_y: ['menu-finder', 'buy-free', 'items', 'categories', 'free-item'],
         buy_2_get_1: ['menu-finder', 'buy-free', 'items', 'categories', 'free-item'],
+        buy_3_get_1: ['menu-finder', 'buy-free', 'items', 'categories', 'free-item'],
         buy_3_get_2: ['menu-finder', 'buy-free', 'items', 'categories', 'free-item'],
         free_item: ['menu-finder', 'items', 'categories', 'free-item'],
     };
@@ -1360,8 +1376,8 @@ document.addEventListener('DOMContentLoaded', function () {
         percentage: 'Percentage value, for example 20.',
         flat: 'Flat discount amount.',
         fixed_price: 'Final fixed payable price.',
-        delivery_discount: 'Use 1-100 for percent, above 100 for flat delivery discount.',
-        packaging_discount: 'Use 1-100 for percent, above 100 for flat packaging discount.',
+        delivery_discount: 'Enter the delivery charge discount using the selected value type.',
+        packaging_discount: 'Enter the packaging charge discount using the selected value type.',
         combo_deal: 'Set combo deal price in Value and map at least two paid items.',
         meal_deal: 'Set meal deal price in Value and map at least two paid items.',
         reward_points: 'Enter points in Value.',

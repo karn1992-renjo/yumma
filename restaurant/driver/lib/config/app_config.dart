@@ -12,13 +12,13 @@ class AppConfig {
   );
 
   static const String appName = appRole == 'driver'
-      ? 'Yumma Driver'
+      ? 'Yumma! Driver'
       : appRole == 'restaurant'
-          ? 'Yumma Resto'
-          : 'Yumma';
+          ? 'Yumma! Resto'
+          : 'Yumma!';
   static const String apiBaseUrl = String.fromEnvironment(
     'API_BASE_URL',
-    defaultValue: 'https://yumma.in/api',
+    defaultValue: 'https://yumma.online/api',
   );
   static const String googleMapsApiKey = String.fromEnvironment(
     'GOOGLE_MAPS_API_KEY',
@@ -31,13 +31,13 @@ class AppConfig {
   // Firebase Config (if using)
   static const String firebaseProjectId = String.fromEnvironment(
     'FIREBASE_PROJECT_ID',
-    defaultValue: 'yumma-458b0',
+    defaultValue: 'Yumma-458b0',
   );
 
   static const String supportPhone = String.fromEnvironment('+917030666066');
   static const String supportEmail = String.fromEnvironment(
     'SUPPORT_EMAIL',
-    defaultValue: 'info@yumma.in',
+    defaultValue: 'info@yumma.online',
   );
 
   static bool get isCustomerApp => appRole == 'customer';

@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:async';
 import 'dart:io';
+import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -18,6 +19,7 @@ class ApiException implements Exception {
 
 enum ApiCachePolicy {
   none(Duration.zero),
+  screen(Duration(minutes: 2)),
   discovery(Duration(minutes: 5)),
   staticContent(Duration(hours: 24));
 
@@ -31,6 +33,13 @@ class ApiService {
   ApiService._internal();
 
   String? _authToken;
+  final http.Client _client = http.Client();
+  final Map<String, Future<dynamic>> _inFlightGets =
+      <String, Future<dynamic>>{};
+  final Map<String, Future<dynamic>> _inFlightPosts =
+      <String, Future<dynamic>>{};
+  final Map<String, _RecentPostResponse> _recentPostResponses =
+      <String, _RecentPostResponse>{};
   static const Duration _requestTimeout = Duration(seconds: 25);
 
   Future<String?> getToken() async {
@@ -41,6 +50,11 @@ class ApiService {
   }
 
   Future<void> setToken(String token) async {
+    if (_authToken != null && _authToken != token) {
+      _inFlightGets.clear();
+      _inFlightPosts.clear();
+      _recentPostResponses.clear();
+    }
     _authToken = token;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('auth_token', token);
@@ -48,8 +62,12 @@ class ApiService {
 
   Future<void> clearToken() async {
     _authToken = null;
+    _inFlightGets.clear();
+    _inFlightPosts.clear();
+    _recentPostResponses.clear();
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('auth_token');
+    await LocalCacheService.clear();
   }
 
   Future<Map<String, String>> _getHeaders({bool includeAuth = true}) async {
@@ -78,12 +96,13 @@ class ApiService {
   }) async {
     final uri = _buildUri(endpoint, queryParams);
     final shouldCache = cacheResponse || cachePolicy != ApiCachePolicy.none;
-    final maxAge = cachePolicy == ApiCachePolicy.none
-        ? null
-        : cachePolicy.maxAge;
+    final maxAge =
+        cachePolicy == ApiCachePolicy.none ? null : cachePolicy.maxAge;
+    final cacheKey = await _cacheKey(uri, includeAuth: includeAuth);
+    if (shouldCache) await LocalCacheService.initialize();
     if (shouldCache && cacheFirst) {
       final cached = LocalCacheService.get(
-        uri.toString(),
+        cacheKey,
         maxAge: maxAge,
         allowExpired: true,
       );
@@ -94,6 +113,7 @@ class ApiService {
             includeAuth: includeAuth,
             onRefreshed: onCacheRefreshed,
             maxAge: maxAge,
+            cacheKey: cacheKey,
           ));
         }
         return cached;
@@ -101,23 +121,17 @@ class ApiService {
     }
 
     try {
-
       if (kDebugMode) print('📍 GET: $uri');
 
-      final response = await http.get(
-        uri,
-        headers: await _getHeaders(includeAuth: includeAuth),
-      ).timeout(_requestTimeout);
-
-      final result = await _handleResponse(response, includeAuth: includeAuth);
+      final result = await _coalescedGet(uri, includeAuth: includeAuth);
       if (shouldCache && _isCacheableResponse(result)) {
-        await LocalCacheService.put(uri.toString(), result, maxAge: maxAge);
+        await LocalCacheService.put(cacheKey, result, maxAge: maxAge);
       }
       return result;
     } on TimeoutException {
       if (shouldCache) {
         final cached = LocalCacheService.get(
-          uri.toString(),
+          cacheKey,
           maxAge: maxAge,
           allowExpired: true,
         );
@@ -127,7 +141,7 @@ class ApiService {
     } on SocketException {
       if (shouldCache) {
         final cached = LocalCacheService.get(
-          uri.toString(),
+          cacheKey,
           maxAge: maxAge,
           allowExpired: true,
         );
@@ -138,13 +152,45 @@ class ApiService {
       if (e is ApiException) rethrow;
       if (shouldCache) {
         final cached = LocalCacheService.get(
-          uri.toString(),
+          cacheKey,
           maxAge: maxAge,
           allowExpired: true,
         );
         if (cached != null) return cached;
       }
       throw Exception('Network error: $e');
+    }
+  }
+
+  Future<String> _cacheKey(Uri uri, {required bool includeAuth}) async {
+    if (!includeAuth) return 'public:${uri.toString()}';
+    final token = await getToken();
+    if (token == null || token.isEmpty) return 'guest:${uri.toString()}';
+    final fingerprint = sha256.convert(utf8.encode(token)).toString();
+    return 'user:$fingerprint:${uri.toString()}';
+  }
+
+  Future<dynamic> _coalescedGet(
+    Uri uri, {
+    required bool includeAuth,
+  }) async {
+    final key = await _cacheKey(uri, includeAuth: includeAuth);
+    final existing = _inFlightGets[key];
+    if (existing != null) return existing;
+
+    final request = _client
+        .get(uri, headers: await _getHeaders(includeAuth: includeAuth))
+        .timeout(_requestTimeout)
+        .then(
+          (response) => _handleResponse(response, includeAuth: includeAuth),
+        );
+    _inFlightGets[key] = request;
+    try {
+      return await request;
+    } finally {
+      if (identical(_inFlightGets[key], request)) {
+        _inFlightGets.remove(key);
+      }
     }
   }
 
@@ -167,15 +213,13 @@ class ApiService {
     required bool includeAuth,
     void Function(dynamic freshData)? onRefreshed,
     Duration? maxAge,
+    required String cacheKey,
   }) async {
     try {
-      final response = await http
-          .get(uri, headers: await _getHeaders(includeAuth: includeAuth))
-          .timeout(_requestTimeout);
-      final result = await _handleResponse(response, includeAuth: includeAuth);
-      final previous = LocalCacheService.get(uri.toString());
+      final result = await _coalescedGet(uri, includeAuth: includeAuth);
+      final previous = LocalCacheService.get(cacheKey);
       if (!_isCacheableResponse(result)) return;
-      await LocalCacheService.put(uri.toString(), result, maxAge: maxAge);
+      await LocalCacheService.put(cacheKey, result, maxAge: maxAge);
       if (jsonEncode(previous) != jsonEncode(result)) {
         onRefreshed?.call(result);
       }
@@ -193,7 +237,9 @@ class ApiService {
   Future<dynamic> post(String endpoint,
       {dynamic data,
       Map<String, dynamic>? queryParams,
-      bool includeAuth = true}) async {
+      bool includeAuth = true,
+      bool coalesce = false,
+      Duration reuseFor = Duration.zero}) async {
     try {
       final uri = Uri.parse('${AppConfig.apiBaseUrl}$endpoint').replace(
           queryParameters:
@@ -204,11 +250,22 @@ class ApiService {
         print('📤 Body: $data');
       }
 
-      final response = await http.post(
-        uri,
-        headers: await _getHeaders(includeAuth: includeAuth),
-        body: data != null ? jsonEncode(data) : null,
-      ).timeout(_requestTimeout);
+      if (coalesce || reuseFor > Duration.zero) {
+        return await _coalescedPost(
+          uri,
+          data: data,
+          includeAuth: includeAuth,
+          reuseFor: reuseFor,
+        );
+      }
+
+      final response = await _client
+          .post(
+            uri,
+            headers: await _getHeaders(includeAuth: includeAuth),
+            body: data != null ? jsonEncode(data) : null,
+          )
+          .timeout(_requestTimeout);
 
       return await _handleResponse(response, includeAuth: includeAuth);
     } on TimeoutException {
@@ -221,15 +278,63 @@ class ApiService {
     }
   }
 
+  Future<dynamic> _coalescedPost(
+    Uri uri, {
+    dynamic data,
+    required bool includeAuth,
+    required Duration reuseFor,
+  }) async {
+    final encodedBody = data == null ? '' : jsonEncode(data);
+    final bodyFingerprint = sha256.convert(utf8.encode(encodedBody)).toString();
+    final key =
+        '${await _cacheKey(uri, includeAuth: includeAuth)}:$bodyFingerprint';
+    final recent = _recentPostResponses[key];
+    if (recent != null) {
+      if (DateTime.now().isBefore(recent.expiresAt)) return recent.value;
+      _recentPostResponses.remove(key);
+    }
+
+    final existing = _inFlightPosts[key];
+    if (existing != null) return existing;
+
+    final request = _client
+        .post(
+          uri,
+          headers: await _getHeaders(includeAuth: includeAuth),
+          body: encodedBody.isEmpty ? null : encodedBody,
+        )
+        .timeout(_requestTimeout)
+        .then(
+          (response) => _handleResponse(response, includeAuth: includeAuth),
+        );
+    _inFlightPosts[key] = request;
+    try {
+      final result = await request;
+      if (reuseFor > Duration.zero && _isCacheableResponse(result)) {
+        _recentPostResponses.removeWhere(
+          (_, entry) => !DateTime.now().isBefore(entry.expiresAt),
+        );
+        _recentPostResponses[key] = _RecentPostResponse(result, reuseFor);
+      }
+      return result;
+    } finally {
+      if (identical(_inFlightPosts[key], request)) {
+        _inFlightPosts.remove(key);
+      }
+    }
+  }
+
   Future<dynamic> put(String endpoint, {dynamic data}) async {
     try {
       final uri = Uri.parse('${AppConfig.apiBaseUrl}$endpoint');
 
-      final response = await http.put(
-        uri,
-        headers: await _getHeaders(),
-        body: jsonEncode(data),
-      ).timeout(_requestTimeout);
+      final response = await http
+          .put(
+            uri,
+            headers: await _getHeaders(),
+            body: jsonEncode(data),
+          )
+          .timeout(_requestTimeout);
 
       return await _handleResponse(response);
     } catch (e) {
@@ -249,10 +354,12 @@ class ApiService {
         ),
       );
 
-      final response = await http.delete(
-        uri,
-        headers: await _getHeaders(),
-      ).timeout(_requestTimeout);
+      final response = await http
+          .delete(
+            uri,
+            headers: await _getHeaders(),
+          )
+          .timeout(_requestTimeout);
 
       return await _handleResponse(response);
     } catch (e) {
@@ -376,4 +483,12 @@ class ApiService {
 
     throw ApiException(message);
   }
+}
+
+class _RecentPostResponse {
+  _RecentPostResponse(this.value, Duration lifetime)
+      : expiresAt = DateTime.now().add(lifetime);
+
+  final dynamic value;
+  final DateTime expiresAt;
 }

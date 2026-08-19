@@ -10,9 +10,9 @@ class MenuItem extends Model
 {
     protected $fillable = [
         'restaurant_id', 'master_menu_item_id', 'item_source', 'category_id', 'cuisine_id', 'name', 'description', 'price',
-        'discounted_price', 'images', 'is_veg', 'food_type', 'is_available', 'is_recommended',
+        'discounted_price', 'is_price_inclusive_gst', 'images', 'is_veg', 'food_type', 'is_available', 'unavailable_until', 'is_recommended',
         'is_bestseller', 'is_new', 'is_spicy', 'is_combo', 'availability_schedule', 'approval_status',
-        'preparation_time', 'rating', 'total_orders', 'tags', 'variants', 'add_ons'
+        'preparation_time', 'rating', 'total_ratings', 'total_orders', 'tags', 'variants', 'add_ons'
     ];
     
     protected $casts = [
@@ -22,7 +22,9 @@ class MenuItem extends Model
         'add_ons' => 'array',
         'availability_schedule' => 'array',
         'is_veg' => 'boolean',
+        'is_price_inclusive_gst' => 'boolean',
         'is_available' => 'boolean',
+        'unavailable_until' => 'datetime',
         'is_recommended' => 'boolean',
         'is_bestseller' => 'boolean',
         'is_new' => 'boolean',
@@ -148,3 +150,4 @@ class MenuItem extends Model
         return ($hour * 60) + $minute;
     }
 }
+

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../widgets/common/app_cached_image.dart';
+import '../../widgets/common/app_skeleton.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../config/api_constants.dart';
@@ -33,18 +34,16 @@ class _CampaignLandingScreenState extends State<CampaignLandingScreen> {
 
   Future<void> _loadCampaign({bool forceRefresh = false}) async {
     try {
-      final response = await _api
-          .get(
-            '${ApiConstants.campaigns}/${widget.campaignId}',
-            includeAuth: false,
-            cachePolicy: ApiCachePolicy.staticContent,
-            cacheFirst: !forceRefresh,
-            refreshCached: !forceRefresh,
-            onCacheRefreshed: (_) {
-              if (mounted) _loadCampaign(forceRefresh: true);
-            },
-          )
-          .timeout(const Duration(seconds: 12));
+      final response = await _api.get(
+        '${ApiConstants.campaigns}/${widget.campaignId}',
+        includeAuth: false,
+        cachePolicy: ApiCachePolicy.staticContent,
+        cacheFirst: !forceRefresh,
+        refreshCached: !forceRefresh,
+        onCacheRefreshed: (_) {
+          if (mounted) _loadCampaign(forceRefresh: true);
+        },
+      ).timeout(const Duration(seconds: 12));
       final data = response['data'];
       if (response['success'] == true && data is Map) {
         _campaign = Map<String, dynamic>.from(data);
@@ -60,7 +59,8 @@ class _CampaignLandingScreenState extends State<CampaignLandingScreen> {
     if (!mounted) return;
     setState(() => _isLoading = false);
     if (_campaign == null) {
-      Navigator.pushNamedAndRemoveUntil(context, '/customer/home', (_) => false);
+      Navigator.pushNamedAndRemoveUntil(
+          context, '/customer/home', (_) => false);
     }
   }
 
@@ -75,15 +75,18 @@ class _CampaignLandingScreenState extends State<CampaignLandingScreen> {
   }
 
   Future<void> _openCampaignLink() async {
-    final link = _text('link_url').isNotEmpty ? _text('link_url') : _text('link');
+    final link =
+        _text('link_url').isNotEmpty ? _text('link_url') : _text('link');
     if (link.isEmpty) {
-      Navigator.pushNamedAndRemoveUntil(context, '/customer/home', (_) => false);
+      Navigator.pushNamedAndRemoveUntil(
+          context, '/customer/home', (_) => false);
       return;
     }
 
     final uri = Uri.tryParse(link);
     if (uri == null) {
-      Navigator.pushNamedAndRemoveUntil(context, '/customer/home', (_) => false);
+      Navigator.pushNamedAndRemoveUntil(
+          context, '/customer/home', (_) => false);
       return;
     }
 
@@ -106,7 +109,7 @@ class _CampaignLandingScreenState extends State<CampaignLandingScreen> {
         surfaceTintColor: Colors.white,
       ),
       body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
+          ? const AppDetailSkeleton(cardCount: 2)
           : campaign == null
               ? const SizedBox.shrink()
               : ListView(
@@ -128,7 +131,9 @@ class _CampaignLandingScreenState extends State<CampaignLandingScreen> {
                       _imageFallback(),
                     const SizedBox(height: 18),
                     Text(
-                      _text('title').isNotEmpty ? _text('title') : _text('name'),
+                      _text('title').isNotEmpty
+                          ? _text('title')
+                          : _text('name'),
                       style: const TextStyle(
                         color: FoodFlowTheme.ink,
                         fontSize: 24,

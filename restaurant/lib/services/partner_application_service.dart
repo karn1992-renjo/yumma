@@ -6,7 +6,8 @@ import 'api_service.dart';
 class PartnerApplicationService {
   PartnerApplicationService._();
 
-  static final PartnerApplicationService instance = PartnerApplicationService._();
+  static final PartnerApplicationService instance =
+      PartnerApplicationService._();
   final ApiService _api = ApiService();
 
   static const String _applicationNumberKey =
@@ -44,6 +45,17 @@ class PartnerApplicationService {
     return raw
         .whereType<Map>()
         .map((item) => Map<String, dynamic>.from(item))
+        .toList();
+  }
+
+  Future<List<Map<String, dynamic>>> fetchActiveCuisines() async {
+    final response = await _api.get(ApiConstants.popularCuisines);
+    final raw = response['data'];
+    if (raw is! List) return const [];
+    return raw
+        .whereType<Map>()
+        .map((item) => Map<String, dynamic>.from(item))
+        .where((item) => (item['name']?.toString().trim() ?? '').isNotEmpty)
         .toList();
   }
 

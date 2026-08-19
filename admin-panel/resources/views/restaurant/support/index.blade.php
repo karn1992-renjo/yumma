@@ -146,11 +146,11 @@
                 <tr>
                     <td style="padding-left: 24px;">
                         <a href="{{ route('restaurant.support.show', $ticket->id) }}" class="fw-bold text-primary text-decoration-none">
-                            {{ $ticket->ticket_number }}
+                            {{ $ticket->conversation_number }}
                         </a>
                     </td>
                     <td>
-                        <div class="fw-semibold">{{ $ticket->subject }}</div>
+                        <div class="fw-semibold">{{ Str::limit($ticket->firstMessage?->message, 60) }}</div>
                     </td>
                     <td>
                         <span class="badge bg-light text-dark">

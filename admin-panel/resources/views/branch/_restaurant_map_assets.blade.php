@@ -532,6 +532,37 @@ document.addEventListener('DOMContentLoaded', function () {
             lookupAddress(searchInput.value.trim() || addressField.value.trim());
         }
     });
+
+    if (searchInput && google.maps.places) {
+        const autocomplete = new google.maps.places.Autocomplete(searchInput, {
+            fields: ['address_components', 'formatted_address', 'geometry', 'name'],
+        });
+        autocomplete.bindTo('bounds', map);
+        autocomplete.addListener('place_changed', function () {
+            const place = autocomplete.getPlace();
+            if (!place || !place.geometry || !place.geometry.location) {
+                updateStatus('Select a suggested address or try a more specific search.');
+                return;
+            }
+            const components = place.address_components || [];
+            const componentValue = (types) => {
+                const match = components.find((item) => types.some((type) => item.types.includes(type)));
+                return match ? match.long_name : '';
+            };
+            fillLocation({
+                display_name: place.formatted_address || place.name || '',
+                lat: place.geometry.location.lat(),
+                lon: place.geometry.location.lng(),
+                address: {
+                    city: componentValue(['locality', 'postal_town', 'administrative_area_level_3', 'sublocality']),
+                    state: componentValue(['administrative_area_level_1']),
+                    postcode: componentValue(['postal_code']),
+                },
+            });
+            updateStatus('Location selected from address search.');
+        });
+    }
+
     useLocationBtn?.addEventListener('click', detectLocation);
     radiusField?.addEventListener('change', function () {
         if (circle) circle.setRadius(getRadiusMeters());

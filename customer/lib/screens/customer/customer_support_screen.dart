@@ -1,17 +1,13 @@
 // lib/screens/customer/customer_support_screen.dart
-import 'dart:async';
-import 'dart:convert';
-
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../config/api_constants.dart';
 import '../../models/app_branding.dart';
 import '../../models/order.dart';
 import '../../services/api_service.dart';
 import '../../services/app_branding_service.dart';
+import '../../services/websocket_service.dart';
 import '../../theme/foodflow_theme.dart';
-import '../../widgets/customer/account_chrome.dart';
 
 class CustomerSupportScreen extends StatefulWidget {
   final Order? order;
@@ -29,41 +25,37 @@ class CustomerSupportScreen extends StatefulWidget {
 
 class _CustomerSupportScreenState extends State<CustomerSupportScreen> {
   final TextEditingController _messageController = TextEditingController();
-  final List<_SupportMessage> _messages = [];
+  final TextEditingController _csatCommentController = TextEditingController();
+  final ScrollController _scrollController = ScrollController();
   final ApiService _api = ApiService();
-  int? _ticketId;
-  String? _supportChoice;
-  bool _awaitingSatisfaction = false;
-  bool _showEscalationChoices = false;
-  Timer? _refreshTimer;
+  final WebSocketService _webSocketService = WebSocketService();
+
+  List<Map<String, dynamic>> _messages = [];
+  int? _conversationId;
+  String _stage = 'bot';
+  bool _isLoading = false;
+  bool _isSending = false;
+  bool _csatSubmitted = false;
+  int _csatRating = 0;
   AppBranding _branding = AppBranding.fallback();
 
   @override
   void initState() {
     super.initState();
-    if (widget.openChat) {
-      _messages.add(
-        _SupportMessage(
-          text: _orderContextText == null
-              ? 'Hi! Ask me your question and I’ll try to help right away.'
-              : 'Hi! Ask me anything about $_orderContextText and I’ll try to help right away.',
-          fromUser: false,
-        ),
-      );
-    }
-    _loadLocalConversation();
     _loadBranding();
-    _loadLatestTicket();
-    _refreshTimer = Timer.periodic(
-      const Duration(seconds: 5),
-      (_) => _loadLatestTicket(silent: true),
-    );
+    if (widget.openChat) {
+      _startOrLoadConversation();
+    }
   }
 
   @override
   void dispose() {
-    _refreshTimer?.cancel();
+    if (_conversationId != null) {
+      _webSocketService.removeSupportChatHandler(_conversationId!);
+    }
     _messageController.dispose();
+    _csatCommentController.dispose();
+    _scrollController.dispose();
     super.dispose();
   }
 
@@ -71,63 +63,6 @@ class _CustomerSupportScreenState extends State<CustomerSupportScreen> {
     final order = widget.order;
     if (order == null) return null;
     return 'Order #${order.orderNumber}';
-  }
-
-  String get _localConversationKey => widget.order == null
-      ? 'support_local_chat_general'
-      : 'support_local_chat_order_${widget.order!.id}';
-
-  Future<void> _loadLocalConversation() async {
-    final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getString(_localConversationKey);
-    if (raw == null || raw.isEmpty || !mounted) return;
-    try {
-      final decoded = jsonDecode(raw);
-      if (decoded is! Map) return;
-      final storedMessages = (decoded['messages'] as List? ?? const [])
-          .whereType<Map>()
-          .map(
-            (item) => _SupportMessage(
-              text: item['text']?.toString() ?? '',
-              fromUser: item['from_user'] == true,
-            ),
-          )
-          .where((message) => message.text.isNotEmpty)
-          .toList();
-      setState(() {
-        if (storedMessages.isNotEmpty) {
-          _messages
-            ..clear()
-            ..addAll(storedMessages);
-        }
-        _awaitingSatisfaction = decoded['awaiting_satisfaction'] == true;
-        _showEscalationChoices = decoded['show_escalation'] == true;
-        final choice = decoded['support_choice']?.toString();
-        if (choice == 'agent' || choice == 'ticket') {
-          _supportChoice = choice;
-        }
-      });
-    } catch (_) {
-      // Ignore invalid local chat state.
-    }
-  }
-
-  Future<void> _saveLocalConversation() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(
-      _localConversationKey,
-      jsonEncode({
-        'messages': _messages
-            .map((message) => {
-                  'text': message.text,
-                  'from_user': message.fromUser,
-                })
-            .toList(),
-        'awaiting_satisfaction': _awaitingSatisfaction,
-        'show_escalation': _showEscalationChoices,
-        'support_choice': _supportChoice,
-      }),
-    );
   }
 
   Future<void> _loadBranding() async {
@@ -184,165 +119,182 @@ class _CustomerSupportScreenState extends State<CustomerSupportScreen> {
     );
   }
 
-  Future<void> _loadLatestTicket({bool silent = false}) async {
+  Future<void> _startOrLoadConversation() async {
+    if (_conversationId != null || _isLoading) return;
+    setState(() => _isLoading = true);
     try {
-      final response = await _api.get(
-        ApiConstants.supportTickets,
-        queryParams: {'requester_role': 'customer'},
+      final response = await _api.post(
+        ApiConstants.supportConversations,
+        data: {'order_id': widget.order?.id},
       );
-      final tickets = response['data'];
-      if (response['success'] == true &&
-          tickets is List &&
-          tickets.isNotEmpty) {
-        Map? ticket;
-        if (widget.order == null) {
-          ticket = tickets.first as Map;
-        } else {
-          for (final candidate in tickets.whereType<Map>()) {
-            final subject = candidate['subject']?.toString() ?? '';
-            if (subject.contains(widget.order!.orderNumber)) {
-              ticket = candidate;
-              break;
-            }
-          }
-        }
-        if (ticket == null) return;
-        final Map selectedTicket = ticket;
-        final replies = selectedTicket['replies'] is List
-            ? selectedTicket['replies'] as List
-            : [];
-        final nextMessages = replies.map((reply) {
-          final map = reply as Map;
-          return _SupportMessage(
-            text: map['message']?.toString() ?? '',
-            fromUser: map['is_admin_reply'] != true,
-          );
-        }).toList();
-
-        if (!mounted) return;
-        setState(() {
-          _ticketId = selectedTicket['id'] is int
-              ? selectedTicket['id'] as int
-              : int.tryParse('${selectedTicket['id']}');
-          _supportChoice ??=
-              selectedTicket['category']?.toString() == 'live_chat'
-                  ? 'agent'
-                  : 'ticket';
-          _messages
-            ..clear()
-            ..addAll(nextMessages);
-        });
-      }
-    } catch (e) {
-      if (!silent) {
-        debugPrint('Load support chat error: $e');
-      }
-    }
-  }
-
-  Future<void> _sendMessage() async {
-    final message = _messageController.text.trim();
-    if (message.isEmpty) return;
-
-    if (_ticketId == null && _supportChoice == null) {
-      setState(() {
-        _messages.add(_SupportMessage(text: message, fromUser: true));
-        _messages.add(
-          _SupportMessage(text: _localAutoReply(message), fromUser: false),
+      _applyConversationResponse(response);
+      if (_conversationId != null) {
+        _webSocketService.initSupportChat(
+          _conversationId!,
+          onMessage: _handleIncomingMessage,
         );
-        _messages.add(
-          const _SupportMessage(
-            text: 'Are you satisfied with this answer?',
-            fromUser: false,
-          ),
-        );
-        _messageController.clear();
-        _awaitingSatisfaction = true;
-        _showEscalationChoices = false;
-      });
-      await _saveLocalConversation();
-      return;
-    }
-
-    setState(() {
-      _messages.add(_SupportMessage(text: message, fromUser: true));
-      _messageController.clear();
-    });
-    await _saveLocalConversation();
-
-    try {
-      final subject = _orderContextText == null
-          ? 'Live chat support'
-          : 'Support for $_orderContextText';
-      final response = _ticketId == null
-          ? await _api.post(ApiConstants.supportTickets, data: {
-              'subject': subject,
-              'message': message,
-              'category':
-                  _supportChoice == 'agent' ? 'live_chat' : 'order_issue',
-              'priority': _supportChoice == 'agent' ? 'high' : 'medium',
-              'requester_role': 'customer',
-              'target_app': 'customer',
-            })
-          : await _api.post(ApiConstants.supportTicketReply(_ticketId!), data: {
-              'message': message,
-              'requester_role': 'customer',
-              'target_app': 'customer',
-            });
-
-      if (response['success'] == true) {
-        final ticket = response['data'] as Map?;
-        final id = ticket?['id'];
-        _ticketId = id is int ? id : int.tryParse('$id');
-        await _loadLatestTicket(silent: true);
       }
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not send chat message: $e')),
-      );
+      _showSnack('Could not start support chat: $e');
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
-  String _localAutoReply(String question) {
-    final text = question.toLowerCase();
-    final order = widget.order;
-    if (text.contains('status') ||
-        text.contains('where') ||
-        text.contains('track')) {
-      return order == null
-          ? 'Open Orders and select Track Order to see the latest status.'
-          : '${_orderContextText!} is currently ${order.statusText}. You can follow live progress on the tracking screen.';
+  void _applyConversationResponse(Map<String, dynamic> response) {
+    final data = response['data'];
+    if (data is! Map) return;
+    final messages = (response['messages'] as List? ?? const [])
+        .whereType<Map>()
+        .map((item) => Map<String, dynamic>.from(item))
+        .toList();
+
+    if (!mounted) return;
+    setState(() {
+      _conversationId = data['id'] is int ? data['id'] as int : null;
+      _stage = data['stage']?.toString() ?? 'bot';
+      _messages = messages;
+      if (data['csat_rating'] is int && (data['csat_rating'] as int) > 0) {
+        _csatSubmitted = true;
+      }
+    });
+    _scrollToBottom();
+  }
+
+  void _handleIncomingMessage(Map<String, dynamic> payload) {
+    if ((payload['conversation_id']?.toString() ?? '') !=
+        _conversationId?.toString()) {
+      return;
     }
-    if (text.contains('cancel')) {
-      return order?.canCancel == true
-          ? 'You can cancel this order from the tracking screen before the cancellation timer ends.'
-          : 'This order cannot be cancelled automatically now. If you still need help, choose No below to contact support.';
+
+    if (!mounted) return;
+    setState(() {
+      final exists = _messages.any(
+        (m) => m['id']?.toString() == payload['id']?.toString(),
+      );
+      if (!exists) {
+        _messages = [..._messages, payload];
+      }
+    });
+    _scrollToBottom();
+  }
+
+  Future<void> _sendMessage([String? presetText, String? category]) async {
+    final message = presetText ?? _messageController.text.trim();
+    if (message.isEmpty || _isSending || _conversationId == null) return;
+
+    setState(() => _isSending = true);
+    try {
+      final response = await _api.post(
+        ApiConstants.supportConversationMessages(_conversationId!),
+        data: {
+          'message': message,
+          if (category != null) 'category': category,
+        },
+      );
+      final data = response['data'];
+      if (data is Map) {
+        final newMessage = Map<String, dynamic>.from(data);
+        if (!mounted) return;
+        setState(() {
+          _messageController.clear();
+          final exists = _messages.any(
+            (m) => m['id']?.toString() == newMessage['id']?.toString(),
+          );
+          if (!exists) _messages = [..._messages, newMessage];
+        });
+        _scrollToBottom();
+      }
+      await _refreshConversationStage();
+    } catch (e) {
+      if (!mounted) return;
+      _showSnack('Could not send message: $e');
+    } finally {
+      if (mounted) setState(() => _isSending = false);
     }
-    if (text.contains('refund')) {
-      return 'Refunds are processed according to the payment method and active refund policy. You can check the refund status in Order Details.';
+  }
+
+  Future<void> _escalateToAgent() async {
+    if (_conversationId == null || _isSending || _stage != 'bot') return;
+    setState(() => _isSending = true);
+    try {
+      await _api.post(ApiConstants.supportConversationEscalate(_conversationId!));
+      await _refreshConversationStage();
+    } catch (e) {
+      if (!mounted) return;
+      _showSnack('Could not connect to an agent: $e');
+    } finally {
+      if (mounted) setState(() => _isSending = false);
     }
-    if (text.contains('payment') || text.contains('paid')) {
-      return order == null
-          ? 'Payment status is available inside Order Details.'
-          : 'The payment status for this order is ${order.paymentStatus}.';
+  }
+
+  Future<void> _refreshConversationStage() async {
+    if (_conversationId == null) return;
+    try {
+      final response = await _api.get(
+        ApiConstants.supportConversation(_conversationId!),
+      );
+      _applyConversationResponse(response);
+    } catch (_) {
+      // Ignore; live updates arrive over the socket regardless.
     }
-    if (text.contains('otp')) {
-      return order?.deliveryOtp?.isNotEmpty == true
-          ? 'Your delivery OTP is ${order!.deliveryOtp}.'
-          : 'The delivery OTP appears in tracking when the order is close to delivery.';
+  }
+
+  Future<void> _submitCsat() async {
+    if (_conversationId == null || _csatRating == 0) return;
+    try {
+      await _api.post(
+        ApiConstants.supportConversationCsat(_conversationId!),
+        data: {
+          'rating': _csatRating,
+          if (_csatCommentController.text.trim().isNotEmpty)
+            'comment': _csatCommentController.text.trim(),
+        },
+      );
+      if (!mounted) return;
+      setState(() => _csatSubmitted = true);
+    } catch (e) {
+      _showSnack('Could not submit rating: $e');
     }
-    if (text.contains('driver') || text.contains('rider')) {
-      return order?.driver == null
-          ? 'A delivery partner has not been assigned yet.'
-          : 'Your delivery partner is ${order!.driver!.name}.';
+  }
+
+  void _scrollToBottom() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_scrollController.hasClients) return;
+      _scrollController.animateTo(
+        _scrollController.position.maxScrollExtent + 160,
+        duration: const Duration(milliseconds: 240),
+        curve: Curves.easeOut,
+      );
+    });
+  }
+
+  static IconData _categoryIcon(String? code) {
+    switch (code) {
+      case 'order_status':
+        return Icons.local_shipping_outlined;
+      case 'delivery_delay':
+        return Icons.schedule_outlined;
+      case 'otp_missing':
+        return Icons.password_outlined;
+      case 'driver_contact':
+        return Icons.phone_in_talk_outlined;
+      case 'cancel_order':
+        return Icons.cancel_outlined;
+      case 'refund_status':
+        return Icons.currency_rupee_rounded;
+      case 'payment_issue':
+        return Icons.payment_outlined;
+      case 'wrong_item':
+        return Icons.report_gmailerrorred_outlined;
+      case 'satisfied':
+        return Icons.thumb_up_alt_rounded;
+      case 'escalate':
+        return Icons.support_agent_rounded;
+      default:
+        return Icons.help_outline_rounded;
     }
-    if (text.contains('restaurant')) {
-      return order?.restaurant == null
-          ? 'Restaurant details are available in your order summary.'
-          : 'This order is with ${order!.restaurant!.name}.';
-    }
-    return 'I can help with order status, cancellation, refunds, payment, delivery OTP, restaurant details, and driver assignment.';
   }
 
   @override
@@ -415,15 +367,18 @@ class _CustomerSupportScreenState extends State<CustomerSupportScreen> {
       decoration: const BoxDecoration(
         border: Border(bottom: BorderSide(color: Color(0xFFEDEDED))),
       ),
-      child: const TabBar(
+      child: TabBar(
         indicatorColor: FoodFlowTheme.crimson,
         indicatorWeight: 2.5,
         labelColor: FoodFlowTheme.crimson,
-        unselectedLabelColor: Color(0xFF6B6B73),
-        labelStyle: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w900),
+        unselectedLabelColor: const Color(0xFF6B6B73),
+        labelStyle: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w900),
         unselectedLabelStyle:
-            TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700),
-        tabs: [
+            const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700),
+        onTap: (index) {
+          if (index == 1) _startOrLoadConversation();
+        },
+        tabs: const [
           Tab(text: 'Help'),
           Tab(text: 'Chat'),
         ],
@@ -558,6 +513,10 @@ class _CustomerSupportScreenState extends State<CustomerSupportScreen> {
   }
 
   Widget _buildChatTab() {
+    if (_isLoading && _messages.isEmpty) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
     return Column(
       children: [
         if (_orderContextText != null)
@@ -565,16 +524,7 @@ class _CustomerSupportScreenState extends State<CustomerSupportScreen> {
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
             child: _buildOrderBanner(),
           ),
-        if (_ticketId == null && _awaitingSatisfaction)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-            child: _buildSatisfactionChoice(),
-          ),
-        if (_ticketId == null && _showEscalationChoices)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-            child: _buildSupportChoice(),
-          ),
+        if (_conversationId != null) _buildChatStatusStrip(),
         Expanded(
           child: _messages.isEmpty
               ? Center(
@@ -589,196 +539,497 @@ class _CustomerSupportScreenState extends State<CustomerSupportScreen> {
                   ),
                 )
               : ListView.builder(
-                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-                  itemCount: _messages.length,
+                  controller: _scrollController,
+                  padding: const EdgeInsets.fromLTRB(16, 14, 16, 20),
+                  itemCount: _messages.length + (_stage == 'resolved' ? 1 : 0),
                   itemBuilder: (context, index) {
-                    final message = _messages[index];
-                    return Align(
-                      alignment: message.fromUser
-                          ? Alignment.centerRight
-                          : Alignment.centerLeft,
-                      child: Container(
-                        constraints: const BoxConstraints(maxWidth: 280),
-                        margin: const EdgeInsets.only(bottom: 10),
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 14,
-                          vertical: 10,
-                        ),
-                        decoration: BoxDecoration(
-                          color: message.fromUser
-                              ? FoodFlowTheme.crimson
-                              : Colors.white,
-                          borderRadius: BorderRadius.circular(12),
-                          border: message.fromUser
-                              ? null
-                              : Border.all(color: Colors.grey.shade200),
-                        ),
-                        child: Text(
-                          message.text,
-                          style: TextStyle(
-                            color: message.fromUser
-                                ? Colors.white
-                                : Colors.black87,
-                            fontSize: 13,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
-                    );
+                    if (index == _messages.length) {
+                      return _buildCsatCard();
+                    }
+                    return _buildMessageBubble(_messages[index]);
                   },
                 ),
         ),
-        SafeArea(
-          top: false,
-          child: Container(
-            padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
-            color: Colors.white,
-            child: Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _messageController,
-                    minLines: 1,
-                    maxLines: 3,
-                    decoration: const InputDecoration(
-                      hintText: 'Type your message',
-                      contentPadding:
-                          EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                IconButton.filled(
-                  onPressed: _sendMessage,
-                  icon: const Icon(Icons.send),
-                  style: IconButton.styleFrom(
-                    backgroundColor: FoodFlowTheme.crimson,
-                    foregroundColor: Colors.white,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
+        _buildChatInputBar(),
       ],
     );
   }
 
-  Widget _buildSatisfactionChoice() {
+  /// A persistent strip under the header, mirroring the "Chatting with
+  /// Yumma Assistant / Talk to a human" bar Zomato & Swiggy keep pinned
+  /// above the message list while a bot is triaging the issue.
+  Widget _buildChatStatusStrip() {
+    if (_stage == 'resolved') return const SizedBox.shrink();
+
+    final isBot = _stage == 'bot';
     return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: _supportCardDecoration(),
+      margin: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+      decoration: BoxDecoration(
+        color: isBot ? const Color(0xFFF3F0FF) : const Color(0xFFEFFAF1),
+        borderRadius: BorderRadius.circular(14),
+      ),
       child: Row(
         children: [
-          const Expanded(
+          Icon(
+            isBot ? Icons.smart_toy_outlined : Icons.support_agent_rounded,
+            size: 16,
+            color: isBot ? const Color(0xFF6D5BD0) : const Color(0xFF0A9443),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
             child: Text(
-              'Was this helpful?',
-              style: TextStyle(fontWeight: FontWeight.w800),
+              isBot
+                  ? 'Chatting with Yumma Assistant'
+                  : 'A support agent has joined this chat',
+              style: TextStyle(
+                fontSize: 11.5,
+                fontWeight: FontWeight.w700,
+                color: isBot ? const Color(0xFF6D5BD0) : const Color(0xFF0A9443),
+              ),
             ),
           ),
-          TextButton.icon(
-            onPressed: () => _answerSatisfaction(true),
-            icon: const Icon(Icons.thumb_up_alt_outlined, size: 18),
-            label: const Text('Yes'),
-          ),
-          TextButton.icon(
-            onPressed: () => _answerSatisfaction(false),
-            icon: const Icon(Icons.thumb_down_alt_outlined, size: 18),
-            label: const Text('No'),
-          ),
+          if (isBot)
+            TextButton(
+              onPressed: _isSending ? null : _escalateToAgent,
+              style: TextButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                minimumSize: Size.zero,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                foregroundColor: FoodFlowTheme.crimson,
+              ),
+              child: const Text(
+                'Talk to an agent',
+                style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w800),
+              ),
+            ),
         ],
       ),
     );
   }
 
-  Future<void> _answerSatisfaction(bool satisfied) async {
-    setState(() {
-      _awaitingSatisfaction = false;
-      _showEscalationChoices = !satisfied;
-      _messages.add(
-        _SupportMessage(
-          text: satisfied
-              ? 'Glad I could help. You can ask another question anytime.'
-              : 'No problem. Choose whether to talk with an agent or create a support ticket.',
-          fromUser: false,
-        ),
-      );
-    });
-    await _saveLocalConversation();
-  }
-
-  Widget _buildSupportChoice() {
-    return Container(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-      decoration: _supportCardDecoration(),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            'Choose how you want help',
-            style: TextStyle(fontSize: 14.5, fontWeight: FontWeight.w900),
+  Widget _buildChatInputBar() {
+    final disabled = _stage == 'resolved';
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(16, 6, 6, 6),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(28),
+            border: Border.all(color: const Color(0xFFE8E8EE)),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.06),
+                blurRadius: 18,
+                offset: const Offset(0, 10),
+              ),
+            ],
           ),
-          const SizedBox(height: 12),
-          Row(
+          child: Row(
             children: [
               Expanded(
-                child: _supportChoiceButton(
-                  icon: Icons.support_agent_rounded,
-                  label: 'Talk with agent',
-                  onTap: () => _chooseSupport('agent'),
+                child: TextField(
+                  controller: _messageController,
+                  minLines: 1,
+                  maxLines: 3,
+                  enabled: !disabled,
+                  decoration: InputDecoration(
+                    hintText:
+                        disabled ? 'This conversation is resolved' : 'Type your message',
+                    border: InputBorder.none,
+                    isDense: true,
+                  ),
                 ),
               ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: _supportChoiceButton(
-                  icon: Icons.confirmation_number_outlined,
-                  label: 'Create ticket',
-                  onTap: () => _chooseSupport('ticket'),
+              const SizedBox(width: 6),
+              Container(
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: LinearGradient(
+                    colors: [
+                      FoodFlowTheme.crimson,
+                      Color.lerp(FoodFlowTheme.crimson, Colors.black, 0.15) ??
+                          FoodFlowTheme.crimson,
+                    ],
+                  ),
+                ),
+                child: IconButton(
+                  onPressed: (_isSending || disabled) ? null : () => _sendMessage(),
+                  color: Colors.white,
+                  icon: _isSending
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : const Icon(Icons.send_rounded, size: 20),
                 ),
               ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCsatCard() {
+    if (_csatSubmitted) {
+      return Padding(
+        padding: const EdgeInsets.only(top: 10),
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 14),
+          decoration: _supportCardDecoration(radius: 16),
+          child: const Column(
+            children: [
+              Text('🎉', style: TextStyle(fontSize: 22)),
+              SizedBox(height: 6),
+              Text(
+                'Thanks for rating this conversation!',
+                style: TextStyle(fontWeight: FontWeight.w800, fontSize: 12.5),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    const emojis = ['😞', '😕', '😐', '🙂', '😍'];
+    final headline = _csatRating == 0
+        ? 'How was your support experience?'
+        : _csatRating <= 2
+            ? "Sorry it wasn't great — want to tell us more?"
+            : 'Glad we could help!';
+
+    return Container(
+      margin: const EdgeInsets.only(top: 10),
+      padding: const EdgeInsets.all(18),
+      decoration: _supportCardDecoration(radius: 18),
+      child: Column(
+        children: [
+          Text(
+            _csatRating == 0 ? '⭐' : emojis[_csatRating - 1],
+            style: const TextStyle(fontSize: 34),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            headline,
+            textAlign: TextAlign.center,
+            style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13.5),
+          ),
+          const SizedBox(height: 12),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: List.generate(5, (i) {
+              final starIndex = i + 1;
+              return IconButton(
+                onPressed: () => setState(() => _csatRating = starIndex),
+                icon: Icon(
+                  starIndex <= _csatRating
+                      ? Icons.star_rounded
+                      : Icons.star_border_rounded,
+                  color: Colors.amber,
+                  size: 32,
+                ),
+              );
+            }),
+          ),
+          if (_csatRating > 0) ...[
+            TextField(
+              controller: _csatCommentController,
+              minLines: 1,
+              maxLines: 3,
+              decoration: InputDecoration(
+                hintText: 'Add a comment (optional)',
+                filled: true,
+                fillColor: const Color(0xFFF7F7F9),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide.none,
+                ),
+                contentPadding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              ),
+            ),
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: _submitCsat,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: FoodFlowTheme.crimson,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12)),
+                ),
+                child: const Text('Submit Rating',
+                    style: TextStyle(fontWeight: FontWeight.w800)),
+              ),
+            ),
+          ],
         ],
       ),
     );
   }
 
-  Widget _supportChoiceButton({
-    required IconData icon,
-    required String label,
-    required VoidCallback onTap,
-  }) {
-    return OutlinedButton.icon(
-      onPressed: onTap,
-      icon: Icon(icon, size: 18),
-      label: Text(label, textAlign: TextAlign.center),
-      style: OutlinedButton.styleFrom(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 14),
-        foregroundColor: FoodFlowTheme.crimson,
-        side: const BorderSide(color: Color(0xFFFFD2AA)),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+  Widget _avatar({required bool isBot}) {
+    return Container(
+      width: 28,
+      height: 28,
+      margin: const EdgeInsets.only(right: 6),
+      decoration: BoxDecoration(
+        color: isBot ? const Color(0xFFEFEBFF) : const Color(0xFFEFFAF1),
+        shape: BoxShape.circle,
+      ),
+      child: Icon(
+        isBot ? Icons.smart_toy_outlined : Icons.support_agent_rounded,
+        size: 15,
+        color: isBot ? const Color(0xFF6D5BD0) : const Color(0xFF0A9443),
       ),
     );
   }
 
-  void _chooseSupport(String choice) {
-    setState(() {
-      _supportChoice = choice;
-      _awaitingSatisfaction = false;
-      _showEscalationChoices = false;
-      _messages.add(
-        _SupportMessage(
-          text: choice == 'agent'
-              ? 'Please describe the issue. A support agent will join this chat.'
-              : 'Please describe the issue to create a support ticket for this order.',
-          fromUser: false,
+  String _formatTime(String? raw) {
+    final date = raw == null ? null : DateTime.tryParse(raw)?.toLocal();
+    if (date == null) return '';
+    final hour = date.hour > 12 ? date.hour - 12 : (date.hour == 0 ? 12 : date.hour);
+    final minute = date.minute.toString().padLeft(2, '0');
+    final suffix = date.hour >= 12 ? 'PM' : 'AM';
+    return '$hour:$minute $suffix';
+  }
+
+  Widget _buildMessageBubble(Map<String, dynamic> message) {
+    final senderType = message['sender_type']?.toString() ?? '';
+    final isMine = senderType == 'customer';
+    final isBot = senderType == 'bot';
+    final isSystem = senderType == 'system' ||
+        message['message_type']?.toString() == 'system';
+    final quickReplies = (message['meta'] is Map)
+        ? (message['meta']['quick_replies'] as List? ?? const [])
+        : const [];
+    final isIssuePicker = quickReplies.length > 2;
+
+    if (isSystem) {
+      return Center(
+        child: Container(
+          margin: const EdgeInsets.only(bottom: 14),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+          decoration: BoxDecoration(
+            color: const Color(0xFFF3F4F6),
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.info_outline_rounded, size: 13, color: Colors.grey.shade500),
+              const SizedBox(width: 6),
+              Flexible(
+                child: Text(
+                  message['message']?.toString() ?? '',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    color: Color(0xFF6B7280),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
       );
-    });
-    _saveLocalConversation();
+    }
+
+    final bubbleColor = isMine ? FoodFlowTheme.crimson : Colors.white;
+    final senderLabel = switch (senderType) {
+      'bot' => 'Yumma Assistant',
+      'admin' => 'Support Team',
+      _ => message['sender_name']?.toString() ?? 'You',
+    };
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Column(
+        crossAxisAlignment:
+            isMine ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.end,
+            mainAxisAlignment:
+                isMine ? MainAxisAlignment.end : MainAxisAlignment.start,
+            children: [
+              if (!isMine) _avatar(isBot: isBot),
+              Flexible(
+                child: Container(
+                  constraints: const BoxConstraints(maxWidth: 260),
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: bubbleColor,
+                    borderRadius: BorderRadius.only(
+                      topLeft: const Radius.circular(16),
+                      topRight: const Radius.circular(16),
+                      bottomLeft: Radius.circular(isMine ? 16 : 4),
+                      bottomRight: Radius.circular(isMine ? 4 : 16),
+                    ),
+                    border: isMine ? null : Border.all(color: Colors.grey.shade200),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.04),
+                        blurRadius: 10,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (!isMine)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 3),
+                          child: Text(
+                            senderLabel,
+                            style: TextStyle(
+                              color: Colors.grey.shade600,
+                              fontSize: 10.5,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ),
+                      Text(
+                        message['message']?.toString() ?? '',
+                        style: TextStyle(
+                          color: isMine ? Colors.white : Colors.black87,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          height: 1.3,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+          Padding(
+            padding: EdgeInsets.only(
+              top: 3,
+              bottom: 8,
+              left: isMine ? 0 : 34,
+              right: isMine ? 4 : 0,
+            ),
+            child: Text(
+              _formatTime(message['created_at']?.toString()),
+              style: TextStyle(fontSize: 10, color: Colors.grey.shade500),
+            ),
+          ),
+          if (quickReplies.isNotEmpty && _stage != 'resolved')
+            Padding(
+              padding: EdgeInsets.only(bottom: 12, left: isMine ? 0 : 34),
+              child: isIssuePicker
+                  ? _buildIssuePickerList(quickReplies)
+                  : _buildQuickReplyPills(quickReplies),
+            ),
+        ],
+      ),
+    );
+  }
+
+  /// Vertical list of tappable issue cards — the Zomato/Swiggy "select your
+  /// issue" pattern — used for the initial bot category menu.
+  Widget _buildIssuePickerList(List quickReplies) {
+    return Container(
+      constraints: const BoxConstraints(maxWidth: 280),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: quickReplies.map<Widget>((option) {
+          final map = Map<String, dynamic>.from(option as Map);
+          final code = map['code']?.toString();
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(14),
+              onTap: _isSending
+                  ? null
+                  : () => _sendMessage(map['label']?.toString() ?? '', code),
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: const Color(0xFFE8E8EE)),
+                ),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 32,
+                      height: 32,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFFFF1EE),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Icon(_categoryIcon(code),
+                          size: 17, color: FoodFlowTheme.crimson),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        map['label']?.toString() ?? '',
+                        style: const TextStyle(
+                            fontSize: 12.5, fontWeight: FontWeight.w700),
+                      ),
+                    ),
+                    const Icon(Icons.chevron_right_rounded,
+                        size: 18, color: Color(0xFF9AA0A6)),
+                  ],
+                ),
+              ),
+            ),
+          );
+        }).toList(),
+      ),
+    );
+  }
+
+  /// Two-option row (thumbs up / talk to a human) shown after a bot answer.
+  Widget _buildQuickReplyPills(List quickReplies) {
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: quickReplies.map<Widget>((option) {
+        final map = Map<String, dynamic>.from(option as Map);
+        final code = map['code']?.toString();
+        return OutlinedButton.icon(
+          onPressed: _isSending
+              ? null
+              : () => _sendMessage(map['label']?.toString() ?? '', code),
+          icon: Icon(_categoryIcon(code), size: 15),
+          label: Text(
+            map['label']?.toString() ?? '',
+            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+          ),
+          style: OutlinedButton.styleFrom(
+            foregroundColor: FoodFlowTheme.crimson,
+            side: const BorderSide(color: Color(0xFFFFD2AA)),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          ),
+        );
+      }).toList(),
+    );
   }
 
   Widget _buildOrderBanner() {
+    final statusText = widget.order?.statusText ?? '';
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(14),
@@ -789,24 +1040,38 @@ class _CustomerSupportScreenState extends State<CustomerSupportScreen> {
       ),
       child: Row(
         children: [
-          const Icon(Icons.receipt_long, color: FoodFlowTheme.crimson),
+          Container(
+            width: 38,
+            height: 38,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: const Icon(Icons.receipt_long, color: FoodFlowTheme.crimson, size: 20),
+          ),
           const SizedBox(width: 12),
           Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  _orderContextText!,
-                  style: const TextStyle(
-                      fontSize: 13, fontWeight: FontWeight.w900),
-                ),
-                Text(
-                  widget.order!.statusText,
-                  style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
-                ),
-              ],
+            child: Text(
+              _orderContextText!,
+              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w900),
             ),
           ),
+          if (statusText.isNotEmpty)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              decoration: BoxDecoration(
+                color: FoodFlowTheme.crimson,
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: Text(
+                statusText,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 10.5,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ),
         ],
       ),
     );
@@ -902,14 +1167,4 @@ class _CustomerSupportScreenState extends State<CustomerSupportScreen> {
       ),
     );
   }
-}
-
-class _SupportMessage {
-  final String text;
-  final bool fromUser;
-
-  const _SupportMessage({
-    required this.text,
-    required this.fromUser,
-  });
 }

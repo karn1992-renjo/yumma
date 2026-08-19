@@ -5,11 +5,12 @@ import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart' show rootBundle;
+import 'package:flutter/services.dart' show rootBundle, SystemUiOverlayStyle;
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:intl/intl.dart' show DateFormat;
 import 'package:lottie/lottie.dart' hide Marker;
 import 'package:provider/provider.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../providers/order_provider.dart';
 import '../../providers/auth_provider.dart';
@@ -22,7 +23,10 @@ import '../../models/user.dart';
 import '../../theme/foodflow_theme.dart';
 import '../../utils/currency_utils.dart';
 import '../../widgets/common/app_cached_image.dart';
+import '../../widgets/common/app_skeleton.dart';
 import '../../widgets/customer/order_feedback_dialog.dart';
+import '../../widgets/customer/tip_driver_sheet.dart';
+import 'order_chat_screen.dart';
 
 class OrderTrackingScreen extends StatefulWidget {
   final int orderId;
@@ -86,6 +90,10 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen>
   bool _isOrderPickedUp = false;
   int _pollTick = 0;
   bool _feedbackPromptShown = false;
+  bool _tipPromptShown = false;
+  final GlobalKey _orderSummaryKey = GlobalKey();
+  final DraggableScrollableController _sheetController =
+      DraggableScrollableController();
   bool get _isGroceryOrder => _order?.serviceType == 'grocery';
   Color get _primary => _isGroceryOrder
       ? const Color(0xFF138A36)
@@ -176,6 +184,7 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen>
     _driverMoveController.dispose();
     _animationController.dispose();
     _paymentService.dispose();
+    _sheetController.dispose();
     super.dispose();
   }
 
@@ -234,6 +243,7 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen>
       final order = await orderProvider.fetchOrderDetails(
         widget.orderId,
         notifyLoading: false,
+        preferCache: showLoading,
       );
 
       if (order != null && mounted) {
@@ -244,6 +254,17 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen>
 
         final bool pickedUp =
             !order.isTakeaway && (order.isPickedUp || order.isOnTheWay);
+
+        setState(() {
+          _order = order;
+          _currentStep = _getStepIndexFor(order);
+          _estimatedTime = _estimatedTimeFor(order);
+          _restaurantLocation = restaurantLocation;
+          _deliveryLocation = deliveryLocation;
+          _isLoading = false;
+          _errorMessage = null;
+        });
+        _syncLiveOrderNotification(order);
 
         if (order.isTakeaway) {
           _driverLocation = null;
@@ -295,6 +316,7 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen>
           isPickedUp: pickedUp,
         );
 
+        if (!mounted) return;
         setState(() {
           _order = order;
           _currentStep = _getStepIndexFor(order);
@@ -307,8 +329,6 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen>
           _isLoading = false;
           _errorMessage = null;
         });
-
-        _syncLiveOrderNotification(order);
 
         if (order.isDelivered) {
           _showCompletionFeedback(order);
@@ -398,7 +418,25 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen>
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       if (!mounted) return;
       await showOrderFeedbackDialog(context, order);
+      if (!mounted) return;
+      await _maybeShowTipPrompt(_order ?? order);
     });
+  }
+
+  Future<void> _maybeShowTipPrompt(Order order) async {
+    if (!mounted ||
+        _tipPromptShown ||
+        order.isTakeaway ||
+        order.driver == null ||
+        (order.tip ?? 0) > 0) {
+      return;
+    }
+    _tipPromptShown = true;
+
+    final updated = await showTipDriverSheet(context, order: order);
+    if (updated != null && mounted) {
+      setState(() => _order = updated);
+    }
   }
 
   void _applyServerDistance(Order order) {
@@ -1161,7 +1199,7 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen>
 
   void _openSupport({bool openChat = false}) {
     Navigator.pushNamed(context, '/support',
-        arguments: {'order': _order, 'openChat': true});
+        arguments: {'order': _order, 'openChat': openChat});
   }
 
   LatLng? get _mapTarget =>
@@ -1545,33 +1583,21 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen>
     final order = _order!;
     final paid = order.isPaymentPaid;
     final color = paid
-        ? Colors.green
+        ? const Color(0xFF16A34A)
         : order.paymentStatus == 'failed'
-            ? Colors.red
+            ? const Color(0xFFE11D48)
             : const Color(0xFFFF9800);
 
-    return Container(
-      margin: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+    return _premiumCard(
       padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: color.withOpacity(0.18)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 10,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           Container(
-            padding: const EdgeInsets.all(12),
+            width: 44,
+            height: 44,
             decoration: BoxDecoration(
-              color: color.withOpacity(0.12),
+              color: color.withOpacity(0.1),
               borderRadius: BorderRadius.circular(14),
             ),
             child: Icon(
@@ -1587,33 +1613,38 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen>
                 Text(
                   _paymentStatusLabel(order),
                   style: const TextStyle(
-                    fontSize: 16,
+                    fontSize: 14.5,
                     fontWeight: FontWeight.w800,
+                    color: Color(0xFF171717),
                   ),
                 ),
-                const SizedBox(height: 4),
+                const SizedBox(height: 3),
                 Text(
                   paid
                       ? 'Paid via ${_paymentMethodLabel(order.paymentMethod)}'
                       : 'Amount due: ${formatCurrency(context, order.total)}',
-                  style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
+                  style: const TextStyle(
+                      fontSize: 12, color: Color(0xFF666666)),
                 ),
                 if (order.paidAt != null) ...[
-                  const SizedBox(height: 4),
+                  const SizedBox(height: 3),
                   Text(
                     DateFormat('d MMM, h:mm a').format(order.paidAt!),
-                    style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+                    style: const TextStyle(
+                        fontSize: 11.5, color: Color(0xFF999999)),
                   ),
                 ],
               ],
             ),
           ),
-          if (order.canPayOnlineNow)
+          if (order.canPayOnlineNow) ...[
+            const SizedBox(width: 8),
             ElevatedButton(
               onPressed: _isStartingPayment ? null : _showPayNowSheet,
               style: ElevatedButton.styleFrom(
                 backgroundColor: _primary,
                 foregroundColor: Colors.white,
+                elevation: 0,
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12),
                 ),
@@ -1622,10 +1653,14 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen>
                   ? const SizedBox(
                       width: 18,
                       height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white,
+                      ),
                     )
                   : const Text('Pay Now'),
             ),
+          ],
         ],
       ),
     );
@@ -1672,6 +1707,8 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen>
     if (order == null) return;
 
     final reasonController = TextEditingController();
+    final Color accent =
+        isForceCancel ? const Color(0xFFE11D48) : _cancelAccent;
 
     showModalBottomSheet(
       context: context,
@@ -1689,121 +1726,185 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen>
             padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
             child: SafeArea(
               top: false,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Center(
-                    child: Container(
-                      width: 42,
-                      height: 4,
-                      decoration: BoxDecoration(
-                        color: Colors.grey.shade300,
-                        borderRadius: BorderRadius.circular(999),
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Center(
+                      child: Container(
+                        width: 42,
+                        height: 5,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFDCE1EA),
+                          borderRadius: BorderRadius.circular(999),
+                        ),
                       ),
                     ),
-                  ),
-                  const SizedBox(height: 18),
-                  Text(
-                    isForceCancel ? 'Force cancel order' : 'Cancel order',
-                    style: const TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w900,
+                    const SizedBox(height: 18),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Container(
+                          width: 46,
+                          height: 46,
+                          decoration: BoxDecoration(
+                            color: accent.withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                          child: Icon(
+                            Icons.cancel_outlined,
+                            color: accent,
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text(
+                                'Cancel order',
+                                style: TextStyle(
+                                  color: FoodFlowTheme.ink,
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.w900,
+                                ),
+                              ),
+                              const SizedBox(height: 3),
+                              Text(
+                                isForceCancel
+                                    ? 'The store has already accepted this order. Refund will follow the active admin refund policy.'
+                                    : 'Free cancellation for ${_formatDuration(order.remainingCancellationTime)} more.',
+                                style: const TextStyle(
+                                  color: FoodFlowTheme.muted,
+                                  fontSize: 12.5,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
                     ),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    isForceCancel
-                        ? 'Store has already accepted this order. Refund will be initiated as per the active admin refund policy.'
-                        : 'You can cancel this pending order within 2 minutes of placing it.',
-                    style: TextStyle(
-                      fontSize: 12.5,
-                      color: Colors.grey.shade700,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                  if (!isForceCancel) ...[
-                    const SizedBox(height: 14),
+                    const SizedBox(height: 18),
                     Container(
                       width: double.infinity,
                       padding: const EdgeInsets.all(14),
                       decoration: BoxDecoration(
-                        color: const Color(0xFFFFF7ED),
-                        borderRadius: BorderRadius.circular(18),
-                        border: Border.all(color: const Color(0xFFFED7AA)),
+                        color: const Color(0xFFF7F8FC),
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(color: const Color(0xFFE4E8F0)),
                       ),
-                      child: Row(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Icon(Icons.timer_outlined,
-                              color: Color(0xFFF97316)),
-                          const SizedBox(width: 10),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  '#${order.orderNumber}',
+                                  style: const TextStyle(
+                                    fontSize: 13.5,
+                                    fontWeight: FontWeight.w800,
+                                    color: FoodFlowTheme.ink,
+                                  ),
+                                ),
+                              ),
+                              Text(
+                                formatCurrency(context, order.total),
+                                style: const TextStyle(
+                                  fontSize: 13.5,
+                                  fontWeight: FontWeight.w900,
+                                  color: FoodFlowTheme.ink,
+                                ),
+                              ),
+                            ],
+                          ),
+                          if (order.restaurant?.name != null) ...[
+                            const SizedBox(height: 2),
+                            Text(
+                              order.restaurant!.name,
+                              style: const TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                                color: FoodFlowTheme.muted,
+                              ),
+                            ),
+                          ],
+                          const SizedBox(height: 10),
+                          const Divider(
+                              height: 1, color: Color(0xFFE4E8F0)),
+                          const SizedBox(height: 10),
                           Text(
-                            'Time left: ${_formatDuration(order.remainingCancellationTime)}',
+                            order.items
+                                .map((item) => '${item.quantity}x ${item.name}')
+                                .join(', '),
+                            maxLines: 3,
+                            overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
-                              fontWeight: FontWeight.w800,
-                              color: Color(0xFF9A3412),
+                              fontSize: 12.5,
+                              fontWeight: FontWeight.w600,
+                              color: Color(0xFF444444),
+                              height: 1.4,
                             ),
                           ),
                         ],
                       ),
                     ),
-                  ],
-                  const SizedBox(height: 16),
-                  TextField(
-                    controller: reasonController,
-                    maxLines: 3,
-                    decoration: InputDecoration(
-                      labelText: 'Reason',
-                      hintText: isForceCancel
-                          ? 'Need urgent cancellation, ordered by mistake, change of plan...'
-                          : 'Ordered by mistake, wrong address, changed my mind...',
-                      alignLabelWithHint: true,
+                    const SizedBox(height: 16),
+                    TextField(
+                      controller: reasonController,
+                      maxLines: 3,
+                      decoration: InputDecoration(
+                        labelText: 'Reason',
+                        hintText: isForceCancel
+                            ? 'Need urgent cancellation, ordered by mistake, change of plan...'
+                            : 'Ordered by mistake, wrong address, changed my mind...',
+                        alignLabelWithHint: true,
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 18),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: OutlinedButton(
-                          onPressed: () => Navigator.pop(sheetContext),
-                          child: const Text('Keep Order'),
+                    const SizedBox(height: 18),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton(
+                            onPressed: () => Navigator.pop(sheetContext),
+                            child: const Text('Keep Order'),
+                          ),
                         ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: ElevatedButton(
-                          onPressed: () async {
-                            final reason = reasonController.text.trim();
-                            if (reason.isEmpty) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                  content: Text('Please enter a reason.'),
-                                  backgroundColor: Colors.red,
-                                ),
-                              );
-                              return;
-                            }
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: ElevatedButton(
+                            onPressed: () async {
+                              final reason = reasonController.text.trim();
+                              if (reason.isEmpty) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text('Please enter a reason.'),
+                                    backgroundColor: Colors.red,
+                                  ),
+                                );
+                                return;
+                              }
 
-                            Navigator.pop(sheetContext);
-                            await _submitCancellation(
-                              order: order,
-                              reason: reason,
-                              isForceCancel: isForceCancel,
-                            );
-                          },
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: isForceCancel
-                                ? const Color(0xFFE11D48)
-                                : _primary,
-                          ),
-                          child: Text(
-                            isForceCancel ? 'Force Cancel' : 'Cancel Order',
+                              Navigator.pop(sheetContext);
+                              await _submitCancellation(
+                                order: order,
+                                reason: reason,
+                                isForceCancel: isForceCancel,
+                              );
+                            },
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: accent,
+                              elevation: 0,
+                            ),
+                            child: const Text('Cancel Order'),
                           ),
                         ),
-                      ),
-                    ],
-                  ),
-                ],
+                      ],
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
@@ -1830,146 +1931,164 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen>
             : 'Delivery OTP will appear when the driver is nearby');
 
     return _premiumCard(
-      padding: const EdgeInsets.fromLTRB(18, 18, 18, 20),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.center,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            width: 52,
-            height: 52,
-            decoration: BoxDecoration(
-              color: hasOtp ? const Color(0xFFFFF3E7) : const Color(0xFFF5F5F5),
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(
-                color:
-                    hasOtp ? const Color(0xFFFFD2AA) : const Color(0xFFE5E5E5),
-              ),
-            ),
-            child: Icon(
-              hasOtp ? Icons.password_rounded : Icons.lock_clock_rounded,
-              color: hasOtp ? _primary : const Color(0xFF777777),
-              size: 26,
-            ),
-          ),
-          const SizedBox(height: 12),
-          Text(
-            title,
-            textAlign: TextAlign.center,
-            style: const TextStyle(
-              color: Color(0xFF171717),
-              fontSize: 14.5,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-          const SizedBox(height: 10),
-          if (hasOtp)
-            Container(
-              width: double.infinity,
-              alignment: Alignment.center,
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              decoration: BoxDecoration(
-                color: const Color(0xFFFFF3E7),
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: const Color(0xFFFFD2AA)),
-              ),
-              child: FittedBox(
-                fit: BoxFit.scaleDown,
-                child: Text(
-                  order.deliveryOtp!,
-                  maxLines: 1,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(
-                    color: Colors.black,
-                    fontSize: 30,
-                    fontWeight: FontWeight.w900,
-                    letterSpacing: 8,
-                    height: 1,
-                  ),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: hasOtp
+                      ? _primary.withOpacity(0.1)
+                      : const Color(0xFFF5F5F5),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Icon(
+                  hasOtp ? Icons.password_rounded : Icons.lock_clock_rounded,
+                  color: hasOtp ? _primary : const Color(0xFF777777),
+                  size: 22,
                 ),
               ),
-            ),
-          if (hasOtp) const SizedBox(height: 10),
-          Text(
-            message,
-            textAlign: TextAlign.center,
-            softWrap: true,
-            style: const TextStyle(
-              color: Color(0xFF666666),
-              fontSize: 12,
-              fontWeight: FontWeight.w500,
-              height: 1.35,
-            ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: const TextStyle(
+                        color: Color(0xFF171717),
+                        fontSize: 14.5,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      message,
+                      softWrap: true,
+                      style: const TextStyle(
+                        color: Color(0xFF666666),
+                        fontSize: 12,
+                        fontWeight: FontWeight.w500,
+                        height: 1.35,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
+          if (hasOtp) ...[
+            const SizedBox(height: 16),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                for (final digit in order.deliveryOtp!.split(''))
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 5),
+                    child: Container(
+                      width: 42,
+                      height: 50,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF7F7F7),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: _primary.withOpacity(0.3)),
+                      ),
+                      child: Text(
+                        digit,
+                        style: const TextStyle(
+                          color: Color(0xFF171717),
+                          fontSize: 24,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ],
         ],
       ),
     );
   }
 
+  static const Color _cancelAccent = Color(0xFFF97316);
+
   Widget _buildCancellationWindowCard() {
     final order = _order;
-    if (order == null || !order.isPending || !order.canCancel) {
+    if (order == null || order.isCancelled) return const SizedBox.shrink();
+
+    final bool inFreeWindow = order.isPending && order.canCancel;
+    final bool eligibleForForceCancel = !inFreeWindow && order.canForceCancel;
+
+    if (!inFreeWindow && !eligibleForForceCancel) {
       return const SizedBox.shrink();
     }
 
-    const accent = Color(0xFFF97316);
+    final String title = inFreeWindow
+        ? 'Cancellation available for ${_formatDuration(order.remainingCancellationTime)}'
+        : 'Need to cancel this order?';
+    final String subtitle = inFreeWindow
+        ? 'You can cancel free of cost within 2 minutes of placing it.'
+        : 'The store has already accepted this order. Cancelling now may attract a refund review.';
 
-    return Container(
-      margin: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: const Color(0xFFFFF7ED),
+    return _premiumCard(
+      padding: EdgeInsets.zero,
+      child: InkWell(
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(
-          color: const Color(0xFFFED7AA),
+        onTap: () =>
+            _showCancelOrderSheet(isForceCancel: !inFreeWindow),
+        child: Padding(
+          padding: const EdgeInsets.all(18),
+          child: Row(
+            children: [
+              Container(
+                width: 52,
+                height: 52,
+                decoration: BoxDecoration(
+                  color: _cancelAccent.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: const Icon(Icons.timer_outlined, color: _cancelAccent),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: const TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w800,
+                        color: Color(0xFF171717),
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      subtitle,
+                      style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              Icon(Icons.chevron_right_rounded, color: Colors.grey.shade400),
+            ],
+          ),
         ),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 52,
-            height: 52,
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(16),
-            ),
-            child: Icon(Icons.timer_outlined, color: accent),
-          ),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Cancellation available for ${_formatDuration(order.remainingCancellationTime)}',
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w800,
-                    color: const Color(0xFF9A3412),
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  'You can cancel only within 2 minutes unless the store accepts the order first.',
-                  style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
-                ),
-              ],
-            ),
-          ),
-        ],
       ),
     );
   }
 
   Widget _buildCancelledStateCard() {
     final order = _order!;
-    return Container(
-      margin: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+    return _premiumCard(
       padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: const Color(0xFFFFF1F2),
-        borderRadius: BorderRadius.circular(22),
-        border: Border.all(color: const Color(0xFFFBCFE8)),
-      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -1979,7 +2098,7 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen>
                 width: 54,
                 height: 54,
                 decoration: BoxDecoration(
-                  color: Colors.white,
+                  color: const Color(0xFFE11D48).withOpacity(0.1),
                   borderRadius: BorderRadius.circular(18),
                 ),
                 child: const Icon(Icons.cancel_rounded,
@@ -1995,7 +2114,7 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen>
                       style: TextStyle(
                         fontSize: 15,
                         fontWeight: FontWeight.w900,
-                        color: Color(0xFF9F1239),
+                        color: Color(0xFF171717),
                       ),
                     ),
                     const SizedBox(height: 4),
@@ -2020,9 +2139,8 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen>
               width: double.infinity,
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
-                color: Colors.white,
+                color: const Color(0xFFF7F7F7),
                 borderRadius: BorderRadius.circular(18),
-                border: Border.all(color: const Color(0xFFF3D6D9)),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -2032,7 +2150,7 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen>
                     style: TextStyle(
                       fontSize: 12,
                       fontWeight: FontWeight.w800,
-                      color: Color(0xFF9F1239),
+                      color: Color(0xFF666666),
                     ),
                   ),
                   const SizedBox(height: 6),
@@ -2618,53 +2736,186 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen>
     );
   }
 
-  Widget _buildTrackingHeaderBar() {
+  Color get _bannerColor {
     final order = _order!;
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
-      child: Row(
+    if (order.isCancelled) return const Color(0xFFE11D48);
+    return const Color(0xFF1DB955);
+  }
+
+  String get _bannerHeadline {
+    final order = _order!;
+    if (order.isCancelled) return 'Order Cancelled';
+    if (order.isDelivered)
+      return order.isTakeaway ? 'Order Collected' : 'Order Delivered';
+    if (order.isTakeaway) {
+      return order.isReadyForPickup
+          ? 'Ready for pickup'
+          : 'Preparing your order';
+    }
+    return _isOrderPickedUp ? 'Order is on the way' : 'Preparing your order';
+  }
+
+  String get _bannerEmoji {
+    final order = _order!;
+    if (order.isCancelled) return '';
+    if (order.isDelivered) return ' 🎉';
+    if (_isOrderPickedUp) return ' 🛵';
+    return ' 👨‍🍳';
+  }
+
+  Future<void> _shareOrderStatus() async {
+    final order = _order!;
+    await Share.share(
+      'Track my order #${order.orderNumber} from ${order.restaurant?.name ?? 'the restaurant'} — ${order.statusText}.',
+    );
+  }
+
+  Future<void> _scrollToOrderSummary() async {
+    if (_sheetController.isAttached) {
+      await _sheetController.animateTo(
+        0.9,
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeOut,
+      );
+    }
+    final context = _orderSummaryKey.currentContext;
+    if (context == null) return;
+    Scrollable.ensureVisible(
+      context,
+      duration: const Duration(milliseconds: 400),
+      curve: Curves.easeOut,
+    );
+  }
+
+  Widget _bannerIconButton({
+    required IconData icon,
+    required VoidCallback onTap,
+    double size = 38,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(999),
+      child: Container(
+        width: size,
+        height: size,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: Colors.white.withOpacity(0.18),
+          shape: BoxShape.circle,
+        ),
+        child: Icon(icon, color: Colors.white, size: 20),
+      ),
+    );
+  }
+
+  /// Compact card version of the status header, floated over the full-screen
+  /// map (Zomato-style) instead of the full-width banner that pushes content
+  /// down. Reuses the same `_banner*` state/getters as `_buildStatusBanner`.
+  Widget _buildFloatingStatusBar() {
+    final order = _order!;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(10, 8, 10, 12),
+      decoration: BoxDecoration(
+        color: _bannerColor,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.20),
+            blurRadius: 18,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          IconButton(
-            onPressed: _handleBack,
-            icon: const Icon(Icons.arrow_back, size: 26),
-            splashRadius: 24,
-          ),
-          Expanded(
-            child: Column(
-              children: [
-                Text(
-                  order.isCancelled ? 'Order Details' : 'Order Tracking',
+          Row(
+            children: [
+              _bannerIconButton(
+                icon: Icons.arrow_back_rounded,
+                onTap: _handleBack,
+                size: 32,
+              ),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  order.restaurant?.name ?? 'Order Tracking',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
-                    fontSize: 18.5,
+                    color: Colors.white,
+                    fontSize: 13.5,
                     fontWeight: FontWeight.w800,
-                    height: 1.1,
                   ),
                 ),
-                const SizedBox(height: 4),
-                Text(
-                  'Order ID: #${order.orderNumber}',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 12.5,
-                    color: Color(0xFF6B6B6B),
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-              ],
-            ),
+              ),
+              _bannerIconButton(
+                icon: Icons.share_outlined,
+                onTap: _shareOrderStatus,
+                size: 32,
+              ),
+            ],
           ),
-          TextButton.icon(
-            onPressed: _showHelpDialog,
-            icon: const Icon(Icons.support_agent_outlined, size: 20),
-            label: const Text('Help'),
-            style: TextButton.styleFrom(
-              foregroundColor: Colors.black,
-              padding: const EdgeInsets.symmetric(horizontal: 8),
-              textStyle:
-                  const TextStyle(fontSize: 14.5, fontWeight: FontWeight.w700),
+          const SizedBox(height: 8),
+          Padding(
+            padding: const EdgeInsets.only(left: 6),
+            child: Row(
+              children: [
+                Expanded(
+                  child: AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 250),
+                    child: Text(
+                      '$_bannerHeadline$_bannerEmoji',
+                      key: ValueKey('float_headline_$_bannerHeadline'),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ),
+                ),
+                if (!order.isCancelled) ...[
+                  const SizedBox(width: 8),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 6,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.18),
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 250),
+                      child: Text(
+                        order.isDelivered
+                            ? 'Delivered'
+                            : 'Arriving in $_estimatedTime',
+                        key: ValueKey('float_eta_$_estimatedTime'),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                  ),
+                  if (!order.isDelivered) ...[
+                    const SizedBox(width: 6),
+                    _bannerIconButton(
+                      icon: Icons.refresh_rounded,
+                      onTap: () => _loadOrderDetails(showLoading: false),
+                      size: 28,
+                    ),
+                  ],
+                ],
+              ],
             ),
           ),
         ],
@@ -2672,130 +2923,76 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen>
     );
   }
 
-  Widget _buildHeroStatusCard() {
+  Widget _buildOrderSummaryLink() {
     final order = _order!;
-    final title = order.isCancelled
-        ? 'Order Cancelled'
-        : order.isDelivered
-            ? 'Delivered'
-            : order.isTakeaway
-                ? 'Estimated Pickup'
-                : 'Estimated Delivery';
-    final subtitle = order.isCancelled
-        ? _refundStatusText(order)
-        : order.isDelivered
-            ? 'Your order has been delivered'
-            : order.isTakeaway
-                ? order.preparationStatusLabel
-                : _isOrderPickedUp
-                    ? 'Your order is on the way'
-                    : order.preparationStatusLabel;
-
-    return _premiumCard(
-      padding: const EdgeInsets.fromLTRB(18, 18, 18, 20),
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final compact = constraints.maxWidth < 340;
-          final artWidth = compact ? 76.0 : 112.0;
-          final artHeight = compact ? 64.0 : 86.0;
-          final etaFontSize = compact ? 23.0 : 28.0;
-
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(title,
-                            softWrap: true,
-                            style: const TextStyle(
-                                fontSize: 14.5,
-                                fontWeight: FontWeight.w700,
-                                color: Color(0xFF171717))),
-                        const SizedBox(height: 6),
-                        AnimatedSwitcher(
-                          duration: const Duration(milliseconds: 250),
-                          child: FittedBox(
-                            key: ValueKey(
-                                'hero_eta_${order.status}_$_estimatedTime'),
-                            fit: BoxFit.scaleDown,
-                            alignment: Alignment.centerLeft,
-                            child: Text(
-                              order.isCancelled
-                                  ? order.statusText
-                                  : _estimatedTime,
-                              maxLines: 1,
-                              style: TextStyle(
-                                fontSize: etaFontSize,
-                                fontWeight: FontWeight.w900,
-                                color: order.isCancelled
-                                    ? const Color(0xFFE11D48)
-                                    : _primary,
-                                height: 1,
-                              ),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        Text(
-                          subtitle,
-                          softWrap: true,
-                          style: const TextStyle(
-                            fontSize: 12.5,
-                            color: Color(0xFF666666),
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  SizedBox(width: compact ? 6 : 12),
-                  SizedBox(
-                    width: artWidth,
-                    height: artHeight,
-                    child: Stack(
-                      alignment: Alignment.center,
-                      children: [
-                        Positioned(
-                          bottom: compact ? 8 : 12,
-                          child: Container(
-                            width: compact ? 66 : 96,
-                            height: 12,
-                            decoration: BoxDecoration(
-                              color: Colors.black.withOpacity(0.08),
-                              borderRadius: BorderRadius.circular(999),
-                            ),
-                          ),
-                        ),
-                        Image.asset(
-                          'assets/images/delivery-bike.png',
-                          height: compact ? 56 : 78,
-                          fit: BoxFit.contain,
-                          errorBuilder: (_, __, ___) => Icon(
-                            Icons.delivery_dining,
-                            size: compact ? 42 : 58,
-                            color: _primary,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
+    if (order.isCancelled) return const SizedBox.shrink();
+    return InkWell(
+      onTap: _scrollToOrderSummary,
+      child: Container(
+        width: double.infinity,
+        color: Colors.white,
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(
+                'Order #${order.orderNumber} · View order summary',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  color: Color(0xFF16A34A),
+                ),
               ),
-              const SizedBox(height: 24),
-              _buildHorizontalProgressTracker(),
-            ],
-          );
-        },
+            ),
+            const Icon(Icons.chevron_right_rounded,
+                size: 20, color: Color(0xFF16A34A)),
+          ],
+        ),
       ),
     );
   }
 
-  Widget _buildHorizontalProgressTracker() {
+  Widget _buildHeroStatusCard() {
+    final order = _order!;
+    if (order.isCancelled) {
+      return _premiumCard(
+        padding: const EdgeInsets.fromLTRB(18, 18, 18, 20),
+        child: Text(
+          _refundStatusText(order),
+          softWrap: true,
+          style: const TextStyle(
+            fontSize: 13,
+            color: Color(0xFF666666),
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+      );
+    }
+
+    return _premiumCard(
+      padding: const EdgeInsets.fromLTRB(18, 18, 18, 20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'LIVE STATUS',
+            style: TextStyle(
+              fontSize: 11.5,
+              letterSpacing: 0.8,
+              color: Color(0xFF666666),
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 18),
+          _buildStatusTimeline(),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStatusTimeline() {
     final order = _order!;
     final steps = order.isTakeaway
         ? [
@@ -2834,72 +3031,97 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen>
                 order.isDelivered),
           ];
 
-    return Row(
+    return Column(
       children: List.generate(steps.length, (index) {
         final step = steps[index];
         final isLast = index == steps.length - 1;
-        final activeColor = step.isDone ? _primary : const Color(0xFFBBBBBB);
-        return Expanded(
+        final nextDone = !isLast && steps[index + 1].isDone;
+        final isCurrent = !step.isDone &&
+            (index == 0 || steps[index - 1].isDone) &&
+            !order.isCancelled;
+        return IntrinsicHeight(
           child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              Column(
+                children: [
+                  Container(
+                    width: isCurrent ? 20 : 16,
+                    height: isCurrent ? 20 : 16,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: step.isDone
+                          ? _primary
+                          : isCurrent
+                              ? Colors.white
+                              : const Color(0xFFF2F2F2),
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color: step.isDone || isCurrent
+                            ? _primary
+                            : const Color(0xFFD8D8D8),
+                        width: isCurrent ? 2.5 : 2,
+                      ),
+                    ),
+                    child: step.isDone
+                        ? const Icon(Icons.check_rounded,
+                            color: Colors.white, size: 11)
+                        : isCurrent
+                            ? Container(
+                                width: 8,
+                                height: 8,
+                                decoration: BoxDecoration(
+                                  color: _primary,
+                                  shape: BoxShape.circle,
+                                ),
+                              )
+                            : null,
+                  ),
+                  if (!isLast)
+                    Expanded(
+                      child: Container(
+                        width: 2,
+                        color: nextDone ? _primary : const Color(0xFFE4E4E4),
+                      ),
+                    ),
+                ],
+              ),
+              const SizedBox(width: 14),
               Expanded(
-                child: Column(
-                  children: [
-                    Container(
-                      width: 50,
-                      height: 50,
-                      decoration: BoxDecoration(
-                        color: step.isDone
-                            ? _primary.withOpacity(0.09)
-                            : const Color(0xFFF2F2F2),
-                        shape: BoxShape.circle,
-                        border: Border.all(
+                child: Padding(
+                  padding: EdgeInsets.only(bottom: isLast ? 0 : 20),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        step.label,
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w800,
                           color: step.isDone
-                              ? _primary.withOpacity(0.28)
-                              : const Color(0xFFE4E4E4),
+                              ? const Color(0xFF171717)
+                              : isCurrent
+                                  ? _primary
+                                  : const Color(0xFF9A9A9A),
                         ),
                       ),
-                      child: Icon(step.icon, color: activeColor, size: 24),
-                    ),
-                    const SizedBox(height: 10),
-                    Text(
-                      step.label,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        fontSize: 11.5,
-                        fontWeight: FontWeight.w700,
-                        color: step.isDone
-                            ? const Color(0xFF202020)
-                            : const Color(0xFF777777),
+                      const SizedBox(height: 3),
+                      Text(
+                        isCurrent
+                            ? 'In progress'
+                            : step.time == null
+                                ? 'Pending'
+                                : DateFormat('hh:mm a').format(step.time!),
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: isCurrent ? _primary : const Color(0xFF888888),
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      step.time == null
-                          ? '--'
-                          : DateFormat('hh:mm a').format(step.time!),
-                      maxLines: 1,
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(
-                          fontSize: 10.5, color: Color(0xFF6F6F6F)),
-                    ),
-                  ],
-                ),
-              ),
-              if (!isLast)
-                Container(
-                  width: 30,
-                  height: 3,
-                  margin: const EdgeInsets.only(bottom: 44),
-                  decoration: BoxDecoration(
-                    color: steps[index + 1].isDone
-                        ? _primary
-                        : const Color(0xFFD8D8D8),
-                    borderRadius: BorderRadius.circular(999),
+                    ],
                   ),
                 ),
+              ),
             ],
           ),
         );
@@ -2907,24 +3129,21 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen>
     );
   }
 
-  Widget _buildPremiumTrackingMap() {
-    return Container(
-      height: 320,
-      margin: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: const Color(0xFFEDEDED)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.07),
-            blurRadius: 18,
-            offset: const Offset(0, 8),
-          ),
-        ],
-      ),
-      clipBehavior: Clip.antiAlias,
-      child: Stack(
+  Widget _buildPremiumTrackingMap({bool fullScreen = false}) {
+    // In fullScreen mode the map sits behind the floating status bar and the
+    // draggable bottom sheet, so the camera-fit padding must reserve enough
+    // room for both — otherwise CameraUpdate.newLatLngBounds() centers the
+    // route (and its polyline) partly underneath the opaque sheet.
+    final mapPadding = fullScreen
+        ? EdgeInsets.fromLTRB(
+            16,
+            MediaQuery.paddingOf(context).top + 140,
+            16,
+            MediaQuery.sizeOf(context).height * 0.44,
+          )
+        : const EdgeInsets.fromLTRB(16, 54, 16, 92);
+
+    final content = Stack(
         children: [
           Positioned.fill(
             child: _hasVisibleMap
@@ -2942,7 +3161,7 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen>
                       zoomGesturesEnabled: true,
                       compassEnabled: false,
                       mapToolbarEnabled: false,
-                      padding: const EdgeInsets.fromLTRB(16, 54, 16, 92),
+                      padding: mapPadding,
                     ),
                   )
                 : _buildRouteFallback(),
@@ -2991,71 +3210,6 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen>
             ),
           ),
           Positioned(
-            left: 14,
-            right: 76,
-            bottom: 14,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 11),
-              decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.96),
-                borderRadius: BorderRadius.circular(16),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.10),
-                    blurRadius: 14,
-                    offset: const Offset(0, 6),
-                  ),
-                ],
-              ),
-              child: Row(
-                children: [
-                  Icon(
-                    _order!.isTakeaway
-                        ? Icons.storefront_outlined
-                        : Icons.route_rounded,
-                    color: _primary,
-                    size: 22,
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        AnimatedSwitcher(
-                          duration: const Duration(milliseconds: 250),
-                          child: Text(
-                            _estimatedTime,
-                            key: ValueKey('map_eta_$_estimatedTime'),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.w900,
-                              color: Color(0xFF222222),
-                            ),
-                          ),
-                        ),
-                        if (!_order!.isTakeaway &&
-                            _distanceRemaining.isNotEmpty)
-                          Text(
-                            _distanceRemaining,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              fontSize: 12,
-                              color: Color(0xFF666666),
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          Positioned(
             right: 14,
             bottom: 14,
             child: Column(
@@ -3077,7 +3231,28 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen>
             ),
           ),
         ],
+      );
+
+    if (fullScreen) {
+      return Positioned.fill(child: content);
+    }
+
+    final mapHeight = MediaQuery.sizeOf(context).height * 0.42;
+    return Container(
+      height: mapHeight.clamp(320.0, 460.0),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: const BorderRadius.vertical(bottom: Radius.circular(24)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.10),
+            blurRadius: 20,
+            offset: const Offset(0, 8),
+          ),
+        ],
       ),
+      clipBehavior: Clip.antiAlias,
+      child: content,
     );
   }
 
@@ -3151,6 +3326,10 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen>
     final driverImage = driver?.profileImage?.trim() ?? '';
     final hasDriver = driver != null && driverName.isNotEmpty;
     final assignedAt = order.driverAssignedAt ?? order.driverAcceptedAt;
+    final vehicleLabel = [
+      driver?.vehicleType?.trim() ?? '',
+      driver?.vehicleNumber?.trim() ?? '',
+    ].where((part) => part.isNotEmpty).join(' · ');
 
     return _premiumCard(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
@@ -3202,7 +3381,11 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen>
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  hasDriver ? 'Assigned to this order' : order.statusText,
+                  hasDriver
+                      ? (vehicleLabel.isNotEmpty
+                          ? vehicleLabel
+                          : 'Assigned to this order')
+                      : order.statusText,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
@@ -3221,12 +3404,28 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen>
                         'Assigned ${DateFormat('h:mm a').format(assignedAt)}',
                       ),
                     if (order.driverRating != null && order.driverRating! > 0)
-                      _buildPartnerStatusChip('${order.driverRating}/5 rating'),
+                      _buildPartnerRatingChip(order.driverRating!),
+                    if ((driver?.deliveredOrdersCount ?? 0) > 0)
+                      _buildPartnerStatusChip(
+                        '${driver!.deliveredOrdersCount}+ orders delivered',
+                      ),
                   ],
                 ),
               ],
             ),
           ),
+          if (hasDriver) ...[
+            const SizedBox(width: 12),
+            _buildPartnerAction(
+              icon: Icons.chat_bubble_outline_rounded,
+              label: 'Chat',
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => OrderChatScreen(order: order),
+                ),
+              ),
+            ),
+          ],
           if (driverPhone.isNotEmpty) ...[
             const SizedBox(width: 12),
             _buildPartnerAction(
@@ -3263,6 +3462,31 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen>
     );
   }
 
+  Widget _buildPartnerRatingChip(int rating) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: const Color(0xFFEAF8EE),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.star_rounded, size: 14, color: Color(0xFF179C43)),
+          const SizedBox(width: 2),
+          Text(
+            '$rating/5',
+            style: const TextStyle(
+              fontSize: 11.5,
+              color: Color(0xFF179C43),
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildPartnerAction(
       {required IconData icon,
       required String label,
@@ -3294,70 +3518,31 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen>
 
   Widget _buildPremiumOrderSummaryCard() {
     final order = _order!;
-    final firstItem = order.items.isNotEmpty ? order.items.first : null;
     return _premiumCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('ORDER SUMMARY',
+          Text('ITEMS IN THIS ORDER (${order.items.length})',
+              style: const TextStyle(
+                  fontSize: 11.5,
+                  letterSpacing: 0.8,
+                  color: Color(0xFF666666),
+                  fontWeight: FontWeight.w700)),
+          const SizedBox(height: 16),
+          for (var i = 0; i < order.items.length; i++) ...[
+            if (i > 0) const SizedBox(height: 14),
+            _buildOrderItemRow(order.items[i]),
+          ],
+          const SizedBox(height: 18),
+          const _DashedDivider(),
+          const SizedBox(height: 16),
+          const Text('BILL DETAILS',
               style: TextStyle(
                   fontSize: 11.5,
                   letterSpacing: 0.8,
                   color: Color(0xFF666666),
                   fontWeight: FontWeight.w700)),
-          const SizedBox(height: 18),
-          if (firstItem != null)
-            Row(
-              children: [
-                Container(
-                  width: 54,
-                  height: 54,
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFFFEFE2),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  clipBehavior: Clip.antiAlias,
-                  child: firstItem.imageUrl.trim().isNotEmpty
-                      ? AppCachedImage(
-                          imageUrl: firstItem.imageUrl,
-                          width: 54,
-                          height: 54,
-                          fit: BoxFit.cover,
-                          errorWidget:
-                              Icon(Icons.fastfood, color: _primary, size: 28),
-                        )
-                      : Icon(Icons.fastfood, color: _primary, size: 28),
-                ),
-                const SizedBox(width: 14),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(firstItem.name,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                              fontSize: 14.5, fontWeight: FontWeight.w800)),
-                      const SizedBox(height: 4),
-                      Text('x${firstItem.quantity}',
-                          style: const TextStyle(
-                              fontSize: 11.5, color: Color(0xFF666666))),
-                    ],
-                  ),
-                ),
-                Text(formatCurrency(context, firstItem.totalPrice),
-                    style: const TextStyle(
-                        fontSize: 13, fontWeight: FontWeight.w800)),
-              ],
-            ),
-          if (order.items.length > 1) ...[
-            const SizedBox(height: 8),
-            Text(
-                '+${order.items.length - 1} more item${order.items.length > 2 ? 's' : ''}',
-                style:
-                    const TextStyle(fontSize: 11.5, color: Color(0xFF666666))),
-          ],
-          const SizedBox(height: 18),
+          const SizedBox(height: 14),
           _buildOrderSummaryRow(
               'Item Total', formatCurrency(context, order.subtotal)),
           if (!order.isTakeaway || order.deliveryFee > 0)
@@ -3372,6 +3557,9 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen>
           if (order.discount > 0)
             _buildOrderSummaryRow(
                 'Discount', '-${formatCurrency(context, order.discount)}'),
+          if ((order.tip ?? 0) > 0)
+            _buildOrderSummaryRow(
+                'Delivery Tip', formatCurrency(context, order.tip!)),
           const Padding(
             padding: EdgeInsets.symmetric(vertical: 8),
             child: Divider(color: Color(0xFFE8E8E8), height: 1),
@@ -3381,6 +3569,52 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen>
               isTotal: true),
         ],
       ),
+    );
+  }
+
+  Widget _buildOrderItemRow(OrderItem item) {
+    return Row(
+      children: [
+        Container(
+          width: 46,
+          height: 46,
+          decoration: BoxDecoration(
+            color: const Color(0xFFFFEFE2),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: item.imageUrl.trim().isNotEmpty
+              ? AppCachedImage(
+                  imageUrl: item.imageUrl,
+                  width: 46,
+                  height: 46,
+                  fit: BoxFit.cover,
+                  errorWidget: Icon(Icons.fastfood, color: _primary, size: 22),
+                )
+              : Icon(Icons.fastfood, color: _primary, size: 22),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(item.name,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                      fontSize: 13.5, fontWeight: FontWeight.w800)),
+              const SizedBox(height: 3),
+              Text('Qty ${item.quantity}',
+                  style: const TextStyle(
+                      fontSize: 11.5, color: Color(0xFF666666))),
+            ],
+          ),
+        ),
+        const SizedBox(width: 8),
+        Text(formatCurrency(context, item.totalPrice),
+            style:
+                const TextStyle(fontSize: 13, fontWeight: FontWeight.w800)),
+      ],
     );
   }
 
@@ -3395,26 +3629,45 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen>
         (isTakeaway ? order.restaurant?.phone : order.customerPhone)?.trim() ??
             '';
 
+    const addressAccent = Color(0xFF16A34A);
+
     return _premiumCard(
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Icon(Icons.location_on, color: Color(0xFF2FB44A), size: 34),
+          Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: addressAccent.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: const Icon(Icons.location_on_rounded,
+                color: addressAccent, size: 22),
+          ),
           const SizedBox(width: 14),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  isTakeaway ? 'PICKUP ADDRESS' : 'DELIVERY ADDRESS',
-                  style: const TextStyle(
-                    fontSize: 11.5,
-                    letterSpacing: 0.8,
-                    color: Color(0xFF666666),
-                    fontWeight: FontWeight.w700,
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: addressAccent.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Text(
+                    isTakeaway ? 'PICKUP ADDRESS' : 'DELIVERY ADDRESS',
+                    style: const TextStyle(
+                      fontSize: 10.5,
+                      letterSpacing: 0.6,
+                      color: addressAccent,
+                      fontWeight: FontWeight.w800,
+                    ),
                   ),
                 ),
-                const SizedBox(height: 14),
+                const SizedBox(height: 12),
                 Text(
                   isTakeaway
                       ? (order.restaurant?.name ?? 'Store')
@@ -3473,23 +3726,23 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen>
       margin: const EdgeInsets.fromLTRB(16, 0, 16, 24),
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
       decoration: BoxDecoration(
-        gradient: const LinearGradient(
-            colors: [Color(0xFFFFF5ED), Color(0xFFFFF8F2)]),
+        color: Colors.white,
         borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFEDEDED)),
       ),
       child: InkWell(
-        onTap: () => _openSupport(openChat: true),
-        child: const Row(
+        onTap: () => _openSupport(),
+        child: Row(
           children: [
-            Icon(Icons.shield_outlined, color: Color(0xFFFF7A00), size: 24),
-            SizedBox(width: 12),
-            Expanded(
+            Icon(Icons.shield_outlined, color: _primary, size: 24),
+            const SizedBox(width: 12),
+            const Expanded(
                 child: Text('Your safety is our priority. Tap to know more.',
                     style: TextStyle(
                         fontSize: 12.5,
                         color: Color(0xFF555555),
                         fontWeight: FontWeight.w600))),
-            Icon(Icons.chevron_right, color: Color(0xFF777777)),
+            const Icon(Icons.chevron_right, color: Color(0xFF777777)),
           ],
         ),
       ),
@@ -3514,7 +3767,7 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen>
         onWillPop: _onWillPop,
         child: const Scaffold(
           backgroundColor: Colors.white,
-          body: Center(child: CircularProgressIndicator()),
+          body: SafeArea(child: AppDetailSkeleton(cardCount: 4)),
         ),
       );
     }
@@ -3572,40 +3825,100 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen>
     final order = _order!;
     return WillPopScope(
       onWillPop: _onWillPop,
-      child: Scaffold(
-        backgroundColor: const Color(0xFFF7F7F7),
-        body: SafeArea(
-          bottom: false,
-          child: Column(
+      child: AnnotatedRegion<SystemUiOverlayStyle>(
+        value: SystemUiOverlayStyle.light,
+        child: Scaffold(
+          backgroundColor: const Color(0xFFF7F7F7),
+          body: Stack(
             children: [
-              _buildTrackingHeaderBar(),
-              Expanded(
-                child: SingleChildScrollView(
-                  physics: const BouncingScrollPhysics(),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      _buildHeroStatusCard(),
-                      if (!order.isCancelled) _buildPremiumTrackingMap(),
-                      if (order.isCancelled)
-                        _buildCancelledStateCard()
-                      else ...[
-                        _buildCancellationWindowCard(),
-                        _buildPaymentStatusCard(),
-                        _buildDeliveryPartnerCard(),
+              // Full-screen interactive map, or a solid backdrop for
+              // cancelled orders where the map is not shown.
+              if (!order.isCancelled)
+                _buildPremiumTrackingMap(fullScreen: true)
+              else
+                Positioned.fill(child: Container(color: _bannerColor)),
+              Positioned(
+                left: 12,
+                right: 12,
+                top: MediaQuery.paddingOf(context).top + 8,
+                child: _buildFloatingStatusBar(),
+              ),
+              DraggableScrollableSheet(
+                controller: _sheetController,
+                initialChildSize: 0.42,
+                minChildSize: 0.16,
+                maxChildSize: 0.9,
+                snap: true,
+                snapSizes: const [0.16, 0.42, 0.9],
+                builder: (context, scrollController) {
+                  return Container(
+                    decoration: const BoxDecoration(
+                      color: Color(0xFFF7F7F7),
+                      borderRadius:
+                          BorderRadius.vertical(top: Radius.circular(24)),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black26,
+                          blurRadius: 20,
+                          offset: Offset(0, -6),
+                        ),
                       ],
-                      if (order.isCancelled)
-                        _buildCancelledTimelineCard()
-                      else ...[
-                        _buildPremiumOrderSummaryCard(),
-                        _buildDeliveryAddressCard(),
-                        _buildDeliveryOtpCard(),
-                        _buildSafetyStrip(),
-                        const SizedBox(height: 28),
-                      ],
-                    ],
-                  ),
-                ),
+                    ),
+                    clipBehavior: Clip.antiAlias,
+                    child: SafeArea(
+                      top: false,
+                      child: ListView(
+                        controller: scrollController,
+                        physics: const BouncingScrollPhysics(),
+                        padding: EdgeInsets.zero,
+                        children: [
+                          Center(
+                            child: Container(
+                              width: 42,
+                              height: 5,
+                              margin: const EdgeInsets.symmetric(
+                                vertical: 10,
+                              ),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFDCE1EA),
+                                borderRadius: BorderRadius.circular(999),
+                              ),
+                            ),
+                          ),
+                          _buildOrderSummaryLink(),
+                          _buildHeroStatusCard(),
+                          if (order.isCancelled)
+                            _buildCancelledStateCard()
+                          else ...[
+                            _buildCancellationWindowCard(),
+                            _buildPaymentStatusCard(),
+                            _buildDeliveryPartnerCard(),
+                          ],
+                          if (order.isCancelled) ...[
+                            _buildCancelledTimelineCard(),
+                            const SizedBox(height: 16),
+                            KeyedSubtree(
+                              key: _orderSummaryKey,
+                              child: _buildPremiumOrderSummaryCard(),
+                            ),
+                            _buildDeliveryAddressCard(),
+                            _buildSafetyStrip(),
+                            const SizedBox(height: 28),
+                          ] else ...[
+                            KeyedSubtree(
+                              key: _orderSummaryKey,
+                              child: _buildPremiumOrderSummaryCard(),
+                            ),
+                            _buildDeliveryAddressCard(),
+                            _buildDeliveryOtpCard(),
+                            _buildSafetyStrip(),
+                            const SizedBox(height: 28),
+                          ],
+                        ],
+                      ),
+                    ),
+                  );
+                },
               ),
             ],
           ),
@@ -3644,6 +3957,38 @@ class _UiTrackStep {
   final bool isDone;
 
   const _UiTrackStep(this.label, this.icon, this.time, this.isDone);
+}
+
+/// A dashed horizontal rule — the divider Zomato uses between the item
+/// list and the bill breakdown on its order-summary screen.
+class _DashedDivider extends StatelessWidget {
+  const _DashedDivider();
+
+  static const Color _color = Color(0xFFE0E0E0);
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 1,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          const dashWidth = 6.0;
+          const dashGap = 4.0;
+          final count =
+              (constraints.maxWidth / (dashWidth + dashGap)).floor();
+          return Row(
+            children: List.generate(
+              count,
+              (_) => Padding(
+                padding: const EdgeInsets.only(right: dashGap),
+                child: Container(width: dashWidth, height: 1, color: _color),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
 }
 
 class _DriverRouteSnap {

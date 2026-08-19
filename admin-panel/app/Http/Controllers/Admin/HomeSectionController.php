@@ -25,6 +25,7 @@ class HomeSectionController extends Controller
 
     public function index(): View
     {
+        $this->homeSectionService->syncOrphanedPromoWidgets();
         $sections = $this->homeSectionService->adminSections();
 
         return view('admin.home-sections.index', [

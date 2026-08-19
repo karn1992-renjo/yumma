@@ -54,7 +54,7 @@ class _DriverPrivacyLegalScreenState extends State<DriverPrivacyLegalScreen> {
       ),
       (
         'Legal Contact',
-        'Contact: ${_content['contact_email']?.toString().trim().isNotEmpty == true ? _content['contact_email'] : 'support@yumma.in'}'
+        'Contact: ${_content['contact_email']?.toString().trim().isNotEmpty == true ? _content['contact_email'] : 'support@yumma.online'}'
       ),
     ];
 

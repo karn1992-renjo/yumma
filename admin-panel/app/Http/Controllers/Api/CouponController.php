@@ -48,7 +48,7 @@ class CouponController extends Controller
         if ($request->subtotal < $promo->min_order_amount) {
             return response()->json([
                 'success' => false,
-                'message' => 'Minimum order amount of ' . AppSetting::getValue('currency_symbol', '₹') . $promo->min_order_amount . ' required'
+                'message' => 'Minimum order amount of ' . AppSetting::sanitizedCurrencySymbol() . $promo->min_order_amount . ' required'
             ], 400);
         }
         

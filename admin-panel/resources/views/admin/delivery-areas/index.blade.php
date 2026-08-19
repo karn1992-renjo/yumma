@@ -90,7 +90,7 @@
                         <td>
                             @if($area->free_delivery_enabled && $area->free_delivery_threshold !== null)
                                 <span class="badge bg-success">
-                                    Free above {{ App\Models\AppSetting::getValue('currency_symbol', '?') }}{{ number_format($area->free_delivery_threshold, App\Models\AppSetting::currencyDecimals()) }}
+                                    Free above {{ App\Models\AppSetting::sanitizedCurrencySymbol() }}{{ number_format($area->free_delivery_threshold, App\Models\AppSetting::currencyDecimals()) }}
                                 </span>
                             @else
                                 <span class="badge bg-light text-muted border">Not set</span>

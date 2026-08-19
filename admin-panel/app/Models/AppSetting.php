@@ -39,32 +39,52 @@ class AppSetting extends Model
 
     public static function sanitizedCurrencySymbol(): string
     {
-        $symbol = trim((string) self::getValue('currency_symbol', '₹'));
+        return self::normalizeCurrencySymbol(
+            self::getValue('currency_symbol', self::defaultCurrencySymbol())
+        );
+    }
 
-        if ($symbol === '') {
-            return '₹';
+    public static function normalizeCurrencySymbol(mixed $value): string
+    {
+        $fallback = self::defaultCurrencySymbol();
+        $symbol = trim(html_entity_decode(
+            (string) $value,
+            ENT_QUOTES | ENT_HTML5,
+            'UTF-8'
+        ));
+
+        if ($symbol === '' || ! mb_check_encoding($symbol, 'UTF-8')) {
+            return $fallback;
         }
 
         $normalized = preg_replace('/\s+/', '', $symbol);
 
-        if (preg_match('/\{\{.*\}\}/', $normalized)
+        if (preg_match('/^\?+$/', $normalized)
+            || preg_match('/\{\{.*\}\}/', $normalized)
             || str_contains($normalized, 'currencySymbol')
-            || str_contains($normalized, 'â')
-            || str_contains($normalized, 'Ã¢')
-            || str_contains($normalized, 'Â')
+            || preg_match('/[\x{FFFD}\x{00C2}\x{00C3}\x{00E2}]/u', $normalized)
         ) {
-            return html_entity_decode('&#8377;', ENT_QUOTES, 'UTF-8');
+            return $fallback;
         }
 
         if (mb_strlen($normalized) > 5) {
-            return html_entity_decode('&#8377;', ENT_QUOTES, 'UTF-8');
+            return $fallback;
         }
 
         return $symbol;
     }
+
+    private static function defaultCurrencySymbol(): string
+    {
+        return html_entity_decode('&#8377;', ENT_QUOTES | ENT_HTML5, 'UTF-8');
+    }
     
     public static function setValue($key, $value)
     {
+        if ($key === 'currency_symbol') {
+            $value = self::normalizeCurrencySymbol($value);
+        }
+
         self::updateOrCreate(['key' => $key], ['value' => $value === null ? '' : $value]);
 
         try {

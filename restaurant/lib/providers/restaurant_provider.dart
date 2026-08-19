@@ -1,7 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../services/api_service.dart';
 import '../config/api_constants.dart';
+import '../services/restaurant_order_realtime_service.dart';
 
 class RestaurantProvider extends ChangeNotifier {
   final ApiService _api = ApiService();
@@ -119,7 +122,8 @@ class RestaurantProvider extends ChangeNotifier {
       if (response['success'] == true) {
         final data = _asMap(response['data']);
         final restaurant = data['restaurant'];
-        _restaurant = restaurant is Map ? Map<String, dynamic>.from(restaurant) : null;
+        _restaurant =
+            restaurant is Map ? Map<String, dynamic>.from(restaurant) : null;
         if (data['restaurants'] is List) {
           _restaurants = (data['restaurants'] as List)
               .whereType<Map>()
@@ -129,8 +133,7 @@ class RestaurantProvider extends ChangeNotifier {
         _stats = _asMap(data['stats']);
         _pendingOrders = _asList(data['pending_orders']);
         _activeOrders = _asList(data['active_orders']);
-        _isOpen = _restaurant?['is_open'] == true ||
-            _stats['is_open'] == true;
+        _isOpen = _restaurant?['is_open'] == true || _stats['is_open'] == true;
         _error = null;
       } else {
         _error = response['message'] ?? 'Failed to load dashboard';
@@ -182,7 +185,7 @@ class RestaurantProvider extends ChangeNotifier {
         },
       );
       if (response['success'] == true) {
-        await loadDashboardData();
+        _applyOrderResponse(response['data']);
         return true;
       }
       return false;
@@ -199,7 +202,7 @@ class RestaurantProvider extends ChangeNotifier {
         data: {'reason': reason},
       );
       if (response['success'] == true) {
-        await loadDashboardData();
+        _applyOrderResponse(response['data']);
         return true;
       }
       return false;
@@ -224,7 +227,7 @@ class RestaurantProvider extends ChangeNotifier {
         data: {'status': status},
       );
       if (response['success'] == true) {
-        await loadDashboardData();
+        _applyOrderResponse(response['data']);
         return true;
       }
       return false;
@@ -239,7 +242,7 @@ class RestaurantProvider extends ChangeNotifier {
       final response =
           await _api.post(ApiConstants.restaurantOrderReady(orderId));
       if (response['success'] == true) {
-        await loadDashboardData();
+        _applyOrderResponse(response['data']);
         return true;
       }
       return false;
@@ -259,7 +262,7 @@ class RestaurantProvider extends ChangeNotifier {
         data: {'additional_minutes': additionalMinutes},
       );
       if (response['success'] == true) {
-        await loadDashboardData();
+        _applyOrderResponse(response['data']);
         return true;
       }
       return false;
@@ -287,6 +290,24 @@ class RestaurantProvider extends ChangeNotifier {
       debugPrint('Fetch orders error: $e');
       return [];
     }
+  }
+
+  void _applyOrderResponse(dynamic payload) {
+    if (payload is! Map) {
+      unawaited(loadDashboardData());
+      return;
+    }
+    final normalized = Map<String, dynamic>.from(payload);
+    final nestedOrder = normalized['order'];
+    final order = nestedOrder is Map
+        ? Map<String, dynamic>.from(nestedOrder)
+        : normalized;
+    if (_parseId(order['id'] ?? order['order_id']) == null) {
+      unawaited(loadDashboardData());
+      return;
+    }
+    updateOrder(order);
+    RestaurantOrderRealtimeService.instance.publish(order);
   }
 
   void addNewOrder(Map<String, dynamic> order) {
@@ -319,25 +340,39 @@ class RestaurantProvider extends ChangeNotifier {
   void updateOrder(Map<String, dynamic> updatedOrder) {
     final updatedOrderId =
         _parseId(updatedOrder['id'] ?? updatedOrder['order_id']);
-    final pendingIndex = _pendingOrders.indexWhere((o) {
-      if (o is! Map) return false;
-      return _parseId(o['id'] ?? o['order_id']) == updatedOrderId;
-    });
-    if (pendingIndex != -1) {
-      if (updatedOrder['status'] != 'pending') {
-        _pendingOrders.removeAt(pendingIndex);
-        _activeOrders.insert(0, updatedOrder);
-      } else {
-        _pendingOrders[pendingIndex] = updatedOrder;
+    if (updatedOrderId == null) return;
+
+    Map<String, dynamic> existing = <String, dynamic>{};
+    for (final candidate in [..._pendingOrders, ..._activeOrders]) {
+      if (candidate is! Map) continue;
+      if (_parseId(candidate['id'] ?? candidate['order_id']) ==
+          updatedOrderId) {
+        existing = Map<String, dynamic>.from(candidate);
+        break;
       }
     }
+    final merged = <String, dynamic>{...existing, ...updatedOrder};
+    final status = merged['status']?.toString().toLowerCase() ?? '';
 
-    final activeIndex = _activeOrders.indexWhere((o) {
-      if (o is! Map) return false;
-      return _parseId(o['id'] ?? o['order_id']) == updatedOrderId;
-    });
-    if (activeIndex != -1) {
-      _activeOrders[activeIndex] = updatedOrder;
+    bool matchesOrder(dynamic candidate) {
+      if (candidate is! Map) return false;
+      return _parseId(candidate['id'] ?? candidate['order_id']) ==
+          updatedOrderId;
+    }
+
+    _pendingOrders.removeWhere(matchesOrder);
+    _activeOrders.removeWhere(matchesOrder);
+
+    const terminalStatuses = {
+      'cancelled',
+      'delivered',
+      'completed',
+      'rejected',
+    };
+    if (status == 'pending') {
+      _pendingOrders.insert(0, merged);
+    } else if (!terminalStatuses.contains(status)) {
+      _activeOrders.insert(0, merged);
     }
 
     _stats['pending_orders_count'] = _pendingOrders.length;

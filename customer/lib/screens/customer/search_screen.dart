@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import '../../widgets/common/app_cached_image.dart';
+import '../../widgets/common/app_skeleton.dart';
 import 'package:lottie/lottie.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -2564,11 +2565,10 @@ class _SearchScreenState extends State<SearchScreen> {
     final secondary = _searchSecondary(context);
 
     if (_isLoading) {
-      return _SearchStatePanel(
-        icon: Icons.search_rounded,
-        title: 'Searching nearby',
-        message: 'Finding restaurants and dishes for you...',
-        child: CircularProgressIndicator(color: secondary),
+      return const AppSkeletonListView(
+        itemCount: 5,
+        itemHeight: 112,
+        padding: EdgeInsets.fromLTRB(16, 12, 16, 28),
       );
     }
 
@@ -3154,14 +3154,12 @@ class _SearchStatePanel extends StatelessWidget {
     required this.title,
     required this.message,
     this.action,
-    this.child,
   });
 
   final IconData icon;
   final String title;
   final String message;
   final Widget? action;
-  final Widget? child;
 
   @override
   Widget build(BuildContext context) {
@@ -3217,10 +3215,6 @@ class _SearchStatePanel extends StatelessWidget {
                   fontWeight: FontWeight.w700,
                 ),
               ),
-              if (child != null) ...[
-                const SizedBox(height: 18),
-                child!,
-              ],
               if (action != null) ...[
                 const SizedBox(height: 18),
                 action!,

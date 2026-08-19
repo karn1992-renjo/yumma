@@ -1,11 +1,11 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <meta name="csrf-token" content="{{ csrf_token() }}">
     @php
-        $currencySymbol = App\Models\AppSetting::getValue('currency_symbol', 'â‚¹');
+        $currencySymbol = App\Models\AppSetting::sanitizedCurrencySymbol();
         $currencyDecimals = App\Models\AppSetting::currencyDecimals();
     @endphp
     <meta name="description" content="Order food from your favorite restaurants">

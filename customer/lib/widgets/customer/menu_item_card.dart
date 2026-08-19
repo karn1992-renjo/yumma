@@ -498,7 +498,7 @@ class _MenuCustomizationSheetState extends State<MenuCustomizationSheet> {
                       child: Text(
                         'Add item ${formatCurrency(context, total)}',
                         style: const TextStyle(
-                          fontSize: 14.1,
+                          fontSize: 18,
                           fontWeight: FontWeight.w700,
                         ),
                       ),
@@ -608,7 +608,7 @@ class _AddControl extends StatelessWidget {
                 'ADD',
                 style: TextStyle(
                   color: Color(0xFF0A9443),
-                  fontSize: 15.8,
+                  fontSize: 18,
                   fontWeight: FontWeight.w700,
                 ),
               ),
@@ -960,6 +960,358 @@ class _FooterStepper extends StatelessWidget {
           ),
           _StepperButton(icon: Icons.add, onTap: onAdd),
         ],
+      ),
+    );
+  }
+}
+
+/// A grid-style menu item card: full-width image on top with badges and the
+/// add button overlaid directly on it, then text below with no card
+/// background/border ("block") — matches the reference design used on the
+/// restaurant details screen.
+class RestaurantMenuGridCard extends StatelessWidget {
+  final MenuItem item;
+  final int quantity;
+  final bool orderingEnabled;
+  final VoidCallback? onTap;
+  final ValueChanged<int>? onQuantityChanged;
+  final String? promotionTag;
+
+  const RestaurantMenuGridCard({
+    super.key,
+    required this.item,
+    this.quantity = 0,
+    this.orderingEnabled = true,
+    this.onTap,
+    this.onQuantityChanged,
+    this.promotionTag,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final isAvailable = item.isAvailable && orderingEnabled;
+    final promo = promotionTag?.trim() ?? '';
+    final isPopular = item.isBestseller ||
+        item.isRecommended ||
+        item.totalOrders >= 20;
+    final rating = item.rating;
+    final hasRating = rating != null && rating > 0;
+
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          ClipRRect(
+            borderRadius: BorderRadius.circular(14),
+            child: AspectRatio(
+              aspectRatio: 1.5,
+              child: Stack(
+                clipBehavior: Clip.none,
+                fit: StackFit.expand,
+                children: [
+                  if (!orderingEnabled)
+                    ColorFiltered(
+                      colorFilter: const ColorFilter.matrix(<double>[
+                        0.2126, 0.7152, 0.0722, 0, 0,
+                        0.2126, 0.7152, 0.0722, 0, 0,
+                        0.2126, 0.7152, 0.0722, 0, 0,
+                        0, 0, 0, 1, 0,
+                      ]),
+                      child: NetworkImageLoader(
+                        imageUrl: item.imageUrl,
+                        width: double.infinity,
+                        height: double.infinity,
+                        fit: BoxFit.cover,
+                      ),
+                    )
+                  else
+                    NetworkImageLoader(
+                      imageUrl: item.imageUrl,
+                      width: double.infinity,
+                      height: double.infinity,
+                      fit: BoxFit.cover,
+                    ),
+                  if (promo.isNotEmpty)
+                    Positioned(
+                      left: 8,
+                      top: 8,
+                      child: _PromotionTagBadge(label: promo),
+                    )
+                  else if (isPopular)
+                    const Positioned(
+                      left: 8,
+                      top: 8,
+                      child: _GridPopularBadge(),
+                    ),
+                  if (hasRating)
+                    Positioned(
+                      left: 8,
+                      bottom: 8,
+                      child: _GridRatingBadge(rating: rating),
+                    ),
+                  Positioned(
+                    right: 8,
+                    bottom: 8,
+                    child: _GridAddButton(
+                      quantity: quantity,
+                      isAvailable: isAvailable,
+                      unavailableLabel:
+                          orderingEnabled ? 'Unavailable' : 'Closed',
+                      isCustomisable: item.hasCustomizations,
+                      onQuantityChanged: onQuantityChanged,
+                      onTap: onTap,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          Padding(
+              padding: const EdgeInsets.fromLTRB(2, 8, 2, 4),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.only(top: 3),
+                        child: _FoodTypeBadge(item: item),
+                      ),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          item.name,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 13.5,
+                            height: 1.2,
+                            fontWeight: FontWeight.w700,
+                            color: FoodFlowTheme.ink,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      Text(
+                        formatCurrency(context, item.finalPrice),
+                        style: const TextStyle(
+                          fontSize: 13.5,
+                          fontWeight: FontWeight.w800,
+                          color: FoodFlowTheme.ink,
+                        ),
+                      ),
+                      if (item.hasDiscount) ...[
+                        const SizedBox(width: 6),
+                        Text(
+                          formatCurrency(context, item.price),
+                          style: const TextStyle(
+                            color: FoodFlowTheme.faint,
+                            fontSize: 11.5,
+                            fontWeight: FontWeight.w500,
+                            decoration: TextDecoration.lineThrough,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _GridPopularBadge extends StatelessWidget {
+  const _GridPopularBadge();
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0A9443),
+        borderRadius: BorderRadius.circular(999),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.14),
+            blurRadius: 6,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: const Text(
+        'Popular',
+        style: TextStyle(
+          color: Colors.white,
+          fontSize: 11,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    );
+  }
+}
+
+class _GridRatingBadge extends StatelessWidget {
+  const _GridRatingBadge({required this.rating});
+
+  final double rating;
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0A9443),
+        borderRadius: BorderRadius.circular(999),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.14),
+            blurRadius: 6,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.star_rounded, color: Colors.white, size: 13),
+          const SizedBox(width: 3),
+          Text(
+            rating.toStringAsFixed(1),
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _GridAddButton extends StatelessWidget {
+  const _GridAddButton({
+    required this.quantity,
+    required this.isAvailable,
+    required this.isCustomisable,
+    this.unavailableLabel = 'Unavailable',
+    this.onQuantityChanged,
+    this.onTap,
+  });
+
+  final int quantity;
+  final bool isAvailable;
+  final bool isCustomisable;
+  final String unavailableLabel;
+  final ValueChanged<int>? onQuantityChanged;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!isAvailable) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: Colors.black.withOpacity(0.55),
+          borderRadius: BorderRadius.circular(999),
+        ),
+        child: Text(
+          unavailableLabel,
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 10.5,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      );
+    }
+
+    final isActive = quantity > 0 && !isCustomisable;
+
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: const Color(0xFF0A9443),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: Colors.white, width: 3),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.2),
+            blurRadius: 10,
+            offset: const Offset(0, 5),
+          ),
+        ],
+      ),
+      child: isActive
+          ? SizedBox(
+              height: 34,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _GridStepperZone(
+                    icon: Icons.remove_rounded,
+                    onTap: () => onQuantityChanged?.call(quantity - 1),
+                  ),
+                  SizedBox(
+                    width: 22,
+                    child: Text(
+                      '$quantity',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                  _GridStepperZone(
+                    icon: Icons.add_rounded,
+                    onTap: () => onQuantityChanged?.call(quantity + 1),
+                  ),
+                ],
+              ),
+            )
+          : InkWell(
+              onTap: isCustomisable ? onTap : () => onQuantityChanged?.call(1),
+              borderRadius: BorderRadius.circular(999),
+              child: SizedBox(
+                width: 34,
+                height: 34,
+                child: Icon(
+                  isCustomisable
+                      ? Icons.arrow_forward_ios_rounded
+                      : Icons.add_rounded,
+                  color: Colors.white,
+                  size: isCustomisable ? 14 : 20,
+                ),
+              ),
+            ),
+    );
+  }
+}
+
+class _GridStepperZone extends StatelessWidget {
+  const _GridStepperZone({required this.icon, required this.onTap});
+
+  final IconData icon;
+  final VoidCallback onTap;
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      child: SizedBox(
+        width: 25,
+        height: 34,
+        child: Icon(icon, color: Colors.white, size: 15),
       ),
     );
   }

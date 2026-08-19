@@ -3,7 +3,7 @@
 @section('title', 'Edit Listed Menu Item')
 
 @php
-    $currencySymbol = App\Models\AppSetting::getValue('currency_symbol', '?');
+    $currencySymbol = App\Models\AppSetting::sanitizedCurrencySymbol();
     $currencyDecimals = App\Models\AppSetting::currencyDecimals();
     $priceStep = number_format(1 / pow(10, $currencyDecimals), $currencyDecimals, '.', '');
 @endphp

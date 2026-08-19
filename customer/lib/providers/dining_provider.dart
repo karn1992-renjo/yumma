@@ -52,19 +52,21 @@ class DiningProvider extends ChangeNotifier {
   }
 
   // Load celebration types
-  Future<void> loadCelebrationTypes() async {
-    _setLoading(true);
+  Future<void> loadCelebrationTypes({bool forceRefresh = false}) async {
+    if (_celebrationTypes.isEmpty) _setLoading(true);
     _clearError();
 
     try {
-      final response = await _api.get(ApiConstants.diningCelebrationTypes);
-      
-      if (response['success'] == true) {
-        final data = _extractList(response['data']);
-        _celebrationTypes = data
-            .map((item) => CelebrationType.fromJson(item as Map<String, dynamic>))
-            .toList();
-      } else {
+      final response = await _api.get(
+        ApiConstants.diningCelebrationTypes,
+        includeAuth: false,
+        cachePolicy: ApiCachePolicy.staticContent,
+        cacheFirst: !forceRefresh,
+        refreshCached: !forceRefresh,
+        onCacheRefreshed: _applyCelebrationTypes,
+      );
+
+      if (!_applyCelebrationTypes(response)) {
         _setError(response['message'] ?? 'Failed to load celebration types');
       }
     } catch (e) {
@@ -76,19 +78,20 @@ class DiningProvider extends ChangeNotifier {
   }
 
   // Fetch user's bookings
-  Future<void> fetchMyBookings() async {
-    _setLoading(true);
+  Future<void> fetchMyBookings({bool forceRefresh = false}) async {
+    if (_bookings.isEmpty) _setLoading(true);
     _clearError();
 
     try {
-      final response = await _api.get(ApiConstants.diningMyBookings);
-      
-      if (response['success'] == true) {
-        final data = _extractList(response['data']);
-        _bookings = data
-            .map((item) => DiningBooking.fromJson(item as Map<String, dynamic>))
-            .toList();
-      } else {
+      final response = await _api.get(
+        ApiConstants.diningMyBookings,
+        cachePolicy: ApiCachePolicy.screen,
+        cacheFirst: !forceRefresh,
+        refreshCached: !forceRefresh,
+        onCacheRefreshed: _applyBookings,
+      );
+
+      if (!_applyBookings(response)) {
         _setError(response['message'] ?? 'Failed to load bookings');
       }
     } catch (e) {
@@ -107,10 +110,13 @@ class DiningProvider extends ChangeNotifier {
     try {
       final response = await _api.get(
         ApiConstants.diningBookingDetail(bookingId),
+        cachePolicy: ApiCachePolicy.screen,
+        cacheFirst: _currentBooking?.id == bookingId,
       );
-      
+
       if (response['success'] == true) {
-        final booking = DiningBooking.fromJson(response['data'] as Map<String, dynamic>);
+        final booking =
+            DiningBooking.fromJson(response['data'] as Map<String, dynamic>);
         _currentBooking = booking;
         return booking;
       } else {
@@ -142,7 +148,8 @@ class DiningProvider extends ChangeNotifier {
       final bookingData = {
         'restaurant_id': restaurantId,
         'booking_date': bookingDate.toIso8601String().split('T')[0],
-        'booking_time': '${bookingTime.hour.toString().padLeft(2, '0')}:${bookingTime.minute.toString().padLeft(2, '0')}',
+        'booking_time':
+            '${bookingTime.hour.toString().padLeft(2, '0')}:${bookingTime.minute.toString().padLeft(2, '0')}',
         'number_of_guests': numberOfGuests,
         'celebration_type': celebrationType,
         'special_requests': specialRequests,
@@ -154,7 +161,8 @@ class DiningProvider extends ChangeNotifier {
       );
 
       if (response['success'] == true) {
-        final booking = DiningBooking.fromJson(response['data'] as Map<String, dynamic>);
+        final booking =
+            DiningBooking.fromJson(response['data'] as Map<String, dynamic>);
         _currentBooking = booking;
         _bookings.insert(0, booking);
         return booking;
@@ -191,7 +199,7 @@ class DiningProvider extends ChangeNotifier {
             cancellationReason: reason,
           );
         }
-        
+
         // Update current booking
         if (_currentBooking?.id == bookingId) {
           _currentBooking = _currentBooking?.copyWith(
@@ -271,16 +279,35 @@ class DiningProvider extends ChangeNotifier {
 
   // Get upcoming bookings
   List<DiningBooking> getUpcomingBookings() {
-    return _bookings
-        .where((b) => b.isPending || b.isConfirmed)
-        .toList();
+    return _bookings.where((b) => b.isPending || b.isConfirmed).toList();
   }
 
   // Get past bookings
   List<DiningBooking> getPastBookings() {
-    return _bookings
-        .where((b) => b.isCompleted || b.isCancelled)
+    return _bookings.where((b) => b.isCompleted || b.isCancelled).toList();
+  }
+
+  bool _applyCelebrationTypes(dynamic response) {
+    if (response is! Map || response['success'] != true) return false;
+    final data = _extractList(response['data']);
+    _celebrationTypes = data
+        .whereType<Map>()
+        .map(
+            (item) => CelebrationType.fromJson(Map<String, dynamic>.from(item)))
         .toList();
+    notifyListeners();
+    return true;
+  }
+
+  bool _applyBookings(dynamic response) {
+    if (response is! Map || response['success'] != true) return false;
+    final data = _extractList(response['data']);
+    _bookings = data
+        .whereType<Map>()
+        .map((item) => DiningBooking.fromJson(Map<String, dynamic>.from(item)))
+        .toList();
+    notifyListeners();
+    return true;
   }
 
   List<dynamic> _extractList(dynamic data) {

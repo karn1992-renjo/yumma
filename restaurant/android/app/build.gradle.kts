@@ -1,7 +1,6 @@
 import java.io.File
 import java.io.FileInputStream
 import java.util.Properties
-import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
     id("com.android.application")
@@ -12,13 +11,13 @@ plugins {
 }
 
 val keystoreProperties = Properties()
-val keystorePropertiesFile = file("D:/karn/swaad/resto_key/key.properties")
+val keystorePropertiesFile = rootProject.file("key.properties")
 if (keystorePropertiesFile.exists()) {
     keystoreProperties.load(FileInputStream(keystorePropertiesFile))
 }
 
 android {
-    namespace = "com.adgraph.yumma_vendor"
+    namespace = "com.renjo.restro.android"
     compileSdk = flutter.compileSdkVersion
     // NDK r28+ produces 16 KB ELF-aligned native libraries by default.
     ndkVersion = "28.2.13676358"
@@ -43,7 +42,7 @@ android {
 
     defaultConfig {
         // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId = "com.adgraph.yumma_vendor"
+        applicationId = "com.renjo.restro.android"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion
@@ -52,7 +51,7 @@ android {
         versionName = flutter.versionName
         // Provide the Google Maps API key placeholder used in AndroidManifest.xml.
         // Replace "YOUR_GOOGLE_MAPS_API_KEY" with your actual API key or inject via CI.
-        manifestPlaceholders["GOOGLE_MAPS_API_KEY"] = "AIzaSyB8-QxsMReKTKEZQZ58_BCDMOeiTHo4d2Q"
+        manifestPlaceholders["GOOGLE_MAPS_API_KEY"] = "AIzaSyCNGOec3zc7sPQqpnh10yKIYQ7D97LQmj0"
     }
 
     buildTypes {
@@ -68,7 +67,7 @@ android {
 
 kotlin {
     compilerOptions {
-        jvmTarget.set(JvmTarget.JVM_17)
+        jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17
     }
 }
 

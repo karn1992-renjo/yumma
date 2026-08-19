@@ -9,7 +9,7 @@
 	<key>CFBundleDisplayName</key>
 	<string>Yumma! Resto</string>
 	<key>CFBundleExecutable</key>
-	<string>yummaresto</string>
+	<string>Yummaresto</string>
 	<key>CFBundleIdentifier</key>
 	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
 	<key>CFBundleInfoDictionaryVersion</key>

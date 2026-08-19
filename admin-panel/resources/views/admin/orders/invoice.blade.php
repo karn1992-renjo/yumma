@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <title>Invoice #{{ $order->order_number }}</title>
     @php
-        $currencySymbol = App\Models\AppSetting::getValue('currency_symbol', '?');
+        $currencySymbol = App\Models\AppSetting::sanitizedCurrencySymbol();
         $decimals = App\Models\AppSetting::currencyDecimals();
         $orderItems = is_array($order->items) ? $order->items : (json_decode((string) $order->items, true) ?: []);
     @endphp

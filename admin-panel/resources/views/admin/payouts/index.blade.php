@@ -4,7 +4,7 @@
 @section('header', 'Payout Management')
 
 @php
-    $currencySymbol = App\Models\AppSetting::getValue('currency_symbol', '?');
+    $currencySymbol = App\Models\AppSetting::sanitizedCurrencySymbol();
     $activeGatewaySupportsAutomation = \App\Support\GatewayRegistry::supportsAutomatedPayout($activeGateway ?? null);
 @endphp
 

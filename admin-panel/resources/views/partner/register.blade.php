@@ -210,6 +210,11 @@
                         <h4 class="mb-4">Upload Documents</h4>
                         <div class="row g-4">
                             <div class="col-12">
+                                <label class="form-label">GSTIN Number</label>
+                                <input type="text" class="form-control text-uppercase" name="gstin_number" maxlength="15" placeholder="e.g. 22AAAAA0000A1Z5">
+                                <p class="small text-muted mt-1 mb-0">Used to automatically verify your GST registration. Leave blank to skip automatic verification.</p>
+                            </div>
+                            <div class="col-12">
                                 <div class="file-upload" onclick="document.getElementById('gstFile').click()">
                                     <i class="fas fa-file-invoice"></i>
                                     <p class="mb-0 fw-semibold">GST Certificate</p>
@@ -349,6 +354,11 @@
                             <div class="col-md-6">
                                 <label class="form-label required">License Expiry Date</label>
                                 <input type="date" class="form-control" name="license_expiry" required>
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label required">Date of Birth</label>
+                                <input type="date" class="form-control" name="dob" required>
+                                <p class="small text-muted mt-1 mb-0">As per your driving license &mdash; used to verify your license automatically.</p>
                             </div>
                             <div class="col-md-6">
                                 <label class="form-label required">Create Password</label>

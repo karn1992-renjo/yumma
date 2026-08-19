@@ -1,5 +1,5 @@
 @extends('layouts.restaurant')
-@php $currencySymbol = App\Models\AppSetting::getValue('currency_symbol', '?'); @endphp
+@php $currencySymbol = App\Models\AppSetting::sanitizedCurrencySymbol(); @endphp
 
 @section('title', 'Add Printer')
 

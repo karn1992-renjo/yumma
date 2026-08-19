@@ -30,7 +30,7 @@ class WalletController extends Controller
         return view('restaurant.wallet.index', [
             'wallet' => $wallet,
             'transactions' => $transactions,
-            'currencySymbol' => AppSetting::getValue('currency_symbol', '?'),
+            'currencySymbol' => AppSetting::sanitizedCurrencySymbol(),
         ]);
     }
 }

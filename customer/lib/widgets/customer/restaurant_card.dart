@@ -678,7 +678,7 @@ class _MiniViewCartButton extends StatelessWidget {
           const SizedBox(width: 12),
           Text(
             'View Cart',
-            style: GoogleFonts.nunitoSans(
+            style: GoogleFonts.plusJakartaSans(
               color: Colors.white,
               fontSize: 12,
               fontWeight: FontWeight.w700,

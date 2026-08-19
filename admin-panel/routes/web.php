@@ -133,15 +133,6 @@ Route::prefix('api')->group(function () {
     Route::get('/geocode', [HomeController::class, 'geocode']);
 });
 
-    Route::get('/support', [App\Http\Controllers\Customer\SupportController::class, 'index'])->name('support.index');
-    Route::get('/support/create', [App\Http\Controllers\Customer\SupportController::class, 'create'])->name('support.create');
-    Route::post('/support', [App\Http\Controllers\Customer\SupportController::class, 'store'])->name('support.store');
-    Route::get('/support/{id}', [App\Http\Controllers\Customer\SupportController::class, 'show'])->name('support.show');
-    Route::post('/support/{id}/reply', [App\Http\Controllers\Customer\SupportController::class, 'reply'])->name('support.reply');
-    Route::put('/support/{id}/status', [App\Http\Controllers\Customer\SupportController::class, 'updateStatus'])->name('support.update-status');
-    Route::post('/support/{id}/assign', [App\Http\Controllers\Customer\SupportController::class, 'assign'])->name('support.assign');
-    Route::post('/support/bulk-update', [App\Http\Controllers\Customer\SupportController::class, 'bulkUpdate'])->name('support.bulk-update');
-    Route::delete('/support/{id}', [App\Http\Controllers\Customer\SupportController::class, 'destroy'])->name('support.destroy');   
 // ==================== RESTAURANT DETAIL PAGE ====================
 Route::get('/restaurants/{id}', [HomeController::class, 'showRestaurant'])->name('restaurant.show');
 
@@ -237,9 +228,6 @@ Route::middleware(['auth'])->prefix('customer')->name('customer.')->group(functi
     Route::put('/addresses/{id}', [App\Http\Controllers\Customer\AddressController::class, 'update'])->name('addresses.update');
     Route::delete('/addresses/{id}', [App\Http\Controllers\Customer\AddressController::class, 'destroy'])->name('addresses.destroy');
     Route::post('/addresses/{id}/default', [App\Http\Controllers\Customer\AddressController::class, 'setDefault'])->name('addresses.set-default');
-
-    // Customer support alias route
-    Route::redirect('/support', '/support')->name('support.index');
 });
 
 // Checkout routes
@@ -323,6 +311,7 @@ Route::middleware(['auth', 'role:super_admin|admin'])->prefix('admin')->name('ad
     Route::get('/drivers/{driver}/orders-history', [DriverController::class, 'ordersHistory'])->name('drivers.orders-history');
     Route::get('/drivers/{driver}/orders/{order}', [DriverController::class, 'orderDetails'])->name('drivers.order-details');
     Route::post('/drivers/{driver}/wallet/topup', [DriverController::class, 'topupWallet'])->name('drivers.wallet-topup');
+    Route::post('/drivers/{driver}/cash-collection', [DriverController::class, 'collectCash'])->name('drivers.cash-collection');
     Route::post('/drivers/{driver}/toggle-status', [DriverController::class, 'toggleStatus'])->name('drivers.toggle-status');
 
     // Fleet Management
@@ -405,6 +394,7 @@ Route::middleware(['auth', 'role:super_admin|admin'])->prefix('admin')->name('ad
     Route::get('/partner-applications/{application}', [PartnerApplicationController::class, 'show'])->name('partner-applications.show');
     Route::get('/partner-applications/{application}/edit', [PartnerApplicationController::class, 'edit'])->name('partner-applications.edit');
     Route::put('/partner-applications/{application}', [PartnerApplicationController::class, 'update'])->name('partner-applications.update');
+    Route::post('/partner-applications/{application}/reverify', [PartnerApplicationController::class, 'reverify'])->name('partner-applications.reverify');
     Route::post('/partner-applications/{application}/approve', [PartnerApplicationController::class, 'approve'])->name('partner-applications.approve');
     Route::post('/partner-applications/{application}/reject', [PartnerApplicationController::class, 'reject'])->name('partner-applications.reject');
     Route::delete('/partner-applications/{application}', [PartnerApplicationController::class, 'destroy'])->name('partner-applications.destroy');
@@ -517,6 +507,11 @@ Route::middleware(['auth', 'role:super_admin|admin'])->prefix('admin')->name('ad
     });
 
     // In web.php - add to admin group
+    // Customer Reviews
+    Route::prefix('reviews')->name('reviews.')->group(function () {
+        Route::get('/', [ReviewController::class, 'index'])->name('index');
+        Route::put('/{review}/status', [ReviewController::class, 'updateStatus'])->name('update-status');
+    });
     Route::prefix('support')->name('support.')->group(function () {
         Route::get('/', [SupportController::class, 'index'])->name('index');
         Route::get('/statistics', [SupportController::class, 'statistics'])->name('statistics');
@@ -526,6 +521,7 @@ Route::middleware(['auth', 'role:super_admin|admin'])->prefix('admin')->name('ad
         Route::post('/{id}/reply', [SupportController::class, 'reply'])->name('reply');
         Route::put('/{id}/status', [SupportController::class, 'updateStatus'])->name('update-status');
         Route::post('/{id}/assign', [SupportController::class, 'assign'])->name('assign');
+        Route::post('/{id}/actions', [SupportController::class, 'resolutionAction'])->name('actions');
         Route::post('/bulk-update', [SupportController::class, 'bulkUpdate'])->name('bulk-update');
         Route::delete('/{id}', [SupportController::class, 'destroy'])->name('destroy');
     });

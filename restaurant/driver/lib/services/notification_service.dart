@@ -192,7 +192,7 @@ class FirebaseNotificationService {
     const androidChannel = AndroidNotificationChannel(
       'default_notification_channel',
       'Default Notifications',
-      description: 'General notifications from Yumma',
+      description: 'General notifications from Yumma!',
       importance: Importance.high,
     );
 

@@ -6,6 +6,7 @@ use App\Models\Order;
 use App\Models\RewardPointTransaction;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
 class OrderRewardPointService
 {
@@ -55,9 +56,7 @@ class OrderRewardPointService
                 ],
             ]);
 
-            $order->newQuery()->whereKey($order->id)->update([
-                'reward_points_earned' => $points,
-            ]);
+            $this->syncEarnedPoints($order, $points);
 
             return $transaction;
         });
@@ -119,9 +118,7 @@ class OrderRewardPointService
                 ],
             ]);
 
-            $order->newQuery()->whereKey($order->id)->update([
-                'reward_points_earned' => 0,
-            ]);
+            $this->syncEarnedPoints($order, 0);
 
             return $transaction;
         });
@@ -134,6 +131,23 @@ class OrderRewardPointService
             ->where('reference_id', $order->id)
             ->value('points');
 
-        return (int) ($points ?? $order->reward_points_earned ?? 0);
+        if ($points !== null) {
+            return (int) $points;
+        }
+
+        return Schema::hasColumn($order->getTable(), 'reward_points_earned')
+            ? (int) ($order->getAttribute('reward_points_earned') ?? 0)
+            : 0;
+    }
+
+    private function syncEarnedPoints(Order $order, int $points): void
+    {
+        if (! Schema::hasColumn($order->getTable(), 'reward_points_earned')) {
+            return;
+        }
+
+        $order->newQuery()->whereKey($order->id)->update([
+            'reward_points_earned' => $points,
+        ]);
     }
 }

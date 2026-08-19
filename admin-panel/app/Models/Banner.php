@@ -8,7 +8,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 class Banner extends Model
 {
     protected $fillable = [
-        'title', 'description', 'image', 'link', 'redirect_type', 'redirect_category_id', 'redirect_restaurant_id',
+        'title', 'description', 'cta_label', 'image', 'badge_image', 'link', 'redirect_type', 'redirect_category_id', 'redirect_restaurant_id',
         'redirect_menu_item_id', 'display_order', 'is_active', 'start_date', 'end_date', 'banner_type',
         'layout_mode', 'image_ratio'
     ];

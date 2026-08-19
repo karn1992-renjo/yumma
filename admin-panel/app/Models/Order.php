@@ -37,6 +37,8 @@ class Order extends Model
         'tax',
         'discount',
         'total',
+        'tip_amount',
+        'tip_paid_at',
         'payment_method',
         'payment_gateway',
         'payment_source',
@@ -160,6 +162,8 @@ class Order extends Model
         'tax' => 'decimal:2',
         'discount' => 'decimal:2',
         'total' => 'decimal:2',
+        'tip_amount' => 'decimal:2',
+        'tip_paid_at' => 'datetime',
         'restaurant_earning' => 'decimal:2',
         'driver_earning' => 'decimal:2',
         'driver_delivery_base' => 'decimal:2',
@@ -597,7 +601,7 @@ class Order extends Model
      */
     public function getTotalFormattedAttribute(): string
     {
-        return AppSetting::getValue('currency_symbol', '₹') . number_format($this->total, AppSetting::currencyDecimals());
+        return AppSetting::sanitizedCurrencySymbol() . number_format($this->total, AppSetting::currencyDecimals());
     }
 
     /**

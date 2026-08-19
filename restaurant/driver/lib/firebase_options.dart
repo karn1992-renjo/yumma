@@ -17,33 +17,33 @@ class DefaultFirebaseOptions {
   }
 
   static const FirebaseOptions web = FirebaseOptions(
-    apiKey: 'AIzaSyB6Ixat1fY3Knl7mNiGl4zuNASMxHv23Qg',
-    authDomain: 'yumma-458b0.firebaseapp.com',
-    databaseURL: 'https://yumma-458b0-default-rtdb.firebaseio.com',
-    projectId: 'yumma-458b0',
-    storageBucket: 'yumma-458b0.firebasestorage.app',
+    apiKey: 'PLACE_API_KEY_HERE',
+    authDomain: 'PLACE_AUTH_DOMAIN_HERE',
+    databaseURL: 'PLACE_DATABASE_URL_HERE',
+    projectId: 'Yumma-458b0',
+    storageBucket: 'PLACE_STORAGE_BUCKET_HERE',
     messagingSenderId: '596992936599',
     appId: '1:596992936599:web:8d6fa739975dfcf6f6b7d2',
     measurementId: 'G-P05GYQKEG3',
   );
 
   static const FirebaseOptions android = FirebaseOptions(
-    apiKey: 'AIzaSyB6Ixat1fY3Knl7mNiGl4zuNASMxHv23Qg',
-    authDomain: 'yumma-458b0.firebaseapp.com',
-    databaseURL: 'https://yumma-458b0-default-rtdb.firebaseio.com',
-    projectId: 'yumma-458b0',
-    storageBucket: 'yumma-458b0.firebasestorage.app',
+    apiKey: 'PLACE_API_KEY_HERE',
+    authDomain: 'PLACE_AUTH_DOMAIN_HERE',
+    databaseURL: 'PLACE_DATABASE_URL_HERE',
+    projectId: 'Yumma-458b0',
+    storageBucket: 'PLACE_STORAGE_BUCKET_HERE',
     messagingSenderId: '596992936599',
     appId: '1:596992936599:android:9729edc404ec811ff6b7d2',
   );
 
   static const FirebaseOptions ios = FirebaseOptions(
-    apiKey: 'AIzaSyB6Ixat1fY3Knl7mNiGl4zuNASMxHv23Qg',
+    apiKey: 'PLACE_API_KEY_HERE',
     appId: '1:596992936599:ios:8f0a1b2c3d4e5f6g726703',
     messagingSenderId: '596992936599',
-    projectId: 'yumma-458b0',
-    storageBucket: 'yumma-458b0.firebasestorage.app',
+    projectId: 'Yumma-458b0',
+    storageBucket: 'PLACE_STORAGE_BUCKET_HERE',
     iosBundleId: 'com.example.app',
-    databaseURL: 'https://yumma-458b0-default-rtdb.firebaseio.com',
+    databaseURL: 'PLACE_DATABASE_URL_HERE',
   );
 }
