@@ -537,10 +537,9 @@ class _FoodDeliveryAppState extends State<FoodDeliveryApp> {
       home: AppSplashScreen(
         branding: _branding,
         startupFuture: widget.startupFuture,
-        builder: (_) =>
-            authProvider.isAuthenticated && authProvider.canUseCurrentApp
-                ? const HomeScreen()
-                : const LoginScreen(),
+        builder: (_) => _canOpenCustomerBrowseExperience(authProvider)
+            ? const HomeScreen()
+            : const LoginScreen(),
       ),
       navigatorObservers: [routeObserver],
       onGenerateRoute: (settings) => _generateRoute(context, settings),
@@ -564,6 +563,30 @@ class _FoodDeliveryAppState extends State<FoodDeliveryApp> {
         );
       },
     );
+  }
+
+  bool _canBrowseAsGuest() {
+    return AppConfig.isCustomerApp || !AppConfig.isRoleLocked;
+  }
+
+  bool _canOpenCustomerBrowseExperience(AuthProvider authProvider) {
+    return authProvider.isAuthenticated && authProvider.canUseCurrentApp ||
+        _canBrowseAsGuest();
+  }
+
+  bool _canUseAccountFeatures(BuildContext context) {
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    return authProvider.isAuthenticated && authProvider.canUseCurrentApp;
+  }
+
+  Route<dynamic> _accountRoute(
+    BuildContext context,
+    WidgetBuilder builder,
+  ) {
+    if (!_canUseAccountFeatures(context)) {
+      return MaterialPageRoute(builder: (_) => const LoginScreen());
+    }
+    return MaterialPageRoute(builder: builder);
   }
 
   Route<dynamic>? _generateRoute(BuildContext context, RouteSettings settings) {
@@ -609,7 +632,7 @@ class _FoodDeliveryAppState extends State<FoodDeliveryApp> {
         );
       case '/home':
         final authProvider = Provider.of<AuthProvider>(context, listen: false);
-        if (!authProvider.isAuthenticated || !authProvider.canUseCurrentApp) {
+        if (!_canOpenCustomerBrowseExperience(authProvider)) {
           return MaterialPageRoute(builder: (_) => const LoginScreen());
         }
         return MaterialPageRoute(builder: (_) => const HomeScreen());
@@ -631,7 +654,7 @@ class _FoodDeliveryAppState extends State<FoodDeliveryApp> {
       case '/cart':
         return MaterialPageRoute(builder: (_) => const CartScreen());
       case '/checkout':
-        return MaterialPageRoute(builder: (_) => const CheckoutScreen());
+        return _accountRoute(context, (_) => const CheckoutScreen());
       case '/map-picker':
         final args = settings.arguments;
         return MaterialPageRoute(
@@ -640,8 +663,7 @@ class _FoodDeliveryAppState extends State<FoodDeliveryApp> {
           ),
         );
       case '/saved-restaurants':
-        return MaterialPageRoute(
-            builder: (_) => const SavedRestaurantsScreen());
+        return _accountRoute(context, (_) => const SavedRestaurantsScreen());
       case '/offers':
         return MaterialPageRoute(builder: (_) => const OffersScreen());
       case '/promotion-products':
@@ -683,6 +705,9 @@ class _FoodDeliveryAppState extends State<FoodDeliveryApp> {
       case '/privacy-legal':
         return MaterialPageRoute(builder: (_) => const PrivacyLegalScreen());
       case '/order/confirmation':
+        if (!_canUseAccountFeatures(context)) {
+          return MaterialPageRoute(builder: (_) => const LoginScreen());
+        }
         final args = settings.arguments;
         if (args is Map && args['orderId'] is int) {
           return MaterialPageRoute(
@@ -735,6 +760,9 @@ class _FoodDeliveryAppState extends State<FoodDeliveryApp> {
         }
         return _errorRoute('Invalid order confirmation data');
       case '/order/track':
+        if (!_canUseAccountFeatures(context)) {
+          return MaterialPageRoute(builder: (_) => const LoginScreen());
+        }
         final orderId = _parseOrderId(settings.arguments);
         if (orderId == null) {
           return _errorRoute('Invalid order ID supplied for order tracking.');
@@ -743,6 +771,9 @@ class _FoodDeliveryAppState extends State<FoodDeliveryApp> {
           builder: (_) => OrderTrackingScreen(orderId: orderId),
         );
       case '/order/chat':
+        if (!_canUseAccountFeatures(context)) {
+          return MaterialPageRoute(builder: (_) => const LoginScreen());
+        }
         final args = settings.arguments;
         if (args is Order) {
           return MaterialPageRoute(
@@ -766,17 +797,23 @@ class _FoodDeliveryAppState extends State<FoodDeliveryApp> {
           builder: (_) => OrderChatScreen(orderId: orderId),
         );
       case '/orders':
-        return MaterialPageRoute(builder: (_) => const OrdersScreen());
+        return _accountRoute(context, (_) => const OrdersScreen());
       case '/profile':
-        return MaterialPageRoute(builder: (_) => const ProfileScreen());
+        return _accountRoute(context, (_) => const ProfileScreen());
       case '/addresses':
-        return MaterialPageRoute(builder: (_) => const AddressScreen());
+        return _accountRoute(context, (_) => const AddressScreen());
       case '/addresses/add':
+        if (!_canUseAccountFeatures(context)) {
+          return MaterialPageRoute(builder: (_) => const LoginScreen());
+        }
         final args = settings.arguments;
         return MaterialPageRoute(
           builder: (_) => AddAddressScreen(address: args),
         );
       case '/addresses/edit':
+        if (!_canUseAccountFeatures(context)) {
+          return MaterialPageRoute(builder: (_) => const LoginScreen());
+        }
         final args = settings.arguments;
         return MaterialPageRoute(
           builder: (_) => AddAddressScreen(address: args),
@@ -784,8 +821,11 @@ class _FoodDeliveryAppState extends State<FoodDeliveryApp> {
       case '/search':
         return MaterialPageRoute(builder: (_) => const SearchScreen());
       case '/notifications':
-        return MaterialPageRoute(builder: (_) => const NotificationsScreen());
+        return _accountRoute(context, (_) => const NotificationsScreen());
       case '/support':
+        if (!_canUseAccountFeatures(context)) {
+          return MaterialPageRoute(builder: (_) => const LoginScreen());
+        }
         final args = settings.arguments;
         if (args is Map) {
           return MaterialPageRoute(
@@ -797,18 +837,16 @@ class _FoodDeliveryAppState extends State<FoodDeliveryApp> {
         }
         return MaterialPageRoute(builder: (_) => const CustomerSupportScreen());
       case '/wallet':
-        return MaterialPageRoute(builder: (_) => const WalletScreen());
+        return _accountRoute(context, (_) => const WalletScreen());
       case '/scratch-cards':
-        return MaterialPageRoute(
-          builder: (_) =>
-              ScratchCardsScreen(orderId: _parseOrderId(settings.arguments)),
+        return _accountRoute(
+          context,
+          (_) => ScratchCardsScreen(orderId: _parseOrderId(settings.arguments)),
         );
       case '/referrals':
-        return MaterialPageRoute(builder: (_) => const ReferralScreen());
+        return _accountRoute(context, (_) => const ReferralScreen());
       case '/dining/bookings':
-        return MaterialPageRoute(
-          builder: (_) => const DiningBookingsListScreen(),
-        );
+        return _accountRoute(context, (_) => const DiningBookingsListScreen());
 
       default:
         return _errorRoute('Page not found: ${settings.name}');

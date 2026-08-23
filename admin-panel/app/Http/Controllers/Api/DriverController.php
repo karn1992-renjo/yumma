@@ -7,10 +7,14 @@ use App\Events\OrderStatusUpdatedEvent;
 use App\Models\Order;
 use App\Models\DriverGig;
 use App\Models\DriverGigBooking;
+use App\Models\GigDispute;
 use App\Models\AppSetting;
 use App\Rules\UniqueUserContactForRole;
 use App\Services\AutoAssignDriverService;
 use App\Services\GoogleMapsEtaService;
+use App\Services\GigLifecycleService;
+use App\Services\DriverLocationTrustService;
+use App\Services\GigOperationsBroadcastService;
 use App\Services\OrderPaymentService;
 use App\Services\OrderStatusPushService;
 use App\Support\GatewayRegistry;
@@ -36,30 +40,44 @@ class DriverController extends Controller
 
     public function updateLocation(Request $request)
     {
-        $request->validate([
+        $validated = $request->validate([
             'lat' => 'required|numeric',
             'lng' => 'required|numeric',
+            'accuracy_meters' => 'nullable|numeric|min:0',
+            'accuracy' => 'nullable|numeric|min:0',
+            'speed_mps' => 'nullable|numeric|min:0',
+            'speed' => 'nullable|numeric|min:0',
+            'heading' => 'nullable|numeric',
+            'is_mock_location' => 'nullable|boolean',
+            'device_id' => 'nullable|string|max:120',
+            'platform' => 'nullable|string|max:32',
+            'app_version' => 'nullable|string|max:40',
+            'attestation_token' => 'nullable|string|max:5000',
+            'recorded_at' => 'nullable|date',
         ]);
-        
+
         $driverId = auth()->id();
-        
+        $risk = app(DriverLocationTrustService::class)->record($request->user(), $validated);
+
         Cache::put("driver_location_{$driverId}", [
             'lat' => (float) $request->lat,
             'lng' => (float) $request->lng,
-            'updated_at' => now()
-        ], 300); // Cache for 5 minutes
+            'risk_score' => $risk['score'] ?? 0,
+            'risk_status' => $risk['status'] ?? 'trusted',
+            'updated_at' => now(),
+        ], 300);
 
         $request->user()?->forceFill([
             'latitude' => (float) $request->lat,
             'longitude' => (float) $request->lng,
         ])->save();
-        
+
         return response()->json([
             'success' => true,
-            'message' => 'Location updated'
+            'message' => 'Location updated',
+            'location_trust' => $risk,
         ]);
     }
-    
     public function getAssignedOrders()
     {
         $orders = Order::where('driver_id', auth()->id())
@@ -162,7 +180,7 @@ class DriverController extends Controller
                 ->orderBy('date')
                 ->orderBy('start_time')
                 ->get()
-                ->filter(fn (DriverGig $gig) => $gig->available_seats > 0)
+                ->filter(fn (DriverGig $gig) => $gig->available_seats > 0 && $this->gigIsBookable($gig))
                 ->values()
                 ->map(function (DriverGig $gig) {
                     $gig->setAttribute('status', 'available');
@@ -222,6 +240,13 @@ class DriverController extends Controller
                 return [[
                     'success' => false,
                     'message' => 'Gig not available',
+                ], 400];
+            }
+
+            if (! $this->gigIsBookable($gig)) {
+                return [[
+                    'success' => false,
+                    'message' => 'Gig slot has already ended.',
                 ], 400];
             }
 
@@ -291,6 +316,33 @@ class DriverController extends Controller
         return response()->json($payload, $statusCode);
     }
     
+    public function disputeGig(Request $request, $bookingId)
+    {
+        $validated = $request->validate([
+            'reason' => 'required|string|max:120',
+            'message' => 'nullable|string|max:2000',
+        ]);
+
+        $booking = DriverGigBooking::with('gig')
+            ->where('id', $bookingId)
+            ->where('driver_id', auth()->id())
+            ->firstOrFail();
+
+        $dispute = GigDispute::create([
+            'driver_gig_id' => $booking->driver_gig_id,
+            'driver_gig_booking_id' => $booking->id,
+            'driver_id' => $booking->driver_id,
+            'reason' => $validated['reason'],
+            'message' => $validated['message'] ?? null,
+            'status' => 'open',
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Gig dispute submitted for review.',
+            'data' => $dispute,
+        ], 201);
+    }
     public function getEarnings(Request $request)
     {
         $driverId = auth()->id();
@@ -422,6 +474,8 @@ class DriverController extends Controller
             ], 404);
         }
 
+        app(GigLifecycleService::class)->recordRejection(auth()->id());
+
         $autoAssignService->reassignOnCancellation($order->id, auth()->id());
 
         broadcast(new OrderStatusUpdatedEvent($order->fresh(), $order->restaurant_id));
@@ -531,6 +585,15 @@ class DriverController extends Controller
         $status = Cache::get("driver_status_{$driverId}", ['is_online' => false]);
         $activeGig = $this->activeBookedGig($driverId);
 
+        if (($status['is_online'] ?? false) && ! $activeGig) {
+            $status = [
+                'is_online' => false,
+                'online_started_at' => null,
+            ];
+            Cache::put("driver_status_{$driverId}", $status, now()->addDays(7));
+            app(GigLifecycleService::class)->checkOutOpenBooking($driverId);
+        }
+
         return response()->json([
             'success' => true,
             'data' => [
@@ -554,7 +617,7 @@ class DriverController extends Controller
         if ($request->boolean('is_online') && !$activeGig) {
             return response()->json([
                 'success' => false,
-                'message' => 'Book a gig for today before going online.',
+                'message' => 'Book an active gig before going online.',
                 'data' => [
                     'is_online' => false,
                     'can_go_online' => false,
@@ -571,6 +634,12 @@ class DriverController extends Controller
                 : null,
         ];
         Cache::put("driver_status_{$driverId}", $status, now()->addDays(7));
+
+        if ($isOnline) {
+            app(GigLifecycleService::class)->checkIn($driverId);
+        } else {
+            app(GigLifecycleService::class)->checkOutOpenBooking($driverId);
+        }
 
         return response()->json([
             'success' => true,
@@ -633,8 +702,33 @@ class DriverController extends Controller
         ]);
     }
 
+    private function gigIsBookable(DriverGig $gig): bool
+    {
+        $slotEnd = $this->gigSlotDateTime($gig, 'end_time');
+
+        return $slotEnd !== null && $slotEnd->greaterThan(now());
+    }
+
+    private function gigSlotDateTime(DriverGig $gig, string $attribute): ?Carbon
+    {
+        $date = $gig->date;
+        $time = $gig->{$attribute};
+
+        if (! $date || ! $time) {
+            return null;
+        }
+
+        return Carbon::createFromFormat(
+            'Y-m-d H:i:s',
+            $date->format('Y-m-d') . ' ' . $time->format('H:i:s'),
+            config('app.timezone')
+        );
+    }
+
     private function activeBookedGig(int $driverId): ?DriverGig
     {
+        $now = now();
+
         return DriverGig::with('area')
             ->withCount(['activeBookings as active_bookings_count'])
             ->whereIn('status', ['available', 'booked'])
@@ -643,6 +737,8 @@ class DriverController extends Controller
                     ->where('status', 'booked');
             })
             ->whereDate('date', today())
+            ->whereTime('start_time', '<=', $now->copy()->addMinutes(30)->format('H:i:s'))
+            ->whereTime('end_time', '>=', $now->format('H:i:s'))
             ->orderBy('start_time')
             ->first();
     }

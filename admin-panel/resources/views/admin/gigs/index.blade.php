@@ -45,6 +45,79 @@
 </div>
 
 <div class="table-card mb-4">
+    <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <div>
+            <h5 class="mb-0">Enterprise Control Room</h5>
+            <div class="small text-muted">Forecasts, risk review, approvals, and slot pressure</div>
+        </div>
+        <div class="d-flex gap-2">
+            <form action="{{ route('admin.gigs.forecast') }}" method="POST">
+                @csrf
+                <input type="hidden" name="date" value="{{ $selectedDate ?? today()->toDateString() }}">
+                <button type="submit" class="btn btn-sm btn-outline-primary">Refresh Forecast</button>
+            </form>
+            <a href="{{ route('admin.gigs.operations', ['date' => $selectedDate ?? today()->toDateString()]) }}" class="btn btn-sm btn-outline-secondary" target="_blank">Live JSON</a>
+        </div>
+    </div>
+    <div class="card-body p-4">
+        <div class="row g-3">
+            <div class="col-md-2 col-sm-6"><div class="border rounded p-3 h-100"><div class="small text-muted">Fill Rate</div><div class="h4 mb-0">{{ number_format((float) ($operations['fill_rate'] ?? 0), 1) }}%</div></div></div>
+            <div class="col-md-2 col-sm-6"><div class="border rounded p-3 h-100"><div class="small text-muted">Open Seats</div><div class="h4 mb-0">{{ number_format((int) ($operations['open'] ?? 0)) }}</div></div></div>
+            <div class="col-md-2 col-sm-6"><div class="border rounded p-3 h-100"><div class="small text-muted">Forecast Orders</div><div class="h4 mb-0">{{ number_format((int) ($operations['forecasted_orders'] ?? 0)) }}</div></div></div>
+            <div class="col-md-2 col-sm-6"><div class="border rounded p-3 h-100"><div class="small text-muted">Recommended Cap.</div><div class="h4 mb-0">{{ number_format((int) ($operations['recommended_capacity'] ?? 0)) }}</div></div></div>
+            <div class="col-md-2 col-sm-6"><div class="border rounded p-3 h-100"><div class="small text-muted">Fraud Signals</div><div class="h4 mb-0">{{ number_format((int) ($operations['open_fraud_signals'] ?? 0)) }}</div></div></div>
+            <div class="col-md-2 col-sm-6"><div class="border rounded p-3 h-100"><div class="small text-muted">Pending Payouts</div><div class="h4 mb-0">{{ number_format((int) ($operations['pending_payouts'] ?? 0)) }}</div></div></div>
+        </div>
+    </div>
+</div>
+<div class="table-card mb-4">
+    <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <div>
+            <h5 class="mb-0">Slot Fill Heatmap</h5>
+            <div class="small text-muted">Area and hour-wise live capacity snapshot</div>
+        </div>
+        <a href="{{ route('admin.gigs.heatmap', ['date' => $selectedDate ?? today()->toDateString()]) }}" class="btn btn-sm btn-outline-primary" target="_blank">JSON</a>
+    </div>
+    <div class="table-responsive">
+        <table class="table table-sm align-middle mb-0">
+            <thead>
+                <tr>
+                    <th>Area</th>
+                    <th>Hour</th>
+                    <th>Capacity</th>
+                    <th>Booked</th>
+                    <th>Open</th>
+                    <th>Fill</th>
+                </tr>
+            </thead>
+            <tbody>
+                @forelse(($heatmap ?? []) as $slot)
+                    <tr>
+                        <td>{{ $slot['area_name'] ?? 'Global' }}</td>
+                        <td>{{ $slot['hour'] ?? '-' }}</td>
+                        <td>{{ $slot['capacity'] ?? 0 }}</td>
+                        <td>{{ $slot['booked'] ?? 0 }}</td>
+                        <td>{{ $slot['available'] ?? 0 }}</td>
+                        <td>
+                            @php $fillRate = (float) ($slot['fill_rate'] ?? 0); @endphp
+                            <div class="d-flex align-items-center gap-2">
+                                <div class="progress flex-grow-1" style="height: 8px; min-width: 90px;">
+                                    <div class="progress-bar {{ $fillRate >= 90 ? 'bg-danger' : ($fillRate >= 65 ? 'bg-warning' : 'bg-success') }}" style="width: {{ min(100, max(0, $fillRate)) }}%"></div>
+                                </div>
+                                <span class="small text-muted">{{ number_format($fillRate, 1) }}%</span>
+                            </div>
+                        </td>
+                    </tr>
+                @empty
+                    <tr>
+                        <td colspan="6" class="text-center py-4 text-muted">No slot data for this date.</td>
+                    </tr>
+                @endforelse
+            </tbody>
+        </table>
+    </div>
+</div>
+<div class="table-card mb-4">
     <div class="card-header d-flex justify-content-between align-items-center">
         <h5 class="mb-0">Bulk Create Global Slots</h5>
     </div>

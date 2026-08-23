@@ -4,7 +4,7 @@ class ApiConstants {
   // Base URL - Update this with your actual API URL
   static const String baseUrl = String.fromEnvironment(
     'API_BASE_URL',
-    defaultValue: 'https://yumma.online/api',
+    defaultValue: 'https://yumma.in/api',
   );
 
   // Auth endpoints

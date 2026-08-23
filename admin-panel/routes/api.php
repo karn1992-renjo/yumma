@@ -98,13 +98,19 @@ Route::get('/promotions/{promotion}', [PromotionController::class, 'show'])->whe
 Route::get('/app/branding', [AuthController::class, 'branding']);
 Route::get('/content/legal', function () {
     $settings = AppSetting::all()->pluck('value', 'key')->toArray();
+    $legalText = static function (string $key, string $fallback) use ($settings): string {
+        $value = trim((string) ($settings[$key] ?? ''));
+        return $value !== '' ? $value : $fallback;
+    };
+    $contactEmail = trim((string) ($settings['legal_contact_email'] ?? ($settings['contact_email'] ?? '')));
+
     return response()->json([
         'success' => true,
         'data' => [
-            'terms' => $settings['legal_terms'] ?? '',
-            'privacy' => $settings['legal_privacy'] ?? '',
-            'refund' => $settings['legal_refund'] ?? '',
-            'contact_email' => $settings['legal_contact_email'] ?? ($settings['contact_email'] ?? ''),
+            'terms' => $legalText('legal_terms', 'Use of this platform is subject to account, order, payment, cancellation and support policies.'),
+            'privacy' => $legalText('legal_privacy', 'We process customer, restaurant, driver, location and order data to operate delivery and support workflows.'),
+            'refund' => $legalText('legal_refund', 'Refund eligibility depends on payment status, restaurant acceptance, delivery progress and support review.'),
+            'contact_email' => $contactEmail !== '' ? $contactEmail : 'support@foodflow.com',
         ],
     ]);
 });
@@ -132,7 +138,9 @@ Route::middleware('auth:sanctum')->group(function () {
         $channelName = $validated['channel_name'];
         $isAuthorized = false;
 
-        if (preg_match('/^private-order\.(\d+)$/', $channelName, $matches)) {
+        if ($channelName === 'private-admin.gig-operations') {
+            $isAuthorized = $user->hasRole('admin') || $user->hasRole('super_admin');
+        } elseif (preg_match('/^private-order\.(\d+)$/', $channelName, $matches)) {
             $order = \App\Models\Order::find((int) $matches[1]);
             $isAuthorized = $order
                 && (
@@ -429,6 +437,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/orders/{id}/cash', [OrderPaymentController::class, 'driverCash'])->middleware('throttle:20,1');
         Route::get('/gigs', [DriverController::class, 'getMyGigs']);
         Route::post('/gigs/{gigId}/book', [DriverController::class, 'bookGig']);
+        Route::post('/gigs/{bookingId}/dispute', [DriverController::class, 'disputeGig']);
         Route::get('/earnings', [DriverController::class, 'getEarnings']);
         Route::get('/profile', [DriverController::class, 'profile']);
         Route::post('/profile', [DriverController::class, 'updateProfile']);

@@ -60,6 +60,17 @@ final Set<int> _sessionShownPopupCampaignIds = <int>{};
 
 enum _HomeBlockingState { offline, deliveryUnavailable }
 
+bool _hasCustomerAccountAccess(BuildContext context) {
+  final authProvider = context.read<AuthProvider>();
+  return authProvider.isAuthenticated && authProvider.canUseCurrentApp;
+}
+
+bool _openLoginForAccountFeature(BuildContext context) {
+  if (_hasCustomerAccountAccess(context)) return true;
+  Navigator.pushNamed(context, '/login');
+  return false;
+}
+
 String _resolveHomeAssetUrl(String rawValue) {
   return AppImageCache.resolveUrl(rawValue);
 }
@@ -363,16 +374,18 @@ class _CustomerHomeScreenProductionState
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _ensureLocationSelected();
       _loadMenuPriceFilterConfig();
-      final orderProvider = context.read<OrderProvider>();
-      if (orderProvider.orders.isEmpty) {
-        orderProvider
-            .fetchMyOrders()
-            .then((_) => _maybeShowRecentOrderFeedback());
-      } else {
-        _maybeShowRecentOrderFeedback();
+      if (_hasCustomerAccountAccess(context)) {
+        final orderProvider = context.read<OrderProvider>();
+        if (orderProvider.orders.isEmpty) {
+          orderProvider
+              .fetchMyOrders()
+              .then((_) => _maybeShowRecentOrderFeedback());
+        } else {
+          _maybeShowRecentOrderFeedback();
+        }
+        _startActiveOrderRefreshTimer();
+        _initializeCustomerRealtime();
       }
-      _startActiveOrderRefreshTimer();
-      _initializeCustomerRealtime();
     });
   }
 
@@ -473,7 +486,11 @@ class _CustomerHomeScreenProductionState
   }
 
   Future<void> _refreshActiveOrders() async {
-    if (!mounted || _isRefreshingActiveOrders) return;
+    if (!mounted ||
+        !_hasCustomerAccountAccess(context) ||
+        _isRefreshingActiveOrders) {
+      return;
+    }
     _isRefreshingActiveOrders = true;
     try {
       final provider = context.read<OrderProvider>();
@@ -648,6 +665,9 @@ class _CustomerHomeScreenProductionState
   }
 
   Future<List<app_address.Address>> _loadSavedAddresses() async {
+    if (!_hasCustomerAccountAccess(context)) {
+      return const <app_address.Address>[];
+    }
     final response = await _api.get(ApiConstants.addresses);
     final data = response is Map ? response['data'] : response;
     final items = data is List
@@ -1070,10 +1090,14 @@ class _CustomerHomeScreenProductionState
           onLocationTap: _openLocationPicker,
           onCartTap: _openCartTab,
           onNotificationTap: () async {
+            if (!_openLoginForAccountFeature(context)) return;
             await Navigator.pushNamed(context, '/notifications');
             if (mounted) setState(() {});
           },
-          onWalletTap: () => Navigator.pushNamed(context, '/wallet'),
+          onWalletTap: () {
+            if (!_openLoginForAccountFeature(context)) return;
+            Navigator.pushNamed(context, '/wallet');
+          },
         );
     }
   }
@@ -1124,6 +1148,10 @@ class _CustomerHomeScreenProductionState
                         _setBottomNavVisible(true);
                         if (index == -1) {
                           _openMenuPriceFilterScreen();
+                          return;
+                        }
+                        if ((index == 2 || index == 3) &&
+                            !_openLoginForAccountFeature(context)) {
                           return;
                         }
                         setState(() {
@@ -1247,6 +1275,7 @@ class _CustomerHomeFeedState extends State<_CustomerHomeFeed> {
   }
 
   Future<void> _loadNotificationCount() async {
+    if (!_hasCustomerAccountAccess(context)) return;
     try {
       final response = await _api.get(
         ApiConstants.notifications,
@@ -1283,6 +1312,7 @@ class _CustomerHomeFeedState extends State<_CustomerHomeFeed> {
   }
 
   Future<void> _toggleSavedRestaurant(Map<String, dynamic> restaurant) async {
+    if (!_openLoginForAccountFeature(context)) return;
     final restaurantId = _restaurantId(restaurant);
     if (restaurantId <= 0) return;
     final nextSaved = Set<int>.from(_savedRestaurantIds);
@@ -1894,7 +1924,9 @@ class _CustomerHomeFeedState extends State<_CustomerHomeFeed> {
       final id = _campaignId(campaign);
       if (id <= 0) continue;
       unawaited(
-        _api.post(ApiConstants.campaignTrackImpression(id)).catchError((_) {}),
+        _api
+            .post(ApiConstants.campaignTrackImpression(id), includeAuth: false)
+            .catchError((_) {}),
       );
     }
   }
@@ -1903,7 +1935,9 @@ class _CustomerHomeFeedState extends State<_CustomerHomeFeed> {
     final id = _campaignId(campaign);
     if (id <= 0) return;
     unawaited(
-      _api.post(ApiConstants.campaignTrackClick(id)).catchError((_) {}),
+      _api
+          .post(ApiConstants.campaignTrackClick(id), includeAuth: false)
+          .catchError((_) {}),
     );
   }
 
@@ -8411,7 +8445,8 @@ class _HomePromoBannerState extends State<_HomePromoBanner> {
             banner.containsKey('discount_details'))) {
       unawaited(
         ApiService()
-            .post(ApiConstants.campaignTrackClick(campaignId))
+            .post(ApiConstants.campaignTrackClick(campaignId),
+                includeAuth: false)
             .catchError((_) {}),
       );
     }
@@ -13735,8 +13770,7 @@ class _RunningOrderCardState extends State<_RunningOrderCard>
                           Expanded(
                             child: Container(
                               height: 2,
-                              margin:
-                                  const EdgeInsets.symmetric(horizontal: 4),
+                              margin: const EdgeInsets.symmetric(horizontal: 4),
                               decoration: BoxDecoration(
                                 color: steps[index].$2
                                     ? scheme.primary.withOpacity(0.3)

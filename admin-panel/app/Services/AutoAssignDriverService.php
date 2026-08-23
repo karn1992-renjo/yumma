@@ -11,6 +11,8 @@ use App\Models\User;
 use App\Models\Wallet;
 use App\Services\OrderStatusPushService;
 use Illuminate\Support\Facades\Cache;
+use App\Services\DriverLocationTrustService;
+use App\Services\AdvancedRouteBatchingService;
 use Kreait\Firebase\Factory;
 use Kreait\Firebase\Messaging\CloudMessage;
 use Illuminate\Support\Str;
@@ -41,8 +43,10 @@ class AutoAssignDriverService
         $radius = $restaurant->delivery_radius ?? 10; // km
         $referenceLat = $restaurant->latitude ?? $deliveryLat;
         $referenceLng = $restaurant->longitude ?? $deliveryLng;
-        $now = now();
-        
+        $deliveryAreaId = app(GigLifecycleService::class)->resolveDeliveryAreaId(
+            $deliveryLat !== null ? (float) $deliveryLat : null,
+            $deliveryLng !== null ? (float) $deliveryLng : null
+        );
         $drivers = User::role('delivery_partner')
             ->where('is_active', true)
             ->when($order?->branch_id ?: $restaurant->branch_id, function ($query, $branchId) {
@@ -65,15 +69,11 @@ class AutoAssignDriverService
                 continue;
             }
 
-            $activeGig = $driver->gigBookings()
-                ->where('status', 'booked')
-                ->whereHas('gig', function ($query) use ($now) {
-                    $query->whereDate('date', today())
-                        ->whereIn('status', ['available', 'booked'])
-                        ->whereTime('start_time', '<=', $now->copy()->addMinutes(30)->format('H:i:s'))
-                        ->whereTime('end_time', '>=', $now->format('H:i:s'));
-                })
-                ->first();
+            if (! app(DriverLocationTrustService::class)->isTrusted($driver->id)) {
+                continue;
+            }
+
+            $activeGig = $this->activeGigBookingForDriver($driver, $deliveryAreaId);
 
             if (!$activeGig) {
                 $fallbackDriver ??= $driver;
@@ -101,8 +101,12 @@ class AutoAssignDriverService
                     $candidateOrder->setRelation('restaurant', $restaurant);
 
                     if ($this->driverCanTakeOrder($driver, $candidateOrder)) {
-                        $minDistance = $distance;
-                        $nearestDriver = $driver;
+                        $routeScore = app(AdvancedRouteBatchingService::class)->score($driver, $candidateOrder, $location, $this);
+                        $candidateScore = min($distance, (float) ($routeScore['score'] ?? $distance));
+                        if ($candidateScore < $minDistance) {
+                            $minDistance = $candidateScore;
+                            $nearestDriver = $driver;
+                        }
                     }
                 }
 
@@ -317,9 +321,11 @@ class AutoAssignDriverService
 
         // Find next nearest driver excluding drivers who already rejected this order.
         $restaurant = $order->restaurant;
+        $deliveryAreaId = app(GigLifecycleService::class)->resolveDeliveryAreaId(
+            $order->delivery_lat !== null ? (float) $order->delivery_lat : null,
+            $order->delivery_lng !== null ? (float) $order->delivery_lng : null
+        );
         
-        $now = now();
-
         $drivers = User::role('delivery_partner')
             ->where('is_active', true)
             ->when($order->branch_id, function ($query, $branchId) {
@@ -340,19 +346,15 @@ class AutoAssignDriverService
                 continue;
             }
 
+            if (! app(DriverLocationTrustService::class)->isTrusted($driver->id)) {
+                continue;
+            }
+
             if (!$this->driverCanTakeOrder($driver, $order, $orderId)) {
                 continue;
             }
 
-            $activeGig = $driver->gigBookings()
-                ->where('status', 'booked')
-                ->whereHas('gig', function ($query) use ($now) {
-                    $query->whereDate('date', today())
-                        ->whereIn('status', ['available', 'booked'])
-                        ->whereTime('start_time', '<=', $now->copy()->addMinutes(30)->format('H:i:s'))
-                        ->whereTime('end_time', '>=', $now->format('H:i:s'));
-                })
-                ->first();
+            $activeGig = $this->activeGigBookingForDriver($driver, $deliveryAreaId);
 
             if (!$activeGig) {
                 $fallbackDriver ??= $driver;
@@ -371,9 +373,13 @@ class AutoAssignDriverService
                     $location['lng']
                 );
                 
-                if ($distance <= ($restaurant->delivery_radius ?? 10) && $distance < $minDistance) {
-                    $minDistance = $distance;
-                    $nearestDriver = $driver;
+                if ($distance <= ($restaurant->delivery_radius ?? 10)) {
+                    $routeScore = app(AdvancedRouteBatchingService::class)->score($driver, $order, $location, $this, $orderId);
+                    $candidateScore = min($distance, (float) ($routeScore['score'] ?? $distance));
+                    if ($candidateScore < $minDistance) {
+                        $minDistance = $candidateScore;
+                        $nearestDriver = $driver;
+                    }
                 }
             }
         }
@@ -712,6 +718,33 @@ class AutoAssignDriverService
         );
     }
 
+    private function activeGigBookingForDriver(User $driver, ?int $areaId = null)
+    {
+        $now = now();
+
+        return $driver->gigBookings()
+            ->where('status', 'booked')
+            ->whereHas('gig', function ($query) use ($driver, $now, $areaId) {
+                $query->whereDate('date', today())
+                    ->whereIn('status', ['available', 'booked'])
+                    ->whereTime('start_time', '<=', $now->copy()->addMinutes(30)->format('H:i:s'))
+                    ->whereTime('end_time', '>=', $now->format('H:i:s'))
+                    ->where(function ($areaQuery) use ($driver, $areaId) {
+                        if ($areaId) {
+                            $areaQuery->where('area_id', $areaId)->orWhereNull('area_id');
+                            return;
+                        }
+
+                        if ($driver->delivery_area_id) {
+                            $areaQuery->where('area_id', $driver->delivery_area_id)->orWhereNull('area_id');
+                            return;
+                        }
+
+                        $areaQuery->whereNull('area_id');
+                    });
+            })
+            ->first();
+    }
     public function driverMeetsMinimumWalletBalance(User $driver, Order $order): bool
     {
         if (!$this->isCodOrder($order)) {

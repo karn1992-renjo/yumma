@@ -8,6 +8,10 @@ use App\Models\DriverGigBooking;
 use App\Jobs\AutoMarkOrderPreparingJob;
 use App\Services\AutoAssignDriverService;
 use App\Services\GigIncentiveService;
+use App\Services\GigLifecycleService;
+use App\Services\GigDemandForecastService;
+use App\Services\GigMlForecastService;
+use App\Services\GigExternalSignalService;
 use App\Models\AppSetting;
 use App\Models\Wallet;
 use App\Models\WalletTransaction;
@@ -62,71 +66,31 @@ Schedule::call(function () {
         ]);
 })->when(fn () => $cronTaskEnabled('restore_timed_menu_items'))->everyMinute();
 
-// Mark completed gigs
+// Refresh local weather/event/traffic signal baselines for gig forecasts.
 Schedule::call(function () {
-    DriverGig::whereIn('status', ['available', 'booked'])
-        ->where('end_time', '<', now())
-        ->get()
-        ->each(function (DriverGig $gig) {
-            DB::transaction(function () use ($gig) {
-                $gig->update(['status' => 'completed']);
+    app(GigExternalSignalService::class)->refresh(today());
+    app(GigExternalSignalService::class)->refresh(today()->addDay());
+    app(GigOperationsBroadcastService::class)->broadcast();
+})->when(fn () => $cronTaskEnabled('refresh_gig_external_signals'))->hourly();
+// Train local ML-style gig predictions from order history and ingested signals.
+Schedule::call(function () {
+    app(GigMlForecastService::class)->trainAndServe(today());
+    app(GigMlForecastService::class)->trainAndServe(today()->addDay());
+})->when(fn () => $cronTaskEnabled('train_gig_ml_forecasts'))->hourly();
+// Refresh gig demand forecasts and surge recommendations.
+Schedule::call(function () {
+    app(GigDemandForecastService::class)->forecastDay(today());
+    app(GigDemandForecastService::class)->forecastDay(today()->addDay());
+})->when(fn () => $cronTaskEnabled('forecast_gig_demand'))->hourly();
+// Mark completed/no-show gig bookings and credit eligible incentives.
+Schedule::call(function () {
+    app(GigLifecycleService::class)->finalizeDueGigs();
+})->when(fn () => $cronTaskEnabled('mark_completed_gigs'))->everyFiveMinutes();
 
-                DriverGigBooking::where('driver_gig_id', $gig->id)
-                    ->where('status', 'booked')
-                    ->get()
-                    ->each(function (DriverGigBooking $booking) use ($gig) {
-                        $booking->update([
-                            'status' => 'completed',
-                            'completed_at' => now(),
-                        ]);
-
-                        $incentive = app(GigIncentiveService::class)->calculateGigEarnings($gig->fresh(), $booking->driver_id);
-                        $amount = (float) ($incentive->total_earned ?? 0);
-                        if ($amount <= 0) {
-                            return;
-                        }
-
-                        $wallet = Wallet::where('user_id', $booking->driver_id)->lockForUpdate()->first()
-                            ?: Wallet::create([
-                                'user_id' => $booking->driver_id,
-                                'balance' => 0,
-                                'locked_balance' => 0,
-                                'currency' => strtoupper(AppSetting::getValue('currency_code', 'INR') ?: 'INR'),
-                                'is_active' => true,
-                            ]);
-
-                        $exists = WalletTransaction::where('wallet_id', $wallet->id)
-                            ->where('reference_type', 'driver_gig_booking_incentive')
-                            ->where('reference_id', $booking->id)
-                            ->exists();
-
-                        if ($exists) {
-                            return;
-                        }
-
-                        $wallet->increment('balance', $amount);
-                        $wallet->refresh();
-
-                        WalletTransaction::create([
-                            'wallet_id' => $wallet->id,
-                            'user_id' => $wallet->user_id,
-                            'type' => 'credit',
-                            'amount' => $amount,
-                            'balance_after' => $wallet->balance,
-                            'reference_type' => 'driver_gig_booking_incentive',
-                            'reference_id' => $booking->id,
-                            'description' => 'Gig incentive for ' . ($gig->title ?: 'scheduled gig'),
-                            'meta' => [
-                                'source' => 'gig',
-                                'driver_gig_id' => $gig->id,
-                                'orders_completed' => $incentive->orders_completed ?? [],
-                            ],
-                        ]);
-                    });
-            });
-        });
-})->when(fn () => $cronTaskEnabled('mark_completed_gigs'))->hourly();
-
+// Remind drivers before booked gig slots begin.
+Schedule::call(function () {
+    app(GigLifecycleService::class)->sendUpcomingReminders();
+})->when(fn () => $cronTaskEnabled('send_gig_reminders'))->everyFiveMinutes();
 // Cleanup old notifications
 Schedule::call(function () {
     DB::table('notifications')

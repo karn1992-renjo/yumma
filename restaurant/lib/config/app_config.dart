@@ -18,12 +18,12 @@ class AppConfig {
           : 'Yumma!';
   static const String brandName = 'Yumma!';
   static const String companyName = 'RENJO TECHNOLOGY Private Limited';
-  static const String privacyPolicyUrl = 'https://yumma.online/privacy-policy';
+  static const String privacyPolicyUrl = 'https://yumma.in/privacy-policy';
   static const String accountDeletionPolicyUrl =
-      'https://yumma.online/delete-account-policy.html';
+      'https://yumma.in/delete-account-policy.html';
   static const String apiBaseUrl = String.fromEnvironment(
     'API_BASE_URL',
-    defaultValue: 'https://yumma.online/api',
+    defaultValue: 'https://yumma.in/api',
   );
   static const String googleMapsApiKey = String.fromEnvironment(
     'GOOGLE_MAPS_API_KEY',
@@ -45,7 +45,7 @@ class AppConfig {
   );
   static const String supportEmail = String.fromEnvironment(
     'SUPPORT_EMAIL',
-    defaultValue: 'info@yumma.online',
+    defaultValue: 'info@yumma.in',
   );
 
   static bool get isCustomerApp => appRole == 'customer';

@@ -1,10 +1,18 @@
 @php
     $settings = $settings ?? [];
     $siteName = $settings['site_name'] ?? 'FoodFlow';
+    $legalText = static function (string $key, string $fallback) use ($settings): string {
+        $value = trim((string) ($settings[$key] ?? ''));
+        return $value !== '' ? $value : $fallback;
+    };
+    $legalContact = trim((string) ($settings['legal_contact_email'] ?? ($settings['contact_email'] ?? '')));
+    if ($legalContact === '') {
+        $legalContact = 'support@foodflow.com';
+    }
     $sections = [
-        'terms' => ['title' => 'Terms of Service', 'body' => $settings['legal_terms'] ?? 'Use of this platform is subject to account, order, payment, cancellation and support policies.'],
-        'privacy' => ['title' => 'Privacy Policy', 'body' => $settings['legal_privacy'] ?? 'We process customer, restaurant, driver, location and order data to operate delivery and support workflows.'],
-        'refund' => ['title' => 'Refund Policy', 'body' => $settings['legal_refund'] ?? 'Refund eligibility depends on payment status, restaurant acceptance, delivery progress and support review.'],
+        'terms' => ['title' => 'Terms of Service', 'body' => $legalText('legal_terms', 'Use of this platform is subject to account, order, payment, cancellation and support policies.')],
+        'privacy' => ['title' => 'Privacy Policy', 'body' => $legalText('legal_privacy', 'We process customer, restaurant, driver, location and order data to operate delivery and support workflows.')],
+        'refund' => ['title' => 'Refund Policy', 'body' => $legalText('legal_refund', 'Refund eligibility depends on payment status, restaurant acceptance, delivery progress and support review.')],
     ];
 @endphp
 <!DOCTYPE html>
@@ -37,7 +45,7 @@
                 @endif
             @endforeach
         </div>
-        <p class="text-muted small mt-4">Legal contact: {{ $settings['legal_contact_email'] ?? ($settings['contact_email'] ?? 'support@foodflow.com') }}</p>
+        <p class="text-muted small mt-4">Legal contact: {{ $legalContact }}</p>
     </main>
 @include('partials.web-visit-tracker', ['panel' => 'frontend'])
 </body>

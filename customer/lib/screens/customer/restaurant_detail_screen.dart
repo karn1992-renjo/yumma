@@ -124,6 +124,17 @@ class _RestaurantDetailScreenState extends State<RestaurantDetailScreen> {
     super.dispose();
   }
 
+  bool _hasAccountAccess() {
+    final auth = Provider.of<AuthProvider>(context, listen: false);
+    return auth.isAuthenticated && auth.canUseCurrentApp;
+  }
+
+  bool _openLoginForAccountFeature() {
+    if (_hasAccountAccess()) return true;
+    Navigator.pushNamed(context, '/login');
+    return false;
+  }
+
   Future<void> _loadFavoriteState() async {
     final prefs = await SharedPreferences.getInstance();
     final saved = prefs.getStringList('saved_restaurant_ids') ?? <String>[];
@@ -145,6 +156,7 @@ class _RestaurantDetailScreenState extends State<RestaurantDetailScreen> {
   }
 
   Future<void> _toggleFavorite() async {
+    if (!_openLoginForAccountFeature()) return;
     final prefs = await SharedPreferences.getInstance();
     final saved = prefs.getStringList('saved_restaurant_ids') ?? <String>[];
     final id = widget.restaurantId.toString();
@@ -289,7 +301,10 @@ class _RestaurantDetailScreenState extends State<RestaurantDetailScreen> {
     _isLoadingPromos = true;
     try {
       final response = await _api
-          .get(ApiConstants.customerRestaurantPromos(widget.restaurantId))
+          .get(
+            ApiConstants.customerRestaurantPromos(widget.restaurantId),
+            includeAuth: false,
+          )
           .timeout(const Duration(seconds: 10));
 
       if (response['success'] == true && response['data'] is List) {
@@ -825,11 +840,7 @@ class _RestaurantDetailScreenState extends State<RestaurantDetailScreen> {
   }
 
   Future<void> _openMenuIssueSheet() async {
-    final auth = Provider.of<AuthProvider>(context, listen: false);
-    if (auth.currentUser == null) {
-      _showMessage('Please login to report a menu issue');
-      return;
-    }
+    if (!_openLoginForAccountFeature()) return;
 
     final controller = TextEditingController();
     final submitted = await showModalBottomSheet<bool>(
@@ -936,6 +947,7 @@ class _RestaurantDetailScreenState extends State<RestaurantDetailScreen> {
   }
 
   Future<void> _toggleSavedMenuItem(MenuItem item) async {
+    if (!_openLoginForAccountFeature()) return;
     final prefs = await SharedPreferences.getInstance();
     final nextSaved = Set<int>.from(_savedMenuItemIds);
     final isSaving = !nextSaved.remove(item.id);

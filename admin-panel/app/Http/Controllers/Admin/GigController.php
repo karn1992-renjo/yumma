@@ -5,12 +5,20 @@ namespace App\Http\Controllers\Admin;
 use App\Http\Controllers\Controller;
 use App\Models\DeliveryArea;
 use App\Models\DriverGig;
+use App\Services\GigPayoutApprovalService;
+use App\Services\GigOperationsService;
+use App\Services\GigOperationsBroadcastService;
+use App\Services\GigExternalSignalService;
+use App\Services\GigDemandForecastService;
+use App\Models\GigPayoutApproval;
+use App\Models\GigFraudSignal;
 use Illuminate\Http\Request;
+use App\Services\GigLifecycleService;
 use Carbon\Carbon;
 
 class GigController extends Controller
 {
-    public function index(Request $request)
+    public function index(Request $request, GigLifecycleService $gigLifecycleService, GigOperationsService $gigOperationsService)
     {
         $validated = $request->validate([
             'date' => 'nullable|date',
@@ -90,7 +98,7 @@ class GigController extends Controller
         
         $deliveryAreas = DeliveryArea::where('is_active', true)->orderBy('name')->get();
         
-        return view('admin.gigs.index', compact('availableGigs', 'bookedGigs', 'completedGigs', 'cancelledGigs', 'deliveryAreas', 'stats', 'selectedDate'));
+        return view('admin.gigs.index', compact('availableGigs', 'bookedGigs', 'completedGigs', 'cancelledGigs', 'deliveryAreas', 'stats', 'selectedDate', 'heatmap', 'operations'));
     }
     
     public function create()
@@ -350,6 +358,105 @@ class GigController extends Controller
             ->with('success', "{$created} global gig slots created successfully! " . ($skipped > 0 ? "{$skipped} skipped due to conflicts." : ""));
     }
     
+    public function operations(Request $request, GigOperationsService $gigOperationsService)
+    {
+        $validated = $request->validate([
+            'date' => 'nullable|date',
+        ]);
+
+        $date = !empty($validated['date']) ? Carbon::parse($validated['date']) : today();
+
+        return response()->json([
+            'success' => true,
+            'data' => $gigOperationsService->controlRoom($date),
+        ]);
+    }
+
+    public function forecast(Request $request, GigDemandForecastService $forecastService)
+    {
+        $validated = $request->validate([
+            'date' => 'nullable|date',
+        ]);
+
+        $date = !empty($validated['date']) ? Carbon::parse($validated['date']) : today()->addDay();
+
+        $data = $forecastService->forecastDay($date);
+
+        app(GigOperationsBroadcastService::class)->broadcast();
+
+        if (! $request->expectsJson()) {
+            return redirect()->route('admin.gigs.index', ['date' => $date->toDateString()])
+                ->with('success', count($data) . ' forecast cells refreshed.');
+        }
+
+        return response()->json([
+            'success' => true,
+            'data' => $data,
+        ]);
+    }
+
+    public function approvePayout(Request $request, GigPayoutApproval $approval, GigPayoutApprovalService $approvalService)
+    {
+        $validated = $request->validate([
+            'action' => 'required|in:approve,reject',
+            'note' => 'nullable|string|max:1000',
+        ]);
+
+        if ($validated['action'] === 'approve') {
+            $approvalService->approve($approval, auth()->id(), $validated['note'] ?? null);
+        } else {
+            $approvalService->reject($approval, auth()->id(), $validated['note'] ?? null);
+        }
+
+        return response()->json(['success' => true]);
+    }
+
+    public function resolveFraudSignal(Request $request, GigFraudSignal $signal)
+    {
+        $validated = $request->validate([
+            'status' => 'required|in:cleared,confirmed,ignored',
+        ]);
+
+        $signal->forceFill([
+            'status' => $validated['status'],
+            'reviewed_at' => now(),
+            'reviewed_by' => auth()->id(),
+        ])->save();
+
+        return response()->json(['success' => true]);
+    }
+    public function ingestSignal(Request $request, GigExternalSignalService $signalService)
+    {
+        $validated = $request->validate([
+            'area_id' => 'nullable|exists:delivery_areas,id',
+            'date' => 'required|date',
+            'hour' => 'required|integer|min:0|max:23',
+            'source' => 'required|string|max:40',
+            'score' => 'required|numeric|min:-100|max:100',
+            'payload' => 'nullable|array',
+        ]);
+
+        $signal = $signalService->ingest($validated);
+        app(GigOperationsBroadcastService::class)->broadcast();
+
+        return response()->json([
+            'success' => true,
+            'data' => $signal,
+        ], 201);
+    }
+    public function heatmap(Request $request, GigLifecycleService $gigLifecycleService)
+    {
+        $validated = $request->validate([
+            'date' => 'nullable|date',
+        ]);
+
+        $date = !empty($validated['date']) ? Carbon::parse($validated['date']) : today();
+
+        return response()->json([
+            'success' => true,
+            'data' => $gigLifecycleService->heatmap($date),
+        ]);
+    }
     public function getCalendarEvents()
     {
         $gigs = DriverGig::with(['driver', 'area', 'bookings.driver'])

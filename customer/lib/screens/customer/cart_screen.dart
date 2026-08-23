@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 import '../../config/api_constants.dart';
 import '../../models/menu_item.dart';
 import '../../models/restaurant.dart';
+import '../../providers/auth_provider.dart';
 import '../../providers/cart_provider.dart';
 import '../../services/api_service.dart';
 import '../../theme/foodflow_theme.dart';
@@ -126,13 +127,22 @@ class _CartScreenState extends State<CartScreen> {
               itemCount: cart.paidItemCount,
               primary: primary,
               onAddMore: widget.onAddMore ?? _addMore,
-              onCheckout: () => Navigator.pushNamed(context, '/checkout'),
+              onCheckout: _openCheckout,
             ),
     );
   }
 
   void _goHome() {
     Navigator.pushNamedAndRemoveUntil(context, '/home', (route) => false);
+  }
+
+  void _openCheckout() {
+    final authProvider = context.read<AuthProvider>();
+    if (!authProvider.isAuthenticated || !authProvider.canUseCurrentApp) {
+      Navigator.pushNamed(context, '/login');
+      return;
+    }
+    Navigator.pushNamed(context, '/checkout');
   }
 
   void _addMore() {

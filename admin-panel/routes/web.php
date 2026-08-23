@@ -6,11 +6,14 @@ use Illuminate\Support\Facades\Storage;
 use Illuminate\Http\Request;
 use App\Models\AppSetting;
 use App\Http\Controllers\Admin\DashboardController;
+use App\Http\Controllers\Admin\SearchController;
+use App\Http\Controllers\Admin\NotificationController;
 use App\Http\Controllers\Admin\RestaurantController;
 use App\Http\Controllers\Admin\BranchController;
 use App\Http\Controllers\Admin\OrderController;
 use App\Http\Controllers\Admin\RefundPolicyController;
 use App\Http\Controllers\Admin\UserController;
+use App\Http\Controllers\Admin\ReviewController;
 use App\Http\Controllers\Admin\SupportController;
 use App\Http\Controllers\Admin\ReportController;
 use App\Http\Controllers\Admin\DriverController;
@@ -77,7 +80,10 @@ Route::get('/privacy', function () {
     $settings = AppSetting::all()->pluck('value', 'key')->toArray();
     return view('legal', ['type' => 'privacy', 'settings' => $settings]);
 })->name('legal.privacy');
-Route::view('/privacy-policy', 'privacy-policy')->name('privacy-policy');
+Route::get('/privacy-policy', function () {
+    $settings = AppSetting::all()->pluck('value', 'key')->toArray();
+    return view('legal', ['type' => 'privacy', 'settings' => $settings]);
+})->name('privacy-policy');
 Route::get('/legal', function () {
     $settings = AppSetting::all()->pluck('value', 'key')->toArray();
     return view('legal', ['type' => 'legal', 'settings' => $settings]);
@@ -256,6 +262,17 @@ Route::middleware(['auth', 'role:super_admin|admin'])->prefix('admin')->name('ad
     // Dashboard
     Route::get('/dashboard', [DashboardController::class, 'index'])->name('dashboard');
 
+    // Global Search (header search)
+    Route::get('/search', [SearchController::class, 'search'])->name('search');
+    Route::post('/search/clear-recent', [SearchController::class, 'clearRecent'])->name('search.clear-recent');
+
+    // Notification Center (header notifications)
+    Route::get('/notifications/recent', [NotificationController::class, 'recent'])->name('notifications.recent');
+    Route::get('/notifications/stats', [NotificationController::class, 'stats'])->name('notifications.stats');
+    Route::post('/notifications/{id}/read', [NotificationController::class, 'markAsRead'])->name('notifications.read');
+    Route::post('/notifications/read-all', [NotificationController::class, 'markAllAsRead'])->name('notifications.read-all');
+    Route::delete('/notifications/{id}', [NotificationController::class, 'destroy'])->name('notifications.destroy');
+
     // Branch Management
     Route::get('/branches/users', [BranchController::class, 'users'])->name('branches.users');
     Route::post('/branches/users', [BranchController::class, 'storeUser'])->name('branches.users.store');
@@ -319,7 +336,13 @@ Route::middleware(['auth', 'role:super_admin|admin'])->prefix('admin')->name('ad
     Route::get('/fleet/markers', [FleetController::class, 'markers'])->name('fleet.markers');
     
     // Gigs Management
-    Route::resource('gigs', GigController::class);
+    Route::get('/gigs/operations', [GigController::class, 'operations'])->name('gigs.operations');
+    Route::post('/gigs/forecast', [GigController::class, 'forecast'])->name('gigs.forecast');
+    Route::post('/gigs/signals', [GigController::class, 'ingestSignal'])->name('gigs.signals.ingest');
+    Route::post('/gigs/payout-approvals/{approval}', [GigController::class, 'approvePayout'])->name('gigs.payout-approvals.update');
+    Route::post('/gigs/fraud-signals/{signal}', [GigController::class, 'resolveFraudSignal'])->name('gigs.fraud-signals.update');
+    Route::get('/gigs/heatmap', [GigController::class, 'heatmap'])->name('gigs.heatmap');
+    Route::resource('gigs', GigController::class)->except(['show']);
     Route::post('/gigs/bulk', [GigController::class, 'bulkCreate'])->name('gigs.bulk-create');
 
     // Delivery Areas Management

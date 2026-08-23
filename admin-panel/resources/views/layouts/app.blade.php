@@ -890,7 +890,7 @@
                         <li><a href="#">Help Center</a></li>
                         <li><a href="#">FAQs</a></li>
                         <li><a href="#">Contact Us</a></li>
-                        <li><a href="#">Privacy Policy</a></li>
+                        <li><a href="{{ route('privacy-policy') }}">Privacy Policy</a></li>
                     </ul>
                 </div>
                 <div class="col-md-4 mb-4">
