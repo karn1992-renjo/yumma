@@ -36,7 +36,15 @@ Route::get('login', function () {
         return redirect()->route('home');
     }
 
-    return view('auth.login');
+    $settings = AppSetting::pluck('value', 'key')->toArray();
+    $demoCredentialsEnabled = filter_var($settings['demo_credentials_enabled'] ?? false, FILTER_VALIDATE_BOOLEAN);
+    $demoCredentials = $demoCredentialsEnabled
+        ? collect(json_decode($settings['demo_credentials'] ?? '[]', true) ?: [])
+        : collect();
+
+    return view('auth.login', [
+        'demoCredentials' => $demoCredentials,
+    ]);
 })->name('login');
 
 Route::get('register', function () {
