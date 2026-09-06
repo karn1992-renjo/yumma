@@ -61,6 +61,52 @@ class NotificationController extends Controller
         ]);
     }
 
+    public function destroy(Request $request, string $id)
+    {
+        $deleted = $this->notificationsFor($request, $this->targetApp($request))
+            ->whereKey($id)
+            ->delete();
+
+        return response()->json([
+            'success' => $deleted > 0,
+            'message' => $deleted > 0
+                ? 'Notification removed.'
+                : 'Notification not found.',
+        ], $deleted > 0 ? 200 : 404);
+    }
+
+    public function preferences(Request $request)
+    {
+        $user = $request->user();
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'notify_order_updates' => (bool) $user->notify_order_updates,
+                'notify_offers_promotions' => (bool) $user->notify_offers_promotions,
+            ],
+        ]);
+    }
+
+    public function updatePreferences(Request $request)
+    {
+        $validated = $request->validate([
+            'notify_order_updates' => ['sometimes', 'boolean'],
+            'notify_offers_promotions' => ['sometimes', 'boolean'],
+        ]);
+
+        $user = $request->user();
+        $user->fill($validated)->save();
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'notify_order_updates' => (bool) $user->notify_order_updates,
+                'notify_offers_promotions' => (bool) $user->notify_offers_promotions,
+            ],
+        ]);
+    }
+
     private function targetApp(Request $request): string
     {
         return $request->validate([

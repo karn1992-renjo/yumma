@@ -118,7 +118,7 @@ class _NetworkErrorViewState extends State<NetworkErrorView>
                           shape: BoxShape.circle,
                         ),
                       ),
-                      const Icon(
+                      Icon(
                         Icons.wifi_off_rounded,
                         size: 48,
                         color: FoodFlowTheme.crimson,
@@ -131,7 +131,7 @@ class _NetworkErrorViewState extends State<NetworkErrorView>
               Text(
                 widget.title,
                 textAlign: TextAlign.center,
-                style: const TextStyle(
+                style: TextStyle(
                   color: FoodFlowTheme.ink,
                   fontSize: 24,
                   fontWeight: FontWeight.w900,
@@ -143,7 +143,7 @@ class _NetworkErrorViewState extends State<NetworkErrorView>
                     ? widget.message!
                     : 'Please check your internet connection and try again.',
                 textAlign: TextAlign.center,
-                style: const TextStyle(
+                style: TextStyle(
                   color: FoodFlowTheme.muted,
                   fontSize: 14,
                   height: 1.45,

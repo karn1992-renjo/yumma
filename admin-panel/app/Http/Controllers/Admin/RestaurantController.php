@@ -8,6 +8,7 @@ use App\Models\CommissionSetting;
 use App\Models\Restaurant;
 use App\Models\User;
 use App\Models\Cuisine;
+use App\Services\RestaurantOnboardingService;
 use App\Rules\UniqueUserContactForRole;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
@@ -118,6 +119,12 @@ class RestaurantController extends Controller
             'email' => 'required|email|unique:restaurants,email',
             'phone' => 'required|string|max:20',
             'fssai_license_number' => 'nullable|string|max:64',
+            'is_gst_registered' => 'nullable|boolean',
+            'gstin' => 'nullable|string|max:20',
+            'pan' => 'nullable|string|max:15',
+            'state_code' => 'nullable|string|max:2',
+            'tax_deductee_type' => 'nullable|in:individual,company',
+            'tds_pan_verified' => 'nullable|boolean',
             'description' => 'nullable|string',
             'address' => 'required|string',
             'city' => 'required|string|max:100',
@@ -139,6 +146,8 @@ class RestaurantController extends Controller
             'order_lead_time' => 'nullable|integer|min:0|max:240',
             'open_time' => 'nullable|date_format:H:i',
             'close_time' => 'nullable|date_format:H:i',
+            'break_start' => 'nullable|date_format:H:i',
+            'break_end' => 'nullable|date_format:H:i',
             'timezone' => 'nullable|string|timezone',
             'cuisine' => 'nullable|array',
             'cuisine.*' => 'string',
@@ -198,6 +207,12 @@ class RestaurantController extends Controller
                 'email' => $request->email,
                 'phone' => $request->phone,
                 'fssai_license_number' => $request->fssai_license_number,
+                'is_gst_registered' => $request->boolean('is_gst_registered'),
+                'gstin' => $request->gstin,
+                'pan' => $request->pan,
+                'state_code' => $request->state_code,
+                'tax_deductee_type' => $request->input('tax_deductee_type', 'individual'),
+                'tds_pan_verified' => $request->boolean('tds_pan_verified'),
                 'description' => $request->description,
                 'address' => $request->address,
                 'city' => $request->city,
@@ -217,14 +232,13 @@ class RestaurantController extends Controller
                 'order_lead_time' => $request->order_lead_time ?? 0,
                 'open_time' => $request->open_time,
                 'close_time' => $request->close_time,
-                'weekly_timings' => $this->weeklyTimingsFromFlatHours(null, $request->open_time, $request->close_time),
+                'weekly_timings' => $this->weeklyTimingsFromFlatHours(null, $request->open_time, $request->close_time, $request->break_start, $request->break_end),
                 'timezone' => $request->timezone ?: 'Asia/Kolkata',
                 'cuisine' => $request->cuisine ?? [],
                 'is_open' => false,
                 'is_verified' => false,
-                'is_featured' => false,
             ]);
-            
+
             // Handle logo upload
             if ($request->hasFile('logo')) {
                 $logoPath = $request->file('logo')->store('restaurants/logos', 'public');
@@ -286,6 +300,26 @@ class RestaurantController extends Controller
             ->where('status', 'delivered')
             ->whereNull('restaurant_payout_id')
             ->sum('restaurant_earning');
+
+        // Manual / legacy payouts that settled without stamping orders: count
+        // completed ones as released and open ones as already committed, so the
+        // summary can't show earnings as "pending" after they were paid.
+        $manualPaid = (float) \App\Models\Payout::where('restaurant_id', $restaurant->id)
+            ->where('status', 'completed')
+            ->where(fn ($q) => $q->whereNull('order_ids')->orWhere('order_ids', '[]'))
+            ->sum('amount');
+        $manualOpen = (float) \App\Models\Payout::where('restaurant_id', $restaurant->id)
+            ->whereIn('status', ['pending', 'processing', 'queued', 'partially_paid'])
+            ->where(fn ($q) => $q->whereNull('order_ids')->orWhere('order_ids', '[]'))
+            ->sum(\Illuminate\Support\Facades\DB::raw('amount - COALESCE(paid_amount, 0)'));
+
+        if ($manualPaid > 0 || $manualOpen > 0) {
+            $financialSummary['released_earning'] += $manualPaid;
+            $financialSummary['pending_earning'] = max(
+                0,
+                (float) $financialSummary['pending_earning'] - $manualPaid - $manualOpen
+            );
+        }
 
         $commissionType = $restaurant->commission_calculation_type;
         $commissionValue = $restaurant->commission_rate;
@@ -478,7 +512,6 @@ class RestaurantController extends Controller
                 'cuisine' => $this->parseList($record['cuisine'] ?? ''),
                 'is_verified' => $this->truthy($record['verified'] ?? true),
                 'is_open' => $this->truthy($record['open'] ?? true),
-                'is_featured' => false,
             ]);
 
             $created++;
@@ -500,6 +533,12 @@ class RestaurantController extends Controller
             'email' => 'required|email|unique:restaurants,email,' . $restaurant->id,
             'phone' => 'required|string|max:20',
             'fssai_license_number' => 'nullable|string|max:64',
+            'is_gst_registered' => 'nullable|boolean',
+            'gstin' => 'nullable|string|max:20',
+            'pan' => 'nullable|string|max:15',
+            'state_code' => 'nullable|string|max:2',
+            'tax_deductee_type' => 'nullable|in:individual,company',
+            'tds_pan_verified' => 'nullable|boolean',
             'description' => 'nullable|string',
             'address' => 'required|string',
             'city' => 'required|string|max:100',
@@ -521,13 +560,14 @@ class RestaurantController extends Controller
             'order_lead_time' => 'nullable|integer|min:0|max:240',
             'open_time' => 'nullable|date_format:H:i',
             'close_time' => 'nullable|date_format:H:i',
+            'break_start' => 'nullable|date_format:H:i',
+            'break_end' => 'nullable|date_format:H:i',
             'timezone' => 'nullable|string|timezone',
             'cuisine' => 'nullable|array',
             'logo' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:2048',
             'banner' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:5120',
             'is_open' => 'nullable|boolean',
             'is_verified' => 'nullable|boolean',
-            'is_featured' => 'nullable|boolean',
             'account_holder_name' => 'nullable|string|max:255',
             'bank_name' => 'nullable|string|max:255',
             'account_number' => 'nullable|string|max:64',
@@ -553,6 +593,8 @@ class RestaurantController extends Controller
             // Update restaurant
             $restaurant->update(array_merge($validated, [
                 'restaurant_type' => $request->restaurant_type,
+                'is_gst_registered' => $request->boolean('is_gst_registered'),
+                'tds_pan_verified' => $request->boolean('tds_pan_verified'),
                 'dining_charge' => $request->dining_charge ?? 0,
                 'commission_rate' => $request->commission_calculation_type === 'global' ? null : $request->commission_rate,
                 'commission_calculation_type' => $request->commission_calculation_type,
@@ -562,7 +604,9 @@ class RestaurantController extends Controller
                 'weekly_timings' => $this->weeklyTimingsFromFlatHours(
                     $restaurant->weekly_timings,
                     $request->open_time,
-                    $request->close_time
+                    $request->close_time,
+                    $request->break_start,
+                    $request->break_end
                 ),
             ]));
 
@@ -644,6 +688,10 @@ class RestaurantController extends Controller
     {
         try {
             $restaurant->update(['is_open' => !$restaurant->is_open]);
+
+            if ($restaurant->is_open && $restaurant->is_verified) {
+                app(RestaurantOnboardingService::class)->markActivatedByRestaurant($restaurant->fresh(), request()->user());
+            }
             
             return response()->json([
                 'success' => true,
@@ -746,18 +794,30 @@ class RestaurantController extends Controller
         ]);
     }
 
-    private function weeklyTimingsFromFlatHours(?array $existing, ?string $openTime, ?string $closeTime): array
-    {
+    private function weeklyTimingsFromFlatHours(
+        ?array $existing,
+        ?string $openTime,
+        ?string $closeTime,
+        ?string $breakStart = null,
+        ?string $breakEnd = null
+    ): array {
         $timings = $existing ?: Restaurant::getDefaultWeeklyTimings();
 
-        if (!$openTime && !$closeTime) {
+        if (!$openTime && !$closeTime && $breakStart === null && $breakEnd === null) {
             return $timings;
+        }
+
+        // A break needs both ends; otherwise clear it.
+        if (empty($breakStart) || empty($breakEnd)) {
+            $breakStart = $breakEnd = null;
         }
 
         foreach ($timings as $day => $timing) {
             $timings[$day] = array_merge(Restaurant::getDefaultDayTiming(), $timing, [
                 'open_time' => $openTime ?: ($timing['open_time'] ?? '09:00'),
                 'close_time' => $closeTime ?: ($timing['close_time'] ?? '22:00'),
+                'break_start' => $breakStart,
+                'break_end' => $breakEnd,
             ]);
         }
 
@@ -812,7 +872,7 @@ class RestaurantController extends Controller
             'total' => Restaurant::count(),
             'active' => Restaurant::where('is_open', true)->count(),
             'verified' => Restaurant::where('is_verified', true)->count(),
-            'featured' => Restaurant::where('is_featured', true)->count(),
+            'sponsored' => \App\Models\RestaurantAdCampaign::active()->distinct('restaurant_id')->count('restaurant_id'),
             'new_this_month' => Restaurant::whereMonth('created_at', now()->month)->count(),
             'avg_rating' => round(Restaurant::avg('rating') ?? 0, 1),
         ];

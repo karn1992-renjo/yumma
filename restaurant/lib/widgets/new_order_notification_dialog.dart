@@ -1,6 +1,7 @@
 // lib/widgets/new_order_notification_dialog.dart
 import 'package:flutter/material.dart';
 import '../models/order.dart';
+import '../theme/foodflow_theme.dart';
 import '../utils/currency_utils.dart';
 
 class NewOrderNotificationDialog extends StatefulWidget {
@@ -24,19 +25,17 @@ class _NewOrderNotificationDialogState extends State<NewOrderNotificationDialog>
     with SingleTickerProviderStateMixin {
   static const int _minPrepMinutes = 5;
   static const int _maxPrepMinutes = 60;
-  static const int _prepStep = 5;
+  static const _presets = [10, 15, 20, 30, 45];
 
-  late AnimationController _animationController;
+  late final AnimationController _pulse = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1100),
+  )..repeat(reverse: true);
   int _preparationMinutes = 20;
 
   @override
   void initState() {
     super.initState();
-    _animationController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 600),
-    );
-    _animationController.forward();
     _preparationMinutes = (widget.order.preparationTimeMinutes ?? 20)
         .clamp(_minPrepMinutes, _maxPrepMinutes)
         .toInt();
@@ -44,452 +43,329 @@ class _NewOrderNotificationDialogState extends State<NewOrderNotificationDialog>
 
   @override
   void dispose() {
-    _animationController.dispose();
+    _pulse.dispose();
     super.dispose();
+  }
+
+  double get _orderTotal {
+    final o = widget.order;
+    if (o.total > 0) return o.total;
+    return o.items.fold<double>(0, (s, i) => s + i.price * i.quantity);
   }
 
   @override
   Widget build(BuildContext context) {
-    return ScaleTransition(
-      scale: Tween<double>(begin: 0.8, end: 1.0).animate(
-        CurvedAnimation(parent: _animationController, curve: Curves.easeOutCubic),
-      ),
-      child: Dialog(
-        backgroundColor: Colors.transparent,
-        insetPadding: const EdgeInsets.all(16),
-        child: GestureDetector(
-          onTap: () {},
-          child: Container(
-            decoration: BoxDecoration(
-              gradient: const LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [
-                  Color(0xFFFFFFFF),
-                  Color(0xFFFAFAFA),
-                ],
-              ),
-              borderRadius: BorderRadius.circular(24),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.15),
-                  blurRadius: 30,
-                  offset: const Offset(0, 10),
-                ),
-              ],
+    final o = widget.order;
+    return Dialog(
+      backgroundColor: Colors.transparent,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 24),
+      child: Container(
+        decoration: BoxDecoration(
+          color: foodflow.isDark ? foodflow.elevatedSurface : Colors.white,
+          borderRadius: BorderRadius.circular(26),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.28),
+              blurRadius: 40,
+              offset: const Offset(0, 16),
             ),
-            child: SingleChildScrollView(
-              child: Padding(
-                padding: const EdgeInsets.all(24),
+          ],
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // ---- alert banner ----
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.fromLTRB(22, 22, 22, 20),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [foodflow.orange, foodflow.orangeDark],
+                  ),
+                ),
                 child: Column(
-                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    // Animated Order Icon
-                    Container(
-                      width: 80,
-                      height: 80,
-                      decoration: BoxDecoration(
-                        gradient: const LinearGradient(
-                          colors: [
-                            Color(0xFF2E7D32),
-                            Color(0xFF43A047),
-                          ],
+                    AnimatedBuilder(
+                      animation: _pulse,
+                      builder: (context, child) => Container(
+                        width: 66,
+                        height: 66,
+                        alignment: Alignment.center,
+                        decoration: BoxDecoration(
+                          color: Colors.white.withOpacity(
+                              0.14 + 0.12 * _pulse.value),
+                          shape: BoxShape.circle,
                         ),
-                        shape: BoxShape.circle,
-                        boxShadow: [
-                          BoxShadow(
-                            color: const Color(0xFF2E7D32).withOpacity(0.3),
-                            blurRadius: 20,
-                            offset: const Offset(0, 8),
-                          ),
-                        ],
+                        child: child,
                       ),
-                      child: const Icon(
-                        Icons.shopping_bag,
-                        color: Colors.white,
-                        size: 40,
-                      ),
+                      child: const Icon(Icons.notifications_active_rounded,
+                          color: Colors.white, size: 32),
                     ),
-                    const SizedBox(height: 20),
-
-                    // Header
+                    const SizedBox(height: 12),
                     const Text(
-                      'New Order Received',
+                      'NEW ORDER',
                       style: TextStyle(
-                        fontSize: 24,
+                        color: Colors.white,
+                        fontSize: 22,
                         fontWeight: FontWeight.w900,
-                        color: Color(0xFF1C1C1C),
+                        letterSpacing: 1,
                       ),
-                      textAlign: TextAlign.center,
                     ),
-                    const SizedBox(height: 8),
+                    const SizedBox(height: 2),
                     Text(
-                      'Order #${widget.order.orderNumber}',
-                      style: const TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w600,
-                        color: Color(0xFF2E7D32),
+                      '#${o.orderNumber}  -  ${formatCurrency(context, _orderTotal)}',
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.9),
+                        fontSize: 13,
+                        fontWeight: FontWeight.w800,
                       ),
-                      textAlign: TextAlign.center,
                     ),
-                    const SizedBox(height: 24),
+                  ],
+                ),
+              ),
 
-                    // Order Details Card
+              Padding(
+                padding: const EdgeInsets.fromLTRB(18, 16, 18, 18),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    // customer + address
                     Container(
+                      padding: const EdgeInsets.all(13),
                       decoration: BoxDecoration(
-                        color: Colors.grey.shade50,
-                        borderRadius: BorderRadius.circular(16),
-                        border: Border.all(
-                          color: Colors.grey.shade200,
-                        ),
+                        color: foodflow.isDark
+                            ? foodflow.surfaceColor
+                            : foodflow.canvas,
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(color: foodflow.line),
                       ),
-                      padding: const EdgeInsets.all(16),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          // Customer Name
                           Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
-                              Text(
-                                'Customer Name',
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w600,
-                                  color: Colors.grey.shade600,
+                              Icon(Icons.person_outline,
+                                  size: 16, color: foodflow.orange),
+                              const SizedBox(width: 7),
+                              Expanded(
+                                child: Text(
+                                  o.customerName,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    color: foodflow.ink,
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w900,
+                                  ),
                                 ),
                               ),
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 10,
-                                  vertical: 4,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: Colors.amber.withOpacity(0.15),
-                                  borderRadius: BorderRadius.circular(20),
-                                ),
-                                child: Text(
-                                  '${widget.order.items.length} items',
-                                  style: const TextStyle(
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w700,
-                                    color: Colors.amber,
-                                  ),
+                              Text(
+                                '${o.items.length} ${o.items.length == 1 ? 'item' : 'items'}',
+                                style: TextStyle(
+                                  color: foodflow.muted,
+                                  fontSize: 11.5,
+                                  fontWeight: FontWeight.w800,
                                 ),
                               ),
                             ],
                           ),
                           const SizedBox(height: 6),
-                          Text(
-                            widget.order.customerName,
-                            style: const TextStyle(
-                              fontSize: 15,
-                              fontWeight: FontWeight.w700,
-                              color: Color(0xFF1C1C1C),
-                            ),
-                          ),
-                          const SizedBox(height: 14),
-
-                          // Delivery Address
-                          _buildDetailRow(
-                            icon: Icons.location_on,
-                            label: 'Delivery Address',
-                            value: widget.order.deliveryAddress,
-                            color: Colors.red,
-                          ),
-                          const SizedBox(height: 14),
-
-                          // Order Items
-                          Text(
-                            'Order Items:',
-                            style: TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600,
-                              color: Colors.grey.shade600,
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          Container(
-                            constraints:
-                                const BoxConstraints(maxHeight: 150),
-                            child: ListView.builder(
-                              shrinkWrap: true,
-                              itemCount: widget.order.items.length,
-                              itemBuilder: (context, index) {
-                                final item = widget.order.items[index];
-                                return Padding(
-                                  padding: const EdgeInsets.only(bottom: 6),
-                                  child: Row(
-                                    mainAxisAlignment:
-                                        MainAxisAlignment.spaceBetween,
-                                    children: [
-                                      Flexible(
-                                        child: Text(
-                                          '${item.quantity}x ${item.name}',
-                                          style: const TextStyle(
-                                            fontSize: 13,
-                                            fontWeight: FontWeight.w600,
-                                            color: Color(0xFF1C1C1C),
-                                          ),
-                                          overflow: TextOverflow.ellipsis,
-                                        ),
-                                      ),
-                                      Text(
-                                        formatCurrency(context, item.price),
-                                        style: const TextStyle(
-                                          fontSize: 12,
-                                          fontWeight: FontWeight.w700,
-                                          color: Color(0xFF2E7D32),
-                                        ),
-                                      ),
-                                    ],
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Icon(Icons.location_on_outlined,
+                                  size: 16, color: foodflow.muted),
+                              const SizedBox(width: 7),
+                              Expanded(
+                                child: Text(
+                                  o.deliveryAddress,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    color: foodflow.muted,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600,
                                   ),
-                                );
-                              },
-                            ),
+                                ),
+                              ),
+                            ],
                           ),
                         ],
                       ),
                     ),
-                    const SizedBox(height: 24),
-
-                    _buildPreparationSelector(),
-                    const SizedBox(height: 24),
-
-                    // Action Buttons
+                    const SizedBox(height: 10),
+                    // items
+                    ConstrainedBox(
+                      constraints: const BoxConstraints(maxHeight: 150),
+                      child: ListView.builder(
+                        shrinkWrap: true,
+                        itemCount: o.items.length,
+                        itemBuilder: (context, i) {
+                          final it = o.items[i];
+                          return Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 5),
+                            child: Row(
+                              children: [
+                                Text(
+                                  '${it.quantity}x',
+                                  style: TextStyle(
+                                    color: foodflow.orange,
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w900,
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    it.name,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      color: foodflow.ink,
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                ),
+                                Text(
+                                  formatCurrency(context, it.price * it.quantity),
+                                  style: TextStyle(
+                                    color: foodflow.ink,
+                                    fontSize: 12.5,
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    _prepSelector(),
+                    const SizedBox(height: 16),
                     Row(
                       children: [
                         Expanded(
-                          child: ElevatedButton.icon(
+                          child: OutlinedButton(
                             onPressed: () {
                               Navigator.pop(context);
                               widget.onReject();
                             },
-                            icon: const Icon(Icons.clear, size: 20),
-                            label: const Text(
-                              'REJECT',
-                              style: TextStyle(
-                                fontWeight: FontWeight.w900,
-                                fontSize: 14,
-                              ),
-                            ),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.grey.shade100,
-                              foregroundColor: Colors.grey.shade700,
-                              padding: const EdgeInsets.symmetric(vertical: 14),
-                              elevation: 0,
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: foodflow.danger,
+                              side: BorderSide(
+                                  color: foodflow.danger.withOpacity(0.5)),
+                              padding: const EdgeInsets.symmetric(vertical: 15),
                               shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
+                                borderRadius: BorderRadius.circular(14),
+                              ),
+                              textStyle: const TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w900,
                               ),
                             ),
+                            child: const Text('Reject'),
                           ),
                         ),
                         const SizedBox(width: 12),
                         Expanded(
-                          child: ElevatedButton.icon(
+                          flex: 2,
+                          child: ElevatedButton(
                             onPressed: () {
                               Navigator.pop(context);
                               widget.onAccept(_preparationMinutes);
                             },
-                            icon: const Icon(Icons.check, size: 20),
-                            label: const Text(
-                              'ACCEPT',
-                              style: TextStyle(
-                                fontWeight: FontWeight.w900,
-                                fontSize: 14,
-                              ),
-                            ),
                             style: ElevatedButton.styleFrom(
-                              backgroundColor: const Color(0xFF2E7D32),
+                              backgroundColor: foodflow.orange,
                               foregroundColor: Colors.white,
-                              padding: const EdgeInsets.symmetric(vertical: 14),
-                              elevation: 2,
+                              elevation: 0,
+                              padding: const EdgeInsets.symmetric(vertical: 15),
                               shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
+                                borderRadius: BorderRadius.circular(14),
+                              ),
+                              textStyle: const TextStyle(
+                                fontSize: 15,
+                                fontWeight: FontWeight.w900,
                               ),
                             ),
+                            child: Text('Accept - $_preparationMinutes min'),
                           ),
                         ),
                       ],
                     ),
-                    const SizedBox(height: 12),
-                    Text(
-                      'Tap to accept or reject this order',
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w500,
-                        color: Colors.grey.shade600,
-                      ),
-                      textAlign: TextAlign.center,
-                    ),
                   ],
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildPreparationSelector() {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: const Color(0xFFFFF7ED),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFFFD7B8)),
-      ),
-      child: Column(
-        children: [
-          const Row(
-            children: [
-              Icon(Icons.timer_outlined, color: Color(0xFF2E7D32), size: 18),
-              SizedBox(width: 8),
-              Text(
-                'Preparation estimate',
-                style: TextStyle(
-                  fontWeight: FontWeight.w900,
-                  color: Color(0xFF1C1C1C),
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              _timeButton(
-                Icons.remove,
-                enabled: _preparationMinutes > _minPrepMinutes,
-                onTap: () => _changePreparation(-_prepStep),
-              ),
-              Expanded(
-                child: Column(
-                  children: [
-                    Text(
-                      '$_preparationMinutes',
-                      style: const TextStyle(
-                        fontSize: 34,
-                        height: 1,
-                        fontWeight: FontWeight.w900,
-                        color: Color(0xFF1C1C1C),
-                      ),
-                    ),
-                    const Text(
-                      'minutes',
-                      style: TextStyle(
-                        color: Color(0xFF666666),
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              _timeButton(
-                Icons.add,
-                enabled: _preparationMinutes < _maxPrepMinutes,
-                onTap: () => _changePreparation(_prepStep),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          const Text(
-            'Shared with customer and driver after acceptance.',
-            style: TextStyle(
-              color: Color(0xFF666666),
-              fontSize: 11,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _timeButton(
-    IconData icon, {
-    required bool enabled,
-    required VoidCallback onTap,
-  }) {
-    return InkWell(
-      onTap: enabled ? onTap : null,
-      borderRadius: BorderRadius.circular(12),
-      child: Container(
-        width: 44,
-        height: 44,
-        decoration: BoxDecoration(
-          color: enabled ? Colors.white : Colors.grey.shade100,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color: enabled
-                ? const Color(0xFF2E7D32).withOpacity(0.28)
-                : Colors.grey.shade200,
-          ),
-        ),
-        child: Icon(
-          icon,
-          color: enabled ? const Color(0xFF2E7D32) : Colors.grey.shade400,
         ),
       ),
     );
   }
 
-  void _changePreparation(int delta) {
-    setState(() {
-      _preparationMinutes = (_preparationMinutes + delta)
-          .clamp(_minPrepMinutes, _maxPrepMinutes)
-          .toInt();
-    });
-  }
-
-  Widget _buildDetailRow({
-    required IconData icon,
-    required String label,
-    required String value,
-    required Color color,
-  }) {
-    return Row(
+  Widget _prepSelector() {
+    return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Container(
-          padding: const EdgeInsets.all(8),
-          decoration: BoxDecoration(
-            color: color.withOpacity(0.15),
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: Icon(
-            icon,
-            size: 16,
-            color: color,
-          ),
+        Row(
+          children: [
+            Icon(Icons.timer_outlined, size: 15, color: foodflow.muted),
+            const SizedBox(width: 6),
+            Text(
+              'Ready in',
+              style: TextStyle(
+                color: foodflow.muted,
+                fontSize: 12,
+                fontWeight: FontWeight.w900,
+                letterSpacing: 0.4,
+              ),
+            ),
+          ],
         ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                label,
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                  color: Colors.grey.shade600,
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            for (final m in _presets)
+              GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () => setState(() => _preparationMinutes = m),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 150),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: _preparationMinutes == m
+                        ? foodflow.orange
+                        : (foodflow.isDark
+                            ? foodflow.surfaceColor
+                            : Colors.white),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: _preparationMinutes == m
+                          ? foodflow.orange
+                          : foodflow.line,
+                    ),
+                  ),
+                  child: Text(
+                    '$m min',
+                    style: TextStyle(
+                      color: _preparationMinutes == m
+                          ? Colors.white
+                          : foodflow.ink,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
                 ),
               ),
-              const SizedBox(height: 2),
-              Text(
-                value,
-                style: const TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w700,
-                  color: Color(0xFF1C1C1C),
-                ),
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ],
-          ),
+          ],
         ),
       ],
     );

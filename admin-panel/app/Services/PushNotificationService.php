@@ -6,9 +6,32 @@ use App\Helpers\FirebaseHelper;
 use App\Models\PushBroadcast;
 use App\Models\User;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Schema;
 
 class PushNotificationService
 {
+    /**
+     * Single-recipient send for personalized content (cart reminders,
+     * reorder nudges) -- distinct from sendBroadcast(), which targets a
+     * whole role and creates a PushBroadcast audit row. Callers that need
+     * an audit trail for a personalized send should log it themselves
+     * (see App\Services\CartRecoveryService / App\Services\ReorderNudgeService).
+     */
+    public function sendToUser(User $user, string $title, string $body, array $data = [], string $targetApp = 'customer'): bool
+    {
+        $firebase = new FirebaseHelper();
+        if (! $firebase->isConfigured()) {
+            return false;
+        }
+
+        $token = $user->fcmTokenForApp($targetApp);
+        if (! $token) {
+            return false;
+        }
+
+        return $firebase->sendToDevice($token, $title, $body, $data);
+    }
+
     public function sendBroadcast(PushBroadcast $broadcast): PushBroadcast
     {
         $firebase = new FirebaseHelper();
@@ -113,6 +136,15 @@ class PushNotificationService
             $query->whereHas('roles', function ($roleQuery) use ($roles) {
                 $roleQuery->whereIn('name', $roles);
             });
+        }
+
+        // AI-generated broadcasts are informational/marketing, not
+        // transactional order alerts -- honor the same opt-out a user would
+        // expect for promotional pushes. Admin-authored broadcasts keep
+        // their existing (unfiltered) behavior; this only narrows the
+        // audience for broadcasts the AI itself created.
+        if ($broadcast->source === 'ai' && Schema::hasColumn('users', 'notify_offers_promotions')) {
+            $query->where('notify_offers_promotions', true);
         }
 
         return $query->get([

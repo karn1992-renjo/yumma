@@ -7,7 +7,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>Yumma! Resto</string>
+	<string>Yumma! Partner</string>
 	<key>CFBundleExecutable</key>
 	<string>Yummaresto</string>
 	<key>CFBundleIdentifier</key>

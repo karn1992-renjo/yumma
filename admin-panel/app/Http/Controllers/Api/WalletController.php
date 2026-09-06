@@ -13,6 +13,7 @@ use App\Models\Wallet;
 use App\Models\WalletRecharge;
 use App\Models\WalletTransaction;
 use App\Services\MediaStorage;
+use App\Services\PayoutSettlementService;
 use App\Support\GatewayRegistry;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -87,7 +88,7 @@ class WalletController extends Controller
         ]);
     }
 
-    public function withdraw(Request $request)
+    public function withdraw(Request $request, PayoutSettlementService $settlementService)
     {
         $validated = $request->validate([
             'amount' => 'required|numeric|min:1|max:1000000',
@@ -123,44 +124,93 @@ class WalletController extends Controller
         $gateway = AppSetting::getValue('payout_gateway_provider', AppSetting::getValue('payment_gateway_provider', 'razorpay'));
 
         try {
-            $result = DB::transaction(function () use ($user, $restaurant, $isDriver, $amount, $currencyCode, $gateway, $validated) {
-                $wallet = $this->walletFor($user, true);
+            $result = DB::transaction(function () use ($user, $restaurant, $isDriver, $amount, $currencyCode, $gateway, $validated, $settlementService) {
+                // Reconcile the request against actual unsettled earnings and
+                // CLAIM the orders it settles -- a manual withdrawal must never
+                // exceed what this vendor has really earned, and the orders it
+                // covers must be stamped so they can't be paid a second time
+                // (by another manual request or the scheduled batch).
+                $earningCol = $isDriver ? 'driver_earning' : 'restaurant_earning';
+                $payoutCol = $isDriver ? 'driver_payout_id' : 'restaurant_payout_id';
 
-                if ((float) $wallet->balance < $amount) {
-                    abort(422, 'Insufficient wallet balance for this withdrawal request.');
+                $orders = Order::query()
+                    ->where('status', 'delivered')
+                    ->when($isDriver,
+                        fn ($q) => $q->where('driver_id', $user->id)->whereNull('driver_payout_id'),
+                        fn ($q) => $q->where('restaurant_id', $restaurant->id)->whereNull('restaurant_payout_id'))
+                    ->orderBy('delivered_at')
+                    ->orderBy('id')
+                    ->lockForUpdate()
+                    ->get();
+
+                $totalUnreleased = round((float) $orders->sum(fn ($o) => max(0, (float) $o->{$earningCol})), 2);
+                if ($totalUnreleased <= 0) {
+                    abort(422, 'You have no settled earnings available to withdraw yet.');
                 }
 
-                $wallet->decrement('balance', $amount);
-                $wallet->increment('locked_balance', $amount);
-                $wallet->refresh();
+                $cap = min($amount, $totalUnreleased);
+
+                // Greedily claim whole orders up to the cap.
+                $claimIds = [];
+                $claimed = 0.0;
+                foreach ($orders as $o) {
+                    $e = max(0, (float) $o->{$earningCol});
+                    if ($e <= 0) {
+                        continue;
+                    }
+                    if ($claimIds !== [] && $claimed + $e > $cap + 0.01) {
+                        break;
+                    }
+                    $claimIds[] = $o->id;
+                    $claimed = round($claimed + $e, 2);
+                    if ($claimed >= $cap - 0.01) {
+                        break;
+                    }
+                }
+
+                if ($claimIds === []) {
+                    abort(422, 'No settled orders are available for this withdrawal.');
+                }
 
                 $payout = Payout::create([
                     'restaurant_id' => $restaurant?->id,
                     'driver_id' => $isDriver ? $user->id : null,
-                    'amount' => $amount,
-                    'gross_amount' => $amount,
-                    'net_amount' => $amount,
+                    'amount' => $claimed,
+                    'gross_amount' => $claimed,
+                    'net_amount' => $claimed,
                     'currency' => $currencyCode,
                     'status' => 'pending',
                     'gateway' => $gateway,
                     'vendor_type' => $isDriver ? 'driver' : 'restaurant',
                     'vendor_id' => $isDriver ? $user->id : $restaurant->id,
+                    'order_ids' => $claimIds,
                     'period_start' => now(),
                     'period_end' => now(),
                     'created_by' => $user->id,
                     'idempotency_key' => 'manual_' . ($isDriver ? 'driver_' : 'restaurant_') . (string) \Illuminate\Support\Str::uuid(),
+                    'source' => $isDriver ? 'manual_driver' : 'manual_restaurant',
                 ]);
 
-                $transaction = WalletTransaction::create([
-                    'wallet_id' => $wallet->id,
-                    'user_id' => $wallet->user_id,
-                    'type' => 'debit',
-                    'amount' => $amount,
-                    'balance_after' => $wallet->balance,
-                    'reference_type' => 'payout',
-                    'reference_id' => $payout->id,
-                    'description' => $validated['description'] ?? 'Manual settlement withdrawal requested',
+                if (! $settlementService->reserveFunds(
+                    $payout,
+                    $claimed,
+                    $validated['description'] ?? 'Manual settlement withdrawal requested',
+                    $isDriver ? 'manual_driver' : 'manual_restaurant'
+                )) {
+                    abort(422, 'Your settlement wallet is not funded for this amount yet. Please try again later.');
+                }
+
+                Order::whereIn('id', $claimIds)->update([
+                    $payoutCol => $payout->id,
+                    'payout_status' => 'Payout Released',
+                    'payout_released_at' => now(),
                 ]);
+
+                $wallet = $this->walletFor($user);
+                $transaction = WalletTransaction::where('reference_type', 'payout')
+                    ->where('reference_id', $payout->id)
+                    ->latest('id')
+                    ->first();
 
                 return compact('wallet', 'payout', 'transaction');
             });
@@ -187,7 +237,10 @@ class WalletController extends Controller
             'payment_gateway' => 'nullable|in:razorpay,stripe,cashfree',
             'payment_gateway_provider' => 'nullable|in:razorpay,stripe,cashfree',
             'description' => 'nullable|string|max:255',
+            'purpose' => 'nullable|in:wallet_topup,cod_settlement',
         ]);
+
+        $purpose = $validated['purpose'] ?? 'wallet_topup';
 
         $requestedMethod = $validated['payment_method']
             ?? $request->input('gateway')
@@ -215,7 +268,9 @@ class WalletController extends Controller
             'status' => 'pending',
             'payment_method' => $paymentMethod,
             'meta' => [
-                'description' => $validated['description'] ?? 'Wallet top-up',
+                'description' => $validated['description']
+                    ?? ($purpose === 'cod_settlement' ? 'COD cash deposit' : 'Wallet top-up'),
+                'purpose' => $purpose,
             ],
         ]);
 
@@ -512,6 +567,41 @@ class WalletController extends Controller
             $validated['payment_id'] = $successfulPayment['cf_payment_id'] ?? $cashfreeOrderId;
         }
 
+        $codSettlement = data_get($recharge->meta, 'purpose') === 'cod_settlement';
+
+        // A COD cash deposit reduces the driver's undeposited-cash balance
+        // instead of topping up their spendable wallet.
+        if ($codSettlement) {
+            DB::transaction(function () use ($request, $recharge, $validated, $paymentMethod) {
+                $lockedRecharge = WalletRecharge::whereKey($recharge->id)->lockForUpdate()->firstOrFail();
+                if ($lockedRecharge->status === 'success') {
+                    return;
+                }
+                $lockedRecharge->update([
+                    'status' => 'success',
+                    'gateway_payment_id' => $validated['payment_id'],
+                    'gateway_signature' => $validated['razorpay_signature'] ?? null,
+                ]);
+                app(\App\Services\CodReconciliationService::class)->collectFromDriver(
+                    $request->user(),
+                    (float) $lockedRecharge->amount,
+                    $request->user(),
+                    'online_deposit:' . $lockedRecharge->id
+                );
+            });
+
+            $svc = app(\App\Services\AutoAssignDriverService::class);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Cash deposit received. Your account is updated.',
+                'data' => [
+                    'cod_cash_in_hand' => round($svc->driverCodCashInHand($request->user()), 2),
+                    'cod_cash_limit' => round(\App\Services\AutoAssignDriverService::codCashLimit(), 2),
+                ],
+            ]);
+        }
+
         $wallet = DB::transaction(function () use ($request, $recharge, $validated, $paymentMethod) {
             $lockedRecharge = WalletRecharge::whereKey($recharge->id)->lockForUpdate()->firstOrFail();
             if ($lockedRecharge->status === 'success') {
@@ -542,6 +632,19 @@ class WalletController extends Controller
                     'payment_id' => $validated['payment_id'],
                 ],
             ]);
+
+            try {
+                $entry = app(\App\Services\Accounting\LedgerPostingService::class)->postWalletRecharge(
+                    (int) $lockedRecharge->id,
+                    (float) $lockedRecharge->amount,
+                    now()
+                );
+                \App\Services\Integration\LedgerEventEmitter::journal($entry);
+            } catch (\Throwable $e) {
+                \Illuminate\Support\Facades\Log::warning('Ledger postWalletRecharge failed', [
+                    'wallet_recharge_id' => $lockedRecharge->id, 'error' => $e->getMessage(),
+                ]);
+            }
 
             return $wallet;
         });

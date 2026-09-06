@@ -15,6 +15,7 @@ use App\Console\Commands\ProcessScheduledPayouts;
 use App\Console\Commands\RetryFailedPayouts;
 use App\Console\Commands\RebuildSearchIndex;
 use App\Console\Commands\SyncPayoutStatus;
+use App\Console\Commands\GenerateSitemap;
 
 return Application::configure(basePath: dirname(__DIR__))
     ->withRouting(
@@ -30,6 +31,7 @@ return Application::configure(basePath: dirname(__DIR__))
         RebuildSearchIndex::class,
         SyncPayoutStatus::class,
         CheckPayoutBalance::class,
+        GenerateSitemap::class,
     ])
     ->withMiddleware(function (Middleware $middleware) {
             // Register middleware aliases
@@ -43,6 +45,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'webhooks/razorpay/payout',
             'webhooks/stripe/payout',
             'webhooks/cashfree/payout',
+            'webhooks/exotel/call-status',
             'webhook/*',
         ]);
     })

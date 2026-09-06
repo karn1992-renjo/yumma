@@ -13,7 +13,7 @@ class BrandPalette {
 
   factory BrandPalette.fallback() {
     return const BrandPalette(
-      primary: Color(0xFF8B5CF6),
+      primary: Color(0xFF2563EB),
       secondary: Color(0xFF111827),
     );
   }
@@ -21,7 +21,8 @@ class BrandPalette {
   factory BrandPalette.fromBranding(AppBranding? branding) {
     if (branding == null) return BrandPalette.fallback();
     return BrandPalette(
-      primary: colorFromHex(branding.primaryColorHex) ?? const Color(0xFF8B5CF6),
+      primary:
+          colorFromHex(branding.primaryColorHex) ?? const Color(0xFF2563EB),
       secondary:
           colorFromHex(branding.secondaryColorHex) ?? const Color(0xFF111827),
     );

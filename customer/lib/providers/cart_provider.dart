@@ -1,9 +1,11 @@
 // lib/providers/cart_provider.dart
+import 'dart:async';
 import 'dart:convert';
-import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/menu_item.dart';
 import '../models/restaurant.dart';
+import '../services/api_service.dart';
 
 class CartItem {
   final MenuItem menuItem;
@@ -297,6 +299,13 @@ class CartProvider extends ChangeNotifier {
   Restaurant? _restaurant;
   final Map<int, RestaurantCart> _restaurantCarts = {};
   int? _activeRestaurantId;
+
+  // Restaurant ids ever seen in this session's cart, so a cart that just
+  // became empty (all items removed) still gets one final sync call telling
+  // the server to clear it -- otherwise the backend would keep treating a
+  // now-empty cart as still in progress. See _syncCartToServer().
+  final Set<int> _knownCartRestaurantIds = {};
+  Timer? _cartSyncDebounce;
 
   List<CartItem> get items => _items;
   List<CartItem> get paidItems =>
@@ -672,6 +681,64 @@ class CartProvider extends ChangeNotifier {
       'carts': carts.map((cart) => cart.toJson()).toList(),
     };
     await prefs.setString('cart', jsonEncode(cartData));
+    _scheduleCartSync();
+  }
+
+  /// Debounces server-side cart sync so rapid edits (e.g. tapping the
+  /// quantity stepper repeatedly) don't fire a request per tap. The actual
+  /// network call happens ~2s after the last local change.
+  void _scheduleCartSync() {
+    _restaurantCarts.keys.forEach(_knownCartRestaurantIds.add);
+    _cartSyncDebounce?.cancel();
+    _cartSyncDebounce = Timer(const Duration(seconds: 2), _syncCartToServer);
+  }
+
+  /// Reports current cart contents to the backend (POST /cart/sync) so
+  /// abandoned-cart reminders can be sent server-side -- see
+  /// CartRecoveryService in the admin app. Best-effort only: failures are
+  /// swallowed so a flaky network never affects the local cart experience.
+  /// Every restaurant id seen this session is included, sending an empty
+  /// items list for ones that are no longer in _restaurantCarts so the
+  /// server clears that cart instead of treating it as still abandoned.
+  Future<void> _syncCartToServer() async {
+    final restaurantIds = List<int>.from(_knownCartRestaurantIds);
+
+    for (final restaurantId in restaurantIds) {
+      final cart = _restaurantCarts[restaurantId];
+      final items = cart?.items.where((item) => !item.isPromotionReward) ?? const [];
+
+      try {
+        await ApiService().post(
+          '/cart/sync',
+          data: {
+            'restaurant_id': restaurantId,
+            'items': items
+                .map((item) => {
+                      'menu_item_id': item.menuItem.id,
+                      'name': item.menuItem.name,
+                      'quantity': item.quantity,
+                      'price': item.unitPrice,
+                    })
+                .toList(),
+            'subtotal': cart?.subtotal ?? 0,
+          },
+        );
+
+        if (cart == null) {
+          _knownCartRestaurantIds.remove(restaurantId);
+        }
+      } catch (error) {
+        if (kDebugMode) {
+          debugPrint('Cart sync failed for restaurant $restaurantId: $error');
+        }
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _cartSyncDebounce?.cancel();
+    super.dispose();
   }
 
   Future<void> loadCart() async {

@@ -14,6 +14,7 @@ import '../../theme/foodflow_theme.dart';
 import '../../utils/currency_utils.dart';
 import '../../widgets/common/app_cached_image.dart';
 import 'edit_profile_screen.dart';
+import 'home_experience.dart';
 
 const _profileSubtext = FoodFlowTheme.muted;
 const _profileBg = Colors.white;
@@ -40,6 +41,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   int _savedAddressCount = 0;
   int _savedRestaurantCount = 0;
   int _offersCount = 0;
+  int _unreadNotificationCount = 0;
   final ApiService _api = ApiService();
 
   @override
@@ -82,9 +84,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
         await Future.wait([
           orderProvider.fetchMyOrders(notifyLoading: false),
           _loadProfileStats(cacheFirst: false, refreshCached: false),
+          _loadUnreadNotificationCount(),
         ]);
       } else {
         await _loadProfileStats(cacheFirst: true, refreshCached: true);
+        unawaited(_loadUnreadNotificationCount());
         unawaited(_refreshProfileDataInBackground());
       }
     } catch (e) {
@@ -178,6 +182,23 @@ class _ProfileScreenState extends State<ProfileScreen> {
             : const <dynamic>[];
   }
 
+  Future<void> _loadUnreadNotificationCount() async {
+    try {
+      final response = await _api.get(
+        ApiConstants.notifications,
+        queryParams: const {'limit': 1, 'target_app': 'customer'},
+      );
+      final data = response is Map ? response['data'] : null;
+      final count =
+          int.tryParse('${data is Map ? data['unread_count'] ?? 0 : 0}') ?? 0;
+      if (mounted) {
+        setState(() => _unreadNotificationCount = count);
+      }
+    } catch (error) {
+      debugPrint('Could not load unread notification count: $error');
+    }
+  }
+
   Future<void> _refreshData() async {
     await _loadData(forceRefresh: true);
   }
@@ -237,6 +258,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   children: [
                     _ProfileTopBar(
                       onBack: _handleBackNavigation,
+                      hasUnreadNotifications: _unreadNotificationCount > 0,
                     ),
                     const SizedBox(height: 22),
                     _ProfileHeroWithStats(
@@ -298,6 +320,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           onTap: () =>
                               Navigator.pushNamed(context, '/scratch-cards'),
                         ),
+                        _ProfileMenuTile(
+                          icon: LucideIcons.share_2,
+                          title: 'Refer & Earn',
+                          subtitle: 'Invite friends and earn rewards',
+                          onTap: () =>
+                              Navigator.pushNamed(context, '/referrals'),
+                        ),
                       ],
                     ),
                     const SizedBox(height: 22),
@@ -318,10 +347,35 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       ],
                     ),
                     const SizedBox(height: 22),
+                    const _ProfileGroupLabel('APPEARANCE'),
+                    const SizedBox(height: 10),
+                    _ProfileSectionCard(
+                      children: [
+                        ValueListenableBuilder<bool>(
+                          valueListenable: homeV2Enabled,
+                          builder: (context, useV2, _) => _ProfileSwitchTile(
+                            icon: LucideIcons.sparkles,
+                            title: 'New Home (Glass)',
+                            subtitle:
+                                'Try the redesigned glassmorphism home screen',
+                            value: useV2,
+                            onChanged: (next) => setHomeV2Enabled(next),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 22),
                     const _ProfileGroupLabel('SUPPORT & INFO'),
                     const SizedBox(height: 10),
                     _ProfileSectionCard(
                       children: [
+                        _ProfileMenuTile(
+                          icon: LucideIcons.bell_ring,
+                          title: 'Notification Preferences',
+                          subtitle: 'Choose what you get notified about',
+                          onTap: () => Navigator.pushNamed(
+                              context, '/notification-preferences'),
+                        ),
                         _ProfileMenuTile(
                           icon: LucideIcons.headset,
                           title: 'Help & Support',
@@ -610,9 +664,11 @@ class _ProfileVersionFooter extends StatelessWidget {
 class _ProfileTopBar extends StatelessWidget {
   const _ProfileTopBar({
     required this.onBack,
+    required this.hasUnreadNotifications,
   });
 
   final Future<bool> Function() onBack;
+  final bool hasUnreadNotifications;
 
   @override
   Widget build(BuildContext context) {
@@ -657,7 +713,7 @@ class _ProfileTopBar extends StatelessWidget {
         _RoundHeaderButton(
           icon: LucideIcons.bell,
           color: Colors.black,
-          showDot: true,
+          showDot: hasUnreadNotifications,
           onTap: () => Navigator.pushNamed(context, '/notifications'),
         ),
         const SizedBox(width: 12),
@@ -1098,6 +1154,80 @@ class _ProfileSectionCard extends StatelessWidget {
           }
           return children[index ~/ 2];
         }),
+      ),
+    );
+  }
+}
+
+class _ProfileSwitchTile extends StatelessWidget {
+  const _ProfileSwitchTile({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.value,
+    required this.onChanged,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final bool value;
+  final ValueChanged<bool> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: () => onChanged(!value),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        child: Row(
+          children: [
+            Container(
+              width: 44,
+              height: 44,
+              decoration: BoxDecoration(
+                color: const Color(0xFFF3F4F6),
+                borderRadius: BorderRadius.circular(13),
+              ),
+              child: Icon(icon, color: const Color(0xFF4B5563), size: 20),
+            ),
+            const SizedBox(width: 18),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Color(0xFF111827),
+                      fontSize: 15,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    subtitle,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Color(0xFF6B7280),
+                      fontSize: 10.5,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 12),
+            Switch.adaptive(
+              value: value,
+              onChanged: onChanged,
+              activeColor: _profilePrimary(context),
+            ),
+          ],
+        ),
       ),
     );
   }

@@ -16,11 +16,25 @@ class PayoutScheduleService
     ) {
     }
 
-    public function shouldRunToday(?PayoutSetting $setting = null): bool
+    public function shouldRunToday(?PayoutSetting $setting = null, ?string $vendorType = null): bool
     {
         $setting ??= PayoutSetting::where('is_active', true)->first();
-        $frequency = $setting?->schedule_frequency ?: AppSetting::getValue('payout_frequency', 'weekly');
-        $day = strtolower($setting?->schedule_day ?: AppSetting::getValue('payout_day', 'monday'));
+
+        // Per-vendor schedule override lives in payout_settings.options JSON, e.g.
+        // {"restaurant": {"schedule_day": "monday"}, "driver": {"schedule_day": "thursday"}}
+        $options = is_array($setting?->options) ? $setting->options : [];
+        $override = $vendorType
+            ? (array) ($options[$vendorType] ?? $options[$vendorType . '_schedule'] ?? [])
+            : [];
+
+        $frequency = $override['schedule_frequency']
+            ?: $setting?->schedule_frequency
+            ?: AppSetting::getValue('payout_frequency', 'weekly');
+        $day = strtolower(
+            $override['schedule_day']
+            ?: $setting?->schedule_day
+            ?: AppSetting::getValue('payout_day', 'monday')
+        );
 
         return match ($frequency) {
             'daily' => true,
@@ -29,6 +43,17 @@ class PayoutScheduleService
             'monthly' => now()->isSameDay(now()->copy()->startOfMonth()),
             default => false,
         };
+    }
+
+    /** Vendor types (`restaurant`, `driver`) whose payout run is due today. */
+    public function dueVendorTypesToday(?PayoutSetting $setting = null): array
+    {
+        $setting ??= PayoutSetting::where('is_active', true)->first();
+
+        return collect(['restaurant', 'driver'])
+            ->filter(fn ($type) => $this->shouldRunToday($setting, $type))
+            ->values()
+            ->all();
     }
 
     public function generateDuePayouts(

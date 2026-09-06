@@ -1,0 +1,12 @@
+@extends('layouts.admin')
+@section('title', 'Gig Payout Approvals')
+@section('content')
+<div class="page-header"><div class="d-flex justify-content-between align-items-center flex-wrap gap-3"><div><h1>Gig Payout Approvals</h1><p>Review incentive payouts before wallet credit.</p></div><form method="GET" action="{{ route('admin.gigs.payout-approvals') }}" class="d-flex gap-2"><select name="status" class="form-select">@foreach($allowedStatuses as $option)<option value="{{ $option }}" @selected($status === $option)>{{ ucfirst($option) }}</option>@endforeach</select><button class="btn btn-outline-primary">Filter</button></form></div></div>
+<div class="table-card"><div class="table-responsive"><table class="table table-hover align-middle mb-0"><thead><tr><th>Driver</th><th>Slot</th><th>Amount</th><th>Risk</th><th>Updated</th><th class="text-end">Action</th></tr></thead><tbody>
+@forelse($approvals as $approval)
+<tr><td>{{ $approval->driver?->name ?? 'Driver #' . $approval->driver_id }}</td><td><div>{{ $approval->gig?->title ?: 'Gig #' . $approval->driver_gig_id }}</div><div class="small text-muted">{{ $approval->gig?->area?->name ?? 'Global' }}</div></td><td>{{ App\Models\AppSetting::sanitizedCurrencySymbol() }}{{ number_format((float) $approval->amount, App\Models\AppSetting::currencyDecimals()) }}</td><td>@php $riskStatus = $approval->risk_summary['status'] ?? 'clear'; @endphp <span class="badge badge-{{ $riskStatus === 'review_required' ? 'danger' : ($riskStatus === 'watch' ? 'warning' : 'success') }}">{{ ucfirst(str_replace('_', ' ', $riskStatus)) }}</span></td><td>{{ $approval->updated_at?->format('d M Y, h:i A') }}</td><td class="text-end">@if($approval->status === 'pending')<div class="d-flex justify-content-end gap-2"><form action="{{ route('admin.gigs.payout-approvals.update', $approval) }}" method="POST">@csrf<input type="hidden" name="action" value="approve"><button class="btn btn-sm btn-outline-success">Approve</button></form><form action="{{ route('admin.gigs.payout-approvals.update', $approval) }}" method="POST" onsubmit="return confirm('Reject this payout?');">@csrf<input type="hidden" name="action" value="reject"><button class="btn btn-sm btn-outline-danger">Reject</button></form></div>@else<span class="badge badge-secondary">{{ ucfirst($approval->status) }}</span>@endif</td></tr>
+@empty
+<tr><td colspan="6" class="text-center py-5 text-muted">No payout approvals found.</td></tr>
+@endforelse
+</tbody></table></div><div class="p-3">{{ $approvals->links() }}</div></div>
+@endsection

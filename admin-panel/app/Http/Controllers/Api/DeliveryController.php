@@ -70,8 +70,11 @@ class DeliveryController extends Controller
 
         $this->issueScratchCardsForOrderEvent($order, 'delivery');
 
+        // The driver just completed this — only customer/restaurant get the push.
         app(OrderStatusPushService::class)->notifyParticipants(
-            $order->fresh(['customer', 'restaurant'])
+            $order->fresh(['customer', 'restaurant']),
+            null,
+            ['customer', 'restaurant']
         );
 
         return response()->json([

@@ -1,6 +1,7 @@
 // lib/screens/restaurant/restaurant_promos_screen.dart
 import 'dart:convert';
 import 'dart:io';
+import 'dart:ui' show ImageFilter;
 
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
@@ -12,12 +13,14 @@ import '../../config/api_constants.dart';
 import '../../providers/restaurant_provider.dart';
 import '../../services/api_service.dart';
 import '../../theme/foodflow_theme.dart';
+import '../../theme/aurora_theme.dart';
+import '../../widgets/aurora/aurora.dart';
+import '../../widgets/aurora/aurora_dialogs.dart';
 import '../../utils/currency_utils.dart';
 import '../../widgets/common/network_image_loader.dart';
 
 // Keep this screen's existing compact theme references while using the app theme.
 // ignore: camel_case_types
-typedef foodflow = FoodFlowTheme;
 
 const Map<String, _PromoShape> _promoShapes = {
   'percentage_discount': _PromoShape(
@@ -200,7 +203,7 @@ class _PromoShape {
 
 BoxDecoration _partnerPanelDecoration({double radius = 28}) {
   return BoxDecoration(
-    color: Colors.white,
+    color: foodflow.surfaceColor,
     borderRadius: BorderRadius.circular(radius),
     border: Border.all(color: foodflow.line),
     boxShadow: [
@@ -238,6 +241,7 @@ class _RestaurantPromosScreenState extends State<RestaurantPromosScreen> {
   final ApiService _api = ApiService();
   List<Map<String, dynamic>> _promos = [];
   bool _isLoading = true;
+  bool _hasData = false;
 
   @override
   void initState() {
@@ -245,16 +249,28 @@ class _RestaurantPromosScreenState extends State<RestaurantPromosScreen> {
     _loadPromos();
   }
 
+  void _applyPromos(dynamic response) {
+    if (response is! Map || response['success'] != true) return;
+    _promos = (response['data'] as List? ?? [])
+        .map((row) => Map<String, dynamic>.from(row as Map))
+        .toList();
+    _hasData = true;
+  }
+
   Future<void> _loadPromos() async {
-    setState(() => _isLoading = true);
+    if (!_hasData) setState(() => _isLoading = true);
     try {
-      final response = await _api.get(ApiConstants.restaurantPromos);
-      if (response['success'] == true && mounted) {
-        final rows = (response['data'] as List? ?? [])
-            .map((row) => Map<String, dynamic>.from(row as Map))
-            .toList();
-        setState(() => _promos = rows);
-      }
+      final response = await _api.getWithCache(
+        ApiConstants.restaurantPromos,
+        onCache: (cached) {
+          if (!mounted) return;
+          setState(() {
+            _applyPromos(cached);
+            _isLoading = false;
+          });
+        },
+      );
+      if (mounted) setState(() => _applyPromos(response));
     } catch (e) {
       debugPrint('Load promos error: $e');
     } finally {
@@ -279,24 +295,15 @@ class _RestaurantPromosScreenState extends State<RestaurantPromosScreen> {
   Future<void> _deletePromo(Map<String, dynamic> promo) async {
     final promoId = _promoActionId(promo);
     if (promoId <= 0) return;
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Delete Promotion'),
-        content: Text('Delete "${_promoTitle(promo)}"?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Delete', style: TextStyle(color: Colors.red)),
-          ),
-        ],
-      ),
+    final confirmed = await showAuroraConfirm(
+      context,
+      icon: Icons.local_offer_outlined,
+      title: 'Delete promotion?',
+      message: '"${_promoTitle(promo)}" will be removed for all customers.',
+      confirmLabel: 'Delete',
+      destructive: true,
     );
-    if (confirmed != true) return;
+    if (!confirmed) return;
 
     try {
       final response =
@@ -393,6 +400,8 @@ class _RestaurantPromosScreenState extends State<RestaurantPromosScreen> {
     }
   }
 
+  String _filter = 'All';
+
   @override
   Widget build(BuildContext context) {
     final active =
@@ -403,67 +412,150 @@ class _RestaurantPromosScreenState extends State<RestaurantPromosScreen> {
         _promos.where((promo) => _promoStatus(promo) == 'Draft').length;
     final restaurantName =
         context.watch<RestaurantProvider>().selectedRestaurantLabel;
+    final topPad = MediaQuery.of(context).padding.top + 60;
+
+    final visible = _filter == 'All'
+        ? _promos
+        : _promos.where((p) => _promoStatus(p) == _filter).toList();
 
     return Scaffold(
-      backgroundColor: foodflow.orange.withOpacity(0.04),
-      body: SafeArea(
-        child: _isLoading
-            ? const Center(child: CircularProgressIndicator())
-            : RefreshIndicator(
-                onRefresh: _loadPromos,
-                child: ListView(
-                  padding: EdgeInsets.zero,
-                  children: [
-                    _PromosHero(
-                      restaurantName: restaurantName,
-                      total: _promos.length,
-                      active: active,
-                      scheduled: scheduled,
-                      draft: draft,
-                      onCreate: _openCreate,
-                    ),
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(20, 22, 20, 8),
-                      child: Row(
-                        children: [
-                          const Expanded(
-                            child: Text(
-                              'Your Promotions',
-                              style: TextStyle(
-                                color: foodflow.ink,
-                                fontSize: 18,
-                                fontWeight: FontWeight.w900,
+      backgroundColor: foodflow.canvas,
+      extendBodyBehindAppBar: true,
+      appBar: GlassAppBar(
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              'Promotions',
+              style: TextStyle(
+                color: foodflow.ink,
+                fontSize: 17,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+            Text(
+              restaurantName,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: foodflow.muted,
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+        ),
+      ),
+      floatingActionButton: _promos.isEmpty
+          ? null
+          : FloatingActionButton.extended(
+              onPressed: _openCreate,
+              backgroundColor: foodflow.orange,
+              foregroundColor: Colors.white,
+              icon: const Icon(Icons.add_rounded),
+              label: const Text('New offer',
+                  style: TextStyle(fontWeight: FontWeight.w800)),
+            ),
+      body: Stack(
+        children: [
+          ...AuroraTheme.auroraBlobs(),
+          _isLoading
+              ? const Center(child: CircularProgressIndicator())
+              : RefreshIndicator(
+                  onRefresh: _loadPromos,
+                  child: ListView(
+                    padding: EdgeInsets.fromLTRB(16, topPad, 16, 96),
+                    children: [
+                      _PromoPulseBoard(
+                        total: _promos.length,
+                        active: active,
+                        scheduled: scheduled,
+                        draft: draft,
+                      ),
+                      if (_promos.isNotEmpty) ...[
+                        const SizedBox(height: 14),
+                        _PromoFilterBar(
+                          current: _filter,
+                          counts: {
+                            'All': _promos.length,
+                            'Active': active,
+                            'Scheduled': scheduled,
+                            'Draft': draft,
+                          },
+                          onSelect: (f) => setState(() => _filter = f),
+                        ),
+                        const SizedBox(height: 6),
+                        ...visible.map(
+                          (promo) => Padding(
+                            padding: const EdgeInsets.only(top: 10),
+                            child: _PromoCard(
+                              promo: promo,
+                              status: _promoStatus(promo),
+                              statusColor: _statusColor(_promoStatus(promo)),
+                              active: _isPromoActive(promo),
+                              reward: _cardReward(context, promo),
+                              subtitle: _cardSubtitle(context, promo),
+                              onTap: () => _openDetails(promo),
+                              onToggle: () => _togglePromoStatus(promo),
+                              onEdit: () => _openEdit(promo),
+                              onDelete: () => _deletePromo(promo),
+                            ),
+                          ),
+                        ),
+                        if (visible.isEmpty)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 40),
+                            child: Center(
+                              child: Text(
+                                'No $_filter promotions',
+                                style: TextStyle(
+                                  color: foodflow.muted,
+                                  fontWeight: FontWeight.w700,
+                                ),
                               ),
                             ),
                           ),
-                        ],
-                      ),
-                    ),
-                    if (_promos.isEmpty)
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(20, 30, 20, 20),
-                        child: _EmptyPromotionState(onCreate: _openCreate),
-                      )
-                    else
-                      ..._promos.map(
-                        (promo) => Padding(
-                          padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
-                          child: _PromotionListTile(
-                            promo: promo,
-                            status: _promoStatus(promo),
-                            statusColor: _statusColor(_promoStatus(promo)),
-                            onTap: () => _openDetails(promo),
-                            onEdit: () => _openEdit(promo),
-                            onDelete: () => _deletePromo(promo),
-                          ),
-                        ),
-                      ),
-                    const SizedBox(height: 24),
-                  ],
+                      ] else ...[
+                        const SizedBox(height: 20),
+                        _EmptyPromotionState(onCreate: _openCreate),
+                      ],
+                    ],
+                  ),
                 ),
-              ),
+        ],
       ),
     );
+  }
+
+  String _cardReward(BuildContext context, Map<String, dynamic> promo) {
+    final promotionType =
+        promo['promotion_type']?.toString() ?? _promotionTypeFromLegacy(promo);
+    final shape = _restaurantPromoShape(promotionType);
+    final config = promo['reward_config'] is Map
+        ? Map<String, dynamic>.from(promo['reward_config'] as Map)
+        : <String, dynamic>{};
+    return _promoRewardLabel(
+      context,
+      shape,
+      _toDouble(promo['discount_value']),
+      _toDouble(promo['max_discount_amount']),
+      config,
+    );
+  }
+
+  String _cardSubtitle(BuildContext context, Map<String, dynamic> promo) {
+    final minOrder = _toDouble(promo['min_order_amount']);
+    final endDate = _parseDate(promo['end_date'] ?? promo['valid_to']);
+    final parts = <String>[
+      if (minOrder > 0) 'Min ${formatCurrencyValue(context, minOrder)}',
+      if (endDate != null)
+        'Till ${DateFormat('dd MMM').format(endDate)}',
+      if (promo['code'] != null &&
+          promo['code'].toString().trim().isNotEmpty)
+        promo['code'].toString().toUpperCase(),
+    ];
+    return parts.isEmpty ? 'No restrictions' : parts.join('  ·  ');
   }
 }
 
@@ -489,7 +581,7 @@ class _PromotionEditorScreenState extends State<PromotionEditorScreen> {
   final _perUserLimit = TextEditingController(text: '1');
   final _budgetLimit = TextEditingController();
   final _couponCode = TextEditingController();
-  final _assignedUserId = TextEditingController();
+  final _assignedPhone = TextEditingController();
   final _buyQuantity = TextEditingController(text: '1');
   final _freeQuantity = TextEditingController(text: '1');
 
@@ -633,7 +725,7 @@ class _PromotionEditorScreenState extends State<PromotionEditorScreen> {
     _couponType =
         promo['coupon_type']?.toString() == 'prepaid' ? 'prepaid' : 'public';
     _specificUserOnly = _couponType == 'prepaid';
-    _assignedUserId.text = promo['assigned_to']?.toString() ?? '';
+    _assignedPhone.text = (promo['assigned_to_phone'] ?? promo['assigned_phone'] ?? '').toString();
     _promoImageUrl =
         promo['promo_image']?.toString() ?? promo['image']?.toString();
     if (_promoImageUrl != null && _promoImageUrl!.trim().isEmpty) {
@@ -665,7 +757,7 @@ class _PromotionEditorScreenState extends State<PromotionEditorScreen> {
     _perUserLimit.dispose();
     _budgetLimit.dispose();
     _couponCode.dispose();
-    _assignedUserId.dispose();
+    _assignedPhone.dispose();
     _buyQuantity.dispose();
     _freeQuantity.dispose();
     super.dispose();
@@ -798,8 +890,10 @@ class _PromotionEditorScreenState extends State<PromotionEditorScreen> {
       'coupon_type': _applicationMode == 'coupon' && _specificUserOnly
           ? 'prepaid'
           : 'public',
-      'assigned_to':
-          _specificUserOnly ? int.tryParse(_assignedUserId.text.trim()) : null,
+      'assigned_to': null,
+      'assigned_to_phone': _specificUserOnly && _assignedPhone.text.trim().isNotEmpty
+          ? _assignedPhone.text.trim()
+          : null,
       'start_date': startAt.toIso8601String(),
       'end_date': endAt.toIso8601String(),
       'is_active': _isActive,
@@ -1039,47 +1133,90 @@ class _PromotionEditorScreenState extends State<PromotionEditorScreen> {
     });
   }
 
+  List<String> get _stepNames => [
+        'Details',
+        'Reward',
+        'Conditions',
+        'Schedule',
+        'Limits',
+        if (_applicationMode == 'coupon') 'Coupon code',
+        'Review',
+      ];
+
   @override
   Widget build(BuildContext context) {
+    final names = _stepNames;
+    final currentName = names[_step.clamp(0, names.length - 1)];
     return Scaffold(
-      backgroundColor: foodflow.orange.withOpacity(0.04),
-      appBar: AppBar(
-        elevation: 0,
-        backgroundColor: foodflow.orange.withOpacity(0.04),
-        foregroundColor: foodflow.ink,
-        title: Text(
-          _isEditing ? 'Edit Promotion' : 'Create Promotion',
-          style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w900),
+      backgroundColor: foodflow.canvas,
+      extendBodyBehindAppBar: true,
+      appBar: GlassAppBar(
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              _isEditing ? 'Edit promotion' : 'New promotion',
+              style: TextStyle(
+                color: foodflow.ink,
+                fontSize: 17,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+            Text(
+              'Step ${_step + 1} of ${names.length} · $currentName',
+              style: TextStyle(
+                color: foodflow.muted,
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
         ),
-        centerTitle: true,
       ),
-      body: SafeArea(
-        child: Form(
-          key: _formKey,
-          child: Column(
-            children: [
-              _StepDots(current: _step, total: _stepCount),
-              Expanded(
-                child: SingleChildScrollView(
-                  padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
-                  child: AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 180),
-                    child: _buildStep(),
+      body: Stack(
+        children: [
+          ...AuroraTheme.auroraBlobs(),
+          SafeArea(
+            child: Form(
+              key: _formKey,
+              child: Column(
+                children: [
+                  SizedBox(height: MediaQuery.of(context).padding.top + 8),
+                  _WizardProgress(current: _step, total: names.length),
+                  Expanded(
+                    child: SingleChildScrollView(
+                      padding: const EdgeInsets.fromLTRB(18, 14, 18, 20),
+                      child: AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 200),
+                        transitionBuilder: (child, anim) => FadeTransition(
+                          opacity: anim,
+                          child: SlideTransition(
+                            position: Tween(
+                              begin: const Offset(0, 0.03),
+                              end: Offset.zero,
+                            ).animate(anim),
+                            child: child,
+                          ),
+                        ),
+                        child: _buildStep(),
+                      ),
+                    ),
                   ),
-                ),
+                  _EditorFooter(
+                    isLast: _step == _lastStep,
+                    isSaving: _isSaving,
+                    onBack: _back,
+                    onNext: _next,
+                    nextLabel: _step == _lastStep
+                        ? (_isEditing ? 'Update promotion' : 'Create promotion')
+                        : 'Continue',
+                  ),
+                ],
               ),
-              _EditorFooter(
-                isLast: _step == _lastStep,
-                isSaving: _isSaving,
-                onBack: _back,
-                onNext: _next,
-                nextLabel: _step == _lastStep
-                    ? (_isEditing ? 'Update Promotion' : 'Create Promotion')
-                    : 'Next',
-              ),
-            ],
+            ),
           ),
-        ),
+        ],
       ),
     );
   }
@@ -1355,11 +1492,11 @@ class _PromotionEditorScreenState extends State<PromotionEditorScreen> {
           ),
           if (_specificUserOnly)
             _PromoTextField(
-              controller: _assignedUserId,
-              label: 'Assigned Customer ID',
+              controller: _assignedPhone,
+              label: 'Customer mobile number',
               required: true,
-              keyboardType: TextInputType.number,
-              hint: 'Customer user ID',
+              keyboardType: TextInputType.phone,
+              hint: 'e.g. 9876543210',
             ),
         ],
       ),
@@ -1473,7 +1610,7 @@ class _PromotionEditorScreenState extends State<PromotionEditorScreen> {
               size: 110,
             ),
             const SizedBox(height: 16),
-            const Text(
+            Text(
               'This promotion will be applied automatically at checkout.',
               textAlign: TextAlign.center,
               style:
@@ -1501,11 +1638,11 @@ class _PromotionEditorScreenState extends State<PromotionEditorScreen> {
             ),
             if (_couponType == 'prepaid')
               _PromoTextField(
-                controller: _assignedUserId,
-                label: 'Assigned Customer ID',
+                controller: _assignedPhone,
+                label: 'Customer mobile number',
                 required: true,
-                keyboardType: TextInputType.number,
-                hint: 'Customer user ID',
+                keyboardType: TextInputType.phone,
+                hint: 'e.g. 9876543210',
               ),
             _InfoBox(
                 text:
@@ -1734,7 +1871,7 @@ class PromotionCreatedScreen extends StatelessWidget {
                       ),
                       const _CreatedCheckMark(),
                       const SizedBox(height: 18),
-                      const Text(
+                      Text(
                         'Promotion is live',
                         textAlign: TextAlign.center,
                         style: TextStyle(
@@ -1750,7 +1887,7 @@ class PromotionCreatedScreen extends StatelessWidget {
                             ? 'Customers can now see this offer on eligible orders.'
                             : 'Coupon $code is ready for eligible orders.',
                         textAlign: TextAlign.center,
-                        style: const TextStyle(
+                        style: TextStyle(
                           color: foodflow.muted,
                           fontSize: 13,
                           fontWeight: FontWeight.w700,
@@ -1794,8 +1931,8 @@ class PromotionCreatedScreen extends StatelessWidget {
             ),
             Container(
               padding: const EdgeInsets.fromLTRB(20, 12, 20, 18),
-              decoration: const BoxDecoration(
-                color: Colors.white,
+              decoration: BoxDecoration(
+                color: foodflow.surfaceColor,
                 border: Border(top: BorderSide(color: foodflow.line)),
               ),
               child: Column(
@@ -2124,7 +2261,7 @@ class PromotionDetailsScreen extends StatelessWidget {
                   _PreviewRow(
                       label: 'Application Mode', value: applicationLabel),
                   const SizedBox(height: 22),
-                  const Text(
+                  Text(
                     'Usage Summary',
                     style: TextStyle(
                       color: foodflow.ink,
@@ -2222,13 +2359,13 @@ class _PromosHero extends StatelessWidget {
                             restaurantName,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
+                            style: TextStyle(
                               color: foodflow.ink,
                               fontWeight: FontWeight.w900,
                               fontSize: 16,
                             ),
                           ),
-                          const Text(
+                          Text(
                             'Promotions',
                             style:
                                 TextStyle(color: foodflow.muted, fontSize: 11),
@@ -2252,7 +2389,7 @@ class _PromosHero extends StatelessWidget {
                         height: 1.05,
                         fontWeight: FontWeight.w900,
                       ),
-                      children: const [
+                      children: [
                         TextSpan(
                           text: 'grow orders.',
                           style: TextStyle(
@@ -2274,7 +2411,7 @@ class _PromosHero extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text(
+                    Text(
                       'Total Promotions',
                       style: TextStyle(
                         color: foodflow.ink,
@@ -2285,7 +2422,7 @@ class _PromosHero extends StatelessWidget {
                     const SizedBox(height: 6),
                     Text(
                       '$total',
-                      style: const TextStyle(
+                      style: TextStyle(
                         color: foodflow.ink,
                         fontWeight: FontWeight.w900,
                         fontSize: 28,
@@ -2441,12 +2578,187 @@ class _PromoSketchPainter extends CustomPainter {
   }
 }
 
-class _PromotionListTile extends StatelessWidget {
-  const _PromotionListTile({
+/// Redesigned promotions overview — a headline count with three tappable-looking
+/// status tallies on a single brand-tinted board (replaces the tall sketch hero).
+class _PromoPulseBoard extends StatelessWidget {
+  const _PromoPulseBoard({
+    required this.total,
+    required this.active,
+    required this.scheduled,
+    required this.draft,
+  });
+
+  final int total;
+  final int active;
+  final int scheduled;
+  final int draft;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        gradient: foodflow.brandGradient,
+        borderRadius: BorderRadius.circular(22),
+        boxShadow: [
+          BoxShadow(
+            color: foodflow.orange.withOpacity(0.26),
+            blurRadius: 22,
+            offset: const Offset(0, 12),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text(
+                '$total',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 40,
+                  height: 1,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Padding(
+                padding: const EdgeInsets.only(bottom: 6),
+                child: Text(
+                  total == 1 ? 'promotion' : 'promotions',
+                  style: TextStyle(
+                    color: Colors.white.withOpacity(0.85),
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              _PulseCell(label: 'Active', value: active),
+              _PulseDivider(),
+              _PulseCell(label: 'Scheduled', value: scheduled),
+              _PulseDivider(),
+              _PulseCell(label: 'Draft', value: draft),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PulseCell extends StatelessWidget {
+  const _PulseCell({required this.label, required this.value});
+  final String label;
+  final int value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Expanded(
+      child: Column(
+        children: [
+          Text(
+            '$value',
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 20,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            label,
+            style: TextStyle(
+              color: Colors.white.withOpacity(0.8),
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PulseDivider extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) => Container(
+        width: 1,
+        height: 30,
+        color: Colors.white.withOpacity(0.22),
+      );
+}
+
+/// Horizontal status filter chips with live counts.
+class _PromoFilterBar extends StatelessWidget {
+  const _PromoFilterBar({
+    required this.current,
+    required this.counts,
+    required this.onSelect,
+  });
+
+  final String current;
+  final Map<String, int> counts;
+  final ValueChanged<String> onSelect;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 38,
+      child: ListView(
+        scrollDirection: Axis.horizontal,
+        children: counts.entries.map((e) {
+          final selected = e.key == current;
+          return Padding(
+            padding: const EdgeInsets.only(right: 8),
+            child: GestureDetector(
+              onTap: () => onSelect(e.key),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 160),
+                padding: const EdgeInsets.symmetric(horizontal: 14),
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: selected ? foodflow.orange : foodflow.surfaceColor,
+                  borderRadius: BorderRadius.circular(999),
+                  border: Border.all(
+                    color: selected ? foodflow.orange : foodflow.line,
+                  ),
+                ),
+                child: Text(
+                  '${e.key}  ${e.value}',
+                  style: TextStyle(
+                    color: selected ? Colors.white : foodflow.muted,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+            ),
+          );
+        }).toList(),
+      ),
+    );
+  }
+}
+
+/// A promotion row rebuilt around a status-coloured left spine + an inline
+/// activate/pause switch (no more buried edit/delete icon stack).
+class _PromoCard extends StatelessWidget {
+  const _PromoCard({
     required this.promo,
     required this.status,
     required this.statusColor,
+    required this.active,
+    required this.reward,
+    required this.subtitle,
     required this.onTap,
+    required this.onToggle,
     required this.onEdit,
     required this.onDelete,
   });
@@ -2454,103 +2766,123 @@ class _PromotionListTile extends StatelessWidget {
   final Map<String, dynamic> promo;
   final String status;
   final Color statusColor;
+  final bool active;
+  final String reward;
+  final String subtitle;
   final VoidCallback onTap;
+  final VoidCallback onToggle;
   final VoidCallback onEdit;
   final VoidCallback onDelete;
 
   @override
   Widget build(BuildContext context) {
-    final minOrder = _toDouble(promo['min_order_amount']);
-    final endDate = _parseDate(promo['end_date'] ?? promo['valid_to']);
-    final promotionType =
-        promo['promotion_type']?.toString() ?? _promotionTypeFromLegacy(promo);
-    final shape = _restaurantPromoShape(promotionType);
-    final config = promo['reward_config'] is Map
-        ? Map<String, dynamic>.from(promo['reward_config'] as Map)
-        : <String, dynamic>{};
-    final reward = _promoRewardLabel(
-      context,
-      shape,
-      _toDouble(promo['discount_value']),
-      _toDouble(promo['max_discount_amount']),
-      config,
-    );
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(14),
-      child: Container(
-        padding: const EdgeInsets.all(12),
-        decoration: _partnerPanelDecoration(radius: 18),
+    return Container(
+      clipBehavior: Clip.antiAlias,
+      decoration: BoxDecoration(
+        color: foodflow.surfaceColor,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: foodflow.line),
+      ),
+      child: IntrinsicHeight(
         child: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            _PromotionThumb(size: 58, imageUrl: _promoImage(promo)),
-            const SizedBox(width: 12),
+            Container(width: 4, color: statusColor),
             Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    _promoTitle(promo),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: foodflow.ink,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w900,
-                    ),
+              child: InkWell(
+                onTap: onTap,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 12, 6, 8),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          _PromotionThumb(
+                              size: 46, imageUrl: _promoImage(promo)),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  _promoTitle(promo),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    color: foodflow.ink,
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w900,
+                                  ),
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  reward,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    color: foodflow.orange,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          _StatusPill(label: status, color: statusColor),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        subtitle,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: foodflow.muted,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Row(
+                        children: [
+                          Transform.scale(
+                            scale: 0.8,
+                            child: Switch.adaptive(
+                              value: active,
+                              onChanged: (_) => onToggle(),
+                              activeColor: foodflow.orange,
+                            ),
+                          ),
+                          Text(
+                            active ? 'Live' : 'Paused',
+                            style: TextStyle(
+                              color: foodflow.muted,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                          const Spacer(),
+                          TextButton(
+                            onPressed: onEdit,
+                            style: TextButton.styleFrom(
+                              visualDensity: VisualDensity.compact,
+                              foregroundColor: foodflow.ink,
+                            ),
+                            child: const Text('Edit'),
+                          ),
+                          IconButton(
+                            visualDensity: VisualDensity.compact,
+                            onPressed: onDelete,
+                            icon: Icon(Icons.delete_outline_rounded,
+                                size: 18, color: foodflow.danger),
+                          ),
+                        ],
+                      ),
+                    ],
                   ),
-                  const SizedBox(height: 3),
-                  Text(
-                    reward,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: foodflow.muted,
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  const SizedBox(height: 3),
-                  Text(
-                    [
-                      if (minOrder > 0)
-                        'Min. ${formatCurrencyValue(context, minOrder)}',
-                      if (endDate != null)
-                        'Till ${DateFormat('dd MMM yyyy').format(endDate)}',
-                    ].isEmpty
-                        ? shape.label
-                        : [
-                            if (minOrder > 0)
-                              'Min. ${formatCurrencyValue(context, minOrder)}',
-                            if (endDate != null)
-                              'Till ${DateFormat('dd MMM yyyy').format(endDate)}',
-                          ].join(' · '),
-                    style: const TextStyle(
-                      color: foodflow.muted,
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ],
+                ),
               ),
-            ),
-            const SizedBox(width: 8),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                _StatusPill(label: status, color: statusColor),
-                IconButton(
-                  visualDensity: VisualDensity.compact,
-                  onPressed: onEdit,
-                  icon: const Icon(Icons.edit_outlined, size: 18),
-                ),
-                IconButton(
-                  visualDensity: VisualDensity.compact,
-                  onPressed: onDelete,
-                  color: Colors.red,
-                  icon: const Icon(Icons.delete_outline, size: 18),
-                ),
-              ],
             ),
           ],
         ),
@@ -2559,8 +2891,10 @@ class _PromotionListTile extends StatelessWidget {
   }
 }
 
-class _StepDots extends StatelessWidget {
-  const _StepDots({required this.current, required this.total});
+/// Slim segmented progress rail — one bar segment per wizard step, filled up to
+/// (and including) the current step.
+class _WizardProgress extends StatelessWidget {
+  const _WizardProgress({required this.current, required this.total});
 
   final int current;
   final int total;
@@ -2568,49 +2902,20 @@ class _StepDots extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(22, 10, 22, 8),
+      padding: const EdgeInsets.fromLTRB(18, 4, 18, 10),
       child: Row(
         children: List.generate(total, (index) {
-          final active = index == current;
+          final done = index <= current;
           return Expanded(
-            child: Row(
-              children: [
-                Expanded(
-                  child: Container(
-                    height: 1,
-                    color: index == 0 ? Colors.transparent : foodflow.line,
-                  ),
-                ),
-                AnimatedContainer(
-                  duration: const Duration(milliseconds: 180),
-                  width: active ? 22 : 18,
-                  height: active ? 22 : 18,
-                  decoration: BoxDecoration(
-                    color: active ? foodflow.orange : Colors.white,
-                    shape: BoxShape.circle,
-                    border: Border.all(
-                      color: active ? foodflow.orange : foodflow.line,
-                    ),
-                  ),
-                  child: Center(
-                    child: Text(
-                      '${index + 1}',
-                      style: TextStyle(
-                        color: active ? Colors.white : foodflow.muted,
-                        fontSize: 10,
-                        fontWeight: FontWeight.w900,
-                      ),
-                    ),
-                  ),
-                ),
-                Expanded(
-                  child: Container(
-                    height: 1,
-                    color:
-                        index == total - 1 ? Colors.transparent : foodflow.line,
-                  ),
-                ),
-              ],
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 220),
+              margin: EdgeInsets.only(right: index == total - 1 ? 0 : 6),
+              height: 5,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(4),
+                gradient: done ? foodflow.brandGradient : null,
+                color: done ? null : foodflow.line,
+              ),
             ),
           );
         }),
@@ -2631,37 +2936,69 @@ class _StepSection extends StatelessWidget {
   final String? subtitle;
   final Widget child;
 
+  static const _icons = {
+    'General Information': Icons.info_outline_rounded,
+    'Rewards': Icons.card_giftcard_rounded,
+    'Conditions': Icons.rule_rounded,
+    'Schedule': Icons.calendar_month_rounded,
+    'Limits': Icons.speed_rounded,
+    'Coupon Code': Icons.confirmation_number_outlined,
+    'Coupons': Icons.confirmation_number_outlined,
+    'Preview': Icons.visibility_rounded,
+  };
+
   @override
   Widget build(BuildContext context) {
     return Container(
       key: key,
-      padding: const EdgeInsets.fromLTRB(18, 20, 18, 8),
-      decoration: _partnerPanelDecoration(radius: 24),
+      padding: const EdgeInsets.fromLTRB(18, 18, 18, 10),
+      decoration: BoxDecoration(
+        color: foodflow.surfaceColor,
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(color: foodflow.line),
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          RichText(
-            text: TextSpan(
-              text: title,
-              style: const TextStyle(
-                color: foodflow.ink,
-                fontSize: 18,
-                fontWeight: FontWeight.w900,
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: foodflow.orange.withOpacity(0.10),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(_icons[title] ?? Icons.tune_rounded,
+                    size: 16, color: foodflow.orange),
               ),
-              children: [
-                if (subtitle != null)
-                  TextSpan(
-                    text: ' ($subtitle)',
-                    style: const TextStyle(
-                      color: foodflow.muted,
-                      fontSize: 14,
-                      fontWeight: FontWeight.w800,
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: TextStyle(
+                        color: foodflow.ink,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w900,
+                      ),
                     ),
-                  ),
-              ],
-            ),
+                    if (subtitle != null)
+                      Text(
+                        subtitle!,
+                        style: TextStyle(
+                          color: foodflow.muted,
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ],
           ),
-          const SizedBox(height: 18),
+          Divider(height: 22, color: foodflow.line),
           child,
         ],
       ),
@@ -2713,7 +3050,7 @@ class _TargetSelectionBox extends StatelessWidget {
               Expanded(
                 child: Text(
                   'Select $label',
-                  style: const TextStyle(
+                  style: TextStyle(
                     color: foodflow.ink,
                     fontSize: 12,
                     fontWeight: FontWeight.w900,
@@ -2722,7 +3059,7 @@ class _TargetSelectionBox extends StatelessWidget {
               ),
               Text(
                 '${selectedIds.length} selected',
-                style: const TextStyle(
+                style: TextStyle(
                   color: foodflow.muted,
                   fontSize: 11,
                   fontWeight: FontWeight.w800,
@@ -2744,7 +3081,7 @@ class _TargetSelectionBox extends StatelessWidget {
                   type == 'categories'
                       ? 'No categories found. Create categories in Menu first.'
                       : 'No menu items found. Add items in Menu first.',
-                  style: const TextStyle(
+                  style: TextStyle(
                     color: foodflow.muted,
                     fontSize: 12,
                     fontWeight: FontWeight.w700,
@@ -2838,7 +3175,7 @@ class _TargetChoiceChip extends StatelessWidget {
                     title,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
+                    style: TextStyle(
                       color: foodflow.ink,
                       fontSize: 12,
                       fontWeight: FontWeight.w900,
@@ -2849,7 +3186,7 @@ class _TargetChoiceChip extends StatelessWidget {
                       subtitle,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
+                      style: TextStyle(
                         color: foodflow.muted,
                         fontSize: 10,
                         fontWeight: FontWeight.w700,
@@ -2965,11 +3302,11 @@ class _PromoTextField extends StatelessWidget {
                   const EdgeInsets.symmetric(horizontal: 18, vertical: 18),
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(14),
-                borderSide: const BorderSide(color: foodflow.line),
+                borderSide: BorderSide(color: foodflow.line),
               ),
               enabledBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(14),
-                borderSide: const BorderSide(color: foodflow.line),
+                borderSide: BorderSide(color: foodflow.line),
               ),
               focusedBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(14),
@@ -3024,7 +3361,7 @@ class _PromoDropdown<T> extends StatelessWidget {
                   OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
               enabledBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(14),
-                borderSide: const BorderSide(color: foodflow.line),
+                borderSide: BorderSide(color: foodflow.line),
               ),
             ),
           ),
@@ -3114,7 +3451,7 @@ class _FieldLabel extends StatelessWidget {
               ),
           ],
         ),
-        style: const TextStyle(
+        style: TextStyle(
           color: foodflow.ink,
           fontSize: 12,
           fontWeight: FontWeight.w900,
@@ -3197,7 +3534,7 @@ class _InfoBox extends StatelessWidget {
           Expanded(
             child: Text(
               text,
-              style: const TextStyle(
+              style: TextStyle(
                 color: foodflow.ink,
                 fontSize: 12,
                 fontWeight: FontWeight.w700,
@@ -3232,7 +3569,7 @@ class _SettingSwitch extends StatelessWidget {
           Expanded(
             child: Text(
               title,
-              style: const TextStyle(
+              style: TextStyle(
                 color: foodflow.ink,
                 fontSize: 13,
                 fontWeight: FontWeight.w800,
@@ -3319,7 +3656,7 @@ class _PickerBox extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: foodflow.surfaceColor,
           borderRadius: BorderRadius.circular(10),
           border: Border.all(color: foodflow.line),
         ),
@@ -3332,7 +3669,7 @@ class _PickerBox extends StatelessWidget {
                 text,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
+                style: TextStyle(
                   color: foodflow.ink,
                   fontSize: 12,
                   fontWeight: FontWeight.w800,
@@ -3389,7 +3726,7 @@ class _RepeatDaysPickerState extends State<_RepeatDaysPicker> {
                 label: Text(entry.value),
                 selected: active,
                 selectedColor: const Color(0xFFE8F8EF),
-                backgroundColor: Colors.white,
+                backgroundColor: foodflow.surfaceColor,
                 side: BorderSide(
                   color: active ? const Color(0xFF16A34A) : foodflow.line,
                 ),
@@ -3432,34 +3769,82 @@ class _EditorFooter extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        border: Border(top: BorderSide(color: foodflow.line)),
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: OutlinedButton(
-              onPressed: isSaving ? null : onBack,
-              child: const Text('Back'),
+    return ClipRect(
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(18, 12, 18, 16),
+          decoration: BoxDecoration(
+            color: foodflow.canvas.withOpacity(0.82),
+            border: Border(top: BorderSide(color: foodflow.glassBorder)),
+          ),
+          child: SafeArea(
+            top: false,
+            child: Row(
+              children: [
+                SizedBox(
+                  height: 52,
+                  child: OutlinedButton(
+                    onPressed: isSaving ? null : onBack,
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: foodflow.ink,
+                      side: BorderSide(color: foodflow.line),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                    ),
+                    child: const Text('Back'),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: foodflow.brandGradient,
+                      borderRadius: BorderRadius.circular(14),
+                      boxShadow: [
+                        BoxShadow(
+                          color: foodflow.orange.withOpacity(0.28),
+                          blurRadius: 16,
+                          offset: const Offset(0, 8),
+                        ),
+                      ],
+                    ),
+                    child: ElevatedButton(
+                      onPressed: isSaving ? null : onNext,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.transparent,
+                        shadowColor: Colors.transparent,
+                        foregroundColor: Colors.white,
+                        minimumSize: const Size.fromHeight(52),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                      ),
+                      child: isSaving
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                valueColor:
+                                    AlwaysStoppedAnimation<Color>(Colors.white),
+                              ),
+                            )
+                          : Text(
+                              isLast ? nextLabel : '$nextLabel  →',
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w800,
+                                fontSize: 15,
+                              ),
+                            ),
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: ElevatedButton(
-              onPressed: isSaving ? null : onNext,
-              child: isSaving
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : Text(nextLabel),
-            ),
-          ),
-        ],
+        ),
       ),
     );
   }
@@ -3555,7 +3940,7 @@ class _DetailsBanner extends StatelessWidget {
               children: [
                 Text(
                   reward.toUpperCase(),
-                  style: const TextStyle(
+                  style: TextStyle(
                     color: foodflow.ink,
                     fontSize: 27,
                     fontWeight: FontWeight.w900,
@@ -3566,7 +3951,7 @@ class _DetailsBanner extends StatelessWidget {
                   title,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
+                  style: TextStyle(
                     color: foodflow.ink,
                     fontSize: 15,
                     fontWeight: FontWeight.w900,
@@ -3576,7 +3961,7 @@ class _DetailsBanner extends StatelessWidget {
                   shape,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(color: foodflow.muted, fontSize: 11),
+                  style: TextStyle(color: foodflow.muted, fontSize: 11),
                 ),
               ],
             ),
@@ -3606,7 +3991,7 @@ class _PreviewRow extends StatelessWidget {
           Expanded(
             child: Text(
               label,
-              style: const TextStyle(
+              style: TextStyle(
                 color: foodflow.muted,
                 fontSize: 13,
                 fontWeight: FontWeight.w800,
@@ -3618,7 +4003,7 @@ class _PreviewRow extends StatelessWidget {
             child: Text(
               value,
               textAlign: TextAlign.right,
-              style: const TextStyle(
+              style: TextStyle(
                 color: foodflow.ink,
                 fontSize: 13,
                 fontWeight: FontWeight.w900,
@@ -3670,7 +4055,7 @@ class _ImagePlaceholder extends StatelessWidget {
                     height: 88,
                     clipBehavior: Clip.antiAlias,
                     decoration: BoxDecoration(
-                      color: Colors.white,
+                      color: foodflow.surfaceColor,
                       borderRadius: BorderRadius.circular(10),
                       border: Border.all(color: foodflow.line),
                     ),
@@ -3731,7 +4116,7 @@ class _UploadPrompt extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Column(
+    return Column(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
         Icon(Icons.image_outlined, color: foodflow.muted),
@@ -3851,7 +4236,7 @@ class _HeroMetric extends StatelessWidget {
       children: [
         Text(
           label,
-          style: const TextStyle(
+          style: TextStyle(
             color: foodflow.muted,
             fontSize: 11,
             fontWeight: FontWeight.w700,
@@ -3878,35 +4263,87 @@ class _EmptyPromotionState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    const perks = [
+      ('Bring lapsed customers back', Icons.replay_rounded),
+      ('Push slow hours & slow items', Icons.trending_up_rounded),
+      ('Coupon codes or automatic offers', Icons.confirmation_number_outlined),
+    ];
     return Container(
-      padding: const EdgeInsets.all(22),
-      decoration: _partnerPanelDecoration(radius: 24),
+      padding: const EdgeInsets.fromLTRB(20, 26, 20, 22),
+      decoration: BoxDecoration(
+        color: foodflow.surfaceColor,
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: foodflow.line),
+      ),
       child: Column(
         children: [
-          Icon(Icons.local_offer_outlined, color: foodflow.orange, size: 46),
-          const SizedBox(height: 12),
-          const Text(
-            'No promotions yet',
+          Container(
+            padding: const EdgeInsets.all(18),
+            decoration: BoxDecoration(
+              gradient: foodflow.brandGradient,
+              shape: BoxShape.circle,
+              boxShadow: [
+                BoxShadow(
+                  color: foodflow.orange.withOpacity(0.3),
+                  blurRadius: 20,
+                  offset: const Offset(0, 10),
+                ),
+              ],
+            ),
+            child: const Icon(Icons.local_offer_rounded,
+                color: Colors.white, size: 30),
+          ),
+          const SizedBox(height: 16),
+          Text(
+            'Run your first offer',
             style: TextStyle(
               color: foodflow.ink,
-              fontSize: 18,
+              fontSize: 19,
               fontWeight: FontWeight.w900,
             ),
           ),
           const SizedBox(height: 6),
-          const Text(
-            'Create offers to bring customers back to your restaurant.',
+          Text(
+            'Offers are the quickest lever you have on order volume.',
             textAlign: TextAlign.center,
-            style:
-                TextStyle(color: foodflow.muted, fontWeight: FontWeight.w700),
+            style: TextStyle(color: foodflow.muted, fontSize: 13),
           ),
           const SizedBox(height: 18),
+          ...perks.map(
+            (p) => Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: foodflow.orange.withOpacity(0.10),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Icon(p.$2, size: 16, color: foodflow.orange),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      p.$1,
+                      style: TextStyle(
+                        color: foodflow.ink,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 10),
           SizedBox(
             width: double.infinity,
             child: _BrandActionButton(
               onPressed: onCreate,
               icon: Icons.add,
-              label: 'Create Promotion',
+              label: 'Create promotion',
             ),
           ),
         ],
@@ -3938,7 +4375,7 @@ class _SuccessPromoCard extends StatelessWidget {
                   _promoTitle(promo),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
+                  style: TextStyle(
                     color: foodflow.ink,
                     fontWeight: FontWeight.w900,
                   ),
@@ -3947,7 +4384,7 @@ class _SuccessPromoCard extends StatelessWidget {
                   endDate == null
                       ? 'No validity date'
                       : 'Valid till ${DateFormat('dd MMM yyyy, hh:mm a').format(endDate)}',
-                  style: const TextStyle(color: foodflow.muted, fontSize: 11),
+                  style: TextStyle(color: foodflow.muted, fontSize: 11),
                 ),
               ],
             ),
@@ -3988,7 +4425,7 @@ class _UsageBox extends StatelessWidget {
               value: progress,
               minHeight: 8,
               color: const Color(0xFF16A34A),
-              backgroundColor: const Color(0xFFE5E7EB),
+              backgroundColor: foodflow.canvas,
             ),
           ),
           if (totalDiscount != null) ...[

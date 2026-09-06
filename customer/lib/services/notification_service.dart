@@ -14,8 +14,10 @@ import '../config/app_config.dart';
 import '../firebase_options.dart';
 import '../models/order.dart';
 import '../models/user.dart';
+import '../utils/notification_route_resolver.dart';
 import 'api_service.dart';
 import 'customer_order_status_overlay_service.dart';
+import 'flash_resale_alert_service.dart';
 import 'navigation_service.dart';
 import 'sound_service.dart';
 
@@ -31,6 +33,25 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
           .showCustomerOrderStatusNotificationFromMessage(
         message,
       );
+      return;
+    }
+
+    if (FirebaseNotificationService.isFlashResalePayload(data)) {
+      await FirebaseNotificationService.showFlashResaleNotificationFromMessage(
+        message,
+      );
+      return;
+    }
+
+    if (FirebaseNotificationService.isFlashResaleWithdrawnPayload(data)) {
+      final orderId = FirebaseNotificationService._parseOrderId(
+        data['order_id'],
+      );
+      if (orderId != null) {
+        await FirebaseNotificationService.cancelFlashResaleNotification(
+          orderId,
+        );
+      }
       return;
     }
 
@@ -53,6 +74,7 @@ class FirebaseNotificationService {
   static const String _defaultChannelId = 'default_notification_channel_custom';
   static const String _orderStatusChannelId = 'order_status_channel_custom';
   static const int _liveOrderNotificationBaseId = 810000;
+  static const int _flashResaleNotificationBaseId = 820000;
 
   static final FirebaseNotificationService instance =
       FirebaseNotificationService._internal();
@@ -207,6 +229,12 @@ class FirebaseNotificationService {
       return;
     }
 
+    if (_isFlashResaleWithdrawnData(_safeDataMap(message.data))) {
+      // Already surfaced via the in-app toast in _showInAppOrderOverlay --
+      // no need for a duplicate tray notification while foregrounded.
+      return;
+    }
+
     if (_isCustomBroadcastMessage(message)) {
       await showCustomBroadcastNotification(message);
       return;
@@ -235,7 +263,7 @@ class FirebaseNotificationService {
     const androidChannel = AndroidNotificationChannel(
       _defaultChannelId,
       'Default Notifications',
-      description: 'General notifications from FoodFlow',
+      description: 'General notifications from Yumma!',
       importance: Importance.high,
       playSound: true,
       sound: _customPushSound,
@@ -280,7 +308,7 @@ class FirebaseNotificationService {
     await android.createNotificationChannel(const AndroidNotificationChannel(
       _defaultChannelId,
       'Default Notifications',
-      description: 'General notifications from FoodFlow',
+      description: 'General notifications from Yumma!',
       importance: Importance.high,
       playSound: true,
       sound: _customPushSound,
@@ -331,7 +359,7 @@ class FirebaseNotificationService {
     const channel = AndroidNotificationChannel(
       _defaultChannelId,
       'Default Notifications',
-      description: 'General notifications from FoodFlow',
+      description: 'General notifications from Yumma!',
       importance: Importance.high,
       playSound: true,
       sound: _customPushSound,
@@ -355,7 +383,7 @@ class FirebaseNotificationService {
         android: AndroidNotificationDetails(
           _defaultChannelId,
           'Default Notifications',
-          channelDescription: 'General notifications from FoodFlow',
+          channelDescription: 'General notifications from Yumma!',
           icon: android?.smallIcon,
           importance: Importance.high,
           priority: Priority.max,
@@ -368,6 +396,80 @@ class FirebaseNotificationService {
       ),
       payload: jsonEncode(data),
     );
+  }
+
+  /// Shows a system-tray notification for a FLASH_RESALE push when the app
+  /// is backgrounded/terminated, since the backend sends this as a
+  /// data-only message (no OS auto-display). Tapping it routes through the
+  /// normal payload handler, which opens the full-screen claim overlay.
+  static Future<void> showFlashResaleNotificationFromMessage(
+    RemoteMessage message,
+  ) async {
+    final data = _safeDataMap(message.data);
+    final orderId = _parseOrderId(data['order_id']);
+    if (orderId == null) return;
+
+    final title =
+        data['notification_title']?.toString() ?? 'Flash deal nearby!';
+    final body = data['notification_body']?.toString() ??
+        'A nearby order is available at a discount — first come, first served.';
+
+    final plugin = FlutterLocalNotificationsPlugin();
+    const androidSettings =
+        AndroidInitializationSettings('@mipmap/ic_launcher');
+    const iosSettings = DarwinInitializationSettings();
+    await plugin.initialize(
+      settings: const InitializationSettings(
+        android: androidSettings,
+        iOS: iosSettings,
+      ),
+    );
+
+    const channel = AndroidNotificationChannel(
+      _defaultChannelId,
+      'Default Notifications',
+      description: 'General notifications from Yumma!',
+      importance: Importance.high,
+      playSound: true,
+      sound: _customPushSound,
+    );
+
+    await plugin
+        .resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin>()
+        ?.createNotificationChannel(channel);
+
+    await plugin.show(
+      id: _flashResaleNotificationId(orderId),
+      title: title,
+      body: body,
+      notificationDetails: NotificationDetails(
+        android: AndroidNotificationDetails(
+          _defaultChannelId,
+          'Default Notifications',
+          channelDescription: 'General notifications from Yumma!',
+          importance: Importance.high,
+          priority: Priority.max,
+          playSound: true,
+          sound: _customPushSound,
+          visibility: NotificationVisibility.public,
+        ),
+        iOS: const DarwinNotificationDetails(sound: 'custom-push.mp3'),
+      ),
+      payload: jsonEncode(data),
+    );
+  }
+
+  /// Cancels a previously-shown flash-resale tray notification for this
+  /// order -- used when it's been claimed by someone else or expired, so a
+  /// backgrounded customer doesn't act on a stale offer.
+  static Future<void> cancelFlashResaleNotification(int orderId) async {
+    final plugin = FlutterLocalNotificationsPlugin();
+    await plugin.cancel(id: _flashResaleNotificationId(orderId));
+  }
+
+  static int _flashResaleNotificationId(int orderId) {
+    return _flashResaleNotificationBaseId + orderId.remainder(100000);
   }
 
   static Future<BigPictureStyleInformation?> _bigPictureStyleForMessage(
@@ -449,6 +551,10 @@ class FirebaseNotificationService {
     String? etaText,
     String? distanceText,
   }) async {
+    if (order.isCancelled) {
+      await cancelLiveOrderNotification(order.id);
+      return;
+    }
     await _showLiveOrderNotification(
       data: {
         'type': 'customer_order_status',
@@ -465,6 +571,12 @@ class FirebaseNotificationService {
       },
       alertOnce: false,
       silent: true,
+    );
+  }
+
+  static Future<void> cancelLiveOrderNotification(int orderId) async {
+    await FlutterLocalNotificationsPlugin().cancel(
+      id: _liveOrderNotificationId(orderId),
     );
   }
 
@@ -628,7 +740,7 @@ class FirebaseNotificationService {
         return 'Your order is waiting at the counter';
       }
       if (status == 'delivered' || status == 'picked_up') {
-        return 'Thanks for ordering with FoodFlow';
+        return 'Thanks for ordering with Yumma!';
       }
       return '$store is preparing your pickup';
     }
@@ -690,9 +802,30 @@ class FirebaseNotificationService {
     return progressMap[status] ?? 12;
   }
 
+  void _dismissFlashResaleForWithdrawnData(Map<String, dynamic> data) {
+    final orderId = _parseOrderId(data['order_id']);
+    if (orderId == null) return;
+    FlashResaleAlertService.instance.hideIfOrder(
+      orderId,
+      message: (data['reason']?.toString() ?? '') == 'claimed'
+          ? 'Someone else claimed this order first.'
+          : 'This flash deal has expired.',
+    );
+  }
+
   void _showInAppOrderOverlay(RemoteMessage message) {
     final data = _normalizeOrderData(_safeDataMap(message.data));
     if (_isForeignOrderData(data)) {
+      return;
+    }
+
+    if (_isFlashResaleData(data)) {
+      FlashResaleAlertService.instance.show(data);
+      return;
+    }
+
+    if (_isFlashResaleWithdrawnData(data)) {
+      _dismissFlashResaleForWithdrawnData(data);
       return;
     }
 
@@ -736,6 +869,16 @@ class FirebaseNotificationService {
       return;
     }
 
+    if (_isFlashResaleData(data)) {
+      FlashResaleAlertService.instance.show(data);
+      return;
+    }
+
+    if (_isFlashResaleWithdrawnData(data)) {
+      _dismissFlashResaleForWithdrawnData(data);
+      return;
+    }
+
     if (_isCustomerOrderStatusData(data)) {
       final orderId = _parseOrderId(data['order_id'] ?? data['id']);
       if (orderId != null) {
@@ -749,49 +892,20 @@ class FirebaseNotificationService {
   }
 
   bool _handleGenericDeepLink(Map<String, dynamic> data) {
-    final deepLink = data['deep_link']?.toString().trim();
-    final type = data['type']?.toString().trim().toLowerCase() ?? '';
+    final hasDeepLinkOrType =
+        data['deep_link']?.toString().trim().isNotEmpty == true ||
+            (data['type']?.toString().trim().toLowerCase() ?? '')
+                .contains('support');
+    if (!hasDeepLinkOrType) return false;
 
-    if (deepLink != null && deepLink.isNotEmpty) {
-      final chatMatch = RegExp(r'^/orders/(\d+)/chat$').firstMatch(deepLink);
-      if (chatMatch != null) {
-        final orderId = int.tryParse(chatMatch.group(1) ?? '');
-        if (orderId != null) {
-          appNavigatorKey.currentState?.pushNamed(
-            '/order/chat',
-            arguments: orderId,
-          );
-        }
-        return true;
-      }
-      if (deepLink == '/support') {
-        appNavigatorKey.currentState?.pushNamed(
-          deepLink,
-          arguments: {'openChat': true},
-        );
-      } else if (deepLink == '/order/track') {
-        final orderId = _parseOrderId(data['order_id'] ?? data['id']);
-        if (orderId != null) {
-          appNavigatorKey.currentState?.pushNamed(
-            deepLink,
-            arguments: orderId,
-          );
-        }
-      } else {
-        appNavigatorKey.currentState?.pushNamed(deepLink);
-      }
-      return true;
-    }
+    final route = resolveNotificationDeepLink(data);
+    if (route == null) return false;
 
-    if (type.contains('support')) {
-      appNavigatorKey.currentState?.pushNamed(
-        '/support',
-        arguments: {'openChat': true},
-      );
-      return true;
-    }
-
-    return false;
+    appNavigatorKey.currentState?.pushNamed(
+      route.name,
+      arguments: route.arguments,
+    );
+    return true;
   }
 
   bool _isCustomerOrderStatusMessage(RemoteMessage message) {
@@ -822,12 +936,30 @@ class FirebaseNotificationService {
         text.contains('service-request');
   }
 
+  static bool _isFlashResaleData(Map<String, dynamic> data) {
+    final normalized = _normalizeOrderData(data);
+    final type = normalized['type']?.toString().toUpperCase() ?? '';
+
+    return type == 'FLASH_RESALE';
+  }
+
+  static bool _isFlashResaleWithdrawnData(Map<String, dynamic> data) {
+    final normalized = _normalizeOrderData(data);
+    final type = normalized['type']?.toString().toUpperCase() ?? '';
+
+    return type == 'FLASH_RESALE_WITHDRAWN';
+  }
+
   static bool _isCustomerOrderStatusData(Map<String, dynamic> data) {
     final normalized = _normalizeOrderData(data);
     final type = normalized['type']?.toString().toLowerCase() ?? '';
     final role = normalized['role']?.toString().toLowerCase() ?? '';
     final hasOrderId =
         normalized.containsKey('order_id') || normalized.containsKey('id');
+
+    if (type == 'flash_resale' || type == 'flash_resale_withdrawn') {
+      return false;
+    }
 
     return hasOrderId &&
         (role == 'customer' || type == 'customer_order_status');
@@ -856,6 +988,14 @@ class FirebaseNotificationService {
 
   static bool isCustomBroadcastPayload(Map<String, dynamic> data) {
     return _isCustomBroadcastData(data);
+  }
+
+  static bool isFlashResalePayload(Map<String, dynamic> data) {
+    return _isFlashResaleData(data);
+  }
+
+  static bool isFlashResaleWithdrawnPayload(Map<String, dynamic> data) {
+    return _isFlashResaleWithdrawnData(data);
   }
 
   static bool _isCustomBroadcastData(Map<String, dynamic> data) {

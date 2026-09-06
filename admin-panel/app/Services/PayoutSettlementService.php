@@ -3,10 +3,10 @@
 namespace App\Services;
 
 use App\Models\Payout;
+use App\Models\RestaurantOnboardingIncentive;
 use App\Models\Wallet;
 use App\Models\WalletTransaction;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Str;
 use RuntimeException;
 
 class PayoutSettlementService
@@ -48,6 +48,8 @@ class PayoutSettlementService
                 $this->releaseLockedFundsIfNeeded($lockedPayout, true);
             }
 
+            $this->syncOnboardingIncentives($lockedPayout, $status);
+
             $payout->setRawAttributes($lockedPayout->fresh()->getAttributes(), true);
         });
 
@@ -85,6 +87,8 @@ class PayoutSettlementService
             } elseif ($status === 'failed') {
                 $this->releaseLockedFundsIfNeeded($lockedPayout, true);
             }
+
+            $this->syncOnboardingIncentives($lockedPayout, $status);
 
             $payout->setRawAttributes($lockedPayout->fresh()->getAttributes(), true);
         });
@@ -206,6 +210,95 @@ class PayoutSettlementService
         $wallet->refresh();
     }
 
+    public function settlePartialCash(Payout $payout, float $amountPaid, array $meta = [], ?int $processedBy = null): string
+    {
+        return DB::transaction(function () use ($payout, $amountPaid, $meta, $processedBy) {
+            $lockedPayout = Payout::lockForUpdate()->findOrFail($payout->id);
+
+            if ($lockedPayout->status === 'completed') {
+                return 'completed';
+            }
+
+            $payee = $this->payeeForPayout($lockedPayout->loadMissing(['restaurant.owner', 'driver']));
+            if (! $payee) {
+                throw new RuntimeException('Payout recipient wallet could not be resolved.');
+            }
+
+            $wallet = Wallet::where('user_id', $payee->id)->lockForUpdate()->first();
+            if (! $wallet) {
+                throw new RuntimeException('Payout recipient wallet could not be resolved.');
+            }
+
+            $payoutAmount = (float) $lockedPayout->amount;
+            $alreadyPaid = (float) $lockedPayout->paid_amount;
+            $remaining = max(0, $payoutAmount - $alreadyPaid);
+            $amountPaid = min(max(0, $amountPaid), $remaining);
+
+            if ($amountPaid <= 0) {
+                throw new RuntimeException('This payout has no outstanding balance to settle.');
+            }
+
+            // Reservation-aware settlement (mirrors debitWalletIfNeeded): the
+            // portion already reserved at payout generation was ALREADY debited
+            // from wallet.balance and is held in locked_balance -- settling it is
+            // just releasing the lock, NOT a second balance debit. Only the part
+            // that was never reserved (legacy / manually created payouts) comes
+            // out of balance now. This prevents the double-debit that made a
+            // later payout for the same wallet look under-funded.
+            $fromReserved = min($amountPaid, max(0, (float) $wallet->locked_balance));
+            $fromBalance = round($amountPaid - $fromReserved, 2);
+
+            if ($fromReserved > 0) {
+                $this->releaseCompletedPayoutLockedFunds($wallet, $lockedPayout, $fromReserved);
+            }
+
+            if ($fromBalance > 0) {
+                if ((float) $wallet->balance < $fromBalance) {
+                    throw new RuntimeException('Vendor wallet does not have enough balance to settle this cash payout.');
+                }
+                $wallet->decrement('balance', $fromBalance);
+                $wallet->refresh();
+
+                WalletTransaction::create([
+                    'wallet_id' => $wallet->id,
+                    'user_id' => $wallet->user_id,
+                    'type' => 'debit',
+                    'amount' => $fromBalance,
+                    'balance_after' => $wallet->balance,
+                    'reference_type' => 'payout',
+                    'reference_id' => $lockedPayout->id,
+                    'description' => 'Cash payout settled from wallet balance',
+                    'created_by' => $processedBy,
+                    'meta' => array_merge(['source' => 'partial_cash_settlement'], $meta),
+                ]);
+            }
+
+            $newPaidAmount = $alreadyPaid + $amountPaid;
+            $isFullyPaid = $newPaidAmount >= $payoutAmount - 0.005;
+            $status = $isFullyPaid ? 'completed' : 'partially_paid';
+
+            $lockedPayout->update([
+                'paid_amount' => $newPaidAmount,
+                'status' => $status,
+                'processed_at' => $isFullyPaid ? ($lockedPayout->processed_at ?: now()) : $lockedPayout->processed_at,
+                'processed_by' => $processedBy ?: $lockedPayout->processed_by,
+                'gateway' => 'cash',
+                'transaction_id' => $meta['reference'] ?? $lockedPayout->transaction_id,
+                'gateway_reference_id' => $meta['reference'] ?? $lockedPayout->gateway_reference_id,
+                'gateway_status' => $isFullyPaid ? 'paid' : 'partially_paid',
+                'failure_reason' => null,
+            ]);
+
+            if ($status === 'completed') {
+                $this->syncOnboardingIncentives($lockedPayout, $status);
+            }
+
+            $payout->setRawAttributes($lockedPayout->fresh()->getAttributes(), true);
+
+            return $status;
+        });
+    }
+
     public function reserveFundsForRetry(Payout $payout): bool
     {
         return DB::transaction(function () use ($payout) {
@@ -226,7 +319,8 @@ class PayoutSettlementService
             if ($amountToReserve > 0 && ! $this->reserveFunds(
                 $lockedPayout,
                 $amountToReserve,
-                'Payout retry reserved'
+                'Payout retry reserved',
+                'payout_retry'
             )) {
                 return false;
             }
@@ -255,15 +349,15 @@ class PayoutSettlementService
                 - (float) $transactions->where('type', 'credit')->sum('amount');
 
             if ($netReserved < (float) $lockedPayout->amount) {
-                if (! str_starts_with((string) $lockedPayout->idempotency_key, 'manual_')
-                    && ! str_starts_with((string) $lockedPayout->idempotency_key, 'scheduled_')) {
-                    $lockedPayout->update(['idempotency_key' => 'manual_legacy_' . Str::uuid()]);
+                if ($lockedPayout->source === null) {
+                    $lockedPayout->update(['source' => 'legacy']);
                 }
 
                 if (! $this->reserveFunds(
                     $lockedPayout,
                     (float) $lockedPayout->amount - $netReserved,
-                    'Legacy payout funds reserved'
+                    'Legacy payout funds reserved',
+                    'legacy_reservation'
                 )) {
                     return false;
                 }
@@ -276,9 +370,9 @@ class PayoutSettlementService
         });
     }
 
-    public function reserveFunds(Payout $payout, float $amount, string $description = 'Payout reserved'): bool
+    public function reserveFunds(Payout $payout, float $amount, string $description = 'Payout reserved', string $metaSource = 'payout_retry'): bool
     {
-        return DB::transaction(function () use ($payout, $amount, $description) {
+        return DB::transaction(function () use ($payout, $amount, $description, $metaSource) {
             $amount = max(0, $amount);
             $payee = $this->payeeForPayout($payout->loadMissing(['restaurant.owner', 'driver']));
             if (! $payee) {
@@ -304,7 +398,7 @@ class PayoutSettlementService
                 'reference_id' => $payout->id,
                 'description' => $description,
                 'created_by' => auth()->id(),
-                'meta' => ['source' => 'payout_retry'],
+                'meta' => ['source' => $metaSource],
             ]);
 
             return true;
@@ -313,8 +407,10 @@ class PayoutSettlementService
 
     public function releaseLockedFundsIfNeeded(Payout $payout, bool $restoreBalance = false): void
     {
-        if (! str_starts_with((string) $payout->idempotency_key, 'manual_')
-            && ! str_starts_with((string) $payout->idempotency_key, 'scheduled_')) {
+        // Only skip when there is genuinely nothing to undo. A failure reversal
+        // ($restoreBalance = true) must always run, including for legacy
+        // (null-source) payouts, so money never stays stuck in locked_balance.
+        if ($payout->source === null && ! $restoreBalance) {
             return;
         }
 
@@ -349,6 +445,55 @@ class PayoutSettlementService
         }
     }
 
+
+    private function syncOnboardingIncentives(Payout $payout, string $status): void
+    {
+        if (! $payout->driver_id) {
+            return;
+        }
+
+        $baseQuery = RestaurantOnboardingIncentive::where('payout_id', $payout->id);
+        $onboardingIds = (clone $baseQuery)->pluck('restaurant_onboarding_id')->values()->all();
+
+        if ($onboardingIds === []) {
+            return;
+        }
+
+        if ($status === 'completed') {
+            (clone $baseQuery)->update([
+                'status' => RestaurantOnboardingIncentive::STATUS_PAID,
+                'paid_at' => now(),
+            ]);
+
+            \App\Models\RestaurantOnboarding::whereIn('id', $onboardingIds)->update([
+                'incentive_status' => RestaurantOnboardingIncentive::STATUS_PAID,
+            ]);
+
+            \App\Models\RestaurantOnboarding::with('driver')
+                ->whereIn('id', $onboardingIds)
+                ->get()
+                ->each(fn ($onboarding) => app(RestaurantOnboardingNotificationService::class)->driver(
+                    $onboarding,
+                    'Onboarding incentive paid',
+                    'Your restaurant onboarding incentive payout has been marked paid.',
+                    'restaurant_onboarding_incentive_paid'
+                ));
+
+            return;
+        }
+
+        if ($status === 'failed') {
+            (clone $baseQuery)->update([
+                'status' => RestaurantOnboardingIncentive::STATUS_EARNED,
+                'payout_id' => null,
+                'paid_at' => null,
+            ]);
+
+            \App\Models\RestaurantOnboarding::whereIn('id', $onboardingIds)->update([
+                'incentive_status' => RestaurantOnboardingIncentive::STATUS_EARNED,
+            ]);
+        }
+    }
     private function payeeForPayout(Payout $payout)
     {
         if ($payout->driver_id && $payout->driver) {

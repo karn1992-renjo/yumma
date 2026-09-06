@@ -18,6 +18,7 @@ use App\Models\User;
 use App\Rules\UniqueUserContactForRole;
 use App\Services\AutoAssignDriverService;
 use App\Services\BranchManagementService;
+use App\Services\CodReconciliationService;
 use App\Services\OrderStatusPushService;
 use App\Services\RefundService;
 use App\Services\ScratchCardService;
@@ -34,7 +35,8 @@ class BranchDashboardController extends Controller
 {
     public function __construct(
         private BranchManagementService $branches,
-        private RefundService $refundService
+        private RefundService $refundService,
+        private CodReconciliationService $cod
     )
     {
     }
@@ -447,7 +449,6 @@ class BranchDashboardController extends Controller
                 'cuisine' => $data['cuisine'] ?? [],
                 'is_open' => false,
                 'is_verified' => false,
-                'is_featured' => false,
             ]);
 
             $this->storeRestaurantImages($request, $restaurant);
@@ -640,6 +641,80 @@ class BranchDashboardController extends Controller
         return view('branch.drivers', compact('branch', 'drivers', 'capabilities'));
     }
 
+    public function cod(Request $request)
+    {
+        $branch = $this->currentBranch($request);
+        $this->authorizeBranch($request, 'branch.cod.view', ['view_wallet', 'manage_drivers']);
+
+        $search = $request->filled('search') ? trim((string) $request->search) : null;
+        $drivers = $this->cod->driverSummaries($branch->id, $search);
+        $totals = $this->cod->totals($branch->id);
+        $capabilities = $this->branchCapabilities($request);
+
+        return view('branch.cod', compact('branch', 'drivers', 'totals', 'search', 'capabilities'));
+    }
+
+    public function codSettle(Request $request)
+    {
+        $branch = $this->currentBranch($request);
+        $this->authorizeBranch($request, 'branch.cod.settle', ['view_wallet', 'manage_drivers']);
+
+        $data = $request->validate([
+            'driver_id' => ['required', 'integer', 'exists:users,id'],
+            'collected_amount' => ['required', 'numeric', 'min:0.01'],
+            'reference' => ['nullable', 'string', 'max:255'],
+        ]);
+
+        $driver = User::role('delivery_partner')
+            ->where('branch_id', $branch->id)
+            ->findOrFail($data['driver_id']);
+
+        $result = $this->cod->collectFromDriver(
+            $driver,
+            (float) $data['collected_amount'],
+            $request->user(),
+            $data['reference'] ?? null,
+            $branch->id
+        );
+
+        return back()->with('success', $this->codCollectionMessage($result));
+    }
+
+    public function codHistory(Request $request)
+    {
+        $branch = $this->currentBranch($request);
+        $this->authorizeBranch($request, 'branch.cod.view', ['view_wallet', 'manage_drivers']);
+
+        $transactions = $this->cod->historyQuery($branch->id)->paginate(25)->withQueryString();
+        $capabilities = $this->branchCapabilities($request);
+
+        return view('branch.cod-history', compact('branch', 'transactions', 'capabilities'));
+    }
+
+    public function codExport(Request $request)
+    {
+        $branch = $this->currentBranch($request);
+        $this->authorizeBranch($request, 'branch.cod.view', ['view_wallet', 'manage_drivers']);
+
+        $rows = $this->cod->historyQuery($branch->id)
+            ->get()
+            ->map(fn ($transaction) => [
+                optional($transaction->created_at)->format('Y-m-d H:i:s'),
+                $transaction->user?->name,
+                (float) $transaction->amount,
+                $transaction->description,
+                $transaction->creator?->name ?? 'System',
+            ]);
+
+        return Excel::download(new BranchCollectionExport($rows, [
+            'Date',
+            'Driver',
+            'Amount',
+            'Description',
+            'Settled By',
+        ]), 'branch-cod-reconciliation-' . now()->format('Y-m-d-His') . '.xlsx');
+    }
+
     public function createDriver(Request $request)
     {
         $branch = $this->currentBranch($request);
@@ -667,6 +742,9 @@ class BranchDashboardController extends Controller
             'vehicle_type' => $data['vehicle_type'],
             'vehicle_number' => $data['vehicle_number'],
             'license_number' => $data['license_number'],
+            'earning_mode' => ($data['earning_mode'] ?? null) ?: 'commission',
+            'monthly_salary' => $data['monthly_salary'] ?? null,
+            'salary_effective_from' => $data['salary_effective_from'] ?? null,
             'address' => $data['address'] ?? null,
             'delivery_area_id' => $data['delivery_area_id'] ?? null,
             'latitude' => $data['latitude'] ?? null,
@@ -715,6 +793,9 @@ class BranchDashboardController extends Controller
             'vehicle_type' => $data['vehicle_type'],
             'vehicle_number' => $data['vehicle_number'],
             'license_number' => $data['license_number'],
+            'earning_mode' => ($data['earning_mode'] ?? null) ?: 'commission',
+            'monthly_salary' => $data['monthly_salary'] ?? null,
+            'salary_effective_from' => $data['salary_effective_from'] ?? null,
             'address' => $data['address'] ?? null,
             'delivery_area_id' => $data['delivery_area_id'] ?? null,
             'latitude' => $data['latitude'] ?? null,
@@ -842,6 +923,42 @@ class BranchDashboardController extends Controller
         return view('branch.settlements', compact('branch', 'settlements'));
     }
 
+    /**
+     * Tax view scoped to this branch: every tax_ledger_entries row for an order
+     * routed through the branch, grouped by kind and period, plus its TDS/TCS
+     * withholding. When order.branch_id is set the branch is the tax entity.
+     */
+    public function taxSettlements(Request $request)
+    {
+        $branch = $this->currentBranch($request);
+        $this->authorizeBranch($request, 'branch.settlements.view', ['submit_settlement_requests', 'view_wallet']);
+
+        $from = $request->filled('from') ? \Illuminate\Support\Carbon::parse($request->input('from'))->startOfDay() : now()->startOfMonth();
+        $to = $request->filled('to') ? \Illuminate\Support\Carbon::parse($request->input('to'))->endOfDay() : now()->endOfDay();
+
+        $byKind = \App\Models\TaxLedgerEntry::query()
+            ->whereBetween('tax_ledger_entries.created_at', [$from, $to])
+            ->whereHas('order', fn ($q) => $q->where('branch_id', $branch->id))
+            ->selectRaw('kind, period, count(*) as n, sum(taxable_value) as taxable, sum(cgst) as cgst, sum(sgst) as sgst, sum(amount) as amount')
+            ->groupBy('kind', 'period')
+            ->orderBy('period', 'desc')
+            ->get()
+            ->groupBy('kind');
+
+        $config = app(\App\Services\Tax\TaxConfig::class);
+
+        return view('branch.tax-settlements', [
+            'branch' => $branch,
+            'byKind' => $byKind,
+            'from' => $from->toDateString(),
+            'to' => $to->toDateString(),
+            'symbol' => \App\Models\AppSetting::sanitizedCurrencySymbol(),
+            'decimals' => \App\Models\AppSetting::currencyDecimals(),
+            'gstOn' => $config->gstEnabled(),
+            'branchTan' => $branch->tan,
+        ]);
+    }
+
     public function storeSettlement(Request $request)
     {
         $branch = $this->currentBranch($request);
@@ -963,6 +1080,7 @@ class BranchDashboardController extends Controller
             'address' => ['nullable', 'string', 'max:1000'],
             'gst_number' => ['nullable', 'string', 'max:100'],
             'pan_number' => ['nullable', 'string', 'max:100'],
+            'tan' => ['nullable', 'string', 'max:15'],
             'trade_license' => ['nullable', 'string', 'max:100'],
             'bank_details.account_holder_name' => ['nullable', 'string', 'max:255'],
             'bank_details.bank_name' => ['nullable', 'string', 'max:255'],
@@ -972,6 +1090,13 @@ class BranchDashboardController extends Controller
             'bank_details.upi_id' => ['nullable', 'string', 'max:100'],
             'bank_details.gateway_account_id' => ['nullable', 'string', 'max:255'],
         ]);
+
+        if (! empty($data['tan']) && ! \App\Services\Tax\TaxConfig::validTan($data['tan'])) {
+            return back()->withInput()->withErrors(['tan' => 'Enter a valid 10-character TAN (AAAA99999A).']);
+        }
+        if (! empty($data['tan'])) {
+            $data['tan'] = strtoupper(trim($data['tan']));
+        }
 
         $old = $branch->only(['name', 'owner_name', 'owner_email', 'owner_phone', 'bank_details']);
         $branch->update($data);
@@ -1135,6 +1260,8 @@ class BranchDashboardController extends Controller
             'drivers_view' => $this->branchCan($request, 'branch.drivers.view', ['manage_drivers']),
             'drivers_create' => $this->branchCan($request, 'branch.drivers.create', ['manage_drivers']),
             'drivers_edit' => $this->branchCan($request, 'branch.drivers.edit', ['manage_drivers']),
+            'cod_view' => $this->branchCan($request, 'branch.cod.view', ['view_wallet', 'manage_drivers']),
+            'cod_settle' => $this->branchCan($request, 'branch.cod.settle', ['view_wallet', 'manage_drivers']),
             'settings_view' => $this->branchCan($request, 'branch.settings.view', ['manage_staff']),
             'settings_update' => $this->branchCan($request, 'branch.settings.update', ['manage_staff']),
             'staff_create' => $this->branchCan($request, 'branch.staff.create', ['manage_staff']),
@@ -1142,6 +1269,31 @@ class BranchDashboardController extends Controller
         ];
     }
 
+    private function codCollectionMessage(array $result): string
+    {
+        $currencySymbol = AppSetting::sanitizedCurrencySymbol();
+        $decimals = AppSetting::currencyDecimals();
+        $message = sprintf(
+            'Collected %s%s. %s%s applied to COD balance across %d order(s). Remaining COD balance: %s%s.',
+            $currencySymbol,
+            number_format($result['amount'] ?? 0, $decimals),
+            $currencySymbol,
+            number_format($result['cod_applied_amount'] ?? 0, $decimals),
+            $result['touched_orders'] ?? 0,
+            $currencySymbol,
+            number_format($result['balance_after'] ?? 0, $decimals)
+        );
+
+        if (($result['excess_credit_amount'] ?? 0) > 0) {
+            $message .= sprintf(
+                ' Extra %s%s credited to driver wallet.',
+                $currencySymbol,
+                number_format($result['excess_credit_amount'], $decimals)
+            );
+        }
+
+        return $message;
+    }
     private function branchPermissionCatalog(): array
     {
         return [
@@ -1156,6 +1308,8 @@ class BranchDashboardController extends Controller
             'branch.drivers.view' => 'View Drivers',
             'branch.drivers.create' => 'Create Drivers',
             'branch.drivers.edit' => 'Edit Drivers',
+            'branch.cod.view' => 'View COD Management',
+            'branch.cod.settle' => 'Settle Driver COD Cash',
             'branch.zones.view' => 'View Territories',
             'branch.wallet.view' => 'View Wallet',
             'branch.wallet.export' => 'Export Wallet',
@@ -1357,6 +1511,9 @@ class BranchDashboardController extends Controller
             'vehicle_type' => ['required', 'string', 'max:50'],
             'vehicle_number' => ['required', 'string', 'max:50'],
             'license_number' => ['required', 'string', 'max:100'],
+            'earning_mode' => ['nullable', 'in:commission,salary'],
+            'monthly_salary' => ['nullable', 'numeric', 'min:0', 'required_if:earning_mode,salary'],
+            'salary_effective_from' => ['nullable', 'date'],
             'address' => ['nullable', 'string', 'max:1000'],
             'latitude' => ['nullable', 'numeric', 'between:-90,90'],
             'longitude' => ['nullable', 'numeric', 'between:-180,180'],
@@ -1557,3 +1714,4 @@ class BranchDashboardController extends Controller
         ];
     }
 }
+

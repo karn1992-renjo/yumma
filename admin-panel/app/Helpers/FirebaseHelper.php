@@ -3,6 +3,8 @@
 namespace App\Helpers;
 
 use App\Models\AppSetting;
+use App\Models\User;
+use Kreait\Firebase\Exception\Messaging\NotFound;
 use Kreait\Firebase\Messaging\CloudMessage;
 use Kreait\Firebase\Messaging\Notification;
 use Kreait\Firebase\Factory;
@@ -98,14 +100,21 @@ class FirebaseHelper
             }
                 
             $this->messaging->send($message);
-            
+
             return true;
+        } catch (NotFound $e) {
+            // Token is syntactically valid but unknown to Firebase -- the app
+            // was uninstalled or the token was replaced. Stop retrying it.
+            $deadToken = $e->token() ?? $token;
+            \Log::warning("Firebase send failed: dead token pruned.", ['token' => $deadToken]);
+            $this->pruneDeadTokens([$deadToken]);
+            return false;
         } catch (\Exception $e) {
             \Log::error("Firebase send failed: " . $e->getMessage());
             return false;
         }
     }
-    
+
     public function sendToTopic($topic, $title, $body, $data = [])
     {
         if (! $this->isConfigured()) {
@@ -201,12 +210,18 @@ class FirebaseHelper
 
         $success = 0;
         $failure = 0;
+        $deadTokens = [];
 
         try {
             foreach (array_chunk($tokens, 500) as $tokenChunk) {
                 $report = $this->messaging->sendMulticast($message, $tokenChunk);
                 $success += $report->successes()->count();
                 $failure += $report->failures()->count();
+                $deadTokens = array_merge($deadTokens, $report->unknownTokens(), $report->invalidTokens());
+            }
+
+            if (! empty($deadTokens)) {
+                $this->pruneDeadTokens($deadTokens);
             }
 
             return [
@@ -222,6 +237,31 @@ class FirebaseHelper
                 'failure' => max(count($tokens), $failure),
                 'failure_reason' => $e->getMessage(),
             ];
+        }
+    }
+
+    /**
+     * Clears dead FCM tokens (unregistered/invalid per Firebase's own
+     * response) from whichever of the four token columns holds them, so
+     * they stop being retried on every future send. A token's app/role
+     * isn't known at this layer, so all four columns are checked.
+     */
+    private function pruneDeadTokens(array $tokens): void
+    {
+        $tokens = array_values(array_unique(array_filter($tokens)));
+        if (empty($tokens)) {
+            return;
+        }
+
+        $columns = ['fcm_token', 'customer_fcm_token', 'restaurant_fcm_token', 'driver_fcm_token'];
+        $prunedTotal = 0;
+
+        foreach ($columns as $column) {
+            $prunedTotal += User::whereIn($column, $tokens)->update([$column => null]);
+        }
+
+        if ($prunedTotal > 0) {
+            \Log::info('Firebase: pruned dead FCM tokens.', ['tokens' => count($tokens), 'rows_updated' => $prunedTotal]);
         }
     }
 

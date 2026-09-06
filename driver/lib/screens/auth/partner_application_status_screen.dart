@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'a1paso_auth_widgets.dart';
 
 import '../../services/partner_application_service.dart';
 
@@ -179,7 +180,7 @@ class _PartnerApplicationStatusScreenState
                       icon: const Icon(Icons.refresh_rounded),
                     ),
                     filled: true,
-                    fillColor: Colors.white,
+                    fillColor: A1PasoAuthColors.surface,
                     enabledBorder: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(18),
                       borderSide: const BorderSide(color: _line),

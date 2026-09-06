@@ -26,6 +26,13 @@ class BulkPayoutService
 
             $provider = $payout->gateway ?: PayoutSetting::activeGateway();
             if (!$this->gatewayService->supportsAutomatedProcessing($provider)) {
+                $this->settlementService->releaseLockedFundsIfNeeded(
+                    $payout->loadMissing(['restaurant.owner', 'driver']), true
+                );
+                $payout->update([
+                    'status' => 'failed',
+                    'failure_reason' => $this->gatewayService->unsupportedAutomationMessage($provider),
+                ]);
                 $report['failed']++;
                 $report['items'][$payout->id] = [
                     'success' => false,
@@ -37,6 +44,17 @@ class BulkPayoutService
             if (! $this->settlementService->ensureFundsReserved(
                 $payout->loadMissing(['restaurant.owner', 'driver'])
             )) {
+                // Don't clobber a payout a concurrent worker already advanced.
+                $fresh = $payout->fresh();
+                if ($fresh && $fresh->status === 'pending') {
+                    $this->settlementService->releaseLockedFundsIfNeeded(
+                        $payout->loadMissing(['restaurant.owner', 'driver']), true
+                    );
+                    $payout->update([
+                        'status' => 'failed',
+                        'failure_reason' => 'Insufficient wallet balance to reserve payout.',
+                    ]);
+                }
                 $report['failed']++;
                 $report['items'][$payout->id] = [
                     'success' => false,

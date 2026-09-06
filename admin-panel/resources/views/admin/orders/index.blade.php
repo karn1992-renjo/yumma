@@ -13,6 +13,7 @@
         'picked_up' => ['label' => 'Picked Up', 'icon' => 'person-biking', 'tone' => 'dark'],
         'on_the_way' => ['label' => 'On The Way', 'icon' => 'route', 'tone' => 'info'],
         'delivered' => ['label' => 'Delivered', 'icon' => 'house-circle-check', 'tone' => 'success'],
+        'delivery_failed' => ['label' => 'Delivery Failed', 'icon' => 'triangle-exclamation', 'tone' => 'dark'],
         'cancelled' => ['label' => 'Cancelled', 'icon' => 'ban', 'tone' => 'danger'],
     ];
 
@@ -36,10 +37,15 @@
         ['label' => 'Delivered', 'value' => number_format($statusCounts['delivered'] ?? 0), 'icon' => 'circle-check', 'tone' => '#10b981'],
         ['label' => 'Cancelled', 'value' => number_format($statusCounts['cancelled'] ?? 0), 'icon' => 'circle-xmark', 'tone' => '#ef4444'],
     ];
+    $isOrderQueue = request('status') === 'action_required';
+    $orderPageTitle = $isOrderQueue ? 'Order Queue' : 'Order List';
+    $orderPageSubtitle = $isOrderQueue
+        ? 'Pending and confirmed orders ready for action.'
+        : 'All orders and order history.';
 @endphp
 
 @section('title', 'Orders')
-@section('header', 'Order Management')
+@section('header', $orderPageTitle)
 
 @section('styles')
 <style>
@@ -435,16 +441,16 @@
 <div class="ao-shell">
     <section class="ao-toolbar ao-panel">
         <div>
-            <h1 class="ao-title">Order Management</h1>
+            <h1 class="ao-title">{{ $orderPageTitle }}</h1>
             <div class="ao-subtitle">
-                {{ number_format($orders->total()) }} orders found
+                {{ $orderPageSubtitle }} {{ number_format($orders->total()) }} orders found
                 @if(request()->hasAny(['search', 'status', 'restaurant_id', 'date_from', 'date_to', 'payment_status', 'refund_status']))
                     with current filters applied
                 @endif
             </div>
         </div>
         <div class="ao-toolbar-actions">
-            <a href="{{ route('admin.orders.statistics') }}" class="btn btn-outline-primary">
+            <a href="{{ route('admin.analytics') }}" class="btn btn-outline-primary">
                 <i class="fas fa-chart-line me-2"></i>Analytics
             </a>
             <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#exportModal">
@@ -488,6 +494,7 @@
                     <label class="form-label fw-bold">Status</label>
                     <select name="status" class="form-select">
                         <option value="all">All Status</option>
+                            <option value="action_required" {{ request('status') === 'action_required' ? 'selected' : '' }}>Needs Action</option>
                         @foreach($statusMeta as $status => $meta)
                             <option value="{{ $status }}" {{ request('status') === $status ? 'selected' : '' }}>{{ $meta['label'] }}</option>
                         @endforeach
@@ -536,8 +543,8 @@
     <section class="ao-panel">
         <div class="ao-panel-header">
             <div>
-                <h2 class="ao-panel-title">Order Queue</h2>
-                <div class="ao-panel-subtitle">Select orders for bulk updates or open details for full operations.</div>
+                <h2 class="ao-panel-title">{{ $orderPageTitle }}</h2>
+                <div class="ao-panel-subtitle">{{ $isOrderQueue ? 'New and confirmed orders need attention here.' : 'Browse every order, apply filters, or open details.' }}</div>
             </div>
             <button class="btn btn-outline-primary" id="bulkStatusBtn" onclick="showBulkStatusModal()" disabled>
                 <i class="fas fa-pen-to-square me-2"></i>Bulk Update
@@ -604,6 +611,19 @@
                         <span class="ao-chip {{ $paymentInfo['tone'] }}">
                             <i class="fas fa-{{ $paymentInfo['icon'] }}"></i>{{ $paymentInfo['label'] }}
                         </span>
+                        @if($order->resale_status)
+                            @php
+                                $resaleMeta = [
+                                    'offered' => ['label' => 'Resale Offered', 'icon' => 'bolt', 'tone' => 'warning'],
+                                    'claimed' => ['label' => 'Resale Claimed', 'icon' => 'check', 'tone' => 'success'],
+                                    'expired' => ['label' => 'Awaiting Return', 'icon' => 'hourglass-end', 'tone' => 'dark'],
+                                    'returned' => ['label' => 'Returned to Restaurant', 'icon' => 'store', 'tone' => 'secondary'],
+                                ][$order->resale_status] ?? ['label' => ucfirst($order->resale_status), 'icon' => 'bolt', 'tone' => 'secondary'];
+                            @endphp
+                            <span class="ao-chip {{ $resaleMeta['tone'] }}">
+                                <i class="fas fa-{{ $resaleMeta['icon'] }}"></i>{{ $resaleMeta['label'] }}
+                            </span>
+                        @endif
                     </div>
 
                     <div class="ao-actions">
@@ -692,6 +712,7 @@
                             <label class="form-label fw-bold">Status</label>
                             <select name="status" class="form-select">
                                 <option value="all">All Orders</option>
+                                <option value="action_required" {{ request('status') === 'action_required' ? 'selected' : '' }}>Needs Action</option>
                                 @foreach($statusMeta as $status => $meta)
                                     <option value="{{ $status }}" {{ request('status') === $status ? 'selected' : '' }}>{{ $meta['label'] }}</option>
                                 @endforeach

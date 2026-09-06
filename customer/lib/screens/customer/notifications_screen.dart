@@ -4,6 +4,7 @@ import 'package:flutter_lucide/flutter_lucide.dart';
 import '../../config/api_constants.dart';
 import '../../services/api_service.dart';
 import '../../theme/foodflow_theme.dart';
+import '../../utils/notification_route_resolver.dart';
 import '../../widgets/common/app_skeleton.dart';
 import '../../widgets/customer/profile_screen_chrome.dart';
 
@@ -87,15 +88,39 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     final data = item['data'] is Map
         ? Map<String, dynamic>.from(item['data'] as Map)
         : <String, dynamic>{};
-    final deepLink = data['deep_link']?.toString();
-    final orderId = int.tryParse('${data['order_id'] ?? data['id'] ?? ''}');
 
-    if (deepLink == '/support' || '${data['type']}'.contains('support')) {
-      await Navigator.pushNamed(context, '/support');
-    } else if (orderId != null) {
+    final route = resolveNotificationDeepLink(data);
+    if (route != null) {
+      await Navigator.pushNamed(context, route.name, arguments: route.arguments);
+      return;
+    }
+
+    final orderId = int.tryParse('${data['order_id'] ?? data['id'] ?? ''}');
+    if (orderId != null) {
       await Navigator.pushNamed(context, '/order/track', arguments: orderId);
-    } else if (deepLink != null && deepLink.startsWith('/')) {
-      await Navigator.pushNamed(context, deepLink);
+    }
+  }
+
+  String _idOf(Map<String, dynamic> item) =>
+      '${item['id'] ?? item['notification_id'] ?? ''}';
+
+  Future<void> _deleteOne(Map<String, dynamic> item) async {
+    final id = _idOf(item);
+    setState(() => _notifications = _notifications
+        .where((e) => _idOf(e) != id)
+        .toList(growable: false));
+    if (id.isEmpty) return;
+    try {
+      await _api.post(
+        ApiConstants.deleteNotification(id),
+        data: const {'target_app': 'customer'},
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not remove that notification.')),
+      );
+      _load(forceRefresh: true);
     }
   }
 
@@ -140,9 +165,9 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
 
     setState(() => _clearing = true);
     try {
-      await _api.delete(
-        ApiConstants.notifications,
-        queryParams: const {'target_app': 'customer'},
+      await _api.post(
+        ApiConstants.clearNotifications,
+        data: const {'target_app': 'customer'},
       );
       if (!mounted) return;
       setState(() => _notifications = const []);
@@ -332,7 +357,25 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
         final body = '${data['body'] ?? data['message'] ?? ''}';
         final unread = item['read_at'] == null;
 
-        return Padding(
+        return Dismissible(
+          key: ValueKey('notif_${_idOf(item)}_${index - 2}'),
+          direction: DismissDirection.endToStart,
+          onDismissed: (_) => _deleteOne(item),
+          background: Container(
+            margin: const EdgeInsets.only(bottom: 12),
+            alignment: Alignment.centerRight,
+            padding: const EdgeInsets.only(right: 24),
+            decoration: BoxDecoration(
+              color: profileAccentColor(context).withOpacity(0.12),
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Icon(
+              LucideIcons.trash_2,
+              color: profileAccentColor(context),
+              size: 22,
+            ),
+          ),
+          child: Padding(
           padding: const EdgeInsets.only(bottom: 12),
           child: InkWell(
             onTap: () => _open(item),
@@ -394,6 +437,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                 ],
               ),
             ),
+          ),
           ),
         );
       },

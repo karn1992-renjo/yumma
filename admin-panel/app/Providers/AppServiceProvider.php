@@ -4,8 +4,12 @@ namespace App\Providers;
 
 use App\Models\AppSetting;
 use App\Services\MediaStorage;
+use Illuminate\Cache\RateLimiting\Limit;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Broadcast;
 use Illuminate\Support\Facades\Config;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\View;
 use Illuminate\Support\ServiceProvider;
@@ -25,7 +29,24 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
-        Broadcast::routes(['middleware' => ['auth:sanctum']]);
+        $this->registerApiRateLimiter();
+
+        $this->registerSqliteHaversineFunctions();
+
+        \App\Models\User::observe(\App\Observers\UserIntegrationObserver::class);
+
+        // The admin panel's Echo client (resources/js/bootstrap.js) authenticates
+        // via the normal Blade session cookie, not a Sanctum bearer token -- and
+        // EnsureFrontendRequestsAreStateful is never applied anywhere in this app,
+        // so 'auth:sanctum' alone can never recognize that session (confirmed: the
+        // sanctum guard always returns false for a session-only request here),
+        // making every admin private-channel subscription (gig-operations,
+        // ai-activity) permanently fail auth. The Flutter apps authenticate
+        // channels through the separate api/broadcasting/auth route in
+        // routes/api.php (Sanctum bearer token), so this route is exclusively
+        // used by the admin panel and can safely use the same session guard
+        // every other /admin/* route already uses.
+        Broadcast::routes(['middleware' => ['web', 'auth']]);
         require base_path('routes/channels.php');
 
         try {
@@ -56,7 +77,7 @@ class AppServiceProvider extends ServiceProvider
             ];
             $firebaseEnabled = filter_var(AppSetting::getValue('firebase_enabled', '0'), FILTER_VALIDATE_BOOLEAN);
             $googleMapsApiKey = AppSetting::getValue('google_maps_api_key', AppSetting::getValue('google_maps_key', ''));
-            $defaultDeliveryRadius = AppSetting::getValue('default_delivery_radius', 10);
+            $defaultDeliveryRadius = AppSetting::defaultDeliveryRadius();
             $firebaseConfig = [
                 'api_key' => AppSetting::getValue('firebase_api_key', ''),
                 'auth_domain' => AppSetting::getValue('firebase_auth_domain', ''),
@@ -94,7 +115,7 @@ class AppServiceProvider extends ServiceProvider
                 'scheme' => Config::get('broadcasting.connections.pusher.options.scheme', 'https'),
             ];
             $googleMapsApiKey = '';
-            $defaultDeliveryRadius = 10;
+            $defaultDeliveryRadius = null;
             $firebaseConfig = [
                 'api_key' => '',
                 'auth_domain' => '',
@@ -169,6 +190,62 @@ class AppServiceProvider extends ServiceProvider
         View::share(compact('appName', 'primaryColor', 'primaryDark', 'primaryLight', 'secondaryColor', 'googleMapsApiKey', 'defaultDeliveryRadius', 'currencySymbol', 'currencyDecimals'));
     }
 
+    /**
+     * Global fallback rate limit for the "api" middleware group.
+     *
+     * Applied via $middleware->throttleApi() in bootstrap/app.php. Counts
+     * requests per authenticated user (falling back to client IP for guests),
+     * so one abusive token or IP cannot exhaust capacity for everyone. Routes
+     * that declare their own throttle:x,y (OTP, payments, verification, ...)
+     * keep those stricter limits on top of this ceiling.
+     */
+    protected function registerApiRateLimiter(): void
+    {
+        $perMinute = (int) Config::get('api.rate_limit', 240);
+
+        RateLimiter::for('api', function (Request $request) use ($perMinute) {
+            if ($perMinute <= 0) {
+                return Limit::none();
+            }
+
+            $key = $request->user()?->getAuthIdentifier()
+                ? 'api|user:' . $request->user()->getAuthIdentifier()
+                : 'api|ip:' . $request->ip();
+
+            return Limit::perMinute($perMinute)->by($key)->response(function ($request, array $headers) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Too many requests. Please slow down and try again shortly.',
+                    'error' => 'ThrottleRequestsException',
+                ], 429, $headers);
+            });
+        });
+    }
+
+    /**
+     * MySQL (production) has ACOS/COS/SIN/RADIANS natively, so the
+     * haversine distance queries (Restaurant::scopeNearby et al.) work
+     * there unmodified. SQLite (local dev, database.sqlite) has none of
+     * these, so those same queries 500 with "no such function: acos".
+     * Register them as PDO UDFs so the identical SQL runs on both drivers.
+     */
+    protected function registerSqliteHaversineFunctions(): void
+    {
+        if (Config::get('database.default') !== 'sqlite') {
+            return;
+        }
+
+        try {
+            $pdo = DB::connection()->getPdo();
+            $pdo->sqliteCreateFunction('acos', fn ($x) => acos($x), 1);
+            $pdo->sqliteCreateFunction('cos', fn ($x) => cos($x), 1);
+            $pdo->sqliteCreateFunction('sin', fn ($x) => sin($x), 1);
+            $pdo->sqliteCreateFunction('radians', fn ($x) => deg2rad($x), 1);
+        } catch (\Throwable $e) {
+            // Non-sqlite PDO driver or no DB connection yet -- nothing to do.
+        }
+    }
+
     protected function shadeColor(string $hex, int $percent): string
     {
         $hex = ltrim($hex, '#');
@@ -187,3 +264,4 @@ class AppServiceProvider extends ServiceProvider
         return sprintf('#%02x%02x%02x', $r, $g, $b);
     }
 }
+

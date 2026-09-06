@@ -16,6 +16,7 @@ class GigIncentive extends Model
         'approval_status',
         'surge_amount',
         'surge_multiplier',
+        'zone_surge_bonus',
         'total_earned',
         'orders_completed',
         'active_minutes',
@@ -45,6 +46,7 @@ class GigIncentive extends Model
         'total_earned' => 'decimal:2',
         'surge_multiplier' => 'decimal:2',
         'surge_amount' => 'decimal:2',
+        'zone_surge_bonus' => 'decimal:2',
     ];
     
     public function gig()

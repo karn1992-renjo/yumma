@@ -90,6 +90,9 @@ class DriverController extends Controller
             'vehicle_type' => 'required|string',
             'vehicle_number' => 'required|string',
             'license_number' => 'required|string',
+            'earning_mode' => 'nullable|in:commission,salary',
+            'monthly_salary' => 'nullable|numeric|min:0|required_if:earning_mode,salary',
+            'salary_effective_from' => 'nullable|date',
             'address' => 'nullable|string|max:1000',
             'latitude' => 'nullable|numeric|between:-90,90',
             'longitude' => 'nullable|numeric|between:-180,180',
@@ -113,6 +116,9 @@ class DriverController extends Controller
             'vehicle_type' => $request->vehicle_type,
             'vehicle_number' => $request->vehicle_number,
             'license_number' => $request->license_number,
+            'earning_mode' => $request->earning_mode ?: 'commission',
+            'monthly_salary' => $request->monthly_salary,
+            'salary_effective_from' => $request->salary_effective_from,
             'address' => $request->address,
             'latitude' => $request->latitude,
             'longitude' => $request->longitude,
@@ -160,19 +166,14 @@ class DriverController extends Controller
             ->take(20)
             ->get();
 
-        $pendingCodQuery = Order::query()
-            ->where('driver_id', $driver->id)
-            ->where('status', 'delivered')
-            ->where(function ($query) {
-                $query->where('delivery_payment_mode', 'cod')
-                    ->orWhere('payment_method', 'cod');
-            })
-            ->where('cash_collected_amount', '>', 0)
-            ->whereNull('cod_deposited_at');
+        $pendingCodQuery = app(\App\Services\CodReconciliationService::class)
+            ->pendingOrdersQuery(null, $driver->id);
         $pendingCodOrders = (clone $pendingCodQuery)
             ->latest('cash_collected_at')
-            ->get(['id', 'order_number', 'cash_collected_amount', 'cash_collected_at']);
-        $pendingCodAmount = (float) $pendingCodOrders->sum('cash_collected_amount');
+            ->get(['id', 'order_number', 'cash_collected_amount', 'cash_collected_at', 'total', 'cod_collected_from_driver_amount']);
+        $pendingCodAmount = round((float) (clone $pendingCodQuery)
+            ->selectRaw('COALESCE(SUM(' . \App\Services\CodReconciliationService::CASH_IN_HAND_EXPR . '), 0) as amount')
+            ->value('amount'), 2);
         
         $globalMaxActiveOrders = (int) AppSetting::getValue('max_active_orders_per_driver', 1);
         
@@ -207,6 +208,11 @@ class DriverController extends Controller
             'vehicle_type' => 'required|string',
             'vehicle_number' => 'required|string',
             'license_number' => 'required|string',
+            'earning_mode' => 'required|in:commission,salary',
+            'monthly_salary' => 'nullable|numeric|min:0|required_if:earning_mode,salary',
+            'salary_effective_from' => 'nullable|date',
+            'pan' => 'nullable|string|max:15',
+            'tax_deductee_type' => 'nullable|in:individual,company',
             'address' => 'nullable|string|max:1000',
             'latitude' => 'nullable|numeric|between:-90,90',
             'longitude' => 'nullable|numeric|between:-180,180',
@@ -295,74 +301,13 @@ class DriverController extends Controller
     {
         $driver = User::role('delivery_partner')->findOrFail($id);
 
-        $settled = DB::transaction(function () use ($driver) {
-            $orders = Order::query()
-                ->where('driver_id', $driver->id)
-                ->where('status', 'delivered')
-                ->where(function ($query) {
-                    $query->where('delivery_payment_mode', 'cod')
-                        ->orWhere('payment_method', 'cod');
-                })
-                ->where('cash_collected_amount', '>', 0)
-                ->whereNull('cod_deposited_at')
-                ->lockForUpdate()
-                ->get();
+        $settled = app(\App\Services\CodReconciliationService::class)
+            ->settleForDriver($driver, auth()->user());
 
-            if ($orders->isEmpty()) {
-                return ['count' => 0, 'amount' => 0.0];
-            }
+        $ordersCount = (int) ($settled['orders'] ?? 0);
+        $amount = (float) ($settled['amount'] ?? 0);
 
-            $wallet = Wallet::where('user_id', $driver->id)->lockForUpdate()->first()
-                ?: Wallet::create([
-                    'user_id' => $driver->id,
-                    'balance' => 0,
-                    'locked_balance' => 0,
-                    'currency' => strtoupper(AppSetting::getValue('currency_code', 'INR') ?: 'INR'),
-                    'is_active' => true,
-                ]);
-
-            $settledCount = 0;
-            $settledAmount = 0.0;
-
-            foreach ($orders as $order) {
-                $alreadyCredited = WalletTransaction::query()
-                    ->where('wallet_id', $wallet->id)
-                    ->where('reference_type', 'driver_cod_deposit')
-                    ->where('reference_id', $order->id)
-                    ->exists();
-
-                $amount = round((float) $order->cash_collected_amount, 2);
-                if (! $alreadyCredited && $amount > 0) {
-                    $wallet->increment('balance', $amount);
-                    $wallet->refresh();
-
-                    WalletTransaction::create([
-                        'wallet_id' => $wallet->id,
-                        'user_id' => $driver->id,
-                        'type' => 'credit',
-                        'amount' => $amount,
-                        'balance_after' => $wallet->balance,
-                        'reference_type' => 'driver_cod_deposit',
-                        'reference_id' => $order->id,
-                        'description' => 'COD cash deposited for order #' . ($order->order_number ?? $order->id),
-                        'created_by' => auth()->id(),
-                        'meta' => ['source' => 'admin_cash_collection'],
-                    ]);
-
-                    $settledCount++;
-                    $settledAmount += $amount;
-                }
-
-                $order->forceFill([
-                    'cod_reconciliation_status' => 'deposited',
-                    'cod_deposited_at' => now(),
-                ])->save();
-            }
-
-            return ['count' => $settledCount, 'amount' => $settledAmount];
-        });
-
-        if ($settled['count'] === 0) {
+        if ($ordersCount === 0 && $amount <= 0) {
             return redirect()->route('admin.drivers.show', $driver->id)
                 ->with('info', 'There is no unsettled COD cash for this driver.');
         }
@@ -370,8 +315,8 @@ class DriverController extends Controller
         return redirect()->route('admin.drivers.show', $driver->id)->with(
             'success',
             'Collected ' . AppSetting::sanitizedCurrencySymbol()
-                . number_format($settled['amount'], AppSetting::currencyDecimals())
-                . ' from ' . $settled['count'] . ' COD order(s).'
+                . number_format($amount, AppSetting::currencyDecimals())
+                . ' from ' . $ordersCount . ' COD order(s).'
         );
     }
 

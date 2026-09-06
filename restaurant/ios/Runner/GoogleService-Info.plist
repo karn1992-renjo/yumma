@@ -15,7 +15,7 @@
 	<key>PLIST_VERSION</key>
 	<string>1</string>
 	<key>BUNDLE_ID</key>
-	<string>com.renjo.restro.android</string>
+	<string>com.adgraph.yumma_vendor</string>
 	<key>PROJECT_ID</key>
 	<string>PLACE_PROJECT_ID_HERE</string>
 	<key>STORAGE_BUCKET</key>

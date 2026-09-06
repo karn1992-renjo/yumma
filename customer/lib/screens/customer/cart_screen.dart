@@ -39,7 +39,6 @@ class _CartScreenState extends State<CartScreen> {
   Timer? _rewardDebounce;
   double? _summaryDiscount;
   double? _summaryEmbeddedItemDiscount;
-  double? _summaryTotal;
 
   @override
   void initState() {
@@ -61,9 +60,10 @@ class _CartScreenState extends State<CartScreen> {
     final cartSignature = _cartSignature(cart);
     final hasFreshSummary = _rewardCartSignature == cartSignature;
     final localDiscount = cart.promotionDisplayDiscount;
-    final localTotal = cart.displayTotal;
-    final double checkoutTotal =
-        hasFreshSummary ? (_summaryTotal ?? localTotal) : localTotal;
+    // Cart is a review screen — it only shows the item total. Taxes, delivery
+    // and any coupon adjustment are calculated on the checkout screen, so we
+    // never render a grand total here (it can't be computed correctly without
+    // a delivery address).
     final double checkoutDiscount = hasFreshSummary
         ? ((_summaryDiscount ?? 0) + (_summaryEmbeddedItemDiscount ?? 0))
         : localDiscount;
@@ -122,9 +122,8 @@ class _CartScreenState extends State<CartScreen> {
       bottomNavigationBar: cart.totalCartItemCount == 0
           ? null
           : _CartBottomBar(
-              total: checkoutTotal,
+              itemTotal: cart.displaySubtotal,
               discount: checkoutDiscount,
-              itemCount: cart.paidItemCount,
               primary: primary,
               onAddMore: widget.onAddMore ?? _addMore,
               onCheckout: _openCheckout,
@@ -180,7 +179,6 @@ class _CartScreenState extends State<CartScreen> {
             _rewardCartSignature = null;
             _summaryDiscount = null;
             _summaryEmbeddedItemDiscount = null;
-            _summaryTotal = null;
           });
         });
       }
@@ -223,7 +221,6 @@ class _CartScreenState extends State<CartScreen> {
         _rewardCartSignature = null;
         _summaryDiscount = null;
         _summaryEmbeddedItemDiscount = null;
-        _summaryTotal = null;
       });
       return;
     }
@@ -299,7 +296,6 @@ class _CartScreenState extends State<CartScreen> {
         _summaryDiscount = promotionSummaryNumber(data, 'discount');
         _summaryEmbeddedItemDiscount =
             promotionSummaryNumber(data, 'embedded_item_discount');
-        _summaryTotal = _doubleValue(data['total']);
       });
     } catch (e) {
       debugPrint('Cart reward summary error: $e');
@@ -338,11 +334,6 @@ class _CartScreenState extends State<CartScreen> {
     return null;
   }
 
-  double? _doubleValue(dynamic value) {
-    if (value == null) return null;
-    if (value is num) return value.toDouble();
-    return double.tryParse(value.toString());
-  }
 
   String _rewardLineDebug(List<Map<String, dynamic>> lines) {
     return lines
@@ -1276,17 +1267,15 @@ class _StepperButton extends StatelessWidget {
 
 class _CartBottomBar extends StatelessWidget {
   const _CartBottomBar({
-    required this.total,
+    required this.itemTotal,
     required this.discount,
-    required this.itemCount,
     required this.primary,
     required this.onAddMore,
     required this.onCheckout,
   });
 
-  final double total;
+  final double itemTotal;
   final double discount;
-  final int itemCount;
   final Color primary;
   final VoidCallback onAddMore;
   final VoidCallback onCheckout;
@@ -1307,113 +1296,131 @@ class _CartBottomBar extends StatelessWidget {
           ),
         ],
       ),
-      child: Row(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          Expanded(
-            child: OutlinedButton.icon(
-              onPressed: onAddMore,
-              icon: Icon(Icons.add_rounded, color: primary, size: 20),
-              label: Text(
-                'Add more',
-                overflow: TextOverflow.ellipsis,
+          Row(
+            children: [
+              Text(
+                'Item total',
                 style: GoogleFonts.plusJakartaSans(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w800,
-                  color: primary,
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w700,
+                  color: FoodFlowTheme.muted,
                 ),
               ),
-              style: OutlinedButton.styleFrom(
-                minimumSize: const Size(0, 52),
-                side: BorderSide(color: primary.withOpacity(0.25)),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(17),
+              const SizedBox(width: 8),
+              Text(
+                formatCurrency(context, itemTotal),
+                style: GoogleFonts.plusJakartaSans(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w900,
+                  color: FoodFlowTheme.ink,
                 ),
+              ),
+              const Spacer(),
+              if (discount > 0)
+                Text(
+                  'You save ${formatCurrency(context, discount)}',
+                  style: GoogleFonts.plusJakartaSans(
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w800,
+                    color: FoodFlowTheme.successDark,
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 2),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Text(
+              'Taxes & delivery calculated at checkout',
+              style: GoogleFonts.plusJakartaSans(
+                fontSize: 10.5,
+                fontWeight: FontWeight.w600,
+                color: FoodFlowTheme.faint,
               ),
             ),
           ),
-          const SizedBox(width: 10),
-          Expanded(
-            flex: 2,
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                gradient: FoodFlowTheme.brandGradientOf(context),
-                borderRadius: BorderRadius.circular(18),
-                boxShadow: [
-                  BoxShadow(
-                    color: primary.withOpacity(0.30),
-                    blurRadius: 18,
-                    offset: const Offset(0, 9),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: onAddMore,
+                  icon: Icon(Icons.add_rounded, color: primary, size: 20),
+                  label: Text(
+                    'Add more',
+                    overflow: TextOverflow.ellipsis,
+                    style: GoogleFonts.plusJakartaSans(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w800,
+                      color: primary,
+                    ),
                   ),
-                  BoxShadow(
-                    color: Colors.white.withOpacity(0.35),
-                    blurRadius: 2,
-                    offset: const Offset(-1, -1),
-                  ),
-                ],
-              ),
-              child: Material(
-                color: Colors.transparent,
-                child: InkWell(
-                  borderRadius: BorderRadius.circular(18),
-                  onTap: onCheckout,
-                  child: Container(
-                    height: 54,
-                    padding: const EdgeInsets.symmetric(horizontal: 14),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                formatCurrency(context, total),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: GoogleFonts.plusJakartaSans(
-                                  fontSize: 15,
-                                  fontWeight: FontWeight.w900,
-                                  color: FoodFlowTheme.brandOnPrimary(context),
-                                ),
-                              ),
-                              Text(
-                                discount > 0
-                                    ? 'Saved ${formatCurrency(context, discount)}'
-                                    : '$itemCount item${itemCount == 1 ? '' : 's'}',
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: GoogleFonts.plusJakartaSans(
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.w700,
-                                  color: FoodFlowTheme.brandOnPrimary(context)
-                                      .withOpacity(0.85),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        Text(
-                          'Checkout',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: GoogleFonts.plusJakartaSans(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w900,
-                            color: FoodFlowTheme.brandOnPrimary(context),
-                          ),
-                        ),
-                        const SizedBox(width: 6),
-                        Icon(
-                          Icons.arrow_forward_ios_rounded,
-                          size: 16,
-                          color: FoodFlowTheme.brandOnPrimary(context),
-                        ),
-                      ],
+                  style: OutlinedButton.styleFrom(
+                    minimumSize: const Size(0, 52),
+                    side: BorderSide(color: primary.withOpacity(0.25)),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(17),
                     ),
                   ),
                 ),
               ),
-            ),
+              const SizedBox(width: 10),
+              Expanded(
+                flex: 2,
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: FoodFlowTheme.brandGradientOf(context),
+                    borderRadius: BorderRadius.circular(18),
+                    boxShadow: [
+                      BoxShadow(
+                        color: primary.withOpacity(0.30),
+                        blurRadius: 18,
+                        offset: const Offset(0, 9),
+                      ),
+                      BoxShadow(
+                        color: Colors.white.withOpacity(0.35),
+                        blurRadius: 2,
+                        offset: const Offset(-1, -1),
+                      ),
+                    ],
+                  ),
+                  child: Material(
+                    color: Colors.transparent,
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(18),
+                      onTap: onCheckout,
+                      child: SizedBox(
+                        height: 54,
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Text(
+                              'Checkout',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: GoogleFonts.plusJakartaSans(
+                                fontSize: 15,
+                                fontWeight: FontWeight.w900,
+                                color: FoodFlowTheme.brandOnPrimary(context),
+                              ),
+                            ),
+                            const SizedBox(width: 6),
+                            Icon(
+                              Icons.arrow_forward_ios_rounded,
+                              size: 16,
+                              color: FoodFlowTheme.brandOnPrimary(context),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ],
           ),
         ],
       ),

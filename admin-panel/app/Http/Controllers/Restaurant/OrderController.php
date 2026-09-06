@@ -210,6 +210,11 @@ class OrderController extends Controller
             
             DB::commit();
 
+            if (in_array($order->status, ['confirmed', 'preparing', 'ready_for_pickup'], true) && ! $order->driver_id) {
+                app(AutoAssignDriverService::class)->autoAssignOrder($order);
+                $order->refresh();
+            }
+
             if ($request->status === 'confirmed') {
                 app(ScratchCardService::class)->issueForRecordedUsage($order, 'restaurant_accepts');
             }
@@ -627,7 +632,7 @@ class OrderController extends Controller
                 'order_number' => $order->order_number,
                 'total' => $order->total,
                 'customer_name' => $order->customer->name ?? $order->customer_name ?? 'Guest',
-                'customer_phone' => $order->customer->phone ?? $order->customer_phone ?? '',
+                'customer_phone' => app(\App\Services\CallMaskingService::class)->redactPhone($order->customer->phone ?? $order->customer_phone ?? '') ?? '',
                 'items_count' => $itemsCount,
                 'items_preview' => $itemsPreview,
                 'created_at' => $order->created_at->diffForHumans(),
@@ -804,7 +809,24 @@ class OrderController extends Controller
                         $order->preparation_time_minutes = (int) ($restaurant->order_lead_time ?? 20);
                     }
                 }
+                if ($request->status === 'preparing') {
+                    $order->preparing_at = now();
+                }
+                if ($request->status === 'ready_for_pickup') {
+                    $order->ready_at = now();
+                    if (! $order->delivery_otp) {
+                        $order->delivery_otp = random_int(1000, 9999);
+                    }
+                }
                 $order->save();
+
+                if (in_array($order->status, ['confirmed', 'preparing', 'ready_for_pickup'], true)
+                    && ! $order->driver_id
+                    && ($order->order_type ?? 'delivery') !== 'takeaway') {
+                    app(AutoAssignDriverService::class)->autoAssignOrder($order);
+                    $order->refresh();
+                }
+
                 if ($request->status === 'confirmed') {
                     app(ScratchCardService::class)->issueForRecordedUsage($order, 'restaurant_accepts');
                 }

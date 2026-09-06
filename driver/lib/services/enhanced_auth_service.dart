@@ -11,6 +11,11 @@ import 'package:http/http.dart' as http;
 import '../models/user.dart';
 
 class EnhancedAuthService {
+  static const List<String> _storedUserKeys = [
+    'user_data',
+    'driver_user_data',
+    'user',
+  ];
   final ApiService _api = ApiService();
 
   /// Send OTP to phone number with reCAPTCHA validation
@@ -113,7 +118,7 @@ class EnhancedAuthService {
         'token': token,
         'score_threshold': minScore,
       });
-      
+
       return response['success'] == true && response['data']['valid'] == true;
     } catch (e) {
       print('Error validating reCAPTCHA: $e');
@@ -122,7 +127,8 @@ class EnhancedAuthService {
   }
 
   /// Normalize phone number to international format using the configured country code.
-  String _normalizePhoneNumber(String phone, {String? defaultMobileCountryCode}) {
+  String _normalizePhoneNumber(String phone,
+      {String? defaultMobileCountryCode}) {
     final raw = phone.trim();
     final digits = raw.replaceAll(RegExp(r'\D'), '');
     if (digits.isEmpty) return '';
@@ -149,7 +155,7 @@ class EnhancedAuthService {
   }
 
   /// Legacy methods (kept for backward compatibility)
-  
+
   Future<Map<String, dynamic>> register({
     required String name,
     required String email,
@@ -218,7 +224,8 @@ class EnhancedAuthService {
 
   Future<void> logout() async {
     try {
-      await _api.post(ApiConstants.logout, data: const {'target_app': 'driver'});
+      await _api
+          .post(ApiConstants.logout, data: const {'target_app': 'driver'});
     } catch (e) {
       // Ignore logout errors
     } finally {
@@ -238,19 +245,30 @@ class EnhancedAuthService {
 
   Future<void> persistUser(User user) async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('user', jsonEncode(user.toJson()));
+    final encoded = jsonEncode(user.toJson());
+    for (final key in _storedUserKeys) {
+      await prefs.setString(key, encoded);
+    }
   }
 
   Future<void> clearStoredUser() async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.remove('user');
+    for (final key in _storedUserKeys) {
+      await prefs.remove(key);
+    }
   }
 
   Future<User?> getStoredUser() async {
     final prefs = await SharedPreferences.getInstance();
-    final userJson = prefs.getString('user');
-    if (userJson != null) {
-      return User.fromJson(jsonDecode(userJson));
+    for (final key in _storedUserKeys) {
+      final userJson = prefs.getString(key);
+      if (userJson == null || userJson.isEmpty) continue;
+      final decoded = jsonDecode(userJson);
+      if (decoded is Map) {
+        final user = User.fromJson(Map<String, dynamic>.from(decoded));
+        await persistUser(user);
+        return user;
+      }
     }
     return null;
   }

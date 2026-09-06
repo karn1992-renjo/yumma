@@ -160,6 +160,7 @@
                 @php
                     $mediaUrl = $banner->image ? \Illuminate\Support\Facades\Storage::disk('public')->url($banner->image) : '';
                     $isLottie = \Illuminate\Support\Str::endsWith(\Illuminate\Support\Str::lower((string) $banner->image), '.json');
+                    $displaySurfaceLabel = \App\Models\Banner::DISPLAY_SURFACE_LABELS[$banner->display_surface ?? 'both'] ?? 'Web + Customer App';
                     $redirectLabel = null;
                     if ($banner->redirect_type === 'category') {
                         $redirectLabel = 'Category - ' . ($banner->redirectCategory?->name ?? '#' . $banner->redirect_category_id);
@@ -196,6 +197,7 @@
 
                         <div class="d-flex gap-2 flex-wrap mt-3">
                             <span class="bn-pill">{{ ucfirst(str_replace('_', ' ', $banner->banner_type ?? 'home')) }}</span>
+                            <span class="bn-pill success">{{ $displaySurfaceLabel }}</span>
                             <span class="bn-pill">{{ ucfirst(str_replace('_', ' ', $banner->layout_mode ?? 'text_image')) }}</span>
                             <span class="bn-pill">Order {{ $banner->display_order ?? $index }}</span>
                         </div>

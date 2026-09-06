@@ -26,6 +26,7 @@ use App\Models\Review;
 use App\Models\SupportConversation;
 use App\Models\SupportMessage;
 use App\Models\User;
+use App\Services\RestaurantOnboardingService;
 use App\Rules\UniqueUserContactForRole;
 use App\Services\AutoAssignDriverService;
 use App\Services\GoogleMapsEtaService;
@@ -54,6 +55,8 @@ use Spatie\Permission\PermissionRegistrar;
 
 class RestaurantController extends Controller
 {
+    use \App\Http\Controllers\Concerns\StampsSponsoredRestaurants;
+
     private function payoutProviderAccountAttributes(Request $request): array
     {
         $provider = AppSetting::getValue('payout_gateway_provider', 'razorpay');
@@ -299,6 +302,10 @@ class RestaurantController extends Controller
             }
 
             $restaurant->save();
+
+            if ($restaurant->is_open && $restaurant->is_verified) {
+                app(RestaurantOnboardingService::class)->markActivatedByRestaurant($restaurant->fresh(), $request->user());
+            }
 
             return response()->json([
                 'success' => true,
@@ -567,6 +574,44 @@ class RestaurantController extends Controller
                 'success' => false,
                 'message' => 'An unexpected error occurred while processing the request.',
             ], 500);
+        }
+    }
+
+    public function callDriver($id)
+    {
+        try {
+            $user = auth()->user();
+            $restaurants = $this->getAccessibleRestaurants($user);
+            $restaurant = $this->getAuthenticatedRestaurant($user);
+
+            if (! $restaurant) {
+                return response()->json(['success' => false, 'message' => 'Restaurant not found.'], 404);
+            }
+
+            if ($response = $this->ensureRestaurantPermission($user, 'orders')) {
+                return $response;
+            }
+
+            $order = Order::whereIn('restaurant_id', $restaurants->pluck('id'))
+                ->visibleToRestaurant()
+                ->whereNotNull('driver_id')
+                ->with(['customer', 'restaurant', 'driver'])
+                ->findOrFail($id);
+
+            $result = app(\App\Services\CallMaskingService::class)->initiateClickToCall(
+                $order,
+                'restaurant',
+                'driver',
+                $user->id
+            );
+
+            return response()->json($result, $result['success'] ? 200 : 422);
+        } catch (ModelNotFoundException $e) {
+            return response()->json(['success' => false, 'message' => 'Order not found or no driver assigned yet.'], 404);
+        } catch (\Exception $e) {
+            Log::error('Call driver error: ' . $e->getMessage());
+
+            return response()->json(['success' => false, 'message' => 'An unexpected error occurred while processing the request.'], 500);
         }
     }
 
@@ -1659,6 +1704,7 @@ class RestaurantController extends Controller
                     'description' => $restaurant->description,
                     'cuisine' => $restaurant->cuisine,
                     'is_open' => (bool) $restaurant->is_open,
+                    'weekly_timings' => $restaurant->weekly_timings ?: Restaurant::getDefaultWeeklyTimings(),
                     'account_holder_name' => $user->account_holder_name,
                     'bank_name' => $user->bank_name,
                     'account_number' => $user->account_number,
@@ -1720,12 +1766,56 @@ class RestaurantController extends Controller
                 'upi_id' => 'nullable|string|max:255',
                 'stripe_account_id' => 'nullable|string|max:255',
                 'gateway_account_id' => 'nullable|string|max:255',
+                'weekly_timings' => 'nullable|array',
+                'weekly_timings.*.is_open' => 'nullable|boolean',
+                'weekly_timings.*.open_time' => ['nullable', 'regex:/^\d{1,2}:\d{2}(:\d{2})?$/'],
+                'weekly_timings.*.close_time' => ['nullable', 'regex:/^\d{1,2}:\d{2}(:\d{2})?$/'],
+                'weekly_timings.*.break_start' => ['nullable', 'regex:/^\d{1,2}:\d{2}(:\d{2})?$/'],
+                'weekly_timings.*.break_end' => ['nullable', 'regex:/^\d{1,2}:\d{2}(:\d{2})?$/'],
             ]);
 
             $restaurant->update($request->only([
                 'name', 'email', 'phone', 'address', 'city', 'state', 'pincode',
                 'min_order_amount', 'delivery_time', 'description',
             ]));
+
+            if ($request->has('weekly_timings') && is_array($request->weekly_timings)) {
+                $incoming = $request->weekly_timings;
+                $timings = $restaurant->weekly_timings ?: Restaurant::getDefaultWeeklyTimings();
+                // Times may arrive as H:i or legacy H:i:s — normalise to H:i.
+                $normalizeTime = function ($value) {
+                    if ($value === null || $value === '') {
+                        return null;
+                    }
+                    $parts = explode(':', (string) $value);
+                    if (count($parts) < 2) {
+                        return null;
+                    }
+
+                    return str_pad($parts[0], 2, '0', STR_PAD_LEFT).':'.str_pad($parts[1], 2, '0', STR_PAD_LEFT);
+                };
+                foreach (['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'] as $day) {
+                    $day_data = $incoming[$day] ?? null;
+                    if (! is_array($day_data)) {
+                        continue;
+                    }
+                    $isOpen = filter_var($day_data['is_open'] ?? true, FILTER_VALIDATE_BOOLEAN);
+                    $break_start = $normalizeTime($day_data['break_start'] ?? null);
+                    $break_end = $normalizeTime($day_data['break_end'] ?? null);
+                    // Break needs both ends or neither.
+                    if (empty($break_start) || empty($break_end)) {
+                        $break_start = $break_end = null;
+                    }
+                    $timings[$day] = [
+                        'is_open' => $isOpen,
+                        'open_time' => $normalizeTime($day_data['open_time'] ?? null) ?? ($timings[$day]['open_time'] ?? '09:00'),
+                        'close_time' => $normalizeTime($day_data['close_time'] ?? null) ?? ($timings[$day]['close_time'] ?? '22:00'),
+                        'break_start' => $break_start,
+                        'break_end' => $break_end,
+                    ];
+                }
+                $restaurant->update(['weekly_timings' => $timings]);
+            }
 
             $user->update($request->only([
                 'account_holder_name',
@@ -2672,7 +2762,9 @@ class RestaurantController extends Controller
 
             $validated = $request->validate([
                 'printer_name' => 'required|string|max:255',
-                'printer_type' => 'required|in:network,usb,bluetooth',
+                'printer_type' => 'required|in:network,usb,bluetooth,sunmi',
+                'printer_role' => 'nullable|in:kot,invoice,both',
+                'brand' => 'nullable|in:generic,epson,star,sunmi',
                 'ip_address' => 'required_if:printer_type,network|nullable|ip',
                 'port' => 'required_if:printer_type,network|nullable|integer|min:1|max:65535',
                 'usb_path' => 'nullable|string|max:255',
@@ -2690,6 +2782,8 @@ class RestaurantController extends Controller
                 'restaurant_id' => $restaurant->id,
                 'printer_name' => $validated['printer_name'],
                 'printer_type' => $validated['printer_type'],
+                'printer_role' => $validated['printer_role'] ?? 'both',
+                'brand' => $validated['brand'] ?? ($validated['printer_type'] === 'sunmi' ? 'sunmi' : 'generic'),
                 'ip_address' => $validated['ip_address'] ?? null,
                 'port' => $validated['port'] ?? 9100,
                 'usb_path' => $validated['usb_path'] ?? null,
@@ -2741,6 +2835,58 @@ class RestaurantController extends Controller
             return response()->json([
                 'success' => true,
                 'message' => 'Test print sent successfully.',
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'An unexpected error occurred while processing the request.',
+            ], 500);
+        }
+    }
+
+    /**
+     * Print a sample invoice on a printer so the owner can eyeball the format.
+     * Uses the restaurant's most recent order, or a synthetic order when there
+     * are none yet.
+     */
+    public function testPrinterInvoice($id)
+    {
+        try {
+            $user = auth()->user();
+            $restaurant = $this->getAuthenticatedRestaurant($user);
+
+            if (! $restaurant) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Restaurant not found.',
+                ], 404);
+            }
+
+            $printer = PrinterSetting::where('restaurant_id', $restaurant->id)->findOrFail($id);
+
+            $order = Order::where('restaurant_id', $restaurant->id)
+                ->latest('id')
+                ->first();
+
+            if (! $order) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'No orders yet — take a test order first to print a sample invoice.',
+                ], 422);
+            }
+
+            $printed = app(PrinterService::class)->printInvoice($order, $printer);
+
+            if (! $printed) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Failed to connect to printer.',
+                ], 500);
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Sample invoice sent to printer.',
             ]);
         } catch (\Exception $e) {
             return response()->json([
@@ -3484,7 +3630,9 @@ class RestaurantController extends Controller
 
             $latitude = (float) $validated['lat'];
             $longitude = (float) $validated['lng'];
-            $radius = isset($validated['radius']) ? min(100.0, (float) $validated['radius']) : 100.0;
+            $radius = isset($validated['radius'])
+                ? min(200.0, (float) $validated['radius'])
+                : $this->discoveryRadiusForLocation($latitude, $longitude);
 
             $restaurantsQuery = Restaurant::query()->where('is_verified', true);
 
@@ -3506,6 +3654,8 @@ class RestaurantController extends Controller
                 ->nearby($latitude, $longitude, $radius)
                 ->get();
 
+            $this->stampSponsoredRestaurants($restaurants, 'nearby');
+
             $data = $restaurants
                 ->map(fn (Restaurant $restaurant) => $this->augmentRestaurantResource(
                     $restaurant,
@@ -3514,6 +3664,8 @@ class RestaurantController extends Controller
                 ))
                 ->sortByDesc(fn ($restaurant) => (bool) ($restaurant['is_open_now'] ?? $restaurant['is_open'] ?? false))
                 ->values();
+
+            $data = $this->pinSponsoredResultsToTop($data);
 
             return response()->json([
                 'success' => true,
@@ -3708,8 +3860,12 @@ class RestaurantController extends Controller
             }
 
             if (! empty($validated['lat']) && ! empty($validated['lng'])) {
-                $radius = isset($validated['radius']) ? min(100.0, (float) $validated['radius']) : 100.0;
-                $restaurantsQuery = $restaurantsQuery->nearby((float) $validated['lat'], (float) $validated['lng'], $radius);
+                $latitude = (float) $validated['lat'];
+                $longitude = (float) $validated['lng'];
+                $radius = isset($validated['radius'])
+                    ? min(200.0, (float) $validated['radius'])
+                    : $this->discoveryRadiusForLocation($latitude, $longitude);
+                $restaurantsQuery = $restaurantsQuery->nearby($latitude, $longitude, $radius);
             } else {
                 $restaurantsQuery->orderByDesc('is_open')->orderByDesc('rating');
             }
@@ -3717,6 +3873,7 @@ class RestaurantController extends Controller
             $customerLat = isset($validated['lat']) ? (float) $validated['lat'] : null;
             $customerLng = isset($validated['lng']) ? (float) $validated['lng'] : null;
             $restaurants = $restaurantsQuery->get();
+            $this->stampSponsoredRestaurants($restaurants, 'search');
             $restaurantIds = $restaurants->pluck('id')->values();
             $restaurantsById = $restaurants->keyBy('id');
 
@@ -3786,6 +3943,8 @@ class RestaurantController extends Controller
                 );
             })->values();
 
+            $data = $this->pinSponsoredResultsToTop($data);
+
             $matchedMenuItems = $matchedItems
                 ->map(function ($item) use ($restaurantsById) {
                     $restaurant = $restaurantsById->get($item->restaurant_id);
@@ -3832,6 +3991,25 @@ class RestaurantController extends Controller
                 'message' => 'An unexpected error occurred while processing the request.',
             ], 500);
         }
+    }
+
+    private function discoveryRadiusForLocation(?float $latitude, ?float $longitude): float
+    {
+        $defaultRadius = (float) AppSetting::defaultDeliveryRadius();
+        if ($latitude === null || $longitude === null) {
+            return $defaultRadius;
+        }
+
+        $area = DeliveryArea::query()
+            ->active()
+            ->get()
+            ->first(fn (DeliveryArea $area) => $area->containsPoint($latitude, $longitude));
+
+        if ($area && $area->area_type === 'circle' && (float) $area->radius_km > 0) {
+            return (float) $area->radius_km;
+        }
+
+        return $defaultRadius;
     }
 
     /**
@@ -3888,6 +4066,11 @@ class RestaurantController extends Controller
 
             $customerLat = $request->filled('lat') ? (float) $request->input('lat') : null;
             $customerLng = $request->filled('lng') ? (float) $request->input('lng') : null;
+            // Detail page has no competing slot to auction -- just report
+            // whether this restaurant currently runs any active campaign.
+            $restaurant->setAttribute('is_sponsored', \App\Models\RestaurantAdCampaign::active()
+                ->where('restaurant_id', $restaurant->id)
+                ->exists());
             $resource = $this->augmentRestaurantResource($restaurant, $customerLat, $customerLng);
 
             return response()->json([
@@ -3969,12 +4152,14 @@ class RestaurantController extends Controller
             'completed',
         ], true);
 
+        $callMasking = app(\App\Services\CallMaskingService::class);
+
         return [
             'id' => $order->id,
             'order_number' => $order->order_number,
             'order_type' => $order->order_type ?? 'delivery',
             'customer_name' => $order->customer_name ?? 'Guest',
-            'customer_phone' => $order->customer_phone ?? '',
+            'customer_phone' => $callMasking->redactPhone($order->customer_phone) ?? '',
             'delivery_address' => $order->delivery_address ?? '',
             'total' => (float) ($order->total ?? 0),
             'subtotal' => (float) ($order->subtotal ?? 0),
@@ -3987,7 +4172,7 @@ class RestaurantController extends Controller
             'driver_accepted_at' => $order->driver_accepted_at ? $order->driver_accepted_at->toIso8601String() : null,
             'driver_id' => $order->driver_id,
             'driver_name' => $order->driver?->name,
-            'driver_phone' => $order->driver?->phone,
+            'driver_phone' => $callMasking->redactPhone($order->driver?->phone),
             'driver_location' => $driverLocation,
             'restaurant_location' => $restaurantLocation,
             'driver_arrived_at_restaurant' => $driverHasArrived,
@@ -4011,13 +4196,13 @@ class RestaurantController extends Controller
             'customer' => $order->relationLoaded('customer') && $order->customer ? [
                 'id' => $order->customer->id,
                 'name' => $order->customer->name,
-                'phone' => $order->customer->phone,
+                'phone' => $callMasking->redactPhone($order->customer->phone),
                 'email' => $order->customer->email,
             ] : null,
             'driver' => $order->relationLoaded('driver') && $order->driver ? [
                 'id' => $order->driver->id,
                 'name' => $order->driver->name,
-                'phone' => $order->driver->phone,
+                'phone' => $callMasking->redactPhone($order->driver->phone),
                 'profile_photo_url' => $order->driver->profile_photo_url,
                 'latitude' => $order->driver->latitude !== null ? (float) $order->driver->latitude : null,
                 'longitude' => $order->driver->longitude !== null ? (float) $order->driver->longitude : null,
@@ -4256,7 +4441,8 @@ class RestaurantController extends Controller
             'matched_item_names' => $matchedItemNames,
             'matched_menu_items' => $matchedMenuItems,
             'weekly_timings' => $restaurant->weekly_timings,
-            'is_featured' => (bool) ($restaurant->is_featured ?? false),
+            'is_sponsored' => (bool) ($restaurant->is_sponsored ?? false),
+            'ad_campaign_id' => $restaurant->ad_campaign_id ?? null,
             'orders_count' => 0,
             'created_at' => optional($restaurant->created_at)->toIso8601String(),
         ];
@@ -4435,7 +4621,6 @@ class RestaurantController extends Controller
         $similar = $this->filterRestaurantsToSameDeliveryArea(
             $query
                 ->orderByDesc('is_open')
-                ->orderByDesc('is_featured')
                 ->orderByDesc('rating')
                 ->orderByDesc('total_ratings')
                 ->limit($restaurantArea ? 30 : 6)
@@ -4455,7 +4640,6 @@ class RestaurantController extends Controller
                 ->where('is_verified', true)
                 ->where('city', $restaurant->city)
                 ->orderByDesc('is_open')
-                ->orderByDesc('is_featured')
                 ->orderByDesc('rating')
                 ->orderByDesc('total_ratings')
                 ->limit($restaurantArea ? 30 : 6)
@@ -4625,6 +4809,86 @@ class RestaurantController extends Controller
         }
 
         return collect();
+    }
+
+    /**
+     * Tax-aware settlement statements for the restaurant app:
+     * gross, commission + 18% GST (ITC), TDS 194-O, TCS, net — per cycle + FY.
+     * GET /api/restaurant/statements?from=&to=&restaurant_id=
+     */
+    public function statements(Request $request)
+    {
+        $user = $request->user();
+        $restaurants = $this->getAccessibleRestaurants($user);
+        $restaurant = $this->resolveSingleRestaurantForFeature($request, $user, $restaurants);
+
+        if (! $restaurant) {
+            return response()->json(['success' => false, 'message' => 'No restaurant found.'], 404);
+        }
+
+        $from = $request->filled('from') ? Carbon::parse($request->input('from'))->startOfDay() : now()->startOfMonth();
+        $to = $request->filled('to') ? Carbon::parse($request->input('to'))->endOfDay() : now()->endOfDay();
+        $config = app(\App\Services\Tax\TaxConfig::class);
+        $fy = $config->fy($to);
+
+        $cycles = \App\Models\Payout::where('restaurant_id', $restaurant->id)
+            ->whereBetween('created_at', [$from, $to])
+            ->latest()
+            ->get()
+            ->map(fn ($p) => [
+                'date' => $p->created_at->toDateString(),
+                'status' => $p->status,
+                'gross' => round((float) $p->gross_amount, 2),
+                'commission' => round((float) $p->platform_commission, 2),
+                'commission_gst' => round((float) $p->gst_on_commission, 2),
+                'pre_tax' => round((float) ($p->pre_tax_amount ?: $p->net_amount), 2),
+                'tds_194o' => round((float) $p->tds_amount, 2),
+                'tcs' => round((float) $p->tcs_amount, 2),
+                'net' => round((float) $p->net_amount, 2),
+            ]);
+
+        $agg = \App\Models\Payout::where('restaurant_id', $restaurant->id)
+            ->whereBetween('created_at', [$from, $to])
+            ->selectRaw('count(*) as cycles, sum(gross_amount) as gross, sum(platform_commission) as commission, sum(gst_on_commission) as commission_gst, sum(tds_amount) as tds_194o, sum(tcs_amount) as tcs, sum(net_amount) as net')
+            ->first();
+
+        $eco95 = \App\Models\TaxLedgerEntry::where('kind', \App\Models\TaxLedgerEntry::KIND_GST_9_5)
+            ->whereHas('order', fn ($q) => $q->where('restaurant_id', $restaurant->id))
+            ->whereBetween('created_at', [$from, $to])
+            ->sum('amount');
+
+        $tds = \App\Models\TdsDeducteeTotal::where('party_type', Restaurant::class)
+            ->where('party_id', $restaurant->id)
+            ->where('section', '194O')
+            ->where('fy', $fy)
+            ->first();
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'restaurant_id' => $restaurant->id,
+                'period' => ['from' => $from->toDateString(), 'to' => $to->toDateString(), 'fy' => $fy],
+                'gst_active' => $config->gstEnabled(),
+                'summary' => [
+                    'cycles' => (int) ($agg->cycles ?? 0),
+                    'gross' => round((float) ($agg->gross ?? 0), 2),
+                    'commission' => round((float) ($agg->commission ?? 0), 2),
+                    'commission_gst' => round((float) ($agg->commission_gst ?? 0), 2),
+                    'commission_gst_note' => 'Claimable by you as input tax credit.',
+                    'tds_194o' => round((float) ($agg->tds_194o ?? 0), 2),
+                    'tcs' => round((float) ($agg->tcs ?? 0), 2),
+                    'net' => round((float) ($agg->net ?? 0), 2),
+                    'gst_9_5_paid_by_platform' => round((float) $eco95, 2),
+                ],
+                'fy_tds_194o' => [
+                    'fy' => $fy,
+                    'gross_ytd' => round((float) ($tds->gross_ytd ?? 0), 2),
+                    'tds_ytd' => round((float) ($tds->tds_ytd ?? 0), 2),
+                    'form_16a_url' => $tds ? route('restaurant.statements.form16a', ['fy' => $fy]) : null,
+                ],
+                'cycles' => $cycles,
+            ],
+        ]);
     }
 
     private function resolveRestaurantScope(Request $request, ?User $user)
@@ -4888,3 +5152,4 @@ class RestaurantController extends Controller
         }
     }
 }
+

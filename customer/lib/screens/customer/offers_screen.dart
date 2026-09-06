@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'package:lottie/lottie.dart';
 
 import '../../config/api_constants.dart';
@@ -9,6 +10,8 @@ import '../../services/app_image_cache.dart';
 import '../../theme/foodflow_theme.dart';
 import '../../utils/currency_utils.dart';
 import '../../widgets/customer/account_chrome.dart';
+import '../../widgets/customer/coupon_ticket_card.dart';
+import '../../widgets/customer/promotion_detail_sheet.dart';
 import '../../widgets/common/app_cached_image.dart';
 import '../../widgets/common/app_skeleton.dart';
 
@@ -44,18 +47,83 @@ class _OffersScreenState extends State<OffersScreen> {
           if (mounted) _loadOffers(forceRefresh: true);
         },
       );
-      if (response['success'] == true && response['data'] is List) {
-        _offers = (response['data'] as List)
-            .whereType<Map>()
-            .map((offer) => Map<String, dynamic>.from(offer))
-            .where(
-                (offer) => (offer['source_type'] ?? 'promotion') == 'promotion')
-            .where((offer) => _offerType(offer).isNotEmpty)
-            .toList(growable: false);
-        _precacheOfferImages();
-      }
+      // Also pull every published promotion so admin coupon offers show here
+      // even when the eligibility-filtered /offers/active list misses them.
+      List<Map<String, dynamic>> allPromos = const [];
+      try {
+        final promoResponse = await _api.get(
+          ApiConstants.promotions,
+          includeAuth: false,
+        );
+        if (promoResponse['success'] == true && promoResponse['data'] is List) {
+          allPromos = (promoResponse['data'] as List)
+              .whereType<Map>()
+              .map((offer) => Map<String, dynamic>.from(offer))
+              .toList(growable: false);
+        }
+      } catch (_) {}
+
+      final activeOffers = (response['success'] == true && response['data'] is List)
+          ? (response['data'] as List)
+              .whereType<Map>()
+              .map((offer) => Map<String, dynamic>.from(offer))
+              .toList(growable: false)
+          : const <Map<String, dynamic>>[];
+
+      // Coupons this customer personally holds (scratch-card wins, assigned
+      // codes) -- these are user-scoped so they never come back on the public
+      // lists above.
+      final wonCoupons = await _loadWonCoupons();
+
+      final seen = <String>{};
+      _offers = [...wonCoupons, ...activeOffers, ...allPromos]
+          .where((offer) =>
+              (offer['source_type'] ?? 'promotion') == 'promotion' ||
+              (offer['source_type'] ?? '') == 'scratch_card_reward')
+          .where((offer) => _offerType(offer).isNotEmpty)
+          .where((offer) => seen.add(
+              '${offer['id'] ?? ''}:${offer['code'] ?? offer['coupon_code'] ?? ''}'))
+          .toList(growable: false);
+      _precacheOfferImages();
     } finally {
       if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> _loadWonCoupons() async {
+    try {
+      final res = await _api.get(ApiConstants.rewardCoupons);
+      if (res is! Map || res['success'] != true || res['data'] is! List) {
+        return const [];
+      }
+      return (res['data'] as List)
+          .whereType<Map>()
+          .map((row) => Map<String, dynamic>.from(row))
+          .where((c) => (c['status'] ?? '').toString().toLowerCase() == 'unused')
+          .map((c) {
+        final promo = c['promotion'] is Map
+            ? Map<String, dynamic>.from(c['promotion'] as Map)
+            : <String, dynamic>{};
+        final rewards = promo['rewards'] is Map
+            ? Map<String, dynamic>.from(promo['rewards'] as Map)
+            : const <String, dynamic>{};
+        return <String, dynamic>{
+          ...promo,
+          'id': promo['id'] ?? c['id'],
+          'code': c['code'],
+          'coupon_code': c['code'],
+          'title': promo['title'] ?? 'Your coupon',
+          'description': promo['description'] ?? 'Won from a scratch card',
+          'promotion_type': promo['promotion_type'] ?? rewards['type'],
+          'reward_type': rewards['type'] ?? promo['reward_type'],
+          'discount_type': rewards['type'] ?? promo['promotion_type'],
+          'discount_value': rewards['value'] ?? promo['discount_value'],
+          'expires_at': c['expires_at'] ?? promo['ends_at'],
+          'source_type': 'scratch_card_reward',
+        };
+      }).toList(growable: false);
+    } catch (_) {
+      return const [];
     }
   }
 
@@ -308,11 +376,13 @@ class _PromotionTypeSection extends StatelessWidget {
                   bottom: index == showCount - 1 ? 0 : 14,
                 ),
                 child: GestureDetector(
-                  onTap: () => _openPromotionProductGrid(
-                    context,
-                    style,
-                    [offer],
-                  ),
+                  onTap: () => _isGlobalOffer(offer)
+                      ? _handleGlobalOfferTap(context, offer)
+                      : _openPromotionProductGrid(
+                          context,
+                          style,
+                          [offer],
+                        ),
                   child: _PromotionCard(
                     offer: offer,
                     style: style,
@@ -351,8 +421,37 @@ class _PromotionCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Coupon-code offers render as the "DISCOUNT COUPON" ticket; everything
+    // else keeps the full-bleed promotional card.
+    final code = _codeText(offer);
+    if (code.isNotEmpty) {
+      return CouponTicketCard(
+        valueText: couponValueText(offer,
+            currencySymbol: getCurrencySymbol(context)),
+        title: _titleText(offer),
+        code: code,
+        subtitle: _subtitleText(offer),
+        validUntilText: _offerValidUntilText(offer),
+        accent: const Color(0xFF9A2FF2),
+      );
+    }
     return _FullImagePromotionCard(offer: offer, style: style);
   }
+}
+
+String? _offerValidUntilText(Map<String, dynamic> offer) {
+  final raw = offer['expires_at'] ??
+      offer['ends_at'] ??
+      offer['end_date'] ??
+      offer['valid_until'];
+  if (raw == null) return null;
+  final date = DateTime.tryParse(raw.toString());
+  if (date == null) return null;
+  const months = [
+    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', //
+    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+  ];
+  return '${date.day.toString().padLeft(2, '0')} ${months[date.month - 1]} ${date.year}';
 }
 
 class _FullImagePromotionCard extends StatelessWidget {
@@ -1661,7 +1760,31 @@ class _PromotionStyle {
 
 enum _OfferLayout { product, banner, compact }
 
+/// A promotion that targets no specific restaurant, dish, category or
+/// cuisine has nowhere for a tap to take the customer -- e.g. sitewide free
+/// delivery, a blanket first-order %-off. Same rule as the web client's
+/// isGlobalPromo(): true when targets.restaurant_ids/item_ids/category_ids/
+/// cuisine_ids are all empty and there's no top-level restaurant_id.
+bool _isGlobalOffer(Map<String, dynamic> offer) {
+  final targets = offer['targets'] is Map
+      ? Map<String, dynamic>.from(offer['targets'] as Map)
+      : const <String, dynamic>{};
+
+  bool hasEntries(dynamic value) => value is List && value.isNotEmpty;
+
+  final hasScope = offer['restaurant_id'] != null ||
+      hasEntries(targets['restaurant_ids']) ||
+      hasEntries(targets['item_ids']) ||
+      hasEntries(targets['category_ids']) ||
+      hasEntries(targets['cuisine_ids']);
+
+  return !hasScope;
+}
+
 String _offerType(Map<String, dynamic> offer) {
+  if ((offer['source_type'] ?? '').toString() == 'scratch_card_reward') {
+    return 'scratch_reward';
+  }
   final reward = offer['rewards'] is Map
       ? Map<String, dynamic>.from(offer['rewards'] as Map)
       : offer['reward_config'] is Map
@@ -1679,6 +1802,20 @@ String _offerType(Map<String, dynamic> offer) {
 }
 
 _PromotionStyle _styleForType(String type) {
+  if (type == 'scratch_reward') {
+    return const _PromotionStyle(
+      title: 'Your Coupons',
+      subtitle: 'Rewards you won — ready to use',
+      badge: 'YOURS',
+      icon: Icons.confirmation_number_rounded,
+      colors: [Color(0xFF7C2D91), Color(0xFF9A2FF2)],
+      softColors: [Color(0xFFF6E9FF), Color(0xFFEFE0FF)],
+      badgeColors: [Color(0xFF9A2FF2), Color(0xFF6D28D9)],
+      layout: _OfferLayout.compact,
+      order: -10,
+    );
+  }
+
   if (type.contains('combo') || type.contains('meal')) {
     return const _PromotionStyle(
       title: 'Combo Deals',
@@ -1851,6 +1988,34 @@ _PromotionStyle _styleForType(String type) {
     );
   }
 
+  if (type.contains('percentage') || type == 'percent') {
+    return const _PromotionStyle(
+      title: 'Percentage Discounts',
+      subtitle: 'A slice off your whole order',
+      badge: '% OFF',
+      icon: Icons.percent_rounded,
+      colors: [Color(0xFFDB2777), Color(0xFF9333EA)],
+      softColors: [Color(0xFFFCE7F3), Color(0xFFF3E8FF)],
+      badgeColors: [Color(0xFFDB2777), Color(0xFF9333EA)],
+      layout: _OfferLayout.product,
+      order: 5,
+    );
+  }
+
+  if (type.contains('fixed') || type.contains('flat') || type == 'amount') {
+    return const _PromotionStyle(
+      title: 'Flat Discounts',
+      subtitle: 'Straight money off your bill',
+      badge: 'FLAT OFF',
+      icon: Icons.sell_rounded,
+      colors: [Color(0xFF0EA5E9), Color(0xFF2563EB)],
+      softColors: [Color(0xFFE0F2FE), Color(0xFFDBEAFE)],
+      badgeColors: [Color(0xFF0EA5E9), Color(0xFF2563EB)],
+      layout: _OfferLayout.product,
+      order: 6,
+    );
+  }
+
   return const _PromotionStyle(
     title: 'Special Promotions',
     subtitle: 'Handpicked savings for you',
@@ -1878,8 +2043,43 @@ String _subtitleText(Map<String, dynamic> offer) {
 }
 
 String _codeText(Map<String, dynamic> offer) {
-  final code = (offer['code'] ?? offer['coupon_code'] ?? '').toString().trim();
+  var code = (offer['code'] ?? offer['coupon_code'] ?? '').toString().trim();
+  if (code.isEmpty || code == 'null') {
+    // Real API field is the plural `coupon_codes` array (see
+    // PromotionController::show()'s `coupon_codes` + couponCodes relation);
+    // `code`/`coupon_code` above are legacy/unused singular fallbacks that
+    // never actually appear in a live promotion payload.
+    final codes = offer['coupon_codes'];
+    if (codes is List && codes.isNotEmpty) {
+      final first = codes.first;
+      code = (first is Map ? (first['code'] ?? '') : first).toString().trim();
+    }
+  }
   return code == 'null' ? '' : code;
+}
+
+void _handleGlobalOfferTap(BuildContext context, Map<String, dynamic> offer) {
+  final code = _codeText(offer);
+  final messenger = ScaffoldMessenger.of(context);
+  if (code.isNotEmpty) {
+    Clipboard.setData(ClipboardData(text: code));
+    messenger.showSnackBar(SnackBar(content: Text('Code $code copied — apply it at checkout.')));
+  } else {
+    messenger.showSnackBar(const SnackBar(content: Text('Applied automatically at checkout.')));
+  }
+}
+
+bool _offerHasShoppableItems(Map<String, dynamic> offer) {
+  bool hasRealItems(dynamic v) {
+    if (v is! List) return false;
+    return v.whereType<Map>().any((m) {
+      final id = m['menu_item_id'] ?? m['id'] ?? m['item_id'];
+      final name = (m['name'] ?? m['title'] ?? '').toString().trim();
+      return (int.tryParse('${id ?? ''}') ?? 0) > 0 || name.isNotEmpty;
+    });
+  }
+
+  return _menuItems(offer).isNotEmpty || hasRealItems(offer['reward_menu_items']);
 }
 
 void _openPromotionProductGrid(
@@ -1887,14 +2087,38 @@ void _openPromotionProductGrid(
   _PromotionStyle style,
   List<Map<String, dynamic>> offers,
 ) {
+  final shoppable = offers.where(_offerHasShoppableItems).toList(growable: false);
+
+  // Banner-only promotion(s) -> open the offer detail, never an empty grid.
+  if (shoppable.isEmpty) {
+    if (offers.length == 1) {
+      final offer = offers.first;
+      final restaurantId = int.tryParse(
+              (offer['restaurant_id'] ?? offer['restaurantId'] ?? '').toString()) ??
+          0;
+      showPromotionDetailSheet(
+        context,
+        offer,
+        onPrimaryAction: restaurantId > 0
+            ? () => Navigator.pushNamed(context, '/restaurant/detail',
+                arguments: restaurantId)
+            : null,
+      );
+    } else if (offers.isNotEmpty) {
+      showPromotionDetailSheet(context, offers.first);
+    }
+    return;
+  }
+
   Navigator.pushNamed(
     context,
     '/promotion-products',
     arguments: {
       'title': style.title,
       'subtitle': style.subtitle,
-      'promotion_type': offers.isEmpty ? null : _offerType(offers.first),
-      'offers': offers,
+      'promotion_type':
+          shoppable.isEmpty ? null : _offerType(shoppable.first),
+      'offers': shoppable,
     },
   );
 }

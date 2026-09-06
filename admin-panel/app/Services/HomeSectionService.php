@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\AdImpression;
 use App\Models\AppSetting;
 use App\Models\Banner;
 use App\Models\Category;
@@ -23,8 +24,9 @@ class HomeSectionService
 
     private ?float $customerLatitude = null;
     private ?float $customerLongitude = null;
-    private float $deliveryRadius = 15.0;
+    private float $deliveryRadius = 0.0;
     private bool $deliveryZoneOnly = false;
+    private ?string $displaySurface = null;
 
     public function adminSections(): Collection
     {
@@ -75,14 +77,17 @@ class HomeSectionService
     public function publicSections(
         ?float $latitude = null,
         ?float $longitude = null,
-        float $radius = 15.0,
-        bool $deliveryZoneOnly = false
+        ?float $radius = null,
+        bool $deliveryZoneOnly = false,
+        ?string $displaySurface = null
     ): Collection
     {
         $this->customerLatitude = $latitude;
         $this->customerLongitude = $longitude;
-        $this->deliveryRadius = max(1.0, min(100.0, $radius));
+        $configuredRadius = $radius ?? AppSetting::defaultDeliveryRadius();
+        $this->deliveryRadius = max(0.1, min(200.0, $configuredRadius));
         $this->deliveryZoneOnly = $deliveryZoneOnly;
+        $this->displaySurface = Banner::normalizeDisplaySurface($displaySurface);
 
         $sections = HomeSection::query()
             ->orderBy('display_order')
@@ -171,7 +176,7 @@ class HomeSectionService
         return [
             'categories' => [
                 'title' => 'Explore Categories',
-                'subtitle' => 'Discover food by cuisines & categories',
+                'subtitle' => 'Discover food by cuisine',
                 'type' => 'categories',
             ],
             ...$this->promotionBuiltInDefinitions(),
@@ -234,27 +239,33 @@ class HomeSectionService
     private function resolveBuiltInSection(string $token, array $definition): ?array
     {
         if ($token === 'categories') {
-            $items = GlobalMenuCategory::query()
-                ->with('cuisines:id,name')
-                ->active()
-                ->parents()
+            // "Explore Categories" surfaces cuisines only -- global menu
+            // categories (Pizza, Burger, ...) are intentionally excluded so
+            // the strip stays a clean cuisine picker that maps 1:1 to the
+            // restaurant cuisine filter.
+            $items = Cuisine::query()
+                ->where('is_active', true)
+                ->orderByDesc('popular')
                 ->orderBy('display_order')
                 ->orderBy('name')
                 ->limit(12)
-                ->get(['id', 'name', 'slug', 'description', 'image']);
+                ->get(['id', 'name', 'icon', 'image']);
 
-            if ($items->isNotEmpty()) {
-                $items = $this->attachCuisineImagesToGlobalCategories($items);
-            }
-
+            // Fallback only when no cuisines are configured, so installs that
+            // rely solely on global menu categories don't lose the section.
             if ($items->isEmpty()) {
-                $items = Cuisine::query()
-                    ->where('is_active', true)
-                    ->orderByDesc('popular')
+                $items = GlobalMenuCategory::query()
+                    ->with('cuisines:id,name')
+                    ->active()
+                    ->parents()
                     ->orderBy('display_order')
                     ->orderBy('name')
                     ->limit(12)
-                    ->get(['id', 'name', 'icon', 'image']);
+                    ->get(['id', 'name', 'slug', 'description', 'image']);
+
+                if ($items->isNotEmpty()) {
+                    $items = $this->attachCuisineImagesToGlobalCategories($items);
+                }
             }
 
             return [
@@ -485,6 +496,8 @@ class HomeSectionService
                     : null,
                 'restaurant_id' => $item->restaurant_id,
                 'restaurant_name' => $item->restaurant?->name ?? 'Restaurant',
+                'restaurant_is_open' => (bool) ($item->restaurant?->isOpenNow() ?? true),
+                'is_available' => (bool) ($item->is_available ?? true),
                 'is_veg' => (bool) $item->is_veg,
                 'rating' => (float) ($item->rating ?? 0),
                 'total_orders' => (int) ($item->total_orders ?? 0),
@@ -601,6 +614,8 @@ class HomeSectionService
                     'discounted_price' => $item->discounted_price !== null ? (float) $item->discounted_price : null,
                     'restaurant_id' => $item->restaurant_id,
                     'restaurant_name' => $item->restaurant?->name ?? 'Restaurant',
+                    'restaurant_is_open' => (bool) ($item->restaurant?->isOpenNow() ?? true),
+                    'is_available' => (bool) ($item->is_available ?? true),
                     'is_veg' => (bool) $item->is_veg,
                     'rating' => (float) ($item->rating ?? 0),
                     'total_orders' => (int) ($item->total_orders ?? 0),
@@ -712,6 +727,8 @@ class HomeSectionService
                     'discounted_price' => $item->discounted_price !== null ? (float) $item->discounted_price : null,
                     'restaurant_id' => $item->restaurant_id,
                     'restaurant_name' => $item->restaurant?->name ?? 'Restaurant',
+                    'restaurant_is_open' => (bool) ($item->restaurant?->isOpenNow() ?? true),
+                    'is_available' => (bool) ($item->is_available ?? true),
                     'is_veg' => (bool) $item->is_veg,
                     'rating' => (float) ($item->rating ?? 0),
                     'total_orders' => (int) ($item->total_orders ?? 0),
@@ -1137,6 +1154,8 @@ class HomeSectionService
                 'discounted_price' => $item->discounted_price !== null ? (float) $item->discounted_price : null,
                 'restaurant_id' => $item->restaurant_id,
                 'restaurant_name' => $item->restaurant?->name,
+                'restaurant_is_open' => (bool) ($item->restaurant?->isOpenNow() ?? true),
+                'is_available' => (bool) ($item->is_available ?? true),
                 'is_veg' => (bool) $item->is_veg,
                 'is_combo' => (bool) $item->is_combo,
                 'is_reward_item' => (int) data_get($reward, 'free_item_id') === (int) $item->id,
@@ -1264,6 +1283,7 @@ class HomeSectionService
 
         $query = Banner::query()
             ->where('is_active', true)
+            ->visibleOnSurface($this->displaySurface)
             ->where(function ($builder) {
                 $builder->whereNull('start_date')->orWhere('start_date', '<=', now());
             })
@@ -1412,6 +1432,14 @@ class HomeSectionService
             ->with('owner')
             ->withCount('orders');
 
+        if ($this->hasCustomerLocation()) {
+            $query->nearby(
+                $this->customerLatitude,
+                $this->customerLongitude,
+                $this->deliveryRadius
+            );
+        }
+
         if ($section->data_source === 'manual') {
             $restaurantIds = collect($configuration['restaurant_ids'] ?? [])
                 ->map(fn ($id) => (int) $id)
@@ -1422,39 +1450,31 @@ class HomeSectionService
                 return null;
             }
 
-            $query->whereIn('id', $restaurantIds->all());
-        } else {
-            match ($configuration['restaurant_scope'] ?? $defaultScope) {
-                'top_rated' => $query->orderByDesc('rating')->orderByDesc('total_ratings'),
-                'latest' => $query->latest(),
-                'most_ordered' => $query->orderByDesc('orders_count')->orderByDesc('rating'),
-                'pure_veg' => $query->where('is_pure_veg', true)->orderByDesc('rating'),
-                'open_now' => $query->where('is_open', true)->orderByDesc('rating'),
-                default => $query
-                    ->where('is_featured', true)
-                    ->where(function ($builder) {
-                        $builder->whereNull('ad_expiry')->orWhere('ad_expiry', '>=', now());
-                    })
-                    ->orderByDesc('rating'),
-            };
-        }
-
-        if ($this->hasCustomerLocation()) {
-            $query->nearby(
-                $this->customerLatitude,
-                $this->customerLongitude,
-                $this->deliveryRadius
-            );
-        }
-
-        $restaurants = $query->limit($limit)->get();
-
-        if ($section->data_source === 'manual') {
+            $restaurants = $query->whereIn('id', $restaurantIds->all())->limit($limit)->get();
             $orderedRestaurants = $restaurants->keyBy('id');
             $restaurants = $restaurantIds
                 ->map(fn (int $id) => $orderedRestaurants->get($id))
                 ->filter()
                 ->values();
+        } else {
+            $scope = $configuration['restaurant_scope'] ?? $defaultScope;
+            $namedScopes = ['top_rated', 'latest', 'most_ordered', 'pure_veg', 'open_now'];
+
+            if (in_array($scope, $namedScopes, true)) {
+                match ($scope) {
+                    'top_rated' => $query->orderByDesc('rating')->orderByDesc('total_ratings'),
+                    'latest' => $query->latest(),
+                    'most_ordered' => $query->orderByDesc('orders_count')->orderByDesc('rating'),
+                    'pure_veg' => $query->where('is_pure_veg', true)->orderByDesc('rating'),
+                    'open_now' => $query->where('is_open', true)->orderByDesc('rating'),
+                };
+                $restaurants = $query->limit($limit)->get();
+            } else {
+                // Sponsored slot: an auction among restaurants already eligible
+                // for this feed, not a separate injected dataset. Falls back to
+                // rating order for any slots no campaign is bidding on.
+                $restaurants = $this->resolveSponsoredRestaurants($query, $limit, 'home_featured');
+            }
         }
 
         return $restaurants->map(function (Restaurant $restaurant) use ($section) {
@@ -1535,7 +1555,8 @@ class HomeSectionService
             'is_open_now' => $restaurant->isOpenNow(),
             'next_opening_time' => optional($restaurant->getNextOpeningTime())->toIso8601String(),
             'next_opening_label' => $restaurant->getNextOpeningLabel(),
-            'is_featured' => (bool) $restaurant->is_featured,
+            'is_sponsored' => (bool) ($restaurant->is_sponsored ?? false),
+            'ad_campaign_id' => $restaurant->ad_campaign_id ?? null,
             'is_pure_veg' => (bool) $restaurant->is_pure_veg,
             'orders_count' => (int) ($restaurant->orders_count ?? 0),
             'distance' => isset($restaurant->distance) ? round((float) $restaurant->distance, 2) : null,
@@ -1636,6 +1657,81 @@ class HomeSectionService
         ];
     }
 
+    /**
+     * Resolves a sponsored/"featured" slot via the live CPC auction rather
+     * than the old is_featured flag. Runs the auction only against
+     * restaurants already matched by $query (never injects an unrelated
+     * restaurant), fills any slots no campaign is bidding on with the same
+     * rating-desc fallback the old flag-based query used, and logs an
+     * ad_impressions row for every sponsored restaurant actually returned.
+     */
+    private function resolveSponsoredRestaurants($query, int $limit, string $surface): Collection
+    {
+        $candidates = (clone $query)->orderByDesc('rating')->limit(max($limit * 5, 40))->get();
+
+        if ($candidates->isEmpty()) {
+            return $candidates;
+        }
+
+        $winners = app(AdAuctionService::class)->winnersFor([
+            'restaurant_ids' => $candidates->pluck('id')->all(),
+            'surface' => $surface,
+        ], $limit);
+
+        $candidatesById = $candidates->keyBy('id');
+        $winnerIds = [];
+
+        $ordered = $winners
+            ->map(function (array $winner) use ($candidatesById, &$winnerIds) {
+                $restaurant = $candidatesById->get($winner['restaurant_id']);
+                if (! $restaurant) {
+                    return null;
+                }
+
+                $restaurant->setAttribute('is_sponsored', true);
+                $restaurant->setAttribute('ad_campaign_id', $winner['campaign_id']);
+                $winnerIds[] = $restaurant->id;
+
+                return $restaurant;
+            })
+            ->filter()
+            ->values();
+
+        if ($ordered->count() < $limit) {
+            $remaining = $limit - $ordered->count();
+            $fallback = $candidates
+                ->reject(fn (Restaurant $restaurant) => in_array($restaurant->id, $winnerIds, true))
+                ->take($remaining);
+            $ordered = $ordered->merge($fallback)->values();
+        }
+
+        if ($ordered->isNotEmpty()) {
+            $this->logAdImpressions($ordered, $surface);
+        }
+
+        return $ordered;
+    }
+
+    private function logAdImpressions(Collection $restaurants, string $surface): void
+    {
+        $rows = $restaurants
+            ->filter(fn (Restaurant $restaurant) => (bool) ($restaurant->is_sponsored ?? false))
+            ->map(fn (Restaurant $restaurant) => [
+                'restaurant_ad_campaign_id' => $restaurant->ad_campaign_id,
+                'restaurant_id' => $restaurant->id,
+                'user_id' => auth()->id(),
+                'session_id' => null,
+                'surface' => $surface,
+                'created_at' => now(),
+            ])
+            ->values()
+            ->all();
+
+        if (! empty($rows)) {
+            AdImpression::insert($rows);
+        }
+    }
+
     private function resolveBrandSection(HomeSection $section): ?array
     {
         $configuration = $section->configuration ?? [];
@@ -1662,6 +1758,14 @@ class HomeSectionService
                     ->where('logo_image', '!=', '');
             });
 
+        if ($this->hasCustomerLocation()) {
+            $query->nearby(
+                $this->customerLatitude,
+                $this->customerLongitude,
+                $this->deliveryRadius
+            );
+        }
+
         if ($section->data_source === 'manual') {
             $restaurantIds = collect($configuration['restaurant_ids'] ?? [])
                 ->map(fn ($id) => (int) $id)
@@ -1672,65 +1776,30 @@ class HomeSectionService
                 return null;
             }
 
-            $query->whereIn('id', $restaurantIds->all());
-        } else {
-            match ($selectedScope) {
-                'top_rated' => $query->orderByDesc('rating')->orderByDesc('total_ratings'),
-                'latest' => $query->latest(),
-                'most_ordered' => $query->withCount('orders')->orderByDesc('orders_count')->orderByDesc('rating'),
-                'pure_veg' => $query->where('is_pure_veg', true)->orderByDesc('rating'),
-                'open_now' => $query->where('is_open', true)->orderByDesc('rating'),
-                default => $query
-                    ->where('is_featured', true)
-                    ->where(function ($builder) {
-                        $builder->whereNull('ad_expiry')->orWhere('ad_expiry', '>=', now());
-                    })
-                    ->orderByDesc('rating'),
-            };
-        }
-
-        if ($this->hasCustomerLocation()) {
-            $query->nearby(
-                $this->customerLatitude,
-                $this->customerLongitude,
-                $this->deliveryRadius
-            );
-        }
-
-        $restaurants = $query->limit($limit)->get();
-
-        if (
-            $section->data_source !== 'manual' &&
-            $restaurants->isEmpty() &&
-            $selectedScope === 'featured'
-        ) {
-            $restaurants = Restaurant::query()
-                ->where('is_verified', true)
-                ->where(function ($builder) {
-                    $builder
-                        ->whereNotNull('logo_image')
-                        ->where('logo_image', '!=', '');
-                })
-                ->when($this->hasCustomerLocation(), function ($query) {
-                    $query->nearby(
-                        $this->customerLatitude,
-                        $this->customerLongitude,
-                        $this->deliveryRadius
-                    );
-                })
-                ->orderByDesc('rating')
-                ->orderByDesc('total_ratings')
-                ->orderBy('name')
-                ->limit($limit)
-                ->get();
-        }
-
-        if ($section->data_source === 'manual') {
+            $restaurants = $query->whereIn('id', $restaurantIds->all())->limit($limit)->get();
             $orderedRestaurants = $restaurants->keyBy('id');
             $restaurants = $restaurantIds
                 ->map(fn (int $id) => $orderedRestaurants->get($id))
                 ->filter()
                 ->values();
+        } else {
+            $namedScopes = ['top_rated', 'latest', 'most_ordered', 'pure_veg', 'open_now'];
+
+            if (in_array($selectedScope, $namedScopes, true)) {
+                match ($selectedScope) {
+                    'top_rated' => $query->orderByDesc('rating')->orderByDesc('total_ratings'),
+                    'latest' => $query->latest(),
+                    'most_ordered' => $query->withCount('orders')->orderByDesc('orders_count')->orderByDesc('rating'),
+                    'pure_veg' => $query->where('is_pure_veg', true)->orderByDesc('rating'),
+                    'open_now' => $query->where('is_open', true)->orderByDesc('rating'),
+                };
+                $restaurants = $query->limit($limit)->get();
+            } else {
+                // Sponsored slot -- resolveSponsoredRestaurants() already falls
+                // back to rating order when no campaign is bidding, so the old
+                // separate empty-result refetch is no longer needed here.
+                $restaurants = $this->resolveSponsoredRestaurants($query, $limit, 'home_brand');
+            }
         }
 
         $items = $restaurants
@@ -1741,6 +1810,8 @@ class HomeSectionService
                 'logo_image' => MediaStorage::url($restaurant->logo_image),
                 'image' => MediaStorage::url($restaurant->logo_image),
                 'restaurant_id' => $restaurant->id,
+                'is_sponsored' => (bool) ($restaurant->is_sponsored ?? false),
+                'ad_campaign_id' => $restaurant->ad_campaign_id ?? null,
             ])
             ->values();
 
@@ -1898,3 +1969,4 @@ class HomeSectionService
         return 'homepage_built_in_'.$token.'_subtitle';
     }
 }
+

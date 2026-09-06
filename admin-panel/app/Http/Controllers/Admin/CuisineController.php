@@ -4,8 +4,8 @@ namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Models\Cuisine;
+use App\Services\MediaStorage;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
@@ -86,8 +86,7 @@ class CuisineController extends Controller
         ];
         
         if ($request->hasFile('image')) {
-            $path = $request->file('image')->store('cuisines', 'public');
-            $data['image'] = $path;
+            $data['image'] = MediaStorage::store($request->file('image'), 'cuisines');
         }
         
         Cuisine::create($data);
@@ -136,10 +135,9 @@ class CuisineController extends Controller
         
         if ($request->hasFile('image')) {
             if ($cuisine->image) {
-                Storage::disk('public')->delete($cuisine->image);
+                MediaStorage::delete($cuisine->image);
             }
-            $path = $request->file('image')->store('cuisines', 'public');
-            $data['image'] = $path;
+            $data['image'] = MediaStorage::store($request->file('image'), 'cuisines');
         }
         
         $cuisine->update($data);
@@ -154,7 +152,7 @@ class CuisineController extends Controller
     public function destroy(Cuisine $cuisine)
     {
         if ($cuisine->image) {
-            Storage::disk('public')->delete($cuisine->image);
+            MediaStorage::delete($cuisine->image);
         }
         
         $cuisine->delete();

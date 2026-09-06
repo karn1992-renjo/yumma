@@ -558,6 +558,24 @@ class _PromotionEntry {
   bool get isComboStyle => _isBundlePromotionType(type);
   List<MenuItem> get cartItems => paidItems.isNotEmpty ? paidItems : items;
 
+  /// Orderable only if every card item is available and its restaurant open.
+  bool get orderable {
+    final raw = offer['menu_items'];
+    final maps = raw is List ? raw.whereType<Map>() : const <Map>[];
+    bool flag(dynamic v) => v == null
+        ? true
+        : (v is bool
+            ? v
+            : (v is num
+                ? v != 0
+                : ['true', '1', 'yes']
+                    .contains(v.toString().toLowerCase().trim())));
+    final rawOk = maps.every((m) =>
+        flag(m['is_available'] ?? m['available']) &&
+        flag(m['restaurant_is_open'] ?? m['restaurant_open']));
+    return rawOk && items.every((i) => i.isAvailable);
+  }
+
   MenuItem get primaryItem =>
       cartItems.isNotEmpty ? cartItems.first : items.first;
 }
@@ -579,8 +597,11 @@ class _PromotionMenuCard extends StatelessWidget {
     final subtitle = entry.isComboStyle
         ? entry.items.take(3).map((item) => item.name).join(' + ')
         : item.description?.trim() ?? '';
+    final orderable = entry.orderable;
 
-    return InkWell(
+    return _dimIfUnavailable(
+      orderable: orderable,
+      child: InkWell(
       borderRadius: BorderRadius.circular(22),
       onTap: () => _openEntry(context, entry),
       child: Container(
@@ -751,8 +772,54 @@ class _PromotionMenuCard extends StatelessWidget {
           ],
         ),
       ),
+      ),
     );
   }
+}
+
+/// Greys + dims a promo card and stamps a "Closed" label when it can't be
+/// ordered — mirrors the restaurant/dish card treatment.
+Widget _dimIfUnavailable({required bool orderable, required Widget child}) {
+  if (orderable) return child;
+  return ClipRRect(
+    borderRadius: BorderRadius.circular(22),
+    child: Stack(
+      children: [
+        Opacity(
+          opacity: 0.55,
+          child: ColorFiltered(
+            colorFilter: const ColorFilter.matrix(<double>[
+              0.2126, 0.7152, 0.0722, 0, 0, //
+              0.2126, 0.7152, 0.0722, 0, 0, //
+              0.2126, 0.7152, 0.0722, 0, 0, //
+              0, 0, 0, 1, 0, //
+            ]),
+            child: child,
+          ),
+        ),
+        Positioned(
+          left: 8,
+          top: 8,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            decoration: BoxDecoration(
+              color: Colors.black.withOpacity(0.62),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: const Text(
+              'CLOSED',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 9,
+                letterSpacing: 0.5,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+          ),
+        ),
+      ],
+    ),
+  );
 }
 
 class _AutoImageCarousel extends StatefulWidget {
@@ -1407,7 +1474,8 @@ Restaurant? _restaurantFromEntry(_PromotionEntry entry) {
     'pincode': restaurantMap['pincode'] ?? '',
     'latitude': restaurantMap['latitude'] ?? 0,
     'longitude': restaurantMap['longitude'] ?? 0,
-    'delivery_radius': restaurantMap['delivery_radius'] ?? 10,
+    if (restaurantMap['delivery_radius'] != null)
+      'delivery_radius': restaurantMap['delivery_radius'],
     'min_order_amount': restaurantMap['min_order_amount'] ?? 0,
     'delivery_fee': restaurantMap['delivery_fee'] ?? 0,
     'delivery_time': restaurantMap['delivery_time'] ?? 30,
@@ -1688,3 +1756,5 @@ BoxDecoration _promotionPanelDecoration(
     ],
   );
 }
+
+

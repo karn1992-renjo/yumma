@@ -34,7 +34,7 @@
                                 @endif
                                 @if($layoutMode === 'full_image')
                                     @if($bannerImage)
-                                        <img src="{{ $bannerImage }}" alt="{{ $banner->title }}" class="w-100 h-100 position-relative" style="object-fit: cover;">
+                                        <img src="{{ $bannerImage }}" alt="{{ $banner->title }}" width="1200" height="500" loading="eager" fetchpriority="high" class="w-100 h-100 position-relative" style="object-fit: cover;">
                                     @endif
                                     <div class="position-absolute top-0 start-0 w-100 h-100 d-flex align-items-end" style="background: linear-gradient(to top, rgba(17,24,39,0.72), rgba(17,24,39,0.02));">
                                         <div class="p-4 text-white">
@@ -56,7 +56,7 @@
                                         </div>
                                         <div class="d-flex align-items-center justify-content-center p-4" style="width: {{ $imageRatio }}%;">
                                             @if($bannerImage)
-                                                <img src="{{ $bannerImage }}" alt="{{ $banner->title }}" class="w-100 h-100" style="object-fit: contain;">
+                                                <img src="{{ $bannerImage }}" alt="{{ $banner->title }}" width="1200" height="500" loading="lazy" class="w-100 h-100" style="object-fit: contain;">
                                             @endif
                                         </div>
                                     </div>

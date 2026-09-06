@@ -9,6 +9,22 @@ use Illuminate\Support\Facades\Cache;
 
 class PromotionFinder
 {
+    /**
+     * Cache-buster for the 60s candidate cache. Bumped by Promotion /
+     * PromotionCouponCode model events (see their booted()), so an admin
+     * creating / pausing / editing a promotion reflects at checkout
+     * immediately instead of up to a minute later.
+     */
+    public static function cacheVersion(): int
+    {
+        return (int) Cache::get('promotion_engine:version', 0);
+    }
+
+    public static function bumpCacheVersion(): void
+    {
+        Cache::forever('promotion_engine:version', self::cacheVersion() + 1);
+    }
+
     public function candidates(array $context, ?int $limit = null): Collection
     {
         $normalized = $this->normalizeContext($context);
@@ -23,6 +39,7 @@ class PromotionFinder
 
         $cacheKey = 'promotion_engine:active:'
             . md5(json_encode([
+                'v' => self::cacheVersion(),
                 'restaurant_id' => $normalized['restaurant_id'],
                 'branch_id' => $normalized['branch_id'],
                 'order_type' => $normalized['order_type'],

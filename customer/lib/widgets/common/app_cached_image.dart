@@ -3,6 +3,14 @@ import 'package:flutter/material.dart';
 
 import '../../services/app_image_cache.dart';
 
+/// URLs whose bytes could not be decoded this session (server returned an
+/// HTML error / redirect, or an unsupported format like SVG/AVIF/HEIC). Once
+/// a URL lands here we render the fallback straight away instead of handing
+/// the same bad bytes to the platform image decoder again on every rebuild —
+/// those repeated native `ImageDecoder` attempts + exceptions were a real
+/// source of scroll hitches on the home feed.
+final Set<String> _appImageFailedUrls = <String>{};
+
 class AppCachedImage extends StatelessWidget {
   const AppCachedImage({
     super.key,
@@ -44,7 +52,7 @@ class AppCachedImage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final resolvedUrl = AppImageCache.resolveUrl(imageUrl);
-    if (resolvedUrl.isEmpty) {
+    if (resolvedUrl.isEmpty || _appImageFailedUrls.contains(resolvedUrl)) {
       return errorBuilder?.call(
             context,
             ArgumentError.value(imageUrl, 'imageUrl'),
@@ -88,14 +96,16 @@ class AppCachedImage extends StatelessWidget {
           ) ??
           placeholder ??
           SizedBox(width: width, height: height),
-      errorWidget: (context, _, error) =>
-          errorBuilder?.call(
-            context,
-            error,
-            StackTrace.empty,
-          ) ??
-          errorWidget ??
-          SizedBox(width: width, height: height),
+      errorWidget: (context, _, error) {
+        _appImageFailedUrls.add(resolvedUrl);
+        return errorBuilder?.call(
+              context,
+              error,
+              StackTrace.empty,
+            ) ??
+            errorWidget ??
+            SizedBox(width: width, height: height);
+      },
     );
 
     return _wrap(image);

@@ -14,14 +14,21 @@ use App\Http\Controllers\Restaurant\PrinterController;
 use App\Http\Controllers\Restaurant\StaffController;
 use App\Http\Controllers\Restaurant\WalletController;
 use App\Http\Controllers\Restaurant\PosController;
+use App\Http\Controllers\Restaurant\AiApprovalController;
 
 Route::middleware(['auth', 'role:restaurant_owner|restaurant_staff'])->prefix('restaurant')->name('restaurant.')->group(function () {
-    
+
     // Dashboard
     Route::get('/dashboard', [DashboardController::class, 'index'])->name('dashboard');
     Route::post('/toggle-status', [DashboardController::class, 'toggleStatus'])
         ->middleware('restaurant.permission:view_dashboard')
         ->name('toggle-status');
+
+    // AI proposals (restaurant-funded promotions / menu price suggestions) awaiting this restaurant's approval
+    Route::prefix('ai-proposals')->name('ai-proposals.')->group(function () {
+        Route::post('/{approval}/approve', [AiApprovalController::class, 'approve'])->name('approve');
+        Route::post('/{approval}/reject', [AiApprovalController::class, 'reject'])->name('reject');
+    });
     
     // Orders Management
     Route::middleware('restaurant.permission:view_orders,manage_orders')->group(function () {
@@ -104,6 +111,11 @@ Route::middleware(['auth', 'role:restaurant_owner|restaurant_staff'])->prefix('r
         // Settings
         Route::get('/settings', [SettingsController::class, 'index'])->name('settings.index');
         Route::post('/settings', [SettingsController::class, 'update'])->name('settings.update');
+        Route::post('/settings/tax', [SettingsController::class, 'updateTax'])->name('settings.tax');
+
+        // Tax-aware settlement statements + Form 16A
+        Route::get('/statements', [\App\Http\Controllers\Restaurant\StatementController::class, 'index'])->name('statements.index');
+        Route::get('/statements/form-16a', [\App\Http\Controllers\Restaurant\StatementController::class, 'form16a'])->name('statements.form16a');
         Route::get('/settings/timing', [SettingsController::class, 'timing'])->name('settings.timing');
         Route::put('/settings/timing', [SettingsController::class, 'updateTiming'])->name('settings.timing.update');
         Route::post('/settings/go-offline', [SettingsController::class, 'goOffline'])->name('settings.go-offline');

@@ -396,20 +396,29 @@ class AuthController extends Controller
             'role' => $request->input('role', 'customer'),
         ]);
 
-        $firebaseIdentity = $this->verifyFirebaseIdentityToken(
-            $request->input('firebase_id_token'),
-            $firebaseRequestId
-        );
-        if ($firebaseIdentity === null) {
-            return response()->json([
-                'success' => false,
-                'message' => "Firebase could not verify this OTP session. Reference: {$firebaseRequestId}",
-                'code' => 'FIREBASE_TOKEN_REJECTED',
-                'reference' => $firebaseRequestId,
-            ], 422);
+        $requestPhone = $this->normalizePhone($request->input('phone'));
+
+        if ($this->isDemoLoginPhone($requestPhone)) {
+            Log::info('Demo login: skipping Firebase token verification.', [
+                'request_id' => $firebaseRequestId,
+                'phone' => $requestPhone,
+            ]);
+            $firebaseIdentity = $this->demoFirebaseIdentity($requestPhone);
+        } else {
+            $firebaseIdentity = $this->verifyFirebaseIdentityToken(
+                $request->input('firebase_id_token'),
+                $firebaseRequestId
+            );
+            if ($firebaseIdentity === null) {
+                return response()->json([
+                    'success' => false,
+                    'message' => "Firebase could not verify this OTP session. Reference: {$firebaseRequestId}",
+                    'code' => 'FIREBASE_TOKEN_REJECTED',
+                    'reference' => $firebaseRequestId,
+                ], 422);
+            }
         }
 
-        $requestPhone = $this->normalizePhone($request->input('phone'));
         $firebasePhone = $this->normalizePhone($firebaseIdentity['phone']);
 
         if ($requestPhone !== '' && $firebasePhone !== '' && $requestPhone !== $firebasePhone) {
@@ -482,20 +491,29 @@ class AuthController extends Controller
             'role' => $request->input('role', 'customer'),
         ]);
 
-        $firebaseIdentity = $this->verifyFirebaseIdentityToken(
-            $request->input('firebase_id_token'),
-            $firebaseRequestId
-        );
-        if ($firebaseIdentity === null) {
-            return response()->json([
-                'success' => false,
-                'message' => "Firebase could not verify this OTP session. Reference: {$firebaseRequestId}",
-                'code' => 'FIREBASE_TOKEN_REJECTED',
-                'reference' => $firebaseRequestId,
-            ], 422);
+        $requestPhone = $this->normalizePhone($request->input('phone'));
+
+        if ($this->isDemoLoginPhone($requestPhone)) {
+            Log::info('Demo login: skipping Firebase token verification.', [
+                'request_id' => $firebaseRequestId,
+                'phone' => $requestPhone,
+            ]);
+            $firebaseIdentity = $this->demoFirebaseIdentity($requestPhone);
+        } else {
+            $firebaseIdentity = $this->verifyFirebaseIdentityToken(
+                $request->input('firebase_id_token'),
+                $firebaseRequestId
+            );
+            if ($firebaseIdentity === null) {
+                return response()->json([
+                    'success' => false,
+                    'message' => "Firebase could not verify this OTP session. Reference: {$firebaseRequestId}",
+                    'code' => 'FIREBASE_TOKEN_REJECTED',
+                    'reference' => $firebaseRequestId,
+                ], 422);
+            }
         }
 
-        $requestPhone = $this->normalizePhone($request->input('phone'));
         $firebasePhone = $this->normalizePhone($firebaseIdentity['phone']);
 
         if ($requestPhone !== '' && $firebasePhone !== '' && $requestPhone !== $firebasePhone) {
@@ -646,6 +664,29 @@ class AuthController extends Controller
             ], 403);
         }
 
+        // Demo / app-review number: skip every SMS provider and let the app
+        // collect the fixed OTP with its normal manual entry screen.
+        if ($this->isDemoLoginPhone($normalizedPhone)) {
+            Log::info('Demo login OTP requested.', [
+                'phone' => $normalizedPhone,
+                'role' => $role,
+                'flow' => $flow,
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'OTP sent successfully.',
+                'data' => [
+                    'phone' => $normalizedPhone,
+                    'flow' => $flow,
+                    'existing_user' => (bool) $user,
+                    'provider' => 'demo',
+                    'otp_flow' => 'manual',
+                    'expires_in' => 600,
+                ],
+            ]);
+        }
+
         $smsService = app(SmsService::class);
         if ($this->resolveOtpProvider() === 'msg91' && $smsService->usesMsg91WidgetOtp()) {
             try {
@@ -743,7 +784,9 @@ class AuthController extends Controller
         $otpProvider = $this->resolveOtpProvider();
         $smsService = app(SmsService::class);
         try {
-            if ($otpProvider === 'msg91' && $smsService->usesMsg91WidgetOtp()) {
+            if ($this->isDemoLoginPhone($normalizedPhone)) {
+                $matchedOtp = $this->demoLoginOtpMatches((string) $request->otp) ? 'demo' : null;
+            } elseif ($otpProvider === 'msg91' && $smsService->usesMsg91WidgetOtp()) {
                 $smsService->verifyMsg91WidgetAccessToken(
                     (string) $request->input('msg91_access_token', ''),
                     $normalizedPhone
@@ -990,9 +1033,15 @@ class AuthController extends Controller
             : $user->only(['id', 'name', 'email', 'phone', 'roles']);
 
         $roleNames = $user->roles->pluck('name');
+        // A "customer" role is often auto-granted, so when no role was explicitly
+        // requested, surface a staff/partner role first — otherwise a driver or
+        // restaurant owner hitting /user gets `role: customer` and their app
+        // (which is role-locked) logs them straight back out.
+        $rolePriority = ['delivery_partner', 'restaurant_owner', 'restaurant_staff', 'branch_owner', 'branch_manager', 'admin', 'super_admin'];
+        $prioritisedRole = collect($rolePriority)->first(fn ($r) => $roleNames->contains($r));
         $primaryRole = $preferredRole && $roleNames->contains($preferredRole)
             ? $preferredRole
-            : $roleNames->first();
+            : ($prioritisedRole ?? $roleNames->first());
 
         return array_merge($base, [
             'role' => $primaryRole,
@@ -1062,6 +1111,17 @@ class AuthController extends Controller
                 'app_releases' => $this->appReleaseSettings(),
                 'support_email' => AppSetting::getValue('support_email', AppSetting::getValue('contact_email', 'support@example.com')),
                 'support_phone' => AppSetting::getValue('support_phone', ''),
+                'footer_description' => AppSetting::getValue('footer_description', 'Order food from the best restaurants in your city. Fast delivery, great taste!'),
+                'footer_copyright' => AppSetting::getValue('footer_copyright', 'All rights reserved.'),
+                'footer_company_title' => AppSetting::getValue('footer_company_title', 'Company'),
+                'footer_support_title' => AppSetting::getValue('footer_support_title', 'Support'),
+                'footer_legal_title' => AppSetting::getValue('footer_legal_title', 'Legal'),
+                'footer_link_about' => AppSetting::getValue('footer_link_about', 'About Us'),
+                'footer_link_careers' => AppSetting::getValue('footer_link_careers', 'Careers'),
+                'footer_link_blog' => AppSetting::getValue('footer_link_blog', 'Blog'),
+                'footer_link_help' => AppSetting::getValue('footer_link_help', 'Help Center'),
+                'footer_link_contact' => AppSetting::getValue('footer_link_contact', 'Contact Us'),
+                'footer_link_faqs' => AppSetting::getValue('footer_link_faqs', 'FAQs'),
                 'default_mobile_country_code' => $this->defaultMobileCountryCode(),
                 'otp_service_provider' => $this->resolveOtpProvider(),
                 'cod_enabled' => filter_var(AppSetting::getValue('cod_enabled', '1'), FILTER_VALIDATE_BOOLEAN),
@@ -1072,6 +1132,14 @@ class AuthController extends Controller
                 'onboarding_intro_title' => AppSetting::getValue('onboarding_intro_title', AppSetting::getValue('app_name', config('app.name', 'AH Food'))),
                 'onboarding_intro_subtitle' => AppSetting::getValue('onboarding_intro_subtitle', 'Food, groceries and everyday cravings delivered fast.'),
                 'onboarding_slides' => $this->buildOnboardingSlides(),
+                // Same key the admin's own checkout/store-picker Blade views embed
+                // client-side (see resources/views/checkout.blade.php) — exposed here
+                // so the customer web app's location search can load the Places
+                // library the same way, configured from Admin > Settings > Map.
+                'google_maps_api_key' => trim((string) AppSetting::getValue(
+                    'google_maps_api_key',
+                    AppSetting::getValue('google_maps_key', '')
+                )),
             ],
         ]);
     }
@@ -1296,11 +1364,56 @@ class AuthController extends Controller
     protected function resolveOtpProvider(): string
     {
         $configured = strtolower(trim((string) AppSetting::getValue('otp_service_provider', '')));
-        if (in_array($configured, ['firebase', 'twilio', 'msg91'], true)) {
+        if (in_array($configured, ['firebase', 'twilio', 'msg91', 'exotel'], true)) {
             return $configured;
         }
 
         return '';
+    }
+
+    /**
+     * Whether the demo / app-review login bypass is fully configured.
+     * See config/auth_demo.php. Keep this OFF in normal operation.
+     */
+    protected function demoLoginActive(): bool
+    {
+        return (bool) config('auth_demo.enabled')
+            && trim((string) config('auth_demo.phone')) !== ''
+            && trim((string) config('auth_demo.otp')) !== '';
+    }
+
+    /**
+     * True when the given already-normalized phone is the configured demo number.
+     */
+    protected function isDemoLoginPhone(?string $normalizedPhone): bool
+    {
+        if (! $this->demoLoginActive() || $normalizedPhone === null || $normalizedPhone === '') {
+            return false;
+        }
+
+        return $this->normalizePhone((string) config('auth_demo.phone')) === $normalizedPhone;
+    }
+
+    /**
+     * Constant-time comparison of the supplied OTP against the demo OTP.
+     */
+    protected function demoLoginOtpMatches(?string $otp): bool
+    {
+        return $this->demoLoginActive()
+            && hash_equals(trim((string) config('auth_demo.otp')), trim((string) ($otp ?? '')));
+    }
+
+    /**
+     * Fake "verified identity" for the demo number, matching the shape returned
+     * by verifyFirebaseIdentityToken(), so the Firebase login/verify paths can
+     * skip the real Google token round-trip for reviewers.
+     */
+    protected function demoFirebaseIdentity(string $normalizedPhone): array
+    {
+        return [
+            'phone' => $normalizedPhone,
+            'uid' => 'demo-' . substr(sha1($normalizedPhone), 0, 20),
+        ];
     }
 
     protected function normalizePhone(?string $phone): string

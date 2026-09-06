@@ -10,6 +10,7 @@ use App\Models\User;
 use App\Rules\UniqueUserContactForRole;
 use App\Services\CashfreeVerificationService;
 use App\Services\DeliveryAreaResolver;
+use App\Services\RestaurantApplicationService;
 use App\Support\PhoneNumber;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
@@ -24,7 +25,8 @@ class PartnerApplicationController extends Controller
 {
     public function __construct(
         private readonly DeliveryAreaResolver $deliveryAreaResolver,
-        private readonly CashfreeVerificationService $verification
+        private readonly CashfreeVerificationService $verification,
+        private readonly RestaurantApplicationService $restaurantApplications
     ) {
     }
 
@@ -67,6 +69,48 @@ class PartnerApplicationController extends Controller
                 ], 422);
             }
             $request->merge(['phone' => $normalizedPhone]);
+        }
+
+        if ($partnerType === 'restaurant') {
+            $validator = Validator::make($request->all(), $this->restaurantApplications->publicRules());
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Validation failed.',
+                    'errors' => $validator->errors(),
+                ], 422);
+            }
+
+            DB::beginTransaction();
+
+            try {
+                $application = $this->restaurantApplications->createFromRequest($request);
+
+                DB::commit();
+
+                $this->restaurantApplications->runDocumentVerification($application);
+
+                return response()->json([
+                    'success' => true,
+                    'message' => 'Application submitted successfully. It is now pending admin approval.',
+                    'data' => [
+                        'application_id' => $application->id,
+                        'application_number' => $application->application_number,
+                        'partner_type' => $application->partner_type,
+                        'status' => $application->status,
+                        'status_message' => $this->statusMessage($application),
+                    ],
+                ], 201);
+            } catch (\Throwable $e) {
+                DB::rollBack();
+                Log::error('Restaurant partner application API submission failed: ' . $e->getMessage());
+
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Failed to submit application.',
+                ], 500);
+            }
         }
 
         DB::beginTransaction();
@@ -297,6 +341,7 @@ class PartnerApplicationController extends Controller
             'background_location_enabled' => $request->boolean('background_location_enabled'),
             'notification_permission_enabled' => $request->boolean('notification_permission_enabled'),
             'zone_name' => $area?->name,
+            'service_area_status' => $area ? 'serviceable' : 'not_serviceable',
         ], static fn ($value) => $value !== null && $value !== '');
     }
 
@@ -352,13 +397,9 @@ class PartnerApplicationController extends Controller
             $request->input('longitude') !== null ? (float) $request->input('longitude') : null
         );
 
-        if (! $area) {
-            throw ValidationException::withMessages([
-                'latitude' => 'No active delivery zone matched the current location.',
-            ]);
+        if ($area) {
+            $request->merge(['area_id' => $area->id]);
         }
-
-        $request->merge(['area_id' => $area->id]);
 
         return $area;
     }
@@ -376,7 +417,9 @@ class PartnerApplicationController extends Controller
         return match ($application->status) {
             'approved' => 'Application approved. You can now sign in to your account.',
             'rejected' => 'Application rejected. Please review admin notes and reapply if needed.',
-            default => 'Application submitted and pending admin review.',
+            default => $application->deliveryArea
+                ? 'Application submitted and pending admin review.'
+                : 'Application submitted. Your area is not serviceable yet; we will contact you when service starts in your area.',
         };
     }
 

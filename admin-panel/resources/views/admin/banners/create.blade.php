@@ -33,6 +33,9 @@
 @endsection
 
 @section('content')
+@php
+    $displaySurfaceLabels = $displaySurfaceLabels ?? \App\Models\Banner::DISPLAY_SURFACE_LABELS;
+@endphp
 <section class="bf-head">
     <div class="d-flex justify-content-between align-items-center gap-3 flex-wrap">
         <div>
@@ -74,11 +77,23 @@
                     <label class="form-label fw-bold">Banner Type <span class="text-danger">*</span></label>
                     <select name="banner_type" id="bannerType" class="form-select @error('banner_type') is-invalid @enderror" required>
                         <option value="home" @selected(old('banner_type', 'home') === 'home')>Home Banner</option>
+                        <option value="driver" @selected(old('banner_type') === 'driver')>Driver Banner</option>
+                        <option value="restaurant" @selected(old('banner_type') === 'restaurant')>Restaurant Banner</option>
                         <option value="promo" @selected(old('banner_type') === 'promo')>Promo Banner</option>
                         <option value="search_bar" @selected(old('banner_type') === 'search_bar')>Search Bar Banner</option>
                         <option value="category" @selected(old('banner_type') === 'category')>Category Banner</option>
                     </select>
                     @error('banner_type') <div class="invalid-feedback">{{ $message }}</div> @enderror
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label fw-bold">Placement <span class="text-danger">*</span></label>
+                    <select name="display_surface" class="form-select @error('display_surface') is-invalid @enderror" required>
+                        @foreach($displaySurfaceLabels as $value => $label)
+                            <option value="{{ $value }}" @selected(old('display_surface', 'both') === $value)>{{ $label }}</option>
+                        @endforeach
+                    </select>
+                    <div class="bf-muted mt-1">Choose where this banner should be visible.</div>
+                    @error('display_surface') <div class="invalid-feedback">{{ $message }}</div> @enderror
                 </div>
                 <div class="col-md-6">
                     <label class="form-label fw-bold">Layout Mode <span class="text-danger">*</span></label>

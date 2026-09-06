@@ -1135,6 +1135,7 @@
     @yield('scripts')
 @include('partials.google-maps-shim')
 </body>
+    @include('partials.google-tag-manager')
 </html>
 
 

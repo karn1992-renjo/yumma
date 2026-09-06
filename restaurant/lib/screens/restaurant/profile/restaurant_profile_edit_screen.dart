@@ -25,6 +25,7 @@ class _RestaurantProfileEditScreenState
   final _formKey = GlobalKey<FormState>();
   bool _isSaving = false;
   bool _isLoading = true;
+  String _restaurantCode = '';
 
   late TextEditingController _nameController;
   late TextEditingController _descriptionController;
@@ -80,11 +81,34 @@ class _RestaurantProfileEditScreenState
 
   Future<void> _loadRestaurantInfo() async {
     try {
-      final response = await _api.get(ApiConstants.restaurantSettings);
-      if (response['success'] == true) {
+      final response = await _api.getWithCache(
+        ApiConstants.restaurantSettings,
+        onCache: _applyRestaurantInfo,
+      );
+      _applyRestaurantInfo(response);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error loading profile: $e')),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    }
+  }
+
+  void _applyRestaurantInfo(dynamic response) {
+    if (response is Map && response['success'] == true) {
+      {
         final data = Map<String, dynamic>.from(response['data'] ?? {});
         if (!mounted) return;
         setState(() {
+          _restaurantCode = (data['code'] ??
+                  (data['id'] != null
+                      ? 'RES${data['id'].toString().padLeft(5, '0')}'
+                      : ''))
+              .toString();
           _nameController.text = data['name'] ?? '';
           _descriptionController.text = data['description'] ?? '';
           _emailController.text = data['email'] ?? '';
@@ -97,21 +121,21 @@ class _RestaurantProfileEditScreenState
           if (rawTimings is Map) {
             for (final day in _days) {
               if (rawTimings[day] is Map) {
-                _weeklyTimings[day] =
-                    Map<String, dynamic>.from(rawTimings[day]);
+                final dayTiming =
+                    Map<String, dynamic>.from(rawTimings[day] as Map);
+                for (final field in const [
+                  'open_time',
+                  'close_time',
+                  'break_start',
+                  'break_end',
+                ]) {
+                  dayTiming[field] = _normalizeTime(dayTiming[field]);
+                }
+                _weeklyTimings[day] = dayTiming;
               }
             }
           }
         });
-      }
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error loading profile: $e')),
-      );
-    } finally {
-      if (mounted) {
-        setState(() => _isLoading = false);
       }
     }
   }
@@ -219,6 +243,19 @@ class _RestaurantProfileEditScreenState
     }
   }
 
+  /// Normalises a stored time (`H:i`, `HH:mm`, or legacy `HH:mm:ss`) to `HH:mm`.
+  /// Returns null for empty/invalid values so break times stay optional.
+  String? _normalizeTime(dynamic value) {
+    final raw = value?.toString().trim() ?? '';
+    if (raw.isEmpty) return null;
+    final parts = raw.split(':');
+    if (parts.length < 2) return null;
+    final hour = int.tryParse(parts[0]);
+    final minute = int.tryParse(parts[1]);
+    if (hour == null || minute == null) return null;
+    return '${hour.toString().padLeft(2, '0')}:${minute.toString().padLeft(2, '0')}';
+  }
+
   String _displayTime(String value) {
     final parts = value.split(':');
     final hour = int.tryParse(parts.first) ?? 0;
@@ -251,7 +288,7 @@ class _RestaurantProfileEditScreenState
                     onChanged: (value) =>
                         setState(() => timing['is_open'] = value)),
               ]),
-              if (isOpen)
+              if (isOpen) ...[
                 Row(children: [
                   Expanded(
                       child: OutlinedButton.icon(
@@ -269,9 +306,12 @@ class _RestaurantProfileEditScreenState
                               const Icon(Icons.nights_stay_outlined, size: 18),
                           label: Text(_displayTime(
                               '${timing['close_time'] ?? '22:00'}')))),
-                ])
+                ]),
+                const SizedBox(height: 6),
+                _buildBreakRow(day, timing),
+              ]
               else
-                const Align(
+                Align(
                     alignment: Alignment.centerLeft,
                     child: Text('Closed',
                         style: TextStyle(color: FoodFlowTheme.muted))),
@@ -279,6 +319,52 @@ class _RestaurantProfileEditScreenState
           ),
         );
       }),
+    ]);
+  }
+
+  Widget _buildBreakRow(String day, Map<String, dynamic> timing) {
+    final hasBreak = (timing['break_start']?.toString().isNotEmpty ?? false) &&
+        (timing['break_end']?.toString().isNotEmpty ?? false);
+
+    if (!hasBreak) {
+      return Align(
+        alignment: Alignment.centerLeft,
+        child: TextButton.icon(
+          onPressed: () => setState(() {
+            _weeklyTimings[day]!['break_start'] = '15:00';
+            _weeklyTimings[day]!['break_end'] = '18:00';
+          }),
+          icon: const Icon(Icons.free_breakfast_outlined, size: 16),
+          label: const Text('Add break time'),
+          style: TextButton.styleFrom(padding: EdgeInsets.zero),
+        ),
+      );
+    }
+
+    return Row(children: [
+      Icon(Icons.free_breakfast_outlined,
+          size: 16, color: FoodFlowTheme.muted),
+      const SizedBox(width: 6),
+      Text('Break', style: TextStyle(color: FoodFlowTheme.muted)),
+      const SizedBox(width: 8),
+      Expanded(
+          child: OutlinedButton(
+              onPressed: () => _pickTime(day, 'break_start'),
+              child: Text(_displayTime('${timing['break_start']}')))),
+      const Padding(
+          padding: EdgeInsets.symmetric(horizontal: 6), child: Text('to')),
+      Expanded(
+          child: OutlinedButton(
+              onPressed: () => _pickTime(day, 'break_end'),
+              child: Text(_displayTime('${timing['break_end']}')))),
+      IconButton(
+        tooltip: 'Remove break',
+        icon: const Icon(Icons.close, size: 18),
+        onPressed: () => setState(() {
+          _weeklyTimings[day]!['break_start'] = null;
+          _weeklyTimings[day]!['break_end'] = null;
+        }),
+      ),
     ]);
   }
 
@@ -422,6 +508,23 @@ class _RestaurantProfileEditScreenState
                     ),
                     const SizedBox(height: 24),
                     // Restaurant Name
+                    if (_restaurantCode.isNotEmpty) ...[
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 10, vertical: 6),
+                        decoration: BoxDecoration(
+                          color: FoodFlowTheme.orange.withOpacity(0.10),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          'Restaurant ID: $_restaurantCode',
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w800,
+                          ).copyWith(color: FoodFlowTheme.orange),
+                        ),
+                      ),
+                      const SizedBox(height: 14),
+                    ],
                     const Text(
                       'Restaurant Name',
                       style: TextStyle(fontWeight: FontWeight.w600),

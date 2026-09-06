@@ -1,3 +1,5 @@
+import 'dart:async';
+import 'a1paso_auth_widgets.dart';
 import 'dart:io';
 import 'dart:math';
 
@@ -13,6 +15,7 @@ import '../../services/app_branding_service.dart';
 import '../../services/firebase_phone_auth_service.dart';
 import '../../services/location_service.dart';
 import '../../services/partner_application_service.dart';
+import '../../services/verification_service.dart';
 import '../../utils/phone_number_utils.dart';
 import '../driver/background_location_disclosure_screen.dart';
 import 'otp_verification_screen.dart';
@@ -38,6 +41,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   final _picker = ImagePicker();
   final _locationService = LocationService();
   final _applicationService = PartnerApplicationService.instance;
+  final _verificationService = VerificationService.instance;
   final _firebasePhoneAuthService = FirebasePhoneAuthService();
 
   final _nameController = TextEditingController();
@@ -59,6 +63,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   AppBranding _branding = AppBranding.fallback();
   List<Map<String, dynamic>> _deliveryAreas = const [];
+  List<LocationSuggestion> _locationSuggestions = const [];
 
   String _gender = 'Male';
   String _vehicleType = 'bike';
@@ -73,9 +78,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
   bool _notificationPermissionEnabled = true;
   bool _isLoadingBranding = true;
   bool _isLoadingAreas = true;
+  bool _isLoadingLocationSuggestions = false;
   bool _isLocating = false;
   bool _isSubmitting = false;
   bool _isSendingOtp = false;
+  int _currentStep = 0;
+  int _locationSearchSerial = 0;
 
   File? _profilePhoto;
   File? _vehicleImage;
@@ -85,6 +93,18 @@ class _RegisterScreenState extends State<RegisterScreen> {
   File? _rcFile;
   File? _insuranceFile;
 
+  DocVerifyResult? _vehicleRcResult;
+  DocVerifyResult? _drivingLicenseResult;
+  DocVerifyResult? _panDocResult;
+  DocVerifyResult? _aadhaarDocResult;
+  bool _isCheckingVehicleRc = false;
+  bool _isCheckingLicense = false;
+  bool _isCheckingPanDoc = false;
+  bool _isCheckingAadhaarDoc = false;
+  Timer? _vehicleRcDebounce;
+  Timer? _licenseDebounce;
+  Timer? _locationSearchDebounce;
+
   Color get _primary => AppConfig.primaryColor;
   Color get _secondary => AppConfig.secondaryColor;
   bool get _isPhoneVerified =>
@@ -93,12 +113,16 @@ class _RegisterScreenState extends State<RegisterScreen> {
   @override
   void initState() {
     super.initState();
-    _phoneController.text = _stripCountryCode(widget.initialPhone?.trim() ?? '');
+    _phoneController.text =
+        _stripCountryCode(widget.initialPhone?.trim() ?? '');
     _loadBootstrap();
   }
 
   @override
   void dispose() {
+    _vehicleRcDebounce?.cancel();
+    _licenseDebounce?.cancel();
+    _locationSearchDebounce?.cancel();
     _nameController.dispose();
     _emailController.dispose();
     _phoneController.dispose();
@@ -188,6 +212,175 @@ class _RegisterScreenState extends State<RegisterScreen> {
     onPicked(File(file.path));
   }
 
+  void _onVehicleNumberChanged(String value) {
+    _vehicleRcDebounce?.cancel();
+    if (value.trim().length < 8) {
+      setState(() => _vehicleRcResult = null);
+      return;
+    }
+    _vehicleRcDebounce = Timer(const Duration(milliseconds: 700), () {
+      _checkVehicleRc(value.trim());
+    });
+  }
+
+  Future<void> _checkVehicleRc(String vehicleNumber) async {
+    setState(() => _isCheckingVehicleRc = true);
+    final result = await _verificationService.verifyVehicleRc(vehicleNumber);
+    if (!mounted) return;
+    setState(() {
+      _isCheckingVehicleRc = false;
+      _vehicleRcResult = result;
+    });
+  }
+
+  Future<void> _pickDateOfBirth() async {
+    final now = DateTime.now();
+    DateTime initialDate = DateTime(now.year - 18, now.month, now.day);
+    final existing = DateTime.tryParse(_dobController.text.trim());
+    if (existing != null) {
+      initialDate = existing;
+    }
+
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: initialDate,
+      firstDate: DateTime(now.year - 80),
+      lastDate: DateTime(now.year - 18, now.month, now.day),
+      helpText: 'Select date of birth',
+      initialEntryMode: DatePickerEntryMode.calendarOnly,
+    );
+
+    if (picked == null || !mounted) return;
+
+    setState(() {
+      _dobController.text = _formatDate(picked);
+    });
+    _onLicenseFieldsChanged();
+  }
+
+  String _formatDate(DateTime date) {
+    final month = date.month.toString().padLeft(2, '0');
+    final day = date.day.toString().padLeft(2, '0');
+    return '${date.year}-$month-$day';
+  }
+
+  void _onLicenseFieldsChanged() {
+    _licenseDebounce?.cancel();
+    final licenseNumber = _licenseNumberController.text.trim();
+    final dob = _dobController.text.trim();
+    if (licenseNumber.length < 6 ||
+        !RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(dob)) {
+      setState(() => _drivingLicenseResult = null);
+      return;
+    }
+    _licenseDebounce = Timer(const Duration(milliseconds: 700), () {
+      _checkDrivingLicense(licenseNumber: licenseNumber, dob: dob);
+    });
+  }
+
+  Future<void> _checkDrivingLicense({
+    required String licenseNumber,
+    required String dob,
+  }) async {
+    setState(() => _isCheckingLicense = true);
+    final result = await _verificationService.verifyDrivingLicense(
+      licenseNumber: licenseNumber,
+      dob: dob,
+    );
+    if (!mounted) return;
+    setState(() {
+      _isCheckingLicense = false;
+      _drivingLicenseResult = result;
+    });
+  }
+
+  Future<void> _checkPanDocument(File file) async {
+    setState(() {
+      _isCheckingPanDoc = true;
+      _panDocResult = null;
+    });
+    final result = await _verificationService.verifyPanDocument(file.path);
+    if (!mounted) return;
+    setState(() {
+      _isCheckingPanDoc = false;
+      _panDocResult = result;
+    });
+  }
+
+  Future<void> _checkAadhaarDocument(File file) async {
+    setState(() {
+      _isCheckingAadhaarDoc = true;
+      _aadhaarDocResult = null;
+    });
+    final result = await _verificationService.verifyAadhaarDocument(file.path);
+    if (!mounted) return;
+    setState(() {
+      _isCheckingAadhaarDoc = false;
+      _aadhaarDocResult = result;
+    });
+  }
+
+  Widget _verifyStatusLine(bool checking, DocVerifyResult? result) {
+    if (checking) {
+      return Padding(
+        padding: const EdgeInsets.only(top: 6, left: 4),
+        child: Row(
+          children: [
+            const SizedBox(
+              width: 13,
+              height: 13,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+            const SizedBox(width: 8),
+            Text(
+              'Verifying with Cashfree...',
+              style: TextStyle(color: _subtext, fontSize: 12.5),
+            ),
+          ],
+        ),
+      );
+    }
+    if (result == null || result.status == DocVerifyStatus.unconfigured) {
+      return const SizedBox.shrink();
+    }
+    final IconData icon;
+    final Color color;
+    final String text;
+    switch (result.status) {
+      case DocVerifyStatus.verified:
+        icon = Icons.verified_rounded;
+        color = const Color(0xFF16A34A);
+        text = 'Verified';
+        break;
+      case DocVerifyStatus.invalid:
+        icon = Icons.error_rounded;
+        color = const Color(0xFFDC2626);
+        text = result.message ?? 'Could not verify. Please check and retry.';
+        break;
+      default:
+        icon = Icons.info_rounded;
+        color = _subtext;
+        text = result.message ?? 'Could not verify right now.';
+    }
+    return Padding(
+      padding: const EdgeInsets.only(top: 6, left: 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, color: color, size: 15),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              text,
+              style: TextStyle(
+                  color: color, fontSize: 12.5, fontWeight: FontWeight.w600),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _useCurrentLocation() async {
     setState(() => _isLocating = true);
     try {
@@ -244,12 +437,65 @@ class _RegisterScreenState extends State<RegisterScreen> {
     );
   }
 
+  void _onLocationSearchChanged(String value) {
+    _locationSearchDebounce?.cancel();
+    final query = value.trim();
+    _latitude = null;
+    _longitude = null;
+    _selectedAreaId = null;
+    if (query.length < 3) {
+      setState(() {
+        _locationSuggestions = const [];
+        _isLoadingLocationSuggestions = false;
+      });
+      return;
+    }
+
+    _locationSearchDebounce = Timer(const Duration(milliseconds: 450), () {
+      _loadLocationSuggestions(query);
+    });
+  }
+
+  Future<void> _loadLocationSuggestions(String query) async {
+    final requestId = ++_locationSearchSerial;
+    setState(() => _isLoadingLocationSuggestions = true);
+
+    final suggestions = await _locationService.searchLocationSuggestions(query);
+    if (!mounted || requestId != _locationSearchSerial) return;
+
+    setState(() {
+      _locationSuggestions = suggestions;
+      _isLoadingLocationSuggestions = false;
+    });
+  }
+
+  Future<void> _selectLocationSuggestion(LocationSuggestion suggestion) async {
+    _locationSearchDebounce?.cancel();
+    _latitude = suggestion.lat;
+    _longitude = suggestion.lng;
+
+    setState(() {
+      _locationSearchController.text = suggestion.displayName;
+      _addressController.text = suggestion.address.isNotEmpty
+          ? suggestion.address
+          : suggestion.displayName;
+      if (suggestion.city.isNotEmpty) {
+        _cityController.text = suggestion.city;
+      }
+      _locationSuggestions = const [];
+      _isLoadingLocationSuggestions = false;
+    });
+
+    _autoAssignAreaFromCurrentLocation(showFeedback: true);
+  }
+
   Future<void> _searchLocationManually() async {
     final query = _locationSearchController.text.trim().isNotEmpty
         ? _locationSearchController.text.trim()
         : _addressController.text.trim();
     if (query.isEmpty) {
-      _showMessage('Enter an area, landmark, or pincode to search.', isError: true);
+      _showMessage('Enter an area, landmark, or pincode to search.',
+          isError: true);
       return;
     }
 
@@ -265,7 +511,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
       _longitude = location['lng'] as double?;
 
       if (_latitude == null || _longitude == null) {
-        _showMessage('Location coordinates could not be resolved.', isError: true);
+        _showMessage('Location coordinates could not be resolved.',
+            isError: true);
         return;
       }
 
@@ -372,7 +619,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
         if (!mounted) return;
 
         if (!sent) {
-          _showMessage(authProvider.error ?? 'Failed to send OTP', isError: true);
+          _showMessage(authProvider.error ?? 'Failed to send OTP',
+              isError: true);
           return;
         }
       }
@@ -428,13 +676,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
     }
     if (_selectedAreaId == null) {
       _autoAssignAreaFromCurrentLocation();
-    }
-    if (_selectedAreaId == null) {
-      _showMessage(
-        'No delivery zone matched your current location.',
-        isError: true,
-      );
-      return;
+      _showNotServiceableMessage();
     }
 
     setState(() => _isSubmitting = true);
@@ -456,7 +698,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
           'vehicle_model': _vehicleModelController.text.trim(),
           'fuel_type': _fuelType,
           'license_number': _licenseNumberController.text.trim(),
-          'area_id': '$_selectedAreaId',
+          'area_id': _selectedAreaId?.toString() ?? '',
           'latitude': _latitude?.toString() ?? '',
           'longitude': _longitude?.toString() ?? '',
           'bank_holder_name': _bankHolderController.text.trim(),
@@ -464,8 +706,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
           'bank_ifsc': _ifscController.text.trim(),
           'bank_account_number': _accountNumberController.text.trim(),
           'upi_id': _upiController.text.trim(),
-          'background_location_enabled':
-              _backgroundLocationEnabled ? '1' : '0',
+          'background_location_enabled': _backgroundLocationEnabled ? '1' : '0',
           'notification_permission_enabled':
               _notificationPermissionEnabled ? '1' : '0',
           'terms': '1',
@@ -477,7 +718,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
           if (_aadhaarFile != null) 'aadhar_card': _aadhaarFile!.path,
           if (_panFile != null) 'pan_card': _panFile!.path,
           if (_rcFile != null) 'vehicle_rc': _rcFile!.path,
-          if (_insuranceFile != null) 'insurance_document': _insuranceFile!.path,
+          if (_insuranceFile != null)
+            'insurance_document': _insuranceFile!.path,
         },
       );
 
@@ -513,7 +755,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       prefixIcon: prefixIcon,
       suffixIcon: suffixIcon,
       filled: true,
-      fillColor: Colors.white,
+      fillColor: A1PasoAuthColors.surface,
       contentPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 18),
       enabledBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(18),
@@ -534,603 +776,814 @@ class _RegisterScreenState extends State<RegisterScreen> {
     );
   }
 
+  static const _stepCount = 5;
+
+  String _stepTitle(int index) {
+    switch (index) {
+      case 0:
+        return 'Verify mobile number';
+      case 1:
+        return 'Personal details';
+      case 2:
+        return 'Address and zone';
+      case 3:
+        return 'Vehicle and documents';
+      default:
+        return 'Payout and permissions';
+    }
+  }
+
+  String _stepSubtitle(int index) {
+    switch (index) {
+      case 0:
+        return 'Confirm the number admin will approve for your driver account.';
+      case 1:
+        return 'Tell us who is applying for delivery partner access.';
+      case 2:
+        return 'Use your live location so dispatch can map the correct zone.';
+      case 3:
+        return 'Upload vehicle and identity documents for admin review.';
+      default:
+        return 'Add bank details and consent to the operating permissions.';
+    }
+  }
+
+  IconData _stepIcon(int index) {
+    switch (index) {
+      case 0:
+        return Icons.phone_android_rounded;
+      case 1:
+        return Icons.person_outline_rounded;
+      case 2:
+        return Icons.location_on_outlined;
+      case 3:
+        return Icons.two_wheeler_rounded;
+      default:
+        return Icons.account_balance_outlined;
+    }
+  }
+
+  Future<void> _continueStep(AuthProvider auth) async {
+    if (_isSubmitting ||
+        _isLoadingBranding ||
+        _isLoadingAreas ||
+        auth.isLoading) return;
+    if (!_formKey.currentState!.validate()) return;
+
+    if (_currentStep == 0 && !_isPhoneVerified) {
+      await _verifyMobile();
+      if (!_isPhoneVerified) return;
+    }
+
+    if (_currentStep == 2) {
+      if (_latitude == null || _longitude == null) {
+        _showMessage(
+            'Use current location first so we can auto-assign your delivery zone.',
+            isError: true);
+        return;
+      }
+      if (_selectedAreaId == null) {
+        _autoAssignAreaFromCurrentLocation();
+        _showNotServiceableMessage();
+      }
+    }
+
+    if (_currentStep < _stepCount - 1) {
+      setState(() => _currentStep += 1);
+      return;
+    }
+
+    await _submitApplication();
+  }
+
+  void _backStep() {
+    if (_currentStep == 0) {
+      Navigator.pop(context);
+      return;
+    }
+    setState(() => _currentStep -= 1);
+  }
+
   @override
   Widget build(BuildContext context) {
     return Consumer<AuthProvider>(
       builder: (context, auth, _) {
+        final busy = auth.isLoading ||
+            _isLoadingBranding ||
+            _isSubmitting ||
+            _isLoadingAreas ||
+            _isSendingOtp;
+        final progress = (_currentStep + 1) / _stepCount;
+
         return Scaffold(
           backgroundColor: const Color(0xFFF8FAFC),
           body: SafeArea(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(20, 12, 20, 28),
-              child: Form(
-                key: _formKey,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
+            child: Column(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
+                  child: Row(
+                    children: [
+                      IconButton(
+                        onPressed: busy ? null : _backStep,
+                        style:
+                            IconButton.styleFrom(backgroundColor: Colors.white),
+                        icon: Icon(_currentStep == 0
+                            ? Icons.close_rounded
+                            : Icons.arrow_back_rounded),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(8),
+                          child: LinearProgressIndicator(
+                            value: progress.clamp(0, 1),
+                            minHeight: 7,
+                            backgroundColor: const Color(0xFFE5E7EB),
+                            valueColor: AlwaysStoppedAnimation(_primary),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Text(
+                        'Step ${_currentStep + 1} of $_stepCount',
+                        style: const TextStyle(
+                            color: _subtext,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w800),
+                      ),
+                    ],
+                  ),
+                ),
+                Expanded(
+                  child: Form(
+                    key: _formKey,
+                    child: ListView(
+                      padding: const EdgeInsets.fromLTRB(20, 18, 20, 26),
                       children: [
-                        IconButton(
-                          onPressed: () => Navigator.pop(context),
-                          style: IconButton.styleFrom(
-                            backgroundColor: Colors.white,
-                          ),
-                          icon: const Icon(Icons.arrow_back_rounded),
-                        ),
-                        const SizedBox(width: 12),
-                        const Expanded(
-                          child: Text(
-                            'Driver Registration',
-                            style: TextStyle(
-                              color: _text,
-                              fontSize: 22,
-                              fontWeight: FontWeight.w800,
-                            ),
+                        _wizardHeader(),
+                        const SizedBox(height: 18),
+                        AnimatedSwitcher(
+                          duration: const Duration(milliseconds: 180),
+                          child: KeyedSubtree(
+                            key: ValueKey(_currentStep),
+                            child: _buildCurrentStep(auth),
                           ),
                         ),
-                        TextButton(
-                          onPressed: () => Navigator.pop(context),
-                          child: const Text('Login'),
+                        const SizedBox(height: 18),
+                        Center(
+                          child: TextButton(
+                            onPressed: busy
+                                ? null
+                                : () => Navigator.pushNamed(
+                                    context, '/application-status'),
+                            child: const Text('Track existing application'),
+                          ),
                         ),
                       ],
                     ),
-                    const SizedBox(height: 16),
-                    _hero(),
-                    const SizedBox(height: 18),
-                    _sectionCard(
-                      title: '1. Verify mobile number',
-                      subtitle:
-                          'Use the same real OTP flow as customer login before submitting your partner application.',
-                      child: Column(
-                        children: [
-                          TextFormField(
-                            controller: _phoneController,
-                            readOnly: _isPhoneVerified,
-                            keyboardType: TextInputType.phone,
-                            onChanged: (_) {
-                              if (_isPhoneVerified) return;
-                              if (_verifiedPhoneToken != null) {
-                                setState(() {
-                                  _verifiedPhoneToken = null;
-                                  _verifiedPhoneNumber = null;
-                                });
-                              }
-                            },
-                            decoration: _fieldDecoration(
-                              hint: 'Mobile number',
-                              prefixIcon: const Icon(Icons.phone_android_rounded),
-                              suffixIcon: TextButton(
-                                onPressed: auth.isLoading ||
-                                        _isSendingOtp ||
-                                        _isPhoneVerified
-                                    ? null
-                                    : _verifyMobile,
-                                child: Text(
-                                  _isPhoneVerified
-                                      ? 'Verified'
-                                      : _isSendingOtp
-                                          ? 'Sending...'
-                                          : 'Verify',
-                                ),
-                              ),
-                            ),
-                            validator: (value) {
-                              return PhoneNumberUtils.validateMobile(
-                                value,
-                                countryCode: _branding.defaultMobileCountryCode,
-                              );
-                            },
-                          ),
-                          const SizedBox(height: 12),
-                          _infoBanner(
-                            icon: _isPhoneVerified
-                                ? Icons.verified_rounded
-                                : Icons.sms_outlined,
-                            text: _isPhoneVerified
-                                ? 'Mobile verified: $_verifiedPhoneNumber'
-                                : 'Verify your mobile first. Admin approval will create your driver account on this number.',
-                            accent: _isPhoneVerified ? _primary : _secondary,
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    _sectionCard(
-                      title: '2. Personal details',
-                      subtitle: 'These details go into the admin verification queue.',
-                      child: Column(
-                        children: [
-                          TextFormField(
-                            controller: _nameController,
-                            decoration: _fieldDecoration(
-                              hint: 'Full name',
-                              prefixIcon: const Icon(Icons.person_outline_rounded),
-                            ),
-                            validator: (value) =>
-                                (value == null || value.trim().isEmpty)
-                                    ? 'Full name is required'
-                                    : null,
-                          ),
-                          const SizedBox(height: 12),
-                          TextFormField(
-                            controller: _emailController,
-                            keyboardType: TextInputType.emailAddress,
-                            decoration: _fieldDecoration(
-                              hint: 'Email address',
-                              prefixIcon: const Icon(Icons.email_outlined),
-                            ),
-                            validator: (value) {
-                              if (value == null || value.trim().isEmpty) {
-                                return 'Email is required';
-                              }
-                              if (!value.contains('@')) {
-                                return 'Enter a valid email';
-                              }
-                              return null;
-                            },
-                          ),
-                          const SizedBox(height: 12),
-                          TextFormField(
-                            controller: _dobController,
-                            decoration: _fieldDecoration(
-                              hint: 'Date of birth (YYYY-MM-DD)',
-                              prefixIcon: const Icon(Icons.cake_outlined),
-                            ),
-                          ),
-                          const SizedBox(height: 12),
-                          DropdownButtonFormField<String>(
-                            value: _gender,
-                            decoration: _fieldDecoration(
-                              hint: 'Gender',
-                              prefixIcon: const Icon(Icons.wc_rounded),
-                            ),
-                            items: const [
-                              DropdownMenuItem(value: 'Male', child: Text('Male')),
-                              DropdownMenuItem(
-                                  value: 'Female', child: Text('Female')),
-                              DropdownMenuItem(value: 'Other', child: Text('Other')),
-                            ],
-                            onChanged: (value) {
-                              if (value == null) return;
-                              setState(() => _gender = value);
-                            },
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    _sectionCard(
-                      title: '3. Address and zone',
-                      subtitle:
-                          'Use current location to prefill address and auto-assign the correct delivery dispatch zone.',
-                      child: Column(
-                        children: [
-                          Align(
-                            alignment: Alignment.centerLeft,
-                            child: OutlinedButton.icon(
-                              onPressed: _isLocating ? null : _useCurrentLocation,
-                              icon: const Icon(Icons.my_location_rounded),
-                              label:
-                                  Text(_isLocating ? 'Locating...' : 'Use Current Location'),
-                            ),
-                          ),
-                          const SizedBox(height: 12),
-                          Row(
-                            children: [
-                              Expanded(
-                                child: TextFormField(
-                                  controller: _locationSearchController,
-                                  textInputAction: TextInputAction.search,
-                                  onFieldSubmitted: (_) => _searchLocationManually(),
-                                  decoration: _fieldDecoration(
-                                    hint: 'Search by area, landmark, or pincode',
-                                    prefixIcon: const Icon(Icons.search_rounded),
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(width: 10),
-                              FilledButton.tonal(
-                                onPressed: _isLocating ? null : _searchLocationManually,
-                                style: FilledButton.styleFrom(
-                                  minimumSize: const Size(92, 56),
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(16),
-                                  ),
-                                ),
-                                child: const Text('Search'),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 12),
-                          TextFormField(
-                            controller: _cityController,
-                            decoration: _fieldDecoration(
-                              hint: 'City',
-                              prefixIcon:
-                                  const Icon(Icons.location_city_outlined),
-                            ),
-                            validator: (value) =>
-                                (value == null || value.trim().isEmpty)
-                                    ? 'City is required'
-                                    : null,
-                          ),
-                          const SizedBox(height: 12),
-                          TextFormField(
-                            controller: _addressController,
-                            minLines: 2,
-                            maxLines: 3,
-                            decoration: _fieldDecoration(
-                              hint: 'Full address',
-                              prefixIcon: const Icon(Icons.home_work_outlined),
-                            ),
-                            validator: (value) =>
-                                (value == null || value.trim().isEmpty)
-                                    ? 'Address is required'
-                                    : null,
-                          ),
-                          const SizedBox(height: 12),
-                          TextFormField(
-                            controller: _landmarkController,
-                            decoration: _fieldDecoration(
-                              hint: 'Landmark (optional)',
-                              prefixIcon: const Icon(Icons.place_outlined),
-                            ),
-                          ),
-                          const SizedBox(height: 12),
-                          Container(
-                            width: double.infinity,
-                            padding: const EdgeInsets.all(16),
-                            decoration: BoxDecoration(
-                              color: Colors.white,
-                              borderRadius: BorderRadius.circular(18),
-                              border: Border.all(color: _line),
-                            ),
-                            child: Row(
-                              children: [
-                                Icon(
-                                  Icons.map_outlined,
-                                  color: _selectedAreaId == null
-                                      ? _subtext
-                                      : _primary,
-                                ),
-                                const SizedBox(width: 12),
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      const Text(
-                                        'Auto-assigned delivery zone',
-                                        style: TextStyle(
-                                          color: _subtext,
-                                          fontSize: 12,
-                                          fontWeight: FontWeight.w800,
-                                        ),
-                                      ),
-                                      const SizedBox(height: 4),
-                                      Text(
-                                        _selectedAreaName(),
-                                        style: const TextStyle(
-                                          color: _text,
-                                          fontSize: 16,
-                                          fontWeight: FontWeight.w800,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    _sectionCard(
-                      title: '4. Vehicle and documents',
-                      subtitle:
-                          'Vehicle details and files are uploaded directly into the partner application reviewed by admin.',
-                      child: Column(
-                        children: [
-                          DropdownButtonFormField<String>(
-                            value: _vehicleType,
-                            decoration: _fieldDecoration(
-                              hint: 'Vehicle type',
-                              prefixIcon:
-                                  const Icon(Icons.two_wheeler_rounded),
-                            ),
-                            items: const [
-                              DropdownMenuItem(value: 'bike', child: Text('Bike')),
-                              DropdownMenuItem(
-                                  value: 'ev_scooter', child: Text('EV Scooter')),
-                              DropdownMenuItem(
-                                  value: 'bicycle', child: Text('Bicycle')),
-                            ],
-                            onChanged: (value) {
-                              if (value == null) return;
-                              setState(() => _vehicleType = value);
-                            },
-                          ),
-                          const SizedBox(height: 12),
-                          TextFormField(
-                            controller: _vehicleNumberController,
-                            decoration: _fieldDecoration(
-                              hint: 'Vehicle number',
-                              prefixIcon: const Icon(Icons.pin_outlined),
-                            ),
-                            validator: (value) =>
-                                (value == null || value.trim().isEmpty)
-                                    ? 'Vehicle number is required'
-                                    : null,
-                          ),
-                          const SizedBox(height: 12),
-                          TextFormField(
-                            controller: _vehicleModelController,
-                            decoration: _fieldDecoration(
-                              hint: 'Vehicle model',
-                              prefixIcon:
-                                  const Icon(Icons.directions_bike_outlined),
-                            ),
-                          ),
-                          const SizedBox(height: 12),
-                          DropdownButtonFormField<String>(
-                            value: _fuelType,
-                            decoration: _fieldDecoration(
-                              hint: 'Fuel type',
-                              prefixIcon:
-                                  const Icon(Icons.local_gas_station_outlined),
-                            ),
-                            items: const [
-                              DropdownMenuItem(value: 'petrol', child: Text('Petrol')),
-                              DropdownMenuItem(
-                                  value: 'electric', child: Text('Electric')),
-                              DropdownMenuItem(value: 'manual', child: Text('Manual')),
-                            ],
-                            onChanged: (value) {
-                              if (value == null) return;
-                              setState(() => _fuelType = value);
-                            },
-                          ),
-                          const SizedBox(height: 12),
-                          TextFormField(
-                            controller: _licenseNumberController,
-                            decoration: _fieldDecoration(
-                              hint: 'Driving licence number',
-                              prefixIcon:
-                                  const Icon(Icons.badge_outlined),
-                            ),
-                            validator: (value) =>
-                                (value == null || value.trim().isEmpty)
-                                    ? 'Licence number is required'
-                                    : null,
-                          ),
-                          const SizedBox(height: 14),
-                          _uploadTile(
-                            title: 'Profile photo',
-                            file: _profilePhoto,
-                            onTap: () => _pickFile(
-                              (file) => setState(() => _profilePhoto = file),
-                            ),
-                          ),
-                          _uploadTile(
-                            title: 'Vehicle image',
-                            file: _vehicleImage,
-                            onTap: () => _pickFile(
-                              (file) => setState(() => _vehicleImage = file),
-                            ),
-                          ),
-                          _uploadTile(
-                            title: 'Aadhaar card',
-                            file: _aadhaarFile,
-                            onTap: () => _pickFile(
-                              (file) => setState(() => _aadhaarFile = file),
-                            ),
-                          ),
-                          _uploadTile(
-                            title: 'PAN card',
-                            file: _panFile,
-                            onTap: () => _pickFile(
-                              (file) => setState(() => _panFile = file),
-                            ),
-                          ),
-                          _uploadTile(
-                            title: 'Driving licence',
-                            file: _licenseFile,
-                            onTap: () => _pickFile(
-                              (file) => setState(() => _licenseFile = file),
-                            ),
-                          ),
-                          _uploadTile(
-                            title: 'Vehicle RC',
-                            file: _rcFile,
-                            onTap: () => _pickFile(
-                              (file) => setState(() => _rcFile = file),
-                            ),
-                          ),
-                          _uploadTile(
-                            title: 'Insurance',
-                            file: _insuranceFile,
-                            onTap: () => _pickFile(
-                              (file) => setState(() => _insuranceFile = file),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    _sectionCard(
-                      title: '5. Payout setup and permissions',
-                      subtitle:
-                          'Bank details are stored with the application and copied into the driver account when approved.',
-                      child: Column(
-                        children: [
-                          TextFormField(
-                            controller: _bankHolderController,
-                            decoration: _fieldDecoration(
-                              hint: 'Account holder name',
-                              prefixIcon: const Icon(Icons.person_outline_rounded),
-                            ),
-                          ),
-                          const SizedBox(height: 12),
-                          TextFormField(
-                            controller: _bankNameController,
-                            decoration: _fieldDecoration(
-                              hint: 'Bank name',
-                              prefixIcon:
-                                  const Icon(Icons.account_balance_outlined),
-                            ),
-                          ),
-                          const SizedBox(height: 12),
-                          TextFormField(
-                            controller: _ifscController,
-                            decoration: _fieldDecoration(
-                              hint: 'IFSC code',
-                              prefixIcon: const Icon(Icons.code_rounded),
-                            ),
-                          ),
-                          const SizedBox(height: 12),
-                          TextFormField(
-                            controller: _accountNumberController,
-                            keyboardType: TextInputType.number,
-                            decoration: _fieldDecoration(
-                              hint: 'Account number',
-                              prefixIcon:
-                                  const Icon(Icons.credit_card_outlined),
-                            ),
-                          ),
-                          const SizedBox(height: 12),
-                          TextFormField(
-                            controller: _upiController,
-                            decoration: _fieldDecoration(
-                              hint: 'UPI ID',
-                              prefixIcon: const Icon(Icons.payments_outlined),
-                            ),
-                          ),
-                          const SizedBox(height: 16),
-                          SwitchListTile(
-                            contentPadding: EdgeInsets.zero,
-                            activeColor: _primary,
-                            title: const Text(
-                              'Background location enabled',
-                              style: TextStyle(
-                                color: _text,
-                                fontWeight: FontWeight.w800,
-                              ),
-                            ),
-                            subtitle: const Text(
-                              'Required after approval so live delivery tracking can work when you are online, including when the app is closed or not in use.',
-                              style: TextStyle(color: _subtext),
-                            ),
-                            value: _backgroundLocationEnabled,
-                            onChanged: (value) {
-                              setState(() => _backgroundLocationEnabled = value);
-                            },
-                          ),
-                          SwitchListTile(
-                            contentPadding: EdgeInsets.zero,
-                            activeColor: _primary,
-                            title: const Text(
-                              'Notifications enabled',
-                              style: TextStyle(
-                                color: _text,
-                                fontWeight: FontWeight.w800,
-                              ),
-                            ),
-                            subtitle: const Text(
-                              'Used for new order alerts and approval updates.',
-                              style: TextStyle(color: _subtext),
-                            ),
-                            value: _notificationPermissionEnabled,
-                            onChanged: (value) {
-                              setState(
-                                  () => _notificationPermissionEnabled = value);
-                            },
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    CheckboxListTile(
-                      value: _agreeTerms,
-                      onChanged: (value) {
-                        setState(() => _agreeTerms = value ?? false);
-                      },
-                      contentPadding: EdgeInsets.zero,
-                      controlAffinity: ListTileControlAffinity.leading,
-                      title: const Text(
-                        'I agree to the Terms, Privacy Policy and driver verification process',
-                        style: TextStyle(
-                          color: _subtext,
-                          fontSize: 13,
-                          fontWeight: FontWeight.w400,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 18),
-                    SizedBox(
-                      width: double.infinity,
-                      child: DecoratedBox(
-                        decoration: BoxDecoration(
-                          gradient: LinearGradient(
-                            colors: [
-                              _primary,
-                              Color.lerp(_primary, _secondary, 0.24) ?? _primary,
-                            ],
-                          ),
-                          borderRadius: BorderRadius.circular(18),
-                          boxShadow: [
-                            BoxShadow(
-                              color: _primary.withOpacity(0.2),
-                              blurRadius: 18,
-                              offset: const Offset(0, 10),
-                            ),
-                          ],
-                        ),
-                        child: ElevatedButton(
-                          onPressed: auth.isLoading ||
-                                  _isLoadingBranding ||
-                                  _isSubmitting ||
-                                  _isLoadingAreas
-                              ? null
-                              : _submitApplication,
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.transparent,
-                            shadowColor: Colors.transparent,
-                            minimumSize: const Size.fromHeight(58),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(18),
-                            ),
-                          ),
-                          child: Text(
-                            _isSubmitting
-                                ? 'Submitting application...'
-                                : _isPhoneVerified
-                                    ? 'Submit for Admin Approval'
-                                    : 'Verify Mobile & Submit',
-                            style: const TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.w400,
-                              color: Colors.black,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 18),
-                    Center(
-                      child: TextButton(
-                        onPressed: () =>
-                            Navigator.pushNamed(context, '/application-status'),
-                        child: const Text('Track existing application'),
-                      ),
-                    ),
-                  ],
+                  ),
                 ),
-              ),
+                Container(
+                  padding: const EdgeInsets.fromLTRB(20, 14, 20, 16),
+                  decoration: const BoxDecoration(
+                    color: Colors.white,
+                    border: Border(top: BorderSide(color: _line)),
+                  ),
+                  child: Row(
+                    children: [
+                      if (_currentStep > 0) ...[
+                        SizedBox(
+                          height: 54,
+                          width: 54,
+                          child: OutlinedButton(
+                            onPressed: busy ? null : _backStep,
+                            style: OutlinedButton.styleFrom(
+                              padding: EdgeInsets.zero,
+                              shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(14)),
+                            ),
+                            child: const Icon(Icons.arrow_back_rounded),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                      ],
+                      Expanded(
+                        child: DecoratedBox(
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(colors: [
+                              _primary,
+                              Color.lerp(_primary, _secondary, 0.24) ?? _primary
+                            ]),
+                            borderRadius: BorderRadius.circular(14),
+                            boxShadow: [
+                              BoxShadow(
+                                  color: _primary.withOpacity(0.2),
+                                  blurRadius: 18,
+                                  offset: const Offset(0, 10))
+                            ],
+                          ),
+                          child: ElevatedButton(
+                            onPressed: busy ? null : () => _continueStep(auth),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.transparent,
+                              shadowColor: Colors.transparent,
+                              minimumSize: const Size.fromHeight(54),
+                              shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(14)),
+                            ),
+                            child: Text(
+                              _ctaLabel(),
+                              textAlign: TextAlign.center,
+                              style: const TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w900,
+                                  color: Colors.white),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
             ),
           ),
         );
       },
+    );
+  }
+
+  String _ctaLabel() {
+    if (_isSubmitting) return 'Submitting application...';
+    if (_isSendingOtp) return 'Sending OTP...';
+    if (_currentStep == 0 && !_isPhoneVerified) return 'Verify Mobile';
+    if (_currentStep == _stepCount - 1) return 'Submit for Admin Approval';
+    return 'Save & Continue';
+  }
+
+  Widget _wizardHeader() {
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: _line)),
+      child: Row(
+        children: [
+          Container(
+            width: 48,
+            height: 48,
+            decoration: BoxDecoration(
+                color: _primary.withOpacity(0.10),
+                borderRadius: BorderRadius.circular(14)),
+            child: Icon(_stepIcon(_currentStep), color: _primary),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(_stepTitle(_currentStep),
+                    style: const TextStyle(
+                        color: _text,
+                        fontSize: 21,
+                        height: 1.1,
+                        fontWeight: FontWeight.w900)),
+                const SizedBox(height: 6),
+                Text(_stepSubtitle(_currentStep),
+                    style: const TextStyle(
+                        color: _subtext,
+                        fontSize: 13,
+                        height: 1.35,
+                        fontWeight: FontWeight.w500)),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCurrentStep(AuthProvider auth) {
+    switch (_currentStep) {
+      case 0:
+        return _mobileStep(auth);
+      case 1:
+        return _personalStep();
+      case 2:
+        return _addressStep();
+      case 3:
+        return _vehicleDocumentsStep();
+      default:
+        return _payoutStep();
+    }
+  }
+
+  Widget _mobileStep(AuthProvider auth) {
+    return _sectionCard(
+      title: 'Mobile verification',
+      subtitle: 'Use the same real OTP flow as driver login.',
+      child: Column(
+        children: [
+          TextFormField(
+            controller: _phoneController,
+            readOnly: _isPhoneVerified,
+            keyboardType: TextInputType.phone,
+            onChanged: (_) {
+              if (_isPhoneVerified) return;
+              if (_verifiedPhoneToken != null) {
+                setState(() {
+                  _verifiedPhoneToken = null;
+                  _verifiedPhoneNumber = null;
+                });
+              }
+            },
+            decoration: _fieldDecoration(
+              hint: 'Mobile number',
+              prefixIcon: const Icon(Icons.phone_android_rounded),
+              suffixIcon: TextButton(
+                onPressed: auth.isLoading || _isSendingOtp || _isPhoneVerified
+                    ? null
+                    : _verifyMobile,
+                child: Text(_isPhoneVerified
+                    ? 'Verified'
+                    : _isSendingOtp
+                        ? 'Sending...'
+                        : 'Verify'),
+              ),
+            ),
+            validator: (value) => PhoneNumberUtils.validateMobile(value,
+                countryCode: _branding.defaultMobileCountryCode),
+          ),
+          const SizedBox(height: 12),
+          _infoBanner(
+            icon:
+                _isPhoneVerified ? Icons.verified_rounded : Icons.sms_outlined,
+            text: _isPhoneVerified
+                ? 'Mobile verified: $_verifiedPhoneNumber'
+                : 'Verify your mobile first. Admin approval will create your driver account on this number.',
+            accent: _isPhoneVerified ? _primary : _secondary,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _personalStep() {
+    return _sectionCard(
+      title: 'Personal details',
+      subtitle: 'These details go into the admin verification queue.',
+      child: Column(
+        children: [
+          TextFormField(
+            controller: _nameController,
+            decoration: _fieldDecoration(
+                hint: 'Full name',
+                prefixIcon: const Icon(Icons.person_outline_rounded)),
+            validator: (value) => (value == null || value.trim().isEmpty)
+                ? 'Full name is required'
+                : null,
+          ),
+          const SizedBox(height: 12),
+          TextFormField(
+            controller: _emailController,
+            keyboardType: TextInputType.emailAddress,
+            decoration: _fieldDecoration(
+                hint: 'Email address',
+                prefixIcon: const Icon(Icons.email_outlined)),
+            validator: (value) {
+              if (value == null || value.trim().isEmpty)
+                return 'Email is required';
+              if (!value.contains('@')) return 'Enter a valid email';
+              return null;
+            },
+          ),
+          const SizedBox(height: 12),
+          TextFormField(
+            controller: _dobController,
+            readOnly: true,
+            onTap: _pickDateOfBirth,
+            decoration: _fieldDecoration(
+              hint: 'Date of birth',
+              prefixIcon: const Icon(Icons.cake_outlined),
+              suffixIcon: IconButton(
+                tooltip: 'Select date',
+                onPressed: _pickDateOfBirth,
+                icon: const Icon(Icons.calendar_month_rounded),
+              ),
+            ),
+            validator: (value) => (value == null || value.trim().isEmpty)
+                ? 'Date of birth is required for licence verification'
+                : null,
+          ),
+          const SizedBox(height: 12),
+          DropdownButtonFormField<String>(
+            value: _gender,
+            decoration: _fieldDecoration(
+                hint: 'Gender', prefixIcon: const Icon(Icons.wc_rounded)),
+            items: const [
+              DropdownMenuItem(value: 'Male', child: Text('Male')),
+              DropdownMenuItem(value: 'Female', child: Text('Female')),
+              DropdownMenuItem(value: 'Other', child: Text('Other')),
+            ],
+            onChanged: (value) {
+              if (value == null) return;
+              setState(() => _gender = value);
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _addressStep() {
+    return _sectionCard(
+      title: 'Address and zone',
+      subtitle: 'Current location auto-assigns your delivery dispatch zone.',
+      child: Column(
+        children: [
+          Align(
+            alignment: Alignment.centerLeft,
+            child: OutlinedButton.icon(
+              onPressed: _isLocating ? null : _useCurrentLocation,
+              icon: const Icon(Icons.my_location_rounded),
+              label: Text(_isLocating ? 'Locating...' : 'Use Current Location'),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: TextFormField(
+                  controller: _locationSearchController,
+                  textInputAction: TextInputAction.search,
+                  onChanged: _onLocationSearchChanged,
+                  onFieldSubmitted: (_) => _searchLocationManually(),
+                  decoration: _fieldDecoration(
+                    hint: 'Search by area, landmark, or pincode',
+                    prefixIcon: const Icon(Icons.search_rounded),
+                    suffixIcon: _isLoadingLocationSuggestions
+                        ? const Padding(
+                            padding: EdgeInsets.all(14),
+                            child: SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            ),
+                          )
+                        : null,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              FilledButton.tonal(
+                onPressed: _isLocating ? null : _searchLocationManually,
+                style: FilledButton.styleFrom(
+                    minimumSize: const Size(92, 56),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16))),
+                child: const Text('Search'),
+              ),
+            ],
+          ),
+          if (_locationSuggestions.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            _locationSuggestionList(),
+          ],
+          const SizedBox(height: 12),
+          TextFormField(
+            controller: _cityController,
+            decoration: _fieldDecoration(
+                hint: 'City',
+                prefixIcon: const Icon(Icons.location_city_outlined)),
+            validator: (value) => (value == null || value.trim().isEmpty)
+                ? 'City is required'
+                : null,
+          ),
+          const SizedBox(height: 12),
+          TextFormField(
+            controller: _addressController,
+            minLines: 2,
+            maxLines: 3,
+            decoration: _fieldDecoration(
+                hint: 'Full address',
+                prefixIcon: const Icon(Icons.home_work_outlined)),
+            validator: (value) => (value == null || value.trim().isEmpty)
+                ? 'Address is required'
+                : null,
+          ),
+          const SizedBox(height: 12),
+          TextFormField(
+            controller: _landmarkController,
+            decoration: _fieldDecoration(
+                hint: 'Landmark (optional)',
+                prefixIcon: const Icon(Icons.place_outlined)),
+          ),
+          const SizedBox(height: 12),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(18),
+                border: Border.all(color: _line)),
+            child: Row(
+              children: [
+                Icon(Icons.map_outlined,
+                    color: _selectedAreaId == null ? _subtext : _primary),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('Auto-assigned delivery zone',
+                          style: TextStyle(
+                              color: _subtext,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w800)),
+                      const SizedBox(height: 4),
+                      Text(_selectedAreaName(),
+                          style: const TextStyle(
+                              color: _text,
+                              fontSize: 16,
+                              fontWeight: FontWeight.w800)),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (_latitude != null &&
+              _longitude != null &&
+              _selectedAreaId == null) ...[
+            const SizedBox(height: 12),
+            _infoBanner(
+              icon: Icons.info_outline_rounded,
+              text:
+                  'This location is not serviceable yet. We will process your application and contact you when service starts in your area.',
+              accent: Colors.red,
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _locationSuggestionList() {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: _line),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x0D000000),
+            blurRadius: 14,
+            offset: Offset(0, 8),
+          ),
+        ],
+      ),
+      child: ListView.separated(
+        shrinkWrap: true,
+        physics: const NeverScrollableScrollPhysics(),
+        itemCount: _locationSuggestions.length,
+        separatorBuilder: (_, __) => const Divider(height: 1, color: _line),
+        itemBuilder: (context, index) {
+          final suggestion = _locationSuggestions[index];
+          final subtitle = [suggestion.city, suggestion.state]
+              .where((value) => value.isNotEmpty)
+              .join(', ');
+          return ListTile(
+            dense: true,
+            leading: Icon(Icons.location_on_outlined, color: _primary),
+            title: Text(
+              suggestion.displayName,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: _text,
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            subtitle: subtitle.isEmpty
+                ? null
+                : Text(
+                    subtitle,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+            onTap: () => _selectLocationSuggestion(suggestion),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _vehicleDocumentsStep() {
+    return _sectionCard(
+      title: 'Vehicle and documents',
+      subtitle: 'Details and files are uploaded into the admin review queue.',
+      child: Column(
+        children: [
+          DropdownButtonFormField<String>(
+            value: _vehicleType,
+            decoration: _fieldDecoration(
+                hint: 'Vehicle type',
+                prefixIcon: const Icon(Icons.two_wheeler_rounded)),
+            items: const [
+              DropdownMenuItem(value: 'bike', child: Text('Bike')),
+              DropdownMenuItem(value: 'ev_scooter', child: Text('EV Scooter')),
+              DropdownMenuItem(value: 'bicycle', child: Text('Bicycle')),
+            ],
+            onChanged: (value) {
+              if (value == null) return;
+              setState(() => _vehicleType = value);
+            },
+          ),
+          const SizedBox(height: 12),
+          TextFormField(
+            controller: _vehicleNumberController,
+            textCapitalization: TextCapitalization.characters,
+            onChanged: _onVehicleNumberChanged,
+            decoration: _fieldDecoration(
+                hint: 'Vehicle number',
+                prefixIcon: const Icon(Icons.pin_outlined)),
+            validator: (value) => (value == null || value.trim().isEmpty)
+                ? 'Vehicle number is required'
+                : null,
+          ),
+          _verifyStatusLine(_isCheckingVehicleRc, _vehicleRcResult),
+          const SizedBox(height: 12),
+          TextFormField(
+              controller: _vehicleModelController,
+              decoration: _fieldDecoration(
+                  hint: 'Vehicle model',
+                  prefixIcon: const Icon(Icons.directions_bike_outlined))),
+          const SizedBox(height: 12),
+          DropdownButtonFormField<String>(
+            value: _fuelType,
+            decoration: _fieldDecoration(
+                hint: 'Fuel type',
+                prefixIcon: const Icon(Icons.local_gas_station_outlined)),
+            items: const [
+              DropdownMenuItem(value: 'petrol', child: Text('Petrol')),
+              DropdownMenuItem(value: 'electric', child: Text('Electric')),
+              DropdownMenuItem(value: 'manual', child: Text('Manual')),
+            ],
+            onChanged: (value) {
+              if (value == null) return;
+              setState(() => _fuelType = value);
+            },
+          ),
+          const SizedBox(height: 12),
+          TextFormField(
+            controller: _licenseNumberController,
+            textCapitalization: TextCapitalization.characters,
+            onChanged: (_) => _onLicenseFieldsChanged(),
+            decoration: _fieldDecoration(
+                hint: 'Driving licence number',
+                prefixIcon: const Icon(Icons.badge_outlined)),
+            validator: (value) => (value == null || value.trim().isEmpty)
+                ? 'Licence number is required'
+                : null,
+          ),
+          _verifyStatusLine(_isCheckingLicense, _drivingLicenseResult),
+          if (_drivingLicenseResult == null && !_isCheckingLicense)
+            const Padding(
+              padding: EdgeInsets.only(top: 6, left: 4),
+              child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                      'Using date of birth from personal details for licence verification.',
+                      style: TextStyle(color: _subtext, fontSize: 12))),
+            ),
+          const SizedBox(height: 14),
+          _uploadTile(
+              title: 'Profile photo',
+              file: _profilePhoto,
+              onTap: () =>
+                  _pickFile((file) => setState(() => _profilePhoto = file))),
+          _uploadTile(
+              title: 'Vehicle image',
+              file: _vehicleImage,
+              onTap: () =>
+                  _pickFile((file) => setState(() => _vehicleImage = file))),
+          _uploadTile(
+              title: 'Aadhaar card',
+              file: _aadhaarFile,
+              onTap: () => _pickFile((file) {
+                    setState(() => _aadhaarFile = file);
+                    _checkAadhaarDocument(file);
+                  })),
+          _verifyStatusLine(_isCheckingAadhaarDoc, _aadhaarDocResult),
+          const SizedBox(height: 4),
+          _uploadTile(
+              title: 'PAN card',
+              file: _panFile,
+              onTap: () => _pickFile((file) {
+                    setState(() => _panFile = file);
+                    _checkPanDocument(file);
+                  })),
+          _verifyStatusLine(_isCheckingPanDoc, _panDocResult),
+          const SizedBox(height: 4),
+          _uploadTile(
+              title: 'Driving licence',
+              file: _licenseFile,
+              onTap: () =>
+                  _pickFile((file) => setState(() => _licenseFile = file))),
+          _uploadTile(
+              title: 'Vehicle RC',
+              file: _rcFile,
+              onTap: () => _pickFile((file) => setState(() => _rcFile = file))),
+          _uploadTile(
+              title: 'Insurance',
+              file: _insuranceFile,
+              onTap: () =>
+                  _pickFile((file) => setState(() => _insuranceFile = file))),
+        ],
+      ),
+    );
+  }
+
+  Widget _payoutStep() {
+    return _sectionCard(
+      title: 'Payout setup and permissions',
+      subtitle:
+          'Bank details are copied into the driver account after approval.',
+      child: Column(
+        children: [
+          TextFormField(
+              controller: _bankHolderController,
+              decoration: _fieldDecoration(
+                  hint: 'Account holder name',
+                  prefixIcon: const Icon(Icons.person_outline_rounded))),
+          const SizedBox(height: 12),
+          TextFormField(
+              controller: _bankNameController,
+              decoration: _fieldDecoration(
+                  hint: 'Bank name',
+                  prefixIcon: const Icon(Icons.account_balance_outlined))),
+          const SizedBox(height: 12),
+          TextFormField(
+              controller: _ifscController,
+              textCapitalization: TextCapitalization.characters,
+              decoration: _fieldDecoration(
+                  hint: 'IFSC code',
+                  prefixIcon: const Icon(Icons.code_rounded))),
+          const SizedBox(height: 12),
+          TextFormField(
+              controller: _accountNumberController,
+              keyboardType: TextInputType.number,
+              decoration: _fieldDecoration(
+                  hint: 'Account number',
+                  prefixIcon: const Icon(Icons.credit_card_outlined))),
+          const SizedBox(height: 12),
+          TextFormField(
+              controller: _upiController,
+              decoration: _fieldDecoration(
+                  hint: 'UPI ID',
+                  prefixIcon: const Icon(Icons.payments_outlined))),
+          const SizedBox(height: 16),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            activeColor: _primary,
+            title: const Text('Background location enabled',
+                style: TextStyle(color: _text, fontWeight: FontWeight.w800)),
+            subtitle: const Text(
+                'Required after approval so live delivery tracking can work when you are online, including when the app is closed or not in use.',
+                style: TextStyle(color: _subtext)),
+            value: _backgroundLocationEnabled,
+            onChanged: (value) =>
+                setState(() => _backgroundLocationEnabled = value),
+          ),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            activeColor: _primary,
+            title: const Text('Notifications enabled',
+                style: TextStyle(color: _text, fontWeight: FontWeight.w800)),
+            subtitle: const Text(
+                'Used for new order alerts and approval updates.',
+                style: TextStyle(color: _subtext)),
+            value: _notificationPermissionEnabled,
+            onChanged: (value) =>
+                setState(() => _notificationPermissionEnabled = value),
+          ),
+          CheckboxListTile(
+            value: _agreeTerms,
+            onChanged: (value) => setState(() => _agreeTerms = value ?? false),
+            contentPadding: EdgeInsets.zero,
+            controlAffinity: ListTileControlAffinity.leading,
+            title: const Text(
+                'I agree to the Terms, Privacy Policy and driver verification process',
+                style: TextStyle(
+                    color: _subtext,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w400)),
+          ),
+        ],
+      ),
     );
   }
 
@@ -1285,7 +1738,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
           child: Row(
             children: [
               Icon(
-                file == null ? Icons.upload_file_rounded : Icons.check_circle_rounded,
+                file == null
+                    ? Icons.upload_file_rounded
+                    : Icons.check_circle_rounded,
                 color: file == null ? _subtext : _primary,
               ),
               const SizedBox(width: 12),
@@ -1309,6 +1764,13 @@ class _RegisterScreenState extends State<RegisterScreen> {
           ),
         ),
       ),
+    );
+  }
+
+  void _showNotServiceableMessage() {
+    _showMessage(
+      'This location is not serviceable yet. We will process your application and contact you when service starts in your area.',
+      isError: true,
     );
   }
 
@@ -1345,37 +1807,16 @@ class _RegisterScreenState extends State<RegisterScreen> {
       return null;
     }
 
-    final containing = _deliveryAreas.where(
-      (area) => _areaContainsPoint(area, latitude, longitude),
-    ).toList()
+    final containing = _deliveryAreas
+        .where(
+          (area) => _areaContainsPoint(area, latitude, longitude),
+        )
+        .toList()
       ..sort(
         (left, right) => _areaFootprint(left).compareTo(_areaFootprint(right)),
       );
 
-    if (containing.isNotEmpty) {
-      return containing.first;
-    }
-
-    final centered = _deliveryAreas
-        .where((area) => area['latitude'] != null && area['longitude'] != null)
-        .toList()
-      ..sort(
-        (left, right) => _distanceKm(
-          latitude,
-          longitude,
-          (left['latitude'] as num).toDouble(),
-          (left['longitude'] as num).toDouble(),
-        ).compareTo(
-          _distanceKm(
-            latitude,
-            longitude,
-            (right['latitude'] as num).toDouble(),
-            (right['longitude'] as num).toDouble(),
-          ),
-        ),
-      );
-
-    return centered.isEmpty ? null : centered.first;
+    return containing.isEmpty ? null : containing.first;
   }
 
   bool _areaContainsPoint(
@@ -1407,7 +1848,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
         radius;
   }
 
-  bool _pointInPolygon(List<dynamic> polygon, double latitude, double longitude) {
+  bool _pointInPolygon(
+      List<dynamic> polygon, double latitude, double longitude) {
     var intersections = 0;
     for (var i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
       final current = polygon[i] as Map;
@@ -1422,13 +1864,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
           previousLng == null) {
         continue;
       }
-      final intersects =
-          (currentLat > latitude) != (previousLat > latitude) &&
-              longitude <
-                  (previousLng - currentLng) *
-                          (latitude - currentLat) /
-                          (previousLat - currentLat) +
-                      currentLng;
+      final intersects = (currentLat > latitude) != (previousLat > latitude) &&
+          longitude <
+              (previousLng - currentLng) *
+                      (latitude - currentLat) /
+                      (previousLat - currentLat) +
+                  currentLng;
       if (intersects) {
         intersections++;
       }
@@ -1465,16 +1906,16 @@ class _RegisterScreenState extends State<RegisterScreen> {
     const earthRadius = 6371.0;
     final dLat = _degreesToRadians(lat2 - lat1);
     final dLon = _degreesToRadians(lon2 - lon1);
-    final a =
-        (sin(dLat / 2) * sin(dLat / 2)) +
-            cos(_degreesToRadians(lat1)) *
-                cos(_degreesToRadians(lat2)) *
-                (sin(dLon / 2) * sin(dLon / 2));
+    final a = (sin(dLat / 2) * sin(dLat / 2)) +
+        cos(_degreesToRadians(lat1)) *
+            cos(_degreesToRadians(lat2)) *
+            (sin(dLon / 2) * sin(dLon / 2));
     final c = 2 * atan2(sqrt(a), sqrt(1 - a));
     return earthRadius * c;
   }
 
-  double _degreesToRadians(double degrees) => degrees * 3.1415926535897932 / 180;
+  double _degreesToRadians(double degrees) =>
+      degrees * 3.1415926535897932 / 180;
 
   String _selectedAreaName() {
     for (final area in _deliveryAreas) {
@@ -1482,8 +1923,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
         return area['name']?.toString() ?? '-';
       }
     }
-    return _isLoadingAreas
-        ? 'Loading delivery zones...'
-        : 'Use current location to detect zone';
+    if (_isLoadingAreas) return 'Loading delivery zones...';
+    if (_latitude != null && _longitude != null) return 'Not serviceable area';
+    return 'Use current location or select an address to detect zone';
   }
 }

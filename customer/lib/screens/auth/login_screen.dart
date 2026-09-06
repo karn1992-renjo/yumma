@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
@@ -38,12 +39,17 @@ class _LoginScreenState extends State<LoginScreen> {
   AppBranding _branding = AppBranding.fallback();
   bool _isLoadingBranding = true;
   bool _isSendingOtp = false;
-  bool _acceptedTerms = false;
   String? _socialLoadingProvider;
 
   bool get _isSocialLoading => _socialLoadingProvider != null;
-  bool get _hasSocialLogin =>
-      _branding.usesGoogleLogin || _branding.usesAppleLogin;
+
+  // Sign in with Apple is only offered on Apple platforms.
+  bool get _showAppleLogin =>
+      _branding.usesAppleLogin &&
+      (defaultTargetPlatform == TargetPlatform.iOS ||
+          defaultTargetPlatform == TargetPlatform.macOS);
+
+  bool get _hasSocialLogin => _branding.usesGoogleLogin || _showAppleLogin;
 
   String get _countryCode => _branding.defaultMobileCountryCode;
 
@@ -76,18 +82,8 @@ class _LoginScreenState extends State<LoginScreen> {
     ).normalizedNumber;
   }
 
-  bool _ensureAcceptedTerms() {
-    if (_acceptedTerms) return true;
-    _showMessage(
-      appText('Please accept the Terms & Conditions to continue.'),
-      isError: true,
-    );
-    return false;
-  }
-
   Future<void> _continueWithPhone() async {
     if (_isSendingOtp) return;
-    if (!_ensureAcceptedTerms()) return;
     if (!_formKey.currentState!.validate()) return;
 
     setState(() => _isSendingOtp = true);
@@ -162,7 +158,6 @@ class _LoginScreenState extends State<LoginScreen> {
 
   Future<void> _handleSocialLogin(String provider) async {
     if (_isSocialLoading || _isLoadingBranding) return;
-    if (!_ensureAcceptedTerms()) return;
 
     final latestBranding = await AppBrandingService.instance.loadBranding(
       forceRefresh: true,
@@ -231,11 +226,6 @@ class _LoginScreenState extends State<LoginScreen> {
       return '/driver/dashboard';
     }
     return AppConfig.isRoleLocked ? '/home' : '/customer/home';
-  }
-
-  void _goBackToHome() {
-    FocusManager.instance.primaryFocus?.unfocus();
-    Navigator.pushNamedAndRemoveUntil(context, '/home', (_) => false);
   }
 
   Future<Map<String, dynamic>?> _sendOtpAndOpenVerification({
@@ -399,29 +389,6 @@ class _LoginScreenState extends State<LoginScreen> {
                       child: Column(
                         children: [
                           SizedBox(height: compact ? 16 : 28),
-                          Align(
-                            alignment: Alignment.centerLeft,
-                            child: TextButton.icon(
-                              onPressed: _goBackToHome,
-                              style: TextButton.styleFrom(
-                                foregroundColor:
-                                    FoodFlowTheme.brandPrimary(context),
-                                padding: EdgeInsets.zero,
-                                minimumSize: const Size(0, 36),
-                                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                                textStyle: const TextStyle(
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.w900,
-                                ),
-                              ),
-                              icon: const Icon(
-                                Icons.arrow_back_rounded,
-                                size: 18,
-                              ),
-                              label: Text(appText('Back to home')),
-                            ),
-                          ),
-                          SizedBox(height: compact ? 12 : 18),
                           Text(
                             'Welcome Back!',
                             textAlign: TextAlign.center,
@@ -465,8 +432,6 @@ class _LoginScreenState extends State<LoginScreen> {
                               },
                             ),
                           ),
-                          const SizedBox(height: 16),
-                          _termsAcceptanceCheckbox(),
                           const SizedBox(height: 18),
                           Consumer<AuthProvider>(
                             builder: (context, auth, _) {
@@ -476,9 +441,7 @@ class _LoginScreenState extends State<LoginScreen> {
                               return _continueButton(
                                 label:
                                     busy ? appText('Checking...') : 'Continue',
-                                onPressed: busy || !_acceptedTerms
-                                    ? null
-                                    : _continueWithPhone,
+                                onPressed: busy ? null : _continueWithPhone,
                               );
                             },
                           ),
@@ -488,7 +451,8 @@ class _LoginScreenState extends State<LoginScreen> {
                             const SizedBox(height: 16),
                             _socialButtons(),
                           ],
-                          SizedBox(height: compact ? 10 : 18),
+                          SizedBox(height: compact ? 24 : 32),
+                          const _TermsText(),
                         ],
                       ),
                     ),
@@ -591,7 +555,7 @@ class _LoginScreenState extends State<LoginScreen> {
         ),
       );
     }
-    if (_branding.usesAppleLogin) {
+    if (_showAppleLogin) {
       if (buttons.isNotEmpty) buttons.add(const SizedBox(height: 12));
       buttons.add(
         _socialButton(
@@ -612,8 +576,7 @@ class _LoginScreenState extends State<LoginScreen> {
     required String assetPath,
   }) {
     final loading = _socialLoadingProvider == provider;
-    final disabled =
-        _socialLoadingProvider != null || _isLoadingBranding || !_acceptedTerms;
+    final disabled = _socialLoadingProvider != null || _isLoadingBranding;
     return _ThreeDButton(
       height: 58,
       onPressed: disabled ? null : () => _handleSocialLogin(provider),
@@ -646,38 +609,6 @@ class _LoginScreenState extends State<LoginScreen> {
                 ),
               ],
             ),
-    );
-  }
-
-  Widget _termsAcceptanceCheckbox() {
-    return InkWell(
-      onTap: () => setState(() => _acceptedTerms = !_acceptedTerms),
-      borderRadius: BorderRadius.circular(8),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 2),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            SizedBox(
-              width: 34,
-              height: 34,
-              child: Checkbox(
-                value: _acceptedTerms,
-                onChanged: (value) =>
-                    setState(() => _acceptedTerms = value ?? false),
-                activeColor: FoodFlowTheme.brandPrimary(context),
-                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                side: const BorderSide(color: _line, width: 1.4),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(4),
-                ),
-              ),
-            ),
-            const SizedBox(width: 10),
-            const Expanded(child: _TermsText(textAlign: TextAlign.left)),
-          ],
-        ),
-      ),
     );
   }
 
@@ -845,9 +776,7 @@ class _DividerLabel extends StatelessWidget {
 }
 
 class _TermsText extends StatelessWidget {
-  const _TermsText({this.textAlign = TextAlign.center});
-
-  final TextAlign textAlign;
+  const _TermsText();
 
   void _openLegal(BuildContext context) {
     Navigator.of(context).pushNamed('/privacy-legal');
@@ -868,17 +797,17 @@ class _TermsText extends StatelessWidget {
 
     return Text.rich(
       TextSpan(
-        text: appText('I accept the'),
+        text: appText('By continuing, you agree to our'),
         style: baseStyle,
         children: [
-          const TextSpan(text: ' '),
+          const TextSpan(text: '\n'),
           TextSpan(
-            text: appText('Terms & Conditions'),
+            text: appText('Terms of Service'),
             style: linkStyle,
             recognizer: TapGestureRecognizer()
               ..onTap = () => _openLegal(context),
           ),
-          TextSpan(text: appText(' and ')),
+          TextSpan(text: appText(' and our ')),
           TextSpan(
             text: appText('Privacy Policy'),
             style: linkStyle,
@@ -887,7 +816,7 @@ class _TermsText extends StatelessWidget {
           ),
         ],
       ),
-      textAlign: textAlign,
+      textAlign: TextAlign.center,
     );
   }
 }

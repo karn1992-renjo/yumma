@@ -16,18 +16,17 @@ class MapPickerScreen extends StatefulWidget {
 }
 
 class _MapPickerScreenState extends State<MapPickerScreen> {
-  static const LatLng _fallback = LatLng(28.6139, 77.2090);
   GoogleMapController? _controller;
-  late LatLng _selected;
+  LatLng? _selected;
   double _zoom = 16;
 
   @override
   void initState() {
     super.initState();
     final address = widget.address;
-    _selected = address?.latitude != null && address?.longitude != null
-        ? LatLng(address!.latitude!, address.longitude!)
-        : _fallback;
+    if (address?.latitude != null && address?.longitude != null) {
+      _selected = LatLng(address!.latitude!, address.longitude!);
+    }
   }
 
   @override
@@ -37,6 +36,8 @@ class _MapPickerScreenState extends State<MapPickerScreen> {
   }
 
   void _returnSelection() {
+    final selected = _selected;
+    if (selected == null) return;
     final current = widget.address;
     Navigator.pop(
       context,
@@ -49,8 +50,8 @@ class _MapPickerScreenState extends State<MapPickerScreen> {
         state: current?.state ?? '',
         pincode: current?.pincode ?? '',
         phone: current?.phone ?? '',
-        latitude: _selected.latitude,
-        longitude: _selected.longitude,
+        latitude: selected.latitude,
+        longitude: selected.longitude,
         isDefault: current?.isDefault ?? false,
         distanceKm: current?.distanceKm,
         isDeliverable: current?.isDeliverable ?? true,
@@ -70,21 +71,84 @@ class _MapPickerScreenState extends State<MapPickerScreen> {
 
   Future<void> _recenterPin() async {
     final controller = _controller;
-    if (controller == null) return;
-    await controller
-        .animateCamera(CameraUpdate.newLatLngZoom(_selected, _zoom));
+    final selected = _selected;
+    if (controller == null || selected == null) return;
+    await controller.animateCamera(CameraUpdate.newLatLngZoom(selected, _zoom));
   }
 
   @override
   Widget build(BuildContext context) {
+    final selected = _selected;
+    if (selected == null) {
+      return Scaffold(
+        backgroundColor: Theme.of(context).colorScheme.surface,
+        body: SafeArea(
+          child: Column(
+            children: [
+              ProfilePageTopBar(
+                title: 'Pick delivery pin',
+                subtitle: 'Choose or allow a delivery location first',
+                actions: [
+                  const SizedBox(width: 12),
+                  ProfileRoundButton(
+                    icon: LucideIcons.x,
+                    color: profileAccentColor(context),
+                    onTap: () => Navigator.maybePop(context),
+                  ),
+                ],
+              ),
+              Expanded(
+                child: Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: ProfileSurfaceCard(
+                      padding: const EdgeInsets.all(22),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          ProfileAccentIcon(
+                            icon: LucideIcons.map_pin,
+                            size: 56,
+                            iconSize: 26,
+                          ),
+                          const SizedBox(height: 14),
+                          Text(
+                            'Location required',
+                            style: TextStyle(
+                              color: profileTextColor(context),
+                              fontSize: 18,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            'Select an address or use current location before adjusting the pin.',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              color: profileMutedColor(context),
+                              fontSize: 13,
+                              height: 1.35,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
     return Scaffold(
       backgroundColor: Theme.of(context).colorScheme.scrim,
       body: Stack(
         children: [
           Positioned.fill(
             child: GoogleMap(
-              initialCameraPosition:
-                  CameraPosition(target: _selected, zoom: _zoom),
+              initialCameraPosition: CameraPosition(target: selected, zoom: _zoom),
               onMapCreated: (controller) => _controller = controller,
               onCameraMove: (position) {
                 _selected = position.target;
@@ -114,14 +178,12 @@ class _MapPickerScreenState extends State<MapPickerScreen> {
                         color: profileAccentColor(context),
                         shape: BoxShape.circle,
                         border: Border.all(
-                            color: Theme.of(context).colorScheme.surface,
-                            width: 3),
+                          color: Theme.of(context).colorScheme.surface,
+                          width: 3,
+                        ),
                         boxShadow: [
                           BoxShadow(
-                            color: Theme.of(context)
-                                .colorScheme
-                                .shadow
-                                .withOpacity(0.28),
+                            color: Theme.of(context).colorScheme.shadow.withOpacity(0.28),
                             blurRadius: 16,
                             offset: const Offset(0, 8),
                           ),
@@ -137,10 +199,7 @@ class _MapPickerScreenState extends State<MapPickerScreen> {
                       width: 12,
                       height: 12,
                       decoration: BoxDecoration(
-                        color: Theme.of(context)
-                            .colorScheme
-                            .shadow
-                            .withOpacity(0.22),
+                        color: Theme.of(context).colorScheme.shadow.withOpacity(0.22),
                         shape: BoxShape.circle,
                       ),
                     ),
@@ -211,7 +270,7 @@ class _MapPickerScreenState extends State<MapPickerScreen> {
                         ),
                         const SizedBox(height: 5),
                         Text(
-                          '${_selected.latitude.toStringAsFixed(6)}, ${_selected.longitude.toStringAsFixed(6)}',
+                          '${selected.latitude.toStringAsFixed(6)}, ${selected.longitude.toStringAsFixed(6)}',
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
@@ -235,7 +294,7 @@ class _MapPickerScreenState extends State<MapPickerScreen> {
                       ),
                       radius: 16,
                     ),
-                    child: Text('Use pin'),
+                    child: const Text('Use pin'),
                   ),
                 ],
               ),

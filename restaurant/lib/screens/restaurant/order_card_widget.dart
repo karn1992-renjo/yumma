@@ -101,7 +101,7 @@ class OrderCardWidget extends StatelessWidget {
                           children: [
                             Text(
                               '#${order['order_number']}',
-                              style: const TextStyle(
+                              style: TextStyle(
                                 color: FoodFlowTheme.ink,
                                 fontWeight: FontWeight.w800,
                                 fontSize: 16,
@@ -167,7 +167,7 @@ class OrderCardWidget extends StatelessWidget {
                     child: Text(
                       '${item['quantity']}x ${item['name']}',
                       style:
-                          const TextStyle(
+                          TextStyle(
                               fontSize: 12, color: FoodFlowTheme.inkSoft),
                     ),
                   );
@@ -185,22 +185,22 @@ class OrderCardWidget extends StatelessWidget {
               // Customer info
               Row(
                 children: [
-                  const Icon(Icons.person_outline,
+                  Icon(Icons.person_outline,
                       size: 14, color: FoodFlowTheme.muted),
                   const SizedBox(width: 4),
                   Text(
                     order['customer_name'] ?? 'Guest',
                     style:
-                        const TextStyle(fontSize: 13, color: FoodFlowTheme.muted),
+                        TextStyle(fontSize: 13, color: FoodFlowTheme.muted),
                   ),
                   const SizedBox(width: 12),
-                  const Icon(Icons.phone_outlined,
+                  Icon(Icons.phone_outlined,
                       size: 14, color: FoodFlowTheme.muted),
                   const SizedBox(width: 4),
                   Text(
                     order['customer_phone'] ?? 'N/A',
                     style:
-                        const TextStyle(fontSize: 13, color: FoodFlowTheme.muted),
+                        TextStyle(fontSize: 13, color: FoodFlowTheme.muted),
                   ),
                 ],
               ),

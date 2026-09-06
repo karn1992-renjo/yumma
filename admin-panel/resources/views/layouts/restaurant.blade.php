@@ -167,6 +167,36 @@
             }
         }
 
+        /* Modal + backdrop counter the body zoom so they map to the real
+           viewport — correct centering, full-screen dimming, and Bootstrap's
+           scrollable-modal height math keeps working. */
+        body.dashboard-ui-compact .modal,
+        body.dashboard-ui-compact .modal-backdrop {
+            zoom: calc(1 / var(--dashboard-ui-scale));
+        }
+        body.dashboard-ui-compact.modal-open {
+            padding-right: 0 !important;
+        }
+
+        @supports not (zoom: 1) {
+            body.dashboard-ui-compact .modal,
+            body.dashboard-ui-compact .modal-backdrop {
+                zoom: normal;
+            }
+            body.dashboard-ui-compact.modal-open {
+                transform: none !important;
+                width: 100% !important;
+                max-width: 100% !important;
+            }
+        }
+
+        @media (max-width: 1024px) {
+            body.dashboard-ui-compact .modal,
+            body.dashboard-ui-compact .modal-backdrop {
+                zoom: 1;
+            }
+        }
+
         /* ========== TOP HEADER ========== */
         .top-header {
             position: fixed;
@@ -2051,8 +2081,27 @@
                 }
             }
         }
+
+        (function () {
+            // Move modals up to <body> so they aren't trapped in .main-content's
+            // stacking context (which would paint below the .modal-backdrop).
+            document.addEventListener('show.bs.modal', function (e) {
+                var m = e.target;
+                if (m && m.parentElement !== document.body) document.body.appendChild(m);
+            });
+
+            function clearOrphanBackdrops() {
+                if (document.querySelector('.modal.show')) return;
+                document.querySelectorAll('.modal-backdrop').forEach(function (b) { b.remove(); });
+                document.body.classList.remove('modal-open');
+                document.body.style.removeProperty('overflow');
+                document.body.style.removeProperty('padding-right');
+            }
+            document.addEventListener('DOMContentLoaded', clearOrphanBackdrops);
+            document.addEventListener('hidden.bs.modal', function () { setTimeout(clearOrphanBackdrops, 60); });
+        })();
     </script>
-    
+
     @include('partials.web-visit-tracker', ['panel' => 'restaurant'])
     @yield('scripts')
 </body>

@@ -227,7 +227,7 @@ class HomeSectionController extends Controller
             'types' => $types,
             'sources' => HomeSection::SOURCES,
             'restaurantScopes' => HomeSection::RESTAURANT_SCOPES,
-            'banners' => Banner::query()->orderBy('display_order')->orderByDesc('id')->get(['id', 'title']),
+            'banners' => Banner::query()->orderBy('display_order')->orderByDesc('id')->get(['id', 'title', 'display_surface']),
             'restaurants' => Restaurant::query()->where('is_verified', true)->orderBy('name')->get(['id', 'name']),
             'cuisines' => Cuisine::query()->where('is_active', true)->orderBy('name')->get(['id', 'name']),
             'globalCategories' => GlobalMenuCategory::query()

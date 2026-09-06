@@ -198,9 +198,10 @@ class OrderProvider extends ChangeNotifier {
 
   Future<Map<String, dynamic>?> trackOrder(int orderId) async {
     try {
-      final response = await _api.get('${ApiConstants.trackOrder}/$orderId');
-      if (response['success'] == true) {
-        return response['data'];
+      // Backend route is GET /orders/{id}/track (not /orders/track/{id}).
+      final response = await _api.get('/orders/$orderId/track');
+      if (response is Map && response['success'] == true) {
+        return Map<String, dynamic>.from(response['data'] as Map);
       }
       return null;
     } catch (e) {

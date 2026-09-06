@@ -26,6 +26,7 @@ import '../../utils/promotion_summary_utils.dart';
 import '../../widgets/common/lucide_icon.dart';
 import '../../widgets/customer/cart_item_card.dart';
 import '../../widgets/customer/account_chrome.dart';
+import '../../widgets/customer/coupon_ticket_card.dart';
 import '../../widgets/customer/free_delivery_success_popup.dart';
 import '../../widgets/customer/menu_item_card.dart';
 
@@ -80,6 +81,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   double? _summaryDeliveryDiscount;
   double? _summaryPlatformFee;
   double? _summaryTax;
+  double? _summarySurgeFee;
+  double? _summaryNightSurcharge;
   double? _summaryDiscount;
   double? _summaryEmbeddedItemDiscount;
   double? _summaryTotal;
@@ -104,12 +107,15 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   List<Map<String, dynamic>> _promotionProgress = <Map<String, dynamic>>[];
   List<Map<String, dynamic>> _rewardLines = <Map<String, dynamic>>[];
   List<Map<String, dynamic>> _rewardActions = <Map<String, dynamic>>[];
+  List<Map<String, dynamic>> _appliedPromotions = <Map<String, dynamic>>[];
+  List<Map<String, dynamic>> _invalidPromotionReasons = <Map<String, dynamic>>[];
   double _cashbackEarned = 0;
   int _rewardPointsEarned = 0;
   List<MenuItem> _suggestedItems = <MenuItem>[];
   String? _loadedSuggestedSignature;
   String? _loadingSuggestedSignature;
   String _cartNote = '';
+  String _contactPhoneOverride = '';
   String _selectedOrderType = 'delivery';
   String _selectedPaymentMethod = 'online';
   String? _selectedGatewayKey;
@@ -168,6 +174,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         _promotionProgress = <Map<String, dynamic>>[];
         _rewardLines = <Map<String, dynamic>>[];
         _rewardActions = <Map<String, dynamic>>[];
+        _appliedPromotions = <Map<String, dynamic>>[];
+        _invalidPromotionReasons = <Map<String, dynamic>>[];
         _cashbackEarned = 0;
         _rewardPointsEarned = 0;
         _suggestedItems = <MenuItem>[];
@@ -263,6 +271,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
           _summaryDeliveryDiscount = _toDouble(data['delivery_discount']);
           _summaryPlatformFee = _toDouble(data['platform_fee']);
           _summaryTax = _toDouble(data['tax']);
+          _summarySurgeFee = _toDouble(data['surge_fee']);
+          _summaryNightSurcharge = _toDouble(data['night_surcharge']);
           _summaryDiscount = _toDouble(data['discount']);
           _summaryEmbeddedItemDiscount =
               _toDouble(data['embedded_item_discount']);
@@ -270,6 +280,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
           _promotionProgress = _mapList(data['promotion_progress']);
           _rewardLines = promotionRewardLinesFromSummary(data);
           _rewardActions = _mapList(data['reward_actions']);
+          _appliedPromotions = _mapList(data['applied_promotions']);
+          _invalidPromotionReasons = _mapList(data['invalid_reasons']);
           _cashbackEarned = _toDouble(data['cashback_earned']);
           _rewardPointsEarned = _toDouble(data['reward_points_earned']).round();
           _freeDeliveryThreshold = threshold;
@@ -295,8 +307,18 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         unawaited(_loadCartPromos(restaurant.id));
         unawaited(_loadSuggestedItems());
         if (celebrate) {
+          final savedFee = (_summaryDeliveryDiscount ?? 0) > 0
+              ? _summaryDeliveryDiscount!
+              : (_summaryDeliveryFee ?? 0);
           WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted) showFreeDeliverySuccessPopup(context);
+            if (mounted) {
+              showFreeDeliverySuccessPopup(
+                context,
+                savedText: savedFee > 0
+                    ? formatCurrency(context, savedFee)
+                    : null,
+              );
+            }
           });
         }
       }
@@ -1243,14 +1265,25 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     final tax = hasFreshSummary || canReuseChargeSummary
         ? (_summaryTax ?? cart.tax)
         : cart.tax;
+    final surgeFee = hasFreshSummary || canReuseChargeSummary
+        ? (_summarySurgeFee ?? 0)
+        : 0.0;
+    final nightSurcharge = hasFreshSummary || canReuseChargeSummary
+        ? (_summaryNightSurcharge ?? 0)
+        : 0.0;
     final discount =
         hasFreshSummary ? (_summaryDiscount ?? 0) : localPromotionDiscount;
     final savedOnOrder =
         (discount + (hasFreshSummary ? (_summaryEmbeddedItemDiscount ?? 0) : 0))
             .clamp(0.0, double.infinity)
             .toDouble();
-    final calculatedTotal =
-        subtotal + deliveryFee + platformFee + tax - discount;
+    final calculatedTotal = subtotal +
+        deliveryFee +
+        platformFee +
+        tax +
+        surgeFee +
+        nightSurcharge -
+        discount;
     final total =
         hasFreshSummary ? (_summaryTotal ?? calculatedTotal) : calculatedTotal;
     final deliveryLabel = isTakeaway
@@ -1276,93 +1309,767 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       primaryTextTheme: _jakartaPrimaryTextTheme(baseTheme.primaryTextTheme),
     );
 
+    // ---- New checkout screen (rebuilt Sept 2026; legacy UI kept at
+    // customer/_legacy_checkout/checkout_screen_v1_backup.dart). Same order /
+    // payment / promotion engine underneath -- only the screen is new. ----
     return Theme(
       data: cartTheme,
       child: Scaffold(
-        backgroundColor: const Color(0xFFF5F6FB),
+        backgroundColor: _ckBg,
+        appBar: _ckAppBar(cart, restaurant, orderType),
         body: SafeArea(
           bottom: false,
-          child: CustomScrollView(
-            slivers: [
-              SliverToBoxAdapter(
-                child: _buildCartHeader(primary, cart, restaurant, orderType),
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(14, 14, 14, 150),
+            children: [
+              if (savedOnOrder > 0) ...[
+                _ckSavingsBanner(savedOnOrder),
+                const SizedBox(height: 12),
+              ],
+              _ckSectionLabel(
+                  '${cart.itemCount} item${cart.itemCount == 1 ? '' : 's'} in your order'),
+              const SizedBox(height: 8),
+              _buildItemsPanel(cart, hasFreshSummary: hasFreshSummary),
+              if (_suggestedItems.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                _buildSuggestedItemsPanel(cart),
+              ],
+              const SizedBox(height: 16),
+              _ckFulfilmentCard(
+                primary: primary,
+                cart: cart,
+                restaurant: restaurant,
+                orderType: orderType,
+                restaurantId: restaurant?.id,
               ),
-              if (savedOnOrder > 0)
-                SliverToBoxAdapter(
-                  child: _buildTopSavingsStrip(savedOnOrder),
-                ),
-              if (!isTakeaway && _freeDeliveryThreshold != null)
-                SliverToBoxAdapter(
-                  child: Padding(
-                    padding: EdgeInsets.fromLTRB(
-                      10,
-                      discount > 0 ? 10 : 12,
-                      10,
-                      0,
-                    ),
-                    child: _buildFreeDeliveryMilestone(primary, subtotal),
-                  ),
-                ),
-              SliverPadding(
-                padding: const EdgeInsets.fromLTRB(10, 10, 10, 0),
-                sliver: SliverList(
-                  delegate: SliverChildListDelegate(
-                    [
-                      if (hasPromotionWorkflow) ...[
-                        _buildSpecialOfferPanel(
-                          discount,
-                          savedOnOrder: savedOnOrder,
-                          hasFreshSummary: hasFreshSummary,
-                        ),
-                        const SizedBox(height: 12),
-                      ],
-                      _buildItemsPanel(
-                        cart,
-                        hasFreshSummary: hasFreshSummary,
-                      ),
-                      if (_suggestedItems.isNotEmpty) ...[
-                        const SizedBox(height: 12),
-                        _buildSuggestedItemsPanel(cart),
-                      ],
-                      if (hasPromotionWorkflow) ...[
-                        const SizedBox(height: 12),
-                        _buildCartPromotionSummary(
-                          primary,
-                          promotionLabels,
-                          discount: discount,
-                          savedOnOrder: savedOnOrder,
-                          hasFreshSummary: hasFreshSummary,
-                          promotionProgress: visiblePromotionProgress,
-                          rewardActions: visibleRewardActions,
-                        ),
-                      ],
-                      const SizedBox(height: 12),
-                      _buildDeliveryBillPanel(
-                        primary: primary,
-                        restaurant: restaurant,
-                        orderType: orderType,
-                        restaurantId: restaurant?.id,
-                        subtotal: subtotal,
-                        originalSubtotal: originalSubtotal,
-                        deliveryFee: deliveryFee,
-                        deliveryDiscount: deliveryDiscount,
-                        deliveryLabel: deliveryLabel,
-                        platformFee: platformFee,
-                        tax: tax,
-                        discount: discount,
-                        total: total,
-                      ),
-                      const SizedBox(height: 16),
-                      _buildCancellationPolicy(),
-                      const SizedBox(height: 120),
-                    ],
-                  ),
-                ),
+              if (!isTakeaway && _freeDeliveryThreshold != null) ...[
+                const SizedBox(height: 12),
+                _buildFreeDeliveryMilestone(primary, subtotal),
+              ],
+              const SizedBox(height: 16),
+              _ckSectionLabel('Offers & coupons'),
+              const SizedBox(height: 8),
+              _ckOffersCard(
+                primary: primary,
+                discount: discount,
+                savedOnOrder: savedOnOrder,
+                hasFreshSummary: hasFreshSummary,
+                hasPromotionWorkflow: hasPromotionWorkflow,
               ),
+              if (hasFreshSummary &&
+                  (_cashbackEarned > 0 || _rewardPointsEarned > 0)) ...[
+                const SizedBox(height: 10),
+                _ckRewardsStrip(),
+              ],
+              if (hasPromotionWorkflow &&
+                  (visiblePromotionProgress.isNotEmpty ||
+                      visibleRewardActions.isNotEmpty)) ...[
+                const SizedBox(height: 10),
+                _buildCartPromotionSummary(
+                  primary,
+                  promotionLabels,
+                  discount: discount,
+                  savedOnOrder: savedOnOrder,
+                  hasFreshSummary: hasFreshSummary,
+                  promotionProgress: visiblePromotionProgress,
+                  rewardActions: visibleRewardActions,
+                ),
+              ],
+              const SizedBox(height: 16),
+              _ckSectionLabel('Bill details'),
+              const SizedBox(height: 8),
+              _ckBillCard(
+                subtotal: subtotal,
+                originalSubtotal: originalSubtotal,
+                deliveryFee: deliveryFee,
+                deliveryDiscount: deliveryDiscount,
+                deliveryLabel: deliveryLabel,
+                platformFee: platformFee,
+                tax: tax,
+                surgeFee: surgeFee,
+                nightSurcharge: nightSurcharge,
+                discount: discount,
+                total: total,
+                isTakeaway: isTakeaway,
+              ),
+              const SizedBox(height: 14),
+              _ckCancellationNote(),
             ],
           ),
         ),
-        bottomNavigationBar: _buildBottomCheckoutBar(primary, cart, total),
+        bottomNavigationBar: _ckBottomBar(primary, cart, total),
+      ),
+    );
+  }
+
+  // ============================ NEW CHECKOUT UI ============================
+
+  static const Color _ckBg = Color(0xFFF4F6FA);
+  static const Color _ckCardBorder = Color(0xFFE7EBF2);
+  static const Color _ckInk = Color(0xFF11223A);
+  static const Color _ckMuted = Color(0xFF7A8699);
+  static const Color _ckGreen = Color(0xFF11924E);
+
+  PreferredSizeWidget _ckAppBar(
+    CartProvider cart,
+    dynamic restaurant,
+    String orderType,
+  ) {
+    final name = _checkoutRestaurantDisplayName(cart, restaurant);
+    final isTakeaway = orderType == 'takeaway';
+    final eta = _scheduledTime != null
+        ? _formatScheduledTime(_scheduledTime!)
+        : (isTakeaway
+            ? 'Pickup in ${_pickupEtaText(restaurant)}'
+            : 'Delivery in ${_deliveryEtaText()}');
+    return AppBar(
+      backgroundColor: Colors.white,
+      surfaceTintColor: Colors.white,
+      elevation: 0.5,
+      shadowColor: Colors.black12,
+      leadingWidth: 40,
+      titleSpacing: 0,
+      leading: IconButton(
+        onPressed: () => Navigator.of(context).maybePop(),
+        icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 18),
+        color: _ckInk,
+      ),
+      title: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            name,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: _ckInk,
+              fontSize: 15.5,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          Text(
+            eta,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: _ckGreen,
+              fontSize: 11.5,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        ],
+      ),
+      actions: [
+        IconButton(
+          onPressed: () => _showClearCartDialog(context, cart),
+          icon: const Icon(Icons.delete_outline_rounded, size: 21),
+          color: _ckMuted,
+        ),
+      ],
+    );
+  }
+
+  Widget _ckSectionLabel(String text) {
+    return Padding(
+      padding: const EdgeInsets.only(left: 2),
+      child: Text(
+        text.toUpperCase(),
+        style: const TextStyle(
+          color: _ckMuted,
+          fontSize: 11,
+          letterSpacing: 0.4,
+          fontWeight: FontWeight.w900,
+        ),
+      ),
+    );
+  }
+
+  Widget _ckCard({required Widget child, EdgeInsets? padding}) {
+    return Container(
+      width: double.infinity,
+      padding: padding ?? const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: _ckCardBorder),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.03),
+            blurRadius: 14,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      child: child,
+    );
+  }
+
+  Widget _ckSavingsBanner(double amount) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [Color(0xFFE7F8EE), Color(0xFFF1FBF5)],
+        ),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFBFE9CF)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.savings_rounded, color: _ckGreen, size: 18),
+          const SizedBox(width: 9),
+          Expanded(
+            child: Text(
+              'You save ${formatCurrency(context, amount)} on this order',
+              style: const TextStyle(
+                color: _ckGreen,
+                fontSize: 13,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _ckFulfilmentCard({
+    required Color primary,
+    required CartProvider cart,
+    required dynamic restaurant,
+    required String orderType,
+    required int? restaurantId,
+  }) {
+    final isTakeaway = orderType == 'takeaway';
+    final address = _selectedAddress;
+    final showToggle =
+        _supportsDelivery(restaurant) && _supportsTakeaway(restaurant);
+
+    return _ckCard(
+      padding: const EdgeInsets.fromLTRB(6, 6, 6, 6),
+      child: Column(
+        children: [
+          if (showToggle) ...[
+            Padding(
+              padding: const EdgeInsets.fromLTRB(8, 8, 8, 4),
+              child: _buildOrderTypeSelector(primary, restaurant),
+            ),
+            const _CkLine(),
+          ],
+          _CkTile(
+            icon: isTakeaway
+                ? Icons.storefront_rounded
+                : Icons.location_on_rounded,
+            title: isTakeaway
+                ? 'Pickup from ${restaurant?.name ?? 'the restaurant'}'
+                : (address == null
+                    ? 'Add a delivery address'
+                    : 'Deliver to ${address.name}'),
+            subtitle: isTakeaway
+                ? restaurant?.address?.toString()
+                : (address?.fullAddress ??
+                    'Choose where your order should go'),
+            trailing: isTakeaway ? null : Icons.chevron_right_rounded,
+            danger: !isTakeaway &&
+                (address == null || address.isDeliverable == false),
+            onTap: isTakeaway
+                ? null
+                : (_isAddressLoading
+                    ? null
+                    : () => _addresses.isNotEmpty
+                        ? _showAddressSelector()
+                        : _addAddressAndRefresh(restaurantId)),
+          ),
+          if (!isTakeaway) ...[
+            const _CkLine(),
+            _CkTile(
+              icon: Icons.call_rounded,
+              title: _effectiveContactPhone().isEmpty
+                  ? 'Add a contact number'
+                  : _effectiveContactPhone(),
+              subtitle: _contactPhoneOverride.trim().isNotEmpty
+                  ? 'Contact for this delivery · edited'
+                  : 'Contact for this delivery · tap to change',
+              trailing: Icons.edit_rounded,
+              onTap: _showContactPhoneSheet,
+            ),
+          ],
+          const _CkLine(),
+          _CkTile(
+            icon: _scheduledTime == null
+                ? Icons.bolt_rounded
+                : Icons.schedule_rounded,
+            title: _scheduledTime == null
+                ? (isTakeaway
+                    ? 'Pickup in ${_pickupEtaText(restaurant)}'
+                    : 'Delivery in ${_deliveryEtaText()}')
+                : 'Scheduled · ${_formatScheduledTime(_scheduledTime!)}',
+            titleColor: _ckGreen,
+            subtitle: _scheduledTime == null
+                ? 'Want it later? Schedule this order'
+                : 'Tap to reschedule or switch to now',
+            trailing: Icons.chevron_right_rounded,
+            onTap: _showScheduleSelectorSheet,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _ckOffersCard({
+    required Color primary,
+    required double discount,
+    required double savedOnOrder,
+    required bool hasFreshSummary,
+    required bool hasPromotionWorkflow,
+  }) {
+    final applied = _hasAppliedPromotion(hasFreshSummary, discount);
+    final couponApplied = _selectedCouponCode.isNotEmpty;
+
+    if (applied || couponApplied) {
+      final title = _activePromotionTitle(hasFreshSummary: hasFreshSummary);
+      return _ckCard(
+        padding: const EdgeInsets.fromLTRB(12, 12, 8, 12),
+        child: Row(
+          children: [
+            Container(
+              width: 40,
+              height: 40,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: _ckGreen.withOpacity(0.10),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: const Icon(Icons.check_circle_rounded,
+                  color: _ckGreen, size: 22),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    couponApplied
+                        ? '$_selectedCouponCode applied'
+                        : '$title applied',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: _ckInk,
+                      fontSize: 13.5,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    savedOnOrder > 0
+                        ? "You're saving ${formatCurrency(context, savedOnOrder)}"
+                        : 'Offer active on this cart',
+                    style: const TextStyle(
+                      color: _ckGreen,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            TextButton(
+              onPressed: _showPromoSelectorSheet,
+              style: TextButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 10),
+                  minimumSize: const Size(0, 36)),
+              child: Text(
+                'Change',
+                style: TextStyle(
+                    color: primary, fontWeight: FontWeight.w900, fontSize: 12.5),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return _ckCard(
+      padding: const EdgeInsets.all(6),
+      child: Column(
+        children: [
+          _CkTile(
+            icon: Icons.local_offer_rounded,
+            iconColor: const Color(0xFFE8412C),
+            title: 'Apply a coupon or offer',
+            subtitle: _cartPromos.isEmpty
+                ? 'Enter a code to save on this order'
+                : '${_cartPromos.length} available for this cart',
+            trailing: Icons.chevron_right_rounded,
+            onTap: _showPromoSelectorSheet,
+          ),
+          const _CkLine(),
+          _CkTile(
+            icon: Icons.redeem_rounded,
+            title: 'Browse all offers & promotions',
+            subtitle: 'See every live deal on Yumma!',
+            trailing: Icons.chevron_right_rounded,
+            onTap: () => Navigator.pushNamed(context, '/offers'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _ckBillCard({
+    required double subtotal,
+    required double originalSubtotal,
+    required double deliveryFee,
+    required double deliveryDiscount,
+    required String deliveryLabel,
+    required double platformFee,
+    required double tax,
+    required double surgeFee,
+    required double nightSurcharge,
+    required double discount,
+    required double total,
+    required bool isTakeaway,
+  }) {
+    final itemSavings =
+        (originalSubtotal - subtotal).clamp(0.0, double.infinity).toDouble();
+    // Split the single `discount` figure the way the detail sheet does: the
+    // delivery-discount part shows on the delivery line, the rest as one
+    // "Offer discount" line.
+    final deliveryOff = deliveryDiscount.clamp(0.0, deliveryFee).toDouble();
+    final netDeliveryFee = (deliveryFee - deliveryOff).clamp(0.0, double.infinity).toDouble();
+    final otherDiscount =
+        (discount - deliveryOff).clamp(0.0, double.infinity).toDouble();
+    Widget row(String label, String value,
+        {bool strong = false, Color? color, bool strike = false}) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 5),
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(
+                label,
+                style: TextStyle(
+                  color: color ?? (strong ? _ckInk : _ckMuted),
+                  fontSize: strong ? 14 : 12.5,
+                  fontWeight: strong ? FontWeight.w900 : FontWeight.w700,
+                ),
+              ),
+            ),
+            Text(
+              value,
+              style: TextStyle(
+                color: color ?? (strong ? _ckInk : _ckInk),
+                fontSize: strong ? 15 : 12.5,
+                fontWeight: strong ? FontWeight.w900 : FontWeight.w800,
+                decoration: strike ? TextDecoration.lineThrough : null,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return _ckCard(
+      child: Column(
+        children: [
+          row('Item total', formatCurrency(context, originalSubtotal)),
+          if (itemSavings > 0)
+            row('Item discount', '- ${formatCurrency(context, itemSavings)}',
+                color: _ckGreen),
+          if (!isTakeaway)
+            (deliveryOff > 0 && netDeliveryFee <= 0)
+                ? Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 5),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(deliveryLabel,
+                              style: const TextStyle(
+                                  color: _ckMuted,
+                                  fontSize: 12.5,
+                                  fontWeight: FontWeight.w700)),
+                        ),
+                        Text(formatCurrency(context, deliveryFee),
+                            style: const TextStyle(
+                                color: _ckMuted,
+                                fontSize: 12.5,
+                                fontWeight: FontWeight.w700,
+                                decoration: TextDecoration.lineThrough)),
+                        const SizedBox(width: 6),
+                        const Text('FREE',
+                            style: TextStyle(
+                                color: _ckGreen,
+                                fontSize: 12.5,
+                                fontWeight: FontWeight.w900)),
+                      ],
+                    ),
+                  )
+                : row(deliveryLabel,
+                    netDeliveryFee <= 0
+                        ? 'FREE'
+                        : formatCurrency(context, netDeliveryFee),
+                    color: netDeliveryFee <= 0 ? _ckGreen : null),
+          if (platformFee > 0)
+            row('Platform fee', formatCurrency(context, platformFee)),
+          if (surgeFee > 0)
+            row('Surge fee', formatCurrency(context, surgeFee)),
+          if (nightSurcharge > 0)
+            row('Late-night fee', formatCurrency(context, nightSurcharge)),
+          if (tax > 0)
+            row(_summaryTaxLabel, formatCurrency(context, tax)),
+          if (otherDiscount > 0.01)
+            row('Offer discount', '- ${formatCurrency(context, otherDiscount)}',
+                color: _ckGreen),
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 6),
+            child: _CkLine(inset: false),
+          ),
+          row('To pay', formatCurrency(context, total), strong: true),
+          if (_summaryTaxBreakdown.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            InkWell(
+              onTap: () => _showBillDetailsSheet(
+                subtotal: subtotal,
+                originalSubtotal: originalSubtotal,
+                deliveryFee: deliveryFee,
+                deliveryDiscount: deliveryDiscount,
+                deliveryLabel: deliveryLabel,
+                platformFee: platformFee,
+                tax: tax,
+                surgeFee: surgeFee,
+                nightSurcharge: nightSurcharge,
+                discount: discount,
+                total: total,
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text('View tax & fee breakdown',
+                      style: TextStyle(
+                          color: FoodFlowTheme.brandPrimary(context),
+                          fontSize: 12,
+                          fontWeight: FontWeight.w900)),
+                  Icon(Icons.chevron_right_rounded,
+                      size: 16, color: FoodFlowTheme.brandPrimary(context)),
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _ckRewardsStrip() {
+    final parts = <String>[
+      if (_rewardPointsEarned > 0) '$_rewardPointsEarned points',
+      if (_cashbackEarned > 0)
+        '${formatCurrency(context, _cashbackEarned)} cashback',
+    ];
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF6EC),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFFCE2C4)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.stars_rounded, color: Color(0xFFE08A1E), size: 18),
+          const SizedBox(width: 9),
+          Expanded(
+            child: Text(
+              'Earn ${parts.join(' + ')} after this order is delivered',
+              style: const TextStyle(
+                color: Color(0xFF9A5A11),
+                fontSize: 12,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _ckCancellationNote() {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF7F8FB),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: _ckCardBorder),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(Icons.info_outline_rounded, size: 16, color: _ckMuted),
+          const SizedBox(width: 9),
+          const Expanded(
+            child: Text(
+              'Orders cannot be cancelled once the restaurant starts preparing. '
+              'A cancellation fee may apply after that.',
+              style: TextStyle(
+                color: _ckMuted,
+                fontSize: 11.5,
+                height: 1.35,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _ckBottomBar(Color primary, CartProvider cart, double total) {
+    final user = context.watch<AuthProvider>().currentUser;
+    final bottom = MediaQuery.paddingOf(context).bottom;
+    return Container(
+      padding: EdgeInsets.fromLTRB(14, 10, 14, 10 + bottom),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.10),
+            blurRadius: 24,
+            offset: const Offset(0, -8),
+          ),
+        ],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          InkWell(
+            onTap: () => _showPaymentSelectorSheet(total),
+            borderRadius: BorderRadius.circular(12),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 2),
+              child: Row(
+                children: [
+                  Container(
+                    width: 30,
+                    height: 30,
+                    clipBehavior: Clip.antiAlias,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF2F5F3),
+                      borderRadius: BorderRadius.circular(9),
+                    ),
+                    child: _paymentIconWidget(user, size: 17),
+                  ),
+                  const SizedBox(width: 9),
+                  Text('Pay via ',
+                      style: const TextStyle(
+                          color: _ckMuted,
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w700)),
+                  Expanded(
+                    child: Text(
+                      _paymentTitle(user),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                          color: _ckInk,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w900),
+                    ),
+                  ),
+                  Text('Change',
+                      style: TextStyle(
+                          color: primary,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w900)),
+                  const Icon(Icons.keyboard_arrow_up_rounded,
+                      color: _ckMuted, size: 18),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          SizedBox(
+            height: 54,
+            width: double.infinity,
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: FoodFlowTheme.brandGradientOf(context),
+                borderRadius: BorderRadius.circular(16),
+                boxShadow: [
+                  BoxShadow(
+                    color: primary.withOpacity(0.30),
+                    blurRadius: 16,
+                    offset: const Offset(0, 8),
+                  ),
+                ],
+              ),
+              child: Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  onTap: _isPlacingOrder
+                      ? null
+                      : () => _proceedToCheckout(context, cart.restaurant?.id),
+                  borderRadius: BorderRadius.circular(16),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 18),
+                    child: Row(
+                      children: [
+                        Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              formatCurrency(context, total),
+                              style: GoogleFonts.plusJakartaSans(
+                                color: FoodFlowTheme.brandOnPrimary(context),
+                                fontSize: 16,
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
+                            Text(
+                              'TOTAL',
+                              style: GoogleFonts.plusJakartaSans(
+                                color: FoodFlowTheme.brandOnPrimary(context)
+                                    .withOpacity(0.82),
+                                fontSize: 9,
+                                fontWeight: FontWeight.w800,
+                                letterSpacing: 0.5,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const Spacer(),
+                        if (_isPlacingOrder)
+                          const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(
+                                strokeWidth: 2, color: Colors.white),
+                          )
+                        else ...[
+                          Text(
+                            'Place order',
+                            style: GoogleFonts.plusJakartaSans(
+                              color: FoodFlowTheme.brandOnPrimary(context),
+                              fontSize: 15,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                          const SizedBox(width: 7),
+                          Icon(Icons.arrow_forward_rounded,
+                              color: FoodFlowTheme.brandOnPrimary(context),
+                              size: 18),
+                        ],
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -1572,6 +2279,98 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     if (hasFreshSummary && _rewardLines.isNotEmpty) return true;
     if (_selectedCouponCode.isNotEmpty) return true;
     return false;
+  }
+
+  /// Always-visible entry to apply a coupon / browse offers, shown when no
+  /// promotion or coupon is active on the cart yet. Opens the coupon sheet
+  /// (manual code + cart-eligible coupons) and links to the full Offers
+  /// screen so admin promotions and scratch-card wins are all reachable.
+  Widget _buildApplyCouponEntry(Color primary) {
+    return _CartPanel(
+      padding: const EdgeInsets.fromLTRB(14, 14, 12, 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          InkWell(
+            borderRadius: BorderRadius.circular(16),
+            onTap: _showPromoSelectorSheet,
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                  colors: [Color(0xFFFFF3E9), Color(0xFFFFFBF6)],
+                ),
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 46,
+                      height: 46,
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(999),
+                        border: Border.all(color: const Color(0xFFFFCDD2)),
+                      ),
+                      child: const Icon(
+                        Icons.local_offer_rounded,
+                        color: Color(0xFFE83E58),
+                        size: 22,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    const Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Apply a coupon or offer',
+                            style: TextStyle(
+                              color: FoodFlowTheme.ink,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                          SizedBox(height: 5),
+                          Text(
+                            'Enter a code, or pick a coupon for this cart',
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: FoodFlowTheme.muted,
+                              fontSize: 12,
+                              height: 1.2,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Icon(Icons.chevron_right_rounded, color: primary),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 4),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton.icon(
+              onPressed: () => Navigator.pushNamed(context, '/offers'),
+              style: TextButton.styleFrom(
+                foregroundColor: primary,
+                padding: const EdgeInsets.symmetric(horizontal: 6),
+                textStyle: const TextStyle(fontWeight: FontWeight.w900),
+              ),
+              icon: const Icon(Icons.redeem_rounded, size: 18),
+              label: const Text('View all offers & promotions'),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _buildSpecialOfferPanel(
@@ -2174,6 +2973,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     required String deliveryLabel,
     required double platformFee,
     required double tax,
+    double surgeFee = 0,
+    double nightSurcharge = 0,
     required double discount,
     required double total,
   }) {
@@ -2247,7 +3048,12 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
           const _PanelDivider(),
           _BillSummaryLine(
             total: total,
-            gross: originalSubtotal + deliveryFee + platformFee + tax,
+            gross: originalSubtotal +
+                deliveryFee +
+                platformFee +
+                tax +
+                surgeFee +
+                nightSurcharge,
             saved: displaySavings,
             onTap: () => _showBillDetailsSheet(
               subtotal: subtotal,
@@ -2257,6 +3063,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
               deliveryLabel: deliveryLabel,
               platformFee: platformFee,
               tax: tax,
+              surgeFee: surgeFee,
+              nightSurcharge: nightSurcharge,
               discount: discount,
               total: total,
             ),
@@ -3849,6 +4657,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     required String deliveryLabel,
     required double platformFee,
     required double tax,
+    double surgeFee = 0,
+    double nightSurcharge = 0,
     required double discount,
     required double total,
   }) {
@@ -3897,6 +4707,9 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                 onTap: () => _showTaxBreakdownPopup(tax),
                 tappable: true,
               ),
+              if (surgeFee > 0) _billRow(context, 'Bad weather fee', surgeFee),
+              if (nightSurcharge > 0)
+                _billRow(context, 'Night delivery fee', nightSurcharge),
               if (offerDiscount > 0)
                 _billRow(
                   context,
@@ -3924,8 +4737,72 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     setState(() => _cartNote = note);
   }
 
+  /// The number the order's delivery contact will use: an in-checkout edit
+  /// wins, else the selected address's phone, else the account phone.
+  String _effectiveContactPhone() {
+    if (_contactPhoneOverride.trim().isNotEmpty) {
+      return _contactPhoneOverride.trim();
+    }
+    final addressPhone = _selectedAddress?.phone.trim() ?? '';
+    if (addressPhone.isNotEmpty) return addressPhone;
+    try {
+      return context.read<AuthProvider>().currentUser?.phone.trim() ?? '';
+    } catch (_) {
+      return '';
+    }
+  }
+
+  Future<void> _showContactPhoneSheet() async {
+    final result = await showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) =>
+          _ContactPhoneSheet(initial: _effectiveContactPhone()),
+    );
+    if (!mounted || result == null) return;
+    setState(() => _contactPhoneOverride = result.trim());
+    _queueCartSummaryRefresh(delay: Duration.zero);
+  }
+
+  Future<void> _applyManualCouponCode(
+    BuildContext sheetContext,
+    String rawCode,
+  ) async {
+    final code = rawCode.trim().toUpperCase();
+    if (code.isEmpty) return;
+
+    setState(() => _selectedCouponCode = code);
+    Navigator.pop(sheetContext);
+    await _refreshCartSummary();
+    if (!mounted) return;
+
+    final applied = _appliedPromotions.any(
+      (promo) =>
+          (promo['coupon_code']?.toString().toUpperCase() ?? '') == code,
+    );
+    if (applied) return;
+
+    final invalid = _invalidPromotionReasons.firstWhere(
+      (item) => (item['coupon_code']?.toString().toUpperCase() ?? '') == code,
+      orElse: () => const <String, dynamic>{},
+    );
+    final reason = invalid['reason']?.toString().trim();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          (reason != null && reason.isNotEmpty)
+              ? reason
+              : '$code — coupon not valid for this order',
+        ),
+        backgroundColor: Colors.red,
+      ),
+    );
+  }
+
   void _showPromoSelectorSheet() {
     final primary = FoodFlowTheme.brandPrimary(context);
+    final manualCodeController = TextEditingController();
     showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -3976,6 +4853,72 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                         ],
                       ),
                       const SizedBox(height: 12),
+                      OutlinedButton.icon(
+                        onPressed: () {
+                          Navigator.pop(sheetContext);
+                          Navigator.pushNamed(context, '/offers');
+                        },
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: primary,
+                          minimumSize: const Size.fromHeight(46),
+                          side: BorderSide(color: primary.withOpacity(0.4)),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          textStyle: const TextStyle(fontWeight: FontWeight.w900),
+                        ),
+                        icon: const Icon(Icons.redeem_rounded, size: 18),
+                        label: const Text('Browse all offers & promotions'),
+                      ),
+                      const SizedBox(height: 12),
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(
+                            child: TextField(
+                              controller: manualCodeController,
+                              textCapitalization: TextCapitalization.characters,
+                              decoration: InputDecoration(
+                                hintText: 'Have a coupon code?',
+                                filled: true,
+                                fillColor: Colors.white,
+                                contentPadding: const EdgeInsets.symmetric(
+                                  horizontal: 14,
+                                  vertical: 12,
+                                ),
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                  borderSide: BorderSide.none,
+                                ),
+                              ),
+                              onSubmitted: (value) => _applyManualCouponCode(
+                                sheetContext,
+                                value,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          ElevatedButton(
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: primary,
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 18,
+                                vertical: 14,
+                              ),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                            ),
+                            onPressed: () => _applyManualCouponCode(
+                              sheetContext,
+                              manualCodeController.text,
+                            ),
+                            child: const Text('Apply'),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
                       if (_selectedCouponCode.isNotEmpty)
                         _promoSheetCard(
                           title: 'Remove coupon',
@@ -4002,7 +4945,13 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                           ),
                         )
                       else
-                        ..._cartPromos.map((promo) {
+                        ...(_cartPromos.toList()
+                              ..sort((a, b) {
+                                final ea = _promoCanApplyNow(a) ? 0 : 1;
+                                final eb = _promoCanApplyNow(b) ? 0 : 1;
+                                return ea.compareTo(eb);
+                              }))
+                            .map((promo) {
                           final code = _promoCode(promo);
                           final isScratchReward = _isScratchRewardPromo(promo);
                           final minOrder = _toDouble(
@@ -4017,28 +4966,38 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                               minOrder <= 0 ||
                               subtotal >= minOrder;
                           final enabled = minOrderEnabled &&
+                              _promoCanApplyNow(promo) &&
                               !(isScratchReward && scratchBlocked);
-                          return _promoSheetCard(
-                            title: _promoTitle(promo),
-                            subtitle: isScratchReward && scratchBlocked
-                                ? 'Scratch rewards cannot be combined with active item offers.'
-                                : enabled
-                                    ? _promoSubtitle(promo)
-                                    : 'Add ${formatCurrency(context, minOrder - subtotal)} more to apply',
-                            code: code,
-                            selected:
-                                code.isNotEmpty && code == _selectedCouponCode,
-                            enabled: enabled && code.isNotEmpty,
-                            primary: primary,
-                            onTap: code.isEmpty
-                                ? null
-                                : () {
-                                    setState(() => _selectedCouponCode = code);
-                                    Navigator.pop(sheetContext);
-                                    _queueCartSummaryRefresh(
-                                      delay: Duration.zero,
-                                    );
-                                  },
+                          return Padding(
+                            padding: const EdgeInsets.only(bottom: 12),
+                            child: CouponTicketCard(
+                              valueText: couponValueText(promo,
+                                  currencySymbol: getCurrencySymbol(context)),
+                              title: _promoTitle(promo),
+                              code: code,
+                              subtitle: isScratchReward && scratchBlocked
+                                  ? 'Scratch rewards cannot be combined with active item offers.'
+                                  : enabled
+                                      ? _promoSubtitle(promo)
+                                      : 'Add ${formatCurrency(context, minOrder - subtotal)} more to apply',
+                              validUntilText: _promoValidUntil(promo),
+                              accent: isScratchReward
+                                  ? const Color(0xFF16A34A)
+                                  : const Color(0xFF9A2FF2),
+                              selected: code.isNotEmpty &&
+                                  code == _selectedCouponCode,
+                              enabled: enabled && code.isNotEmpty,
+                              onTap: code.isEmpty
+                                  ? null
+                                  : () {
+                                      setState(
+                                          () => _selectedCouponCode = code);
+                                      Navigator.pop(sheetContext);
+                                      _queueCartSummaryRefresh(
+                                        delay: Duration.zero,
+                                      );
+                                    },
+                            ),
                           );
                         }),
                     ],
@@ -4049,7 +5008,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
           ),
         );
       },
-    );
+    ).whenComplete(() => manualCodeController.dispose());
   }
 
   Widget _promoSheetCard({
@@ -4231,6 +5190,15 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   }
 
   String _promoSubtitle(Map<String, dynamic> promo) {
+    // Server-side eligibility reason (from PromotionEngineService::
+    // listForCheckout offer_applicability) wins — it knows about audience,
+    // per-account limits and better competing offers.
+    final applicability = promo['offer_applicability'];
+    if (applicability is Map && applicability['can_apply_now'] == false) {
+      final reason = applicability['reason']?.toString().trim();
+      if (reason != null && reason.isNotEmpty) return reason;
+    }
+
     final description = promo['description']?.toString().trim();
     if (description != null && description.isNotEmpty) return description;
 
@@ -4242,6 +5210,29 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     }
 
     return 'Tap to apply this coupon';
+  }
+
+  String? _promoValidUntil(Map<String, dynamic> promo) {
+    final raw = promo['expires_at'] ??
+        promo['ends_at'] ??
+        promo['end_date'] ??
+        promo['valid_until'];
+    if (raw == null) return null;
+    final date = DateTime.tryParse(raw.toString());
+    if (date == null) return null;
+    const months = [
+      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', //
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+    ];
+    return '${date.day.toString().padLeft(2, '0')} ${months[date.month - 1]} ${date.year}';
+  }
+
+  bool _promoCanApplyNow(Map<String, dynamic> promo) {
+    final applicability = promo['offer_applicability'];
+    if (applicability is Map) {
+      return applicability['can_apply_now'] != false;
+    }
+    return true;
   }
 
   Widget _buildCartPromotionSummary(
@@ -4416,7 +5407,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                         'Cashback ${formatCurrency(context, _cashbackEarned)}',
                       if (_rewardPointsEarned > 0)
                         '$_rewardPointsEarned points after delivery',
-                    ].join(' â€¢ '),
+                    ].join(' • '),
                     style: const TextStyle(
                       color: Color(0xFF168A35),
                       fontSize: 12,
@@ -5091,7 +6082,9 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         _selectedCouponCode.isNotEmpty ? _selectedCouponCode : cartCouponCode;
     final addressPhone = !isTakeaway ? (address?.phone.trim() ?? '') : '';
     final userPhone = user?.phone.trim() ?? '';
-    final checkoutPhone = addressPhone.isNotEmpty ? addressPhone : userPhone;
+    final checkoutPhone = _contactPhoneOverride.trim().isNotEmpty
+        ? _contactPhoneOverride.trim()
+        : (addressPhone.isNotEmpty ? addressPhone : userPhone);
     final orderData = <String, dynamic>{
       'restaurant_id': restaurant.id,
       'items': cart.paidItems
@@ -5540,6 +6533,139 @@ class _CartNoteSheet extends StatefulWidget {
   State<_CartNoteSheet> createState() => _CartNoteSheetState();
 }
 
+class _ContactPhoneSheet extends StatefulWidget {
+  const _ContactPhoneSheet({required this.initial});
+
+  final String initial;
+
+  @override
+  State<_ContactPhoneSheet> createState() => _ContactPhoneSheetState();
+}
+
+class _ContactPhoneSheetState extends State<_ContactPhoneSheet> {
+  late final TextEditingController _controller;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    // Strip a leading +91 / 91 / 0 so the field shows the 10-digit number.
+    var digits = widget.initial.replaceAll(RegExp(r'[^0-9]'), '');
+    if (digits.length > 10) digits = digits.substring(digits.length - 10);
+    _controller = TextEditingController(text: digits);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _save() {
+    final digits = _controller.text.replaceAll(RegExp(r'[^0-9]'), '');
+    if (digits.length != 10) {
+      setState(() => _error = 'Enter a valid 10-digit mobile number');
+      return;
+    }
+    FocusScope.of(context).unfocus();
+    Navigator.pop(context, '+91$digits');
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: AnimatedPadding(
+        duration: const Duration(milliseconds: 180),
+        curve: Curves.easeOut,
+        padding: EdgeInsets.only(
+          left: 10,
+          right: 10,
+          bottom: MediaQuery.viewInsetsOf(context).bottom + 10,
+        ),
+        child: Container(
+          padding: const EdgeInsets.all(18),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(22),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Contact number for this delivery',
+                style: TextStyle(
+                  color: FoodFlowTheme.ink,
+                  fontSize: 17,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              const SizedBox(height: 5),
+              const Text(
+                'The delivery partner will call this number. It only changes '
+                'this order.',
+                style: TextStyle(
+                  color: FoodFlowTheme.muted,
+                  fontSize: 12,
+                  height: 1.35,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(height: 14),
+              TextField(
+                controller: _controller,
+                keyboardType: TextInputType.phone,
+                maxLength: 10,
+                autofocus: true,
+                onChanged: (_) {
+                  if (_error != null) setState(() => _error = null);
+                },
+                onSubmitted: (_) => _save(),
+                decoration: InputDecoration(
+                  counterText: '',
+                  prefixText: '+91  ',
+                  prefixStyle: const TextStyle(
+                    color: FoodFlowTheme.ink,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w800,
+                  ),
+                  hintText: 'Mobile number',
+                  errorText: _error,
+                  filled: true,
+                  fillColor: const Color(0xFFF4F6FA),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(14),
+                    borderSide: const BorderSide(color: Color(0xFFE4E8F0)),
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(14),
+                    borderSide: const BorderSide(color: Color(0xFFE4E8F0)),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton(
+                  onPressed: _save,
+                  style: FilledButton.styleFrom(
+                    backgroundColor: FoodFlowTheme.brandPrimary(context),
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                  ),
+                  child: const Text('Use this number'),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _CartNoteSheetState extends State<_CartNoteSheet> {
   late final TextEditingController _controller;
 
@@ -5630,6 +6756,117 @@ class _CartNoteSheetState extends State<_CartNoteSheet> {
   }
 }
 
+/// Row inside a new-checkout card: leading icon chip, title + optional
+/// subtitle, optional trailing chevron. Tappable when [onTap] is set.
+class _CkTile extends StatelessWidget {
+  const _CkTile({
+    required this.icon,
+    required this.title,
+    this.subtitle,
+    this.trailing,
+    this.iconColor,
+    this.titleColor,
+    this.danger = false,
+    this.onTap,
+  });
+
+  final IconData icon;
+  final String title;
+  final String? subtitle;
+  final IconData? trailing;
+  final Color? iconColor;
+  final Color? titleColor;
+  final bool danger;
+  final VoidCallback? onTap;
+
+  static const Color _ink = Color(0xFF11223A);
+  static const Color _muted = Color(0xFF7A8699);
+  static const Color _danger = Color(0xFFE8412C);
+
+  @override
+  Widget build(BuildContext context) {
+    final tint = danger ? _danger : (iconColor ?? const Color(0xFF3B7DDD));
+    final content = Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Container(
+            width: 36,
+            height: 36,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: tint.withOpacity(0.10),
+              borderRadius: BorderRadius.circular(11),
+            ),
+            child: Icon(icon, size: 19, color: tint),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: danger
+                        ? _danger
+                        : (titleColor ?? _ink),
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                if (subtitle != null && subtitle!.trim().isNotEmpty) ...[
+                  const SizedBox(height: 3),
+                  Text(
+                    subtitle!,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: _muted,
+                      fontSize: 12,
+                      height: 1.3,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          if (trailing != null) ...[
+            const SizedBox(width: 6),
+            Icon(trailing, size: 20, color: _muted),
+          ],
+        ],
+      ),
+    );
+
+    if (onTap == null) return content;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: content,
+    );
+  }
+}
+
+/// Hairline divider between [_CkTile]s.
+class _CkLine extends StatelessWidget {
+  const _CkLine({this.inset = true});
+
+  final bool inset;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: EdgeInsets.only(left: inset ? 56 : 0, right: 8),
+      child: const Divider(height: 1, thickness: 1, color: Color(0xFFEEF1F6)),
+    );
+  }
+}
+
 class _CartPanel extends StatelessWidget {
   const _CartPanel({
     required this.child,
@@ -5647,7 +6884,14 @@ class _CartPanel extends StatelessWidget {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: const Color(0xFFE9EDF3)),
+        border: Border.all(color: const Color(0xFFE7EBF2)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.03),
+            blurRadius: 14,
+            offset: const Offset(0, 6),
+          ),
+        ],
       ),
       child: child,
     );

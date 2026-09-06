@@ -88,7 +88,7 @@ class IncomingOrderAlertService with WidgetsBindingObserver {
       'target_app': 'driver',
       if (user != null) 'user_id': user.id,
       if (user?.role != null) 'role': user!.role,
-    });
+    }, clearTokenOnUnauthorized: false);
   }
 
   Future<bool> onMessageReceived(Map<String, dynamic> data) {

@@ -23,6 +23,7 @@ class SearchIndex extends Model
         'longitude',
         'is_active',
         'search_score',
+        'is_sponsored',
     ];
 
     protected $casts = [
@@ -31,5 +32,6 @@ class SearchIndex extends Model
         'longitude' => 'float',
         'is_active' => 'boolean',
         'search_score' => 'float',
+        'is_sponsored' => 'boolean',
     ];
 }

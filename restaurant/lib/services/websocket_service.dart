@@ -17,6 +17,7 @@ class WebSocketService {
   final Map<String, _RestaurantSocketHandlers> _restaurantHandlers = {};
   final Map<String, _DriverSocketHandlers> _driverHandlers = {};
   final Map<int, Function(Map<String, dynamic>)> _orderChatHandlers = {};
+  final Map<int, Function(Map<String, dynamic>)> _supportChatHandlers = {};
 
   Future<void> init(
     int restaurantId, {
@@ -99,6 +100,29 @@ class WebSocketService {
     }
   }
 
+  Future<void> initSupportChat(
+    int conversationId, {
+    required Function(Map<String, dynamic>) onMessage,
+  }) async {
+    _supportChatHandlers[conversationId] = onMessage;
+    try {
+      await _ensureInitialized();
+      final channelName = 'private-support.$conversationId';
+      if (_subscribedChannels.contains(channelName)) return;
+      await _pusher!.subscribe(
+        channelName: channelName,
+        onEvent: _handlePusherEvent,
+      );
+      _subscribedChannels.add(channelName);
+    } catch (e) {
+      debugPrint('Support chat WebSocket init error: $e');
+    }
+  }
+
+  void removeSupportChatHandler(int conversationId) {
+    _supportChatHandlers.remove(conversationId);
+  }
+
   Future<void> _ensureInitialized() async {
     if (_pusher != null) return;
 
@@ -179,6 +203,17 @@ class WebSocketService {
       return;
     }
 
+    final conversationId = _extractConversationId(data);
+    final supportHandler =
+        conversationId != null ? _supportChatHandlers[conversationId] : null;
+    if (supportHandler != null && _isSupportChatEvent(eventName, data)) {
+      supportHandler({
+        ...data,
+        '_event': eventName,
+      });
+      return;
+    }
+
     final orderId = _extractOrderId(data);
     final chatHandler = orderId != null ? _orderChatHandlers[orderId] : null;
     if (chatHandler != null && _isOrderChatEvent(eventName, data)) {
@@ -240,6 +275,18 @@ class WebSocketService {
 
   int? _extractOrderId(Map<String, dynamic> data) {
     final value = data['order_id'] ?? data['orderId'] ?? data['id'];
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    return int.tryParse(value?.toString() ?? '');
+  }
+
+  bool _isSupportChatEvent(String eventName, Map<String, dynamic> data) {
+    final type = data['type']?.toString().toLowerCase() ?? '';
+    return eventName.contains('support') || type.contains('support');
+  }
+
+  int? _extractConversationId(Map<String, dynamic> data) {
+    final value = data['conversation_id'] ?? data['conversationId'];
     if (value is int) return value;
     if (value is num) return value.toInt();
     return int.tryParse(value?.toString() ?? '');
@@ -368,6 +415,7 @@ class WebSocketService {
     _restaurantHandlers.clear();
     _driverHandlers.clear();
     _orderChatHandlers.clear();
+    _supportChatHandlers.clear();
   }
 }
 

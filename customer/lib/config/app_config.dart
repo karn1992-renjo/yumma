@@ -20,11 +20,15 @@ class AppConfig {
     'API_BASE_URL',
     defaultValue: 'https://yumma.in/api',
   );
+  static const String aiVoiceBaseUrl = String.fromEnvironment(
+    'AI_VOICE_BASE_URL',
+    defaultValue: 'https://yumma.in/voice-ai',
+  );
   static const String googleMapsApiKey = String.fromEnvironment(
     'GOOGLE_MAPS_API_KEY',
     defaultValue: '',
   );
-  static const Color primaryColor = Color(0xFF0A9443);
+  static const Color primaryColor = Color(0xFF2563EB);
   static const Color secondaryColor = Color(0xFF282C3F);
   static const Color backgroundColor = Color(0xFFF8F8F8);
 
@@ -95,7 +99,7 @@ class AppConfig {
 
   static const String supportPhone = String.fromEnvironment(
     'SUPPORT_PHONE',
-    defaultValue: '+917038666066',
+    defaultValue: '+917030666066',
   );
   static const String supportEmail = String.fromEnvironment(
     'SUPPORT_EMAIL',

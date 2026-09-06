@@ -31,9 +31,16 @@ class ApiConstants {
   static const String notificationsRead = '/notifications/read';
   static const String walletTopUp = '/wallet/top-up';
   static const String walletTopUpVerify = '/wallet/top-up/verify';
-  static const String supportTickets = '/support/tickets';
-  static String supportTicketReply(int ticketId) =>
-      '/support/tickets/$ticketId/reply';
+  static const String supportConversations = '/support/conversations';
+  static String supportConversation(int id) => '/support/conversations/$id';
+  static String supportConversationMessages(int id) =>
+      '/support/conversations/$id/messages';
+  static String supportConversationEscalate(int id) =>
+      '/support/conversations/$id/escalate';
+  static String supportConversationRead(int id) =>
+      '/support/conversations/$id/read';
+  static String supportConversationCsat(int id) =>
+      '/support/conversations/$id/csat';
   static String orderChat(int orderId) => '/orders/$orderId/chat';
   static String restaurantOrderChat(int orderId) =>
       '/restaurant/orders/$orderId/chat';
@@ -49,7 +56,6 @@ class ApiConstants {
   // Content endpoints
   static const String banners = '/banners';
   static const String bannersByType = '/banners';
-  static const String activeOffers = '/offers/active';
   static const String legalContent = '/content/legal';
   static const String partnerApplications = '/partner-applications';
 
@@ -77,7 +83,6 @@ class ApiConstants {
 
   // Coupon endpoints
   static const String validateCoupon = '/promotions/coupon/validate';
-  static const String offers = '/offers';
 
   // Payment endpoints
   static const String createPayment = '/payments/create';
@@ -113,6 +118,19 @@ class ApiConstants {
   static const String restaurantComplaints = '/restaurant/complaints';
   static const String restaurantPromos = '/restaurant/promos';
   static const String restaurantPromoOptions = '/restaurant/promos/options';
+  static const String restaurantAdsWallet = '/restaurant/ads/wallet';
+  static const String restaurantAdsWalletTopUp = '/restaurant/ads/wallet/top-up';
+  static const String restaurantAdsWalletTopUpVerify =
+      '/restaurant/ads/wallet/top-up/verify';
+  static const String restaurantAdCampaigns = '/restaurant/ads/campaigns';
+  static const String restaurantAdPerformance = '/restaurant/ads/performance';
+  static String restaurantAdCampaign(int id) => '$restaurantAdCampaigns/$id';
+  static String restaurantAdCampaignSubmit(int id) =>
+      '$restaurantAdCampaigns/$id/submit';
+  static String restaurantAdCampaignPause(int id) =>
+      '$restaurantAdCampaigns/$id/pause';
+  static String restaurantAdCampaignResume(int id) =>
+      '$restaurantAdCampaigns/$id/resume';
   static const String restaurantPrinters = '/restaurant/printers';
   static const String restaurantPrinterSettings =
       '/restaurant/printers/settings';
@@ -136,6 +154,8 @@ class ApiConstants {
       '$restaurantOrders/$orderId/extend-prep-time';
   static String restaurantVerifyTakeawayOtp(int orderId) =>
       '$restaurantOrders/$orderId/takeaway/verify-otp';
+  static String restaurantCallDriver(int orderId) =>
+      '$restaurantOrders/$orderId/call-driver';
   static String restaurantDiningBookingDetails(int bookingId) =>
       '$restaurantDiningBookings/$bookingId';
   static String restaurantConfirmDiningBooking(int bookingId) =>
@@ -175,9 +195,4 @@ class ApiConstants {
       '/driver/orders/$orderId/reject';
   static String updateOrderStatus(int orderId) =>
       '/driver/orders/$orderId/status';
-
-  // Campaign endpoints
-  static const String campaigns = '/campaigns';
-  static const String campaignTrackClick = '/campaigns/track-click';
-  static const String campaignTrackImpression = '/campaigns/track-impression';
 }

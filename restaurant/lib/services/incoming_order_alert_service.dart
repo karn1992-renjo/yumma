@@ -29,7 +29,7 @@ class IncomingOrderAlertService with WidgetsBindingObserver {
 
   final Set<String> _handledOrderKeys = <String>{};
   final Map<String, Future<void>> _activeLocks = <String, Future<void>>{};
-  Timer? _alarmFallbackTimer;
+
   AppLifecycleState _state = AppLifecycleState.resumed;
   bool _initialized = false;
 
@@ -134,7 +134,7 @@ class IncomingOrderAlertService with WidgetsBindingObserver {
     }
 
     final duration = timerDuration(normalized);
-    _startIncomingOrderAlarm(duration);
+    _startIncomingOrderAlarm();
     final canUseFlutterUi =
         _hasFlutterUiContext() && _state == AppLifecycleState.resumed;
 
@@ -384,7 +384,7 @@ class IncomingOrderAlertService with WidgetsBindingObserver {
     }
 
     final duration = timerDuration(normalized).clamp(10, 120).toInt();
-    _startIncomingOrderAlarm(duration);
+    _startIncomingOrderAlarm();
     await ForegroundServiceManager.startForegroundService(
       status: 'Order #${normalized['order_number'] ?? orderId} was cancelled',
       fullScreen: true,
@@ -587,18 +587,11 @@ class IncomingOrderAlertService with WidgetsBindingObserver {
     await prefs.remove(_pendingRoleKey);
   }
 
-  void _startIncomingOrderAlarm(int durationSeconds) {
+  void _startIncomingOrderAlarm() {
     SoundService.startIncomingOrderAlarm();
-    _alarmFallbackTimer?.cancel();
-    _alarmFallbackTimer = Timer(
-      Duration(seconds: durationSeconds),
-      _stopIncomingOrderAlarm,
-    );
   }
 
   void _stopIncomingOrderAlarm() {
-    _alarmFallbackTimer?.cancel();
-    _alarmFallbackTimer = null;
     unawaited(SoundService.stopIncomingOrderAlarm());
   }
 

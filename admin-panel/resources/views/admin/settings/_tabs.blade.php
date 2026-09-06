@@ -1,6 +1,9 @@
 ﻿@php
     $settingsTabs = [
         ['route' => 'admin.settings.index', 'icon' => 'fas fa-sliders-h', 'label' => 'General'],
+        ['route' => 'admin.settings.business', 'icon' => 'fas fa-building', 'label' => 'Business'],
+        ['route' => 'admin.settings.tax-charges', 'icon' => 'fas fa-receipt', 'label' => 'Tax & Charges'],
+        ['route' => 'admin.settings.integrations', 'icon' => 'fas fa-plug', 'label' => 'Integrations'],
         ['route' => 'admin.settings.branding', 'icon' => 'fas fa-palette', 'label' => 'Branding'],
         ['route' => 'admin.settings.payment', 'icon' => 'fas fa-credit-card', 'label' => 'Payment'],
         ['route' => 'admin.settings.rewards', 'icon' => 'fas fa-gift', 'label' => 'Rewards'],
@@ -10,6 +13,7 @@
         ['route' => 'admin.settings.communication', 'icon' => 'fas fa-envelope', 'label' => 'Communication'],
         ['route' => 'admin.settings.notifications', 'icon' => 'fas fa-bell', 'label' => 'Notifications'],
         ['route' => 'admin.settings.map', 'icon' => 'fas fa-map-marked-alt', 'label' => 'Map'],
+        ['route' => 'admin.settings.voice-ai', 'icon' => 'fas fa-microphone-alt', 'label' => 'Voice AI'],
         ['route' => 'admin.settings.cron', 'icon' => 'fas fa-clock', 'label' => 'Cron'],
     ];
 @endphp
@@ -27,3 +31,4 @@
         </a>
     @endforeach
 </nav>
+

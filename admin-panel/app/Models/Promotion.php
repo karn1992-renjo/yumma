@@ -80,6 +80,15 @@ class Promotion extends Model
         'used_count' => 'integer',
     ];
 
+    protected static function booted(): void
+    {
+        // Any change to a promotion busts the 60s candidate cache so it
+        // reflects at checkout immediately.
+        $bump = fn () => \App\Services\PromotionFinder::bumpCacheVersion();
+        static::saved($bump);
+        static::deleted($bump);
+    }
+
     public function couponCodes(): HasMany
     {
         return $this->hasMany(PromotionCouponCode::class);

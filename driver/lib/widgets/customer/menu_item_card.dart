@@ -40,7 +40,7 @@ class _MenuItemCardState extends State<MenuItemCard> {
                     const SizedBox(height: 8),
                     Text(
                       widget.item.name,
-                      style: const TextStyle(
+                      style:  TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.w800,
                         color: foodflow.ink,
@@ -54,7 +54,7 @@ class _MenuItemCardState extends State<MenuItemCard> {
                         children: [
                           Text(
                             formatCurrency(context, widget.item.finalPrice),
-                            style: const TextStyle(
+                            style:  TextStyle(
                               fontSize: 14,
                               fontWeight: FontWeight.w800,
                               color: foodflow.ink,
@@ -99,7 +99,7 @@ class _MenuItemCardState extends State<MenuItemCard> {
                         padding: const EdgeInsets.only(bottom: 8),
                         child: Text(
                           widget.item.description!,
-                          style: const TextStyle(
+                          style:  TextStyle(
                             fontSize: 12,
                             color: foodflow.muted,
                             height: 1.35,
@@ -116,7 +116,7 @@ class _MenuItemCardState extends State<MenuItemCard> {
                           const SizedBox(width: 6),
                           Text(
                             '(${widget.item.totalOrders})',
-                            style: const TextStyle(
+                            style:  TextStyle(
                                 fontSize: 11, color: foodflow.muted),
                           ),
                         ],

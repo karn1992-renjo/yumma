@@ -1,4 +1,6 @@
 // lib/providers/auth_provider.dart
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import '../config/app_config.dart';
 import '../models/user.dart';
@@ -272,8 +274,17 @@ class AuthProvider extends ChangeNotifier {
       _syncCurrencySettings();
       await _keepForegroundServiceAlive(storedUser);
       notifyListeners();
+      // We already have a usable session — refresh from the server in the
+      // background so app startup isn't blocked on a network round-trip.
+      unawaited(refreshUserFromServer());
+      return;
     }
 
+    // No cached user: we must wait for the network to know who this is.
+    await refreshUserFromServer();
+  }
+
+  Future<void> refreshUserFromServer() async {
     try {
       final user = await _authService.getCurrentUser();
       _currentUser = user;

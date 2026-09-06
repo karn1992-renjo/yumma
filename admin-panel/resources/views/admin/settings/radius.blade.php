@@ -41,5 +41,49 @@
             </form>
         </div>
     </div>
+
+    <div class="settings-card">
+        <div class="settings-card-header">
+            <div>
+                <h2 class="settings-card-title">Long-Distance Restaurant Charge</h2>
+                <p class="settings-card-subtitle">When a delivery order is placed beyond the free radius, the restaurant is charged this fee (deducted from its payout). The customer is not charged.</p>
+            </div>
+        </div>
+        <div class="settings-card-body">
+            <form action="{{ route('admin.settings.update') }}" method="POST">
+                @csrf
+                <input type="hidden" name="redirect_to" value="admin.settings.map">
+                <div class="settings-grid">
+                    <div class="settings-field settings-span-3">
+                        <label class="form-label">Status</label>
+                        <select name="long_distance_charge_enabled" class="form-control">
+                            <option value="0" @selected(($settings['long_distance_charge_enabled'] ?? '0') != '1')>Disabled</option>
+                            <option value="1" @selected(($settings['long_distance_charge_enabled'] ?? '0') == '1')>Enabled</option>
+                        </select>
+                    </div>
+                    <div class="settings-field settings-span-3">
+                        <label class="form-label">Free Radius (km)</label>
+                        <input type="number" name="long_distance_free_km" class="form-control" min="0" step="0.5" value="{{ $settings['long_distance_free_km'] ?? 5 }}">
+                        <small class="text-muted">Deliveries within this distance are not charged.</small>
+                    </div>
+                    <div class="settings-field settings-span-3">
+                        <label class="form-label">Charge Mode</label>
+                        <select name="long_distance_charge_mode" class="form-control">
+                            <option value="per_km" @selected(($settings['long_distance_charge_mode'] ?? 'per_km') == 'per_km')>Per km (on the excess distance)</option>
+                            <option value="fixed" @selected(($settings['long_distance_charge_mode'] ?? 'per_km') == 'fixed')>Fixed amount</option>
+                        </select>
+                    </div>
+                    <div class="settings-field settings-span-3">
+                        <label class="form-label">Rate / Amount</label>
+                        <input type="number" name="long_distance_charge_rate" class="form-control" min="0" step="0.5" value="{{ $settings['long_distance_charge_rate'] ?? 0 }}">
+                        <small class="text-muted">Rupees per excess km, or the flat amount when mode is Fixed.</small>
+                    </div>
+                </div>
+                <div class="settings-action-bar">
+                    <button type="submit" class="btn btn-primary">Save Long-Distance Charge</button>
+                </div>
+            </form>
+        </div>
+    </div>
 </div>
 @endsection

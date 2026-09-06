@@ -172,8 +172,60 @@
                 </div>
             </form>
         </div>
+
+        <!-- Tax & Compliance -->
+        <div class="stat-card mb-4" id="tax-details">
+            <h5 class="mb-1 fw-bold"><i class="fas fa-file-invoice-dollar me-2 text-primary"></i> Tax &amp; Compliance</h5>
+            <p class="text-muted small mb-4">Used on tax invoices, the 18% GST on our commission (which you claim as input tax credit), and your TDS 194-O certificate.</p>
+
+            @if($errors->any())
+                <div class="alert alert-danger"><ul class="mb-0">@foreach($errors->all() as $e)<li>{{ $e }}</li>@endforeach</ul></div>
+            @endif
+
+            <form action="{{ route('restaurant.settings.tax') }}" method="POST">
+                @csrf
+                <input type="hidden" name="is_gst_registered" value="0">
+                <div class="row g-3">
+                    <div class="col-md-6">
+                        <label class="form-label fw-semibold">GSTIN</label>
+                        <input type="text" name="gstin" maxlength="15" class="form-control text-uppercase" value="{{ old('gstin', $restaurant->gstin) }}" placeholder="27AAECY1234A1Z5">
+                        <div class="form-text">State code &amp; PAN are filled in automatically from a valid GSTIN.</div>
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label fw-semibold">PAN</label>
+                        <input type="text" name="pan" maxlength="10" class="form-control text-uppercase" value="{{ old('pan', $restaurant->pan) }}">
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label fw-semibold">GST State Code</label>
+                        <input type="text" name="state_code" maxlength="2" class="form-control" value="{{ old('state_code', $restaurant->state_code) }}" placeholder="27">
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label fw-semibold">Deductee Type <span class="text-danger">*</span></label>
+                        <select name="tax_deductee_type" class="form-select">
+                            @php $dt = old('tax_deductee_type', $restaurant->tax_deductee_type ?? 'individual'); @endphp
+                            @foreach(['individual' => 'Individual / Proprietor', 'company' => 'Company', 'firm' => 'Partnership / LLP', 'huf' => 'HUF', 'other' => 'Other'] as $val => $lbl)
+                                <option value="{{ $val }}" @selected($dt === $val)>{{ $lbl }}</option>
+                            @endforeach
+                        </select>
+                        <div class="form-text">Sets your TDS 194-O rate band and the ₹5L individual exemption.</div>
+                    </div>
+                    <div class="col-md-6 d-flex align-items-end">
+                        <div>
+                            @if($restaurant->is_gst_registered)
+                                <span class="badge bg-success">GST registered</span>
+                            @else
+                                <span class="badge bg-secondary">Not GST registered — Bill of Supply</span>
+                            @endif
+                        </div>
+                    </div>
+                </div>
+                <div class="text-end mt-4">
+                    <button type="submit" class="btn btn-primary rounded-3"><i class="fas fa-save me-2"></i> Save Tax Details</button>
+                </div>
+            </form>
+        </div>
     </div>
-    
+
     <div class="col-lg-4">
         <!-- Restaurant Info Card -->
         <div class="stat-card mb-4">

@@ -21,9 +21,10 @@ class Payout extends Model
         'gst_on_commission', 'payment_gateway_fee', 'admin_delivery_subsidy',
         'restaurant_delivery_subsidy', 'admin_delivery_commission',
         'driver_deduction', 'batch_bonus', 'order_ids', 'breakdown',
-        'gateway_reference_id', 'gateway_status', 'idempotency_key',
+        'gateway_reference_id', 'gateway_status', 'idempotency_key', 'source',
         'vendor_bank_account_id', 'retry_count', 'next_retry_at',
-        'created_by', 'processed_by'
+        'created_by', 'processed_by', 'paid_amount',
+        'pre_tax_amount', 'tds_amount', 'tds_section', 'tcs_amount',
     ];
     
     protected $casts = [
@@ -39,6 +40,9 @@ class Payout extends Model
         'delivery_fee' => 'decimal:2',
         'net_amount' => 'decimal:2',
         'deduction_amount' => 'decimal:2',
+        'pre_tax_amount' => 'decimal:2',
+        'tds_amount' => 'decimal:2',
+        'tcs_amount' => 'decimal:2',
         'gst_on_commission' => 'decimal:2',
         'payment_gateway_fee' => 'decimal:2',
         'admin_delivery_subsidy' => 'decimal:2',
@@ -46,6 +50,7 @@ class Payout extends Model
         'admin_delivery_commission' => 'decimal:2',
         'driver_deduction' => 'decimal:2',
         'batch_bonus' => 'decimal:2',
+        'paid_amount' => 'decimal:2',
         'order_ids' => 'array',
         'breakdown' => 'array',
     ];

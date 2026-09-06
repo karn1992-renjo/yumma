@@ -6,6 +6,7 @@ import '../../providers/auth_provider.dart';
 import '../../services/api_service.dart';
 import '../../services/wallet_recharge_payment_service.dart';
 import '../../theme/foodflow_theme.dart';
+import '../../widgets/aurora/aurora.dart';
 import '../../utils/currency_utils.dart';
 
 class DriverWalletScreen extends StatefulWidget {
@@ -224,18 +225,38 @@ class _DriverWalletScreenState extends State<DriverWalletScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return _isLoading
-        ? const Center(child: CircularProgressIndicator())
-        : RefreshIndicator(
+    return AuroraScaffold(
+      appBar: GlassAppBar(
+        title: Text(
+          'Wallet',
+          style: TextStyle(
+            color: foodflow.ink,
+            fontSize: 18,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+      ),
+      body: _isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : RefreshIndicator(
             onRefresh: _loadWallet,
             child: ListView(
-              padding: const EdgeInsets.all(16),
+              physics: const AlwaysScrollableScrollPhysics(),
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 100),
               children: [
-                Container(
+                AuroraEntrance(
+                  child: Container(
                   padding: const EdgeInsets.all(20),
                   decoration: BoxDecoration(
-                    color: foodflow.crimson,
-                    borderRadius: BorderRadius.circular(18),
+                    gradient: foodflow.brandGradient,
+                    borderRadius: BorderRadius.circular(20),
+                    boxShadow: [
+                      BoxShadow(
+                        color: foodflow.orange.withOpacity(0.28),
+                        blurRadius: 22,
+                        offset: const Offset(0, 12),
+                      ),
+                    ],
                   ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -281,23 +302,29 @@ class _DriverWalletScreenState extends State<DriverWalletScreen> {
                                     )
                                   : const Icon(Icons.add_card_rounded),
                               label: Text(
-                                _isRecharging
-                                    ? 'Opening...'
-                                    : 'Recharge',
+                                _isRecharging ? 'Opening...' : 'Recharge',
                               ),
                               style: ElevatedButton.styleFrom(
                                 backgroundColor: Colors.white,
-                                foregroundColor: foodflow.crimson,
+                                foregroundColor: foodflow.orange,
+                                disabledBackgroundColor:
+                                    Colors.white.withOpacity(0.35),
+                                disabledForegroundColor:
+                                    Colors.white.withOpacity(0.85),
+                                elevation: 0,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
                               ),
                             ),
                           ),
                           const SizedBox(width: 10),
                           Expanded(
                             child: ElevatedButton.icon(
-                              onPressed: _balance <= 0 ||
-                                      _isRequestingWithdrawal
-                                  ? null
-                                  : _requestWithdrawal,
+                              onPressed:
+                                  _balance <= 0 || _isRequestingWithdrawal
+                                      ? null
+                                      : _requestWithdrawal,
                               icon: _isRequestingWithdrawal
                                   ? const SizedBox(
                                       width: 18,
@@ -314,7 +341,15 @@ class _DriverWalletScreenState extends State<DriverWalletScreen> {
                               ),
                               style: ElevatedButton.styleFrom(
                                 backgroundColor: Colors.white,
-                                foregroundColor: foodflow.crimson,
+                                foregroundColor: foodflow.orange,
+                                disabledBackgroundColor:
+                                    Colors.white.withOpacity(0.35),
+                                disabledForegroundColor:
+                                    Colors.white.withOpacity(0.85),
+                                elevation: 0,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
                               ),
                             ),
                           ),
@@ -323,10 +358,15 @@ class _DriverWalletScreenState extends State<DriverWalletScreen> {
                     ],
                   ),
                 ),
+                ),
                 const SizedBox(height: 18),
-                const Text(
+                Text(
                   'Wallet activity',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w800,
+                    color: foodflow.ink,
+                  ),
                 ),
                 const SizedBox(height: 10),
                 if (_transactions.isEmpty)
@@ -336,31 +376,61 @@ class _DriverWalletScreenState extends State<DriverWalletScreen> {
                     subtitle: 'Payout adjustments and credits will show here.',
                   )
                 else
-                  ..._transactions.map((transaction) {
+                  ..._transactions.indexed.map((entry) {
+                    final transaction = entry.$2;
                     final amount =
                         double.tryParse('${transaction['amount'] ?? 0}') ?? 0;
                     final type = '${transaction['type'] ?? ''}';
                     final isCredit =
                         type.contains('credit') || type.contains('topup');
-                    return Card(
-                      child: ListTile(
-                        leading: Icon(
-                          isCredit ? Icons.arrow_downward : Icons.arrow_upward,
-                        ),
-                        title: Text(
-                          transaction['description']?.toString() ??
-                              type.replaceAll('_', ' '),
-                        ),
-                        subtitle: Text(type.replaceAll('_', ' ')),
-                        trailing: Text(
-                          '${isCredit ? '+' : '-'} ${formatCurrency(context, amount)}',
+                    final tint =
+                        isCredit ? foodflow.success : foodflow.danger;
+                    return AuroraEntrance(
+                      delay: Duration(
+                          milliseconds: (entry.$1 * 45).clamp(0, 300)),
+                      child: GlassCard(
+                        solid: true,
+                        margin: const EdgeInsets.only(bottom: 10),
+                        padding: EdgeInsets.zero,
+                        radius: 14,
+                        child: ListTile(
+                          leading: Container(
+                            width: 38,
+                            height: 38,
+                            alignment: Alignment.center,
+                            decoration: BoxDecoration(
+                              color: tint.withOpacity(0.14),
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: Icon(
+                              isCredit
+                                  ? Icons.arrow_downward_rounded
+                                  : Icons.arrow_upward_rounded,
+                              color: tint,
+                              size: 18,
+                            ),
+                          ),
+                          title: Text(
+                            transaction['description']?.toString() ??
+                                type.replaceAll('_', ' '),
+                            style: const TextStyle(fontWeight: FontWeight.w700),
+                          ),
+                          subtitle: Text(type.replaceAll('_', ' ')),
+                          trailing: Text(
+                            '${isCredit ? '+' : '-'} ${formatCurrency(context, amount)}',
+                            style: TextStyle(
+                              fontWeight: FontWeight.w800,
+                              color: tint,
+                            ),
+                          ),
                         ),
                       ),
                     );
                   }),
               ],
             ),
-          );
+          ),
+    );
   }
 }
 
@@ -371,16 +441,23 @@ class _WalletRechargePage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: foodflow.canvas,
-      appBar: AppBar(title: const Text('Recharge wallet')),
-      body: SafeArea(
-        child: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 560),
-            child: _WalletRechargeSheet(
-              minimumDriverBalance: minimumDriverBalance,
-            ),
+    return AuroraScaffold(
+      appBar: GlassAppBar(
+        leading: const BackButton(),
+        title: Text(
+          'Recharge wallet',
+          style: TextStyle(
+            color: foodflow.ink,
+            fontSize: 18,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+      ),
+      body: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 560),
+          child: _WalletRechargeSheet(
+            minimumDriverBalance: minimumDriverBalance,
           ),
         ),
       ),
@@ -390,7 +467,7 @@ class _WalletRechargePage extends StatelessWidget {
 
 class _WalletRechargeSheet extends StatefulWidget {
   const _WalletRechargeSheet({Key? key, required this.minimumDriverBalance})
-    : super(key: key);
+      : super(key: key);
 
   final double minimumDriverBalance;
 

@@ -9,6 +9,9 @@ import '../../config/app_config.dart';
 import '../../services/api_service.dart';
 import '../../services/location_service.dart';
 import '../../services/websocket_service.dart';
+import '../../theme/foodflow_theme.dart';
+import '../../theme/aurora_theme.dart';
+import '../../widgets/aurora/aurora.dart';
 import '../../widgets/common/network_image_loader.dart';
 
 class RestaurantOrderChatScreen extends StatefulWidget {
@@ -25,9 +28,9 @@ class RestaurantOrderChatScreen extends StatefulWidget {
 }
 
 class _RestaurantOrderChatScreenState extends State<RestaurantOrderChatScreen> {
-  static const _ink = Color(0xFF111827);
-  static const _muted = Color(0xFF6B7280);
-  static const _line = Color(0xFFE5E7EB);
+  Color get _ink => foodflow.ink;
+  Color get _muted => foodflow.muted;
+  Color get _line => foodflow.line;
 
   final ApiService _api = ApiService();
   final WebSocketService _webSocketService = WebSocketService();
@@ -374,86 +377,163 @@ class _RestaurantOrderChatScreenState extends State<RestaurantOrderChatScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final initial = _participantName(_recipientRole).isNotEmpty
+        ? _participantName(_recipientRole)[0].toUpperCase()
+        : '?';
+
     return Scaffold(
-      backgroundColor: AppConfig.backgroundColor,
-      appBar: AppBar(
-        backgroundColor: Colors.white,
-        elevation: 0,
-        titleSpacing: 0,
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+      backgroundColor: foodflow.canvas,
+      extendBodyBehindAppBar: true,
+      appBar: GlassAppBar(
+        toolbarHeight: 64,
+        title: Row(
           children: [
-            Text(
-              _participantName(_recipientRole),
-              style: const TextStyle(
-                color: _ink,
-                fontWeight: FontWeight.w800,
-                fontSize: 18,
-              ),
+            Stack(
+              children: [
+                Container(
+                  width: 38,
+                  height: 38,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: _primary.withOpacity(0.14),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Text(initial,
+                      style: TextStyle(
+                          color: _primary,
+                          fontWeight: FontWeight.w900,
+                          fontSize: 15)),
+                ),
+                Positioned(
+                  right: 0,
+                  bottom: 0,
+                  child: Container(
+                    width: 10,
+                    height: 10,
+                    decoration: BoxDecoration(
+                      color: _otherPartyTyping
+                          ? const Color(0xFF16A34A)
+                          : foodflow.muted,
+                      shape: BoxShape.circle,
+                      border: Border.all(color: foodflow.canvas, width: 2),
+                    ),
+                  ),
+                ),
+              ],
             ),
-            Text(
-              _otherPartyTyping ? 'typing...' : 'Realtime order communication',
-              style: const TextStyle(
-                color: _muted,
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    _participantName(_recipientRole),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: _ink,
+                      fontWeight: FontWeight.w900,
+                      fontSize: 16,
+                    ),
+                  ),
+                  Text(
+                    _otherPartyTyping ? 'typing…' : 'Order thread',
+                    style: TextStyle(
+                      color: _muted,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
               ),
             ),
           ],
         ),
       ),
-      body: Column(
+      body: Stack(
         children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 10),
-            child: Column(
-              children: [
-                _summaryCard(),
-                const SizedBox(height: 12),
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(6),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border.all(color: _line),
-                  ),
-                  child: SegmentedButton<String>(
-                    segments: const [
-                      ButtonSegment(value: 'customer', label: Text('Customer')),
-                      ButtonSegment(value: 'driver', label: Text('Driver')),
-                    ],
-                    selected: {_recipientRole},
-                    onSelectionChanged: (selection) {
-                      setState(() {
-                        _recipientRole = selection.first;
-                        _otherPartyTyping = false;
-                      });
-                    },
-                  ),
+          ...AuroraTheme.auroraBlobs(),
+          Column(
+            children: [
+              SizedBox(height: MediaQuery.of(context).padding.top + 68),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: _ContextStrip(
+                        summary: _summary,
+                        muted: _muted,
+                        ink: _ink,
+                        line: _line,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Container(
+                      padding: const EdgeInsets.all(3),
+                      decoration: BoxDecoration(
+                        color: foodflow.surfaceColor,
+                        borderRadius: BorderRadius.circular(999),
+                        border: Border.all(color: _line),
+                      ),
+                      child: Row(
+                        children: ['customer', 'driver'].map((role) {
+                          final selected = _recipientRole == role;
+                          return GestureDetector(
+                            onTap: () => setState(() {
+                              _recipientRole = role;
+                              _otherPartyTyping = false;
+                            }),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 12, vertical: 7),
+                              decoration: BoxDecoration(
+                                color:
+                                    selected ? _primary : Colors.transparent,
+                                borderRadius: BorderRadius.circular(999),
+                              ),
+                              child: Text(
+                                role == 'customer' ? 'Cust' : 'Driver',
+                                style: TextStyle(
+                                  color:
+                                      selected ? Colors.white : _muted,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w900,
+                                ),
+                              ),
+                            ),
+                          );
+                        }).toList(),
+                      ),
+                    ),
+                  ],
                 ),
-                const SizedBox(height: 12),
-                SizedBox(
-                  height: 42,
-                  child: ListView.separated(
-                    scrollDirection: Axis.horizontal,
-                    itemBuilder: (context, index) {
-                      final text = _quickReplies()[index];
-                      return ActionChip(
-                        backgroundColor: Colors.white,
-                        side: const BorderSide(color: _line),
-                        label: Text(text),
-                        onPressed: () => _applyQuickReply(text),
-                      );
-                    },
-                    separatorBuilder: (_, __) => const SizedBox(width: 8),
-                    itemCount: _quickReplies().length,
-                  ),
+              ),
+              SizedBox(
+                height: 40,
+                child: ListView.separated(
+                  scrollDirection: Axis.horizontal,
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  itemBuilder: (context, index) {
+                    final text = _quickReplies()[index];
+                    return ActionChip(
+                      backgroundColor: foodflow.surfaceColor,
+                      side: BorderSide(color: _line),
+                      label: Text(text),
+                      labelStyle: TextStyle(
+                          color: _ink,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700),
+                      onPressed: () => _applyQuickReply(text),
+                    );
+                  },
+                  separatorBuilder: (_, __) => const SizedBox(width: 8),
+                  itemCount: _quickReplies().length,
                 ),
-              ],
-            ),
-          ),
-          Expanded(
+              ),
+              const SizedBox(height: 6),
+              Expanded(
             child: _isLoading
                 ? const Center(child: CircularProgressIndicator())
                 : _messages.isEmpty
@@ -462,7 +542,7 @@ class _RestaurantOrderChatScreenState extends State<RestaurantOrderChatScreen> {
                           margin: const EdgeInsets.symmetric(horizontal: 16),
                           padding: const EdgeInsets.all(24),
                           decoration: BoxDecoration(
-                            color: Colors.white,
+                            color: foodflow.surfaceColor,
                             borderRadius: BorderRadius.circular(24),
                             border: Border.all(color: _line),
                             boxShadow: [
@@ -473,7 +553,7 @@ class _RestaurantOrderChatScreenState extends State<RestaurantOrderChatScreen> {
                               ),
                             ],
                           ),
-                          child: const Column(
+                          child: Column(
                             mainAxisSize: MainAxisSize.min,
                             children: [
                               Icon(
@@ -481,7 +561,7 @@ class _RestaurantOrderChatScreenState extends State<RestaurantOrderChatScreen> {
                                 size: 42,
                                 color: _muted,
                               ),
-                              SizedBox(height: 12),
+                              const SizedBox(height: 12),
                               Text(
                                 'No messages yet',
                                 style: TextStyle(
@@ -520,11 +600,11 @@ class _RestaurantOrderChatScreenState extends State<RestaurantOrderChatScreen> {
                                   vertical: 12,
                                 ),
                                 decoration: BoxDecoration(
-                                  color: Colors.white,
+                                  color: foodflow.surfaceColor,
                                   borderRadius: BorderRadius.circular(20),
                                   border: Border.all(color: _line),
                                 ),
-                                child: const Text(
+                                child: Text(
                                   'Typing...',
                                   style: TextStyle(
                                     color: _muted,
@@ -546,7 +626,7 @@ class _RestaurantOrderChatScreenState extends State<RestaurantOrderChatScreen> {
               child: Container(
                 padding: const EdgeInsets.fromLTRB(10, 8, 8, 8),
                 decoration: BoxDecoration(
-                  color: Colors.white,
+                  color: foodflow.surfaceColor,
                   borderRadius: BorderRadius.circular(28),
                   border: Border.all(color: _line),
                   boxShadow: [
@@ -609,6 +689,8 @@ class _RestaurantOrderChatScreenState extends State<RestaurantOrderChatScreen> {
               ),
             ),
           ),
+        ],
+      ),
         ],
       ),
     );
@@ -717,7 +799,7 @@ class _RestaurantOrderChatScreenState extends State<RestaurantOrderChatScreen> {
           ),
           child: Text(
             message['message']?.toString() ?? '',
-            style: const TextStyle(
+            style: TextStyle(
               color: _muted,
               fontSize: 12,
               fontWeight: FontWeight.w700,
@@ -885,6 +967,64 @@ class _RestaurantOrderChatScreenState extends State<RestaurantOrderChatScreen> {
         color: textColor,
         fontWeight: FontWeight.w600,
         height: 1.45,
+      ),
+    );
+  }
+}
+
+/// Slim single-line order context bar that replaces the tall gradient summary
+/// card, so the message list gets the vertical space.
+class _ContextStrip extends StatelessWidget {
+  const _ContextStrip({
+    required this.summary,
+    required this.muted,
+    required this.ink,
+    required this.line,
+  });
+
+  final Map<String, dynamic> summary;
+  final Color muted;
+  final Color ink;
+  final Color line;
+
+  @override
+  Widget build(BuildContext context) {
+    final order = summary['order_number']?.toString();
+    final status = summary['status_label']?.toString();
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+      decoration: BoxDecoration(
+        color: foodflow.surfaceColor,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: line),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.receipt_long_rounded, size: 15, color: muted),
+          const SizedBox(width: 6),
+          Text(
+            order != null ? 'Order #$order' : 'Order thread',
+            style: TextStyle(
+                color: ink, fontSize: 12, fontWeight: FontWeight.w900),
+          ),
+          if (status != null && status.trim().isNotEmpty) ...[
+            const SizedBox(width: 8),
+            Container(width: 3, height: 3, decoration: BoxDecoration(
+              color: muted, shape: BoxShape.circle)),
+            const SizedBox(width: 8),
+            Flexible(
+              child: Text(
+                status,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                    color: muted,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700),
+              ),
+            ),
+          ],
+        ],
       ),
     );
   }

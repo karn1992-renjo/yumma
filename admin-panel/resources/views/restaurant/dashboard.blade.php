@@ -850,6 +850,74 @@
         </div>
     </section>
 </div>
+
+@if($pendingAiApprovals->isNotEmpty())
+<div class="modal fade" id="aiProposalsModal" tabindex="-1" data-bs-backdrop="static">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="fas fa-robot me-2"></i>AI Proposals Awaiting Your Approval</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                @php $currencySymbol = \App\Models\AppSetting::sanitizedCurrencySymbol(); @endphp
+                @foreach($pendingAiApprovals as $approval)
+                    @php
+                        $params = $approval->requested_payload['parameters']
+                            ?? $approval->decision?->proposed_action['parameters']
+                            ?? [];
+                        $snap = $approval->decision?->input_snapshot ?? [];
+                        $itemName = $params['item_name'] ?? $snap['item_name'] ?? null;
+                        $currentPrice = $params['current_price'] ?? $snap['current_price'] ?? null;
+                        $newPrice = $params['new_price'] ?? $params['suggested_price'] ?? $snap['suggested_price'] ?? null;
+                        $changePct = $params['change_percent'] ?? $snap['change_percent'] ?? null;
+                        $isPricing = ($approval->decision?->decision_type ?? '') === 'menu_price_suggestion';
+                        // Backfill for older proposals whose payload only had menu_item_id.
+                        if ($isPricing && ($itemName === null || $currentPrice === null)) {
+                            $mi = ($params['menu_item_id'] ?? $snap['menu_item_id'] ?? null)
+                                ? \App\Models\MenuItem::find($params['menu_item_id'] ?? $snap['menu_item_id'])
+                                : null;
+                            $itemName ??= $mi?->name;
+                            $currentPrice ??= $mi?->price;
+                            if ($changePct === null && $currentPrice > 0 && $newPrice !== null) {
+                                $changePct = round(((float) $newPrice - (float) $currentPrice) / (float) $currentPrice * 100, 1);
+                            }
+                        }
+                    @endphp
+                    <div class="border rounded p-3 mb-3" data-approval-id="{{ $approval->id }}">
+                        <div class="fw-semibold mb-1">{{ \Illuminate\Support\Str::headline($approval->decision->decision_type ?? 'AI Proposal') }}</div>
+                        @if($isPricing && ($itemName || $newPrice !== null))
+                            <div class="mb-2">
+                                @if($itemName)<div class="fw-semibold">{{ $itemName }}</div>@endif
+                                <div class="d-flex align-items-center gap-2 small">
+                                    @if($currentPrice !== null)
+                                        <span class="text-muted">Current: <span class="fw-semibold">{{ $currencySymbol }}{{ number_format((float) $currentPrice, 2) }}</span></span>
+                                        <i class="fas fa-arrow-right text-muted"></i>
+                                    @endif
+                                    @if($newPrice !== null)
+                                        <span>Proposed: <span class="fw-semibold text-primary">{{ $currencySymbol }}{{ number_format((float) $newPrice, 2) }}</span></span>
+                                    @endif
+                                    @if($changePct !== null)
+                                        <span class="badge bg-{{ (float) $changePct >= 0 ? 'success' : 'danger' }}-subtle text-{{ (float) $changePct >= 0 ? 'success' : 'danger' }}">{{ (float) $changePct >= 0 ? '+' : '' }}{{ number_format((float) $changePct, 1) }}%</span>
+                                    @endif
+                                </div>
+                            </div>
+                        @elseif(!empty($approval->decision?->proposed_action['summary']))
+                            <div class="small fw-semibold mb-2">{{ $approval->decision->proposed_action['summary'] }}</div>
+                        @endif
+                        <div class="text-muted small mb-2">{{ $approval->decision->reason_summary ?? 'No details available.' }}</div>
+                        <div class="d-flex gap-2">
+                            <button type="button" class="btn btn-sm btn-success ai-proposal-approve">Approve</button>
+                            <button type="button" class="btn btn-sm btn-outline-danger ai-proposal-reject">Reject</button>
+                        </div>
+                        <div class="ai-proposal-outcome small fw-semibold mt-2"></div>
+                    </div>
+                @endforeach
+            </div>
+        </div>
+    </div>
+</div>
+@endif
 @endsection
 
 @section('scripts')
@@ -1033,4 +1101,63 @@ document.addEventListener('DOMContentLoaded', function () {
     window.addEventListener('resize', redraw);
 });
 </script>
+@if($pendingAiApprovals->isNotEmpty())
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    var approvalIds = @json($pendingAiApprovals->pluck('id')->sort()->values());
+    var storageKey = 'ai_proposals_seen_' + approvalIds.join('-');
+    var modalEl = document.getElementById('aiProposalsModal');
+    if (! modalEl || typeof bootstrap === 'undefined') {
+        return;
+    }
+    var modal = new bootstrap.Modal(modalEl);
+
+    try {
+        if (! sessionStorage.getItem(storageKey)) {
+            modal.show();
+            sessionStorage.setItem(storageKey, '1');
+        }
+    } catch (e) {
+        modal.show();
+    }
+
+    var csrfToken = document.querySelector('meta[name="csrf-token"]').content;
+    var baseUrl = @json(url('/restaurant/ai-proposals'));
+
+    modalEl.addEventListener('click', function (event) {
+        var approveBtn = event.target.closest('.ai-proposal-approve');
+        var rejectBtn = event.target.closest('.ai-proposal-reject');
+        if (! approveBtn && ! rejectBtn) {
+            return;
+        }
+
+        var card = event.target.closest('[data-approval-id]');
+        var approvalId = card.dataset.approvalId;
+        var action = approveBtn ? 'approve' : 'reject';
+        var buttons = card.querySelectorAll('button');
+        buttons.forEach(function (btn) { btn.disabled = true; });
+
+        fetch(baseUrl + '/' + approvalId + '/' + action, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json',
+                'X-CSRF-TOKEN': csrfToken,
+                'X-Requested-With': 'XMLHttpRequest',
+            },
+            body: JSON.stringify({}),
+        })
+            .then(function (response) { return response.json(); })
+            .then(function (data) {
+                var outcome = card.querySelector('.ai-proposal-outcome');
+                outcome.textContent = data.status === 'approved' ? '✅ Approved.' : '❌ Rejected.';
+                outcome.classList.add(data.status === 'approved' ? 'text-success' : 'text-danger');
+            })
+            .catch(function () {
+                buttons.forEach(function (btn) { btn.disabled = false; });
+            });
+    });
+});
+</script>
+@endif
 @endsection

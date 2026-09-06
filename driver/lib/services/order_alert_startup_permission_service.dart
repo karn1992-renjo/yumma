@@ -6,23 +6,18 @@ class OrderAlertStartupPermissionService {
   OrderAlertStartupPermissionService._();
 
   static bool _requestedOverlayThisRun = false;
-  static bool _requestedBatteryThisRun = false;
 
+  /// Runs once on driver app startup.
+  ///
+  /// It deliberately no longer fires the battery-optimization ("always run in
+  /// the background") system dialog. That request ran on every cold start and
+  /// kept reappearing even after the driver had allowed it -- on many OEM ROMs
+  /// `isIgnoringBatteryOptimizations` never flips to true regardless of what the
+  /// user toggles, so the check stayed false forever. The exemption nudge now
+  /// lives only behind the explicit "go online" action in the dashboard, shown
+  /// at most once unless the driver asks for it.
   static Future<void> ensureForOrderAlerts({required bool enabled}) async {
     if (!enabled) return;
-
-    try {
-      final batteryOptimizationDisabled =
-          await OrderAlertPermissionManager.isBatteryOptimizationDisabled();
-      if (!batteryOptimizationDisabled && !_requestedBatteryThisRun) {
-        _requestedBatteryThisRun = true;
-        await OrderAlertPermissionManager.requestBatteryOptimizationExemption();
-        return;
-      }
-    } catch (e) {
-      debugPrint('Battery optimization exemption request skipped: $e');
-    }
-
     if (_requestedOverlayThisRun) return;
 
     try {

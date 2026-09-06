@@ -22,6 +22,12 @@ class PushBroadcast extends Model
         'failure_reason',
         'sent_by',
         'sent_at',
+        'source',
+        'role_group',
+        'notification_type',
+        'campaign_type',
+        'image_status',
+        'ai_decision_id',
     ];
 
     protected $casts = [

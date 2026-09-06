@@ -19,31 +19,62 @@ class ApiService {
   factory ApiService() => _instance;
   ApiService._internal();
 
+  static const List<String> _tokenKeys = [
+    'auth_token',
+    'driver_auth_token',
+    'access_token',
+    'token',
+  ];
+
   String? _authToken;
 
+  /// Whether the most recent request actually carried a bearer token.
+  bool _lastRequestHadToken = false;
+
+  /// Consecutive 401s seen while a token WAS attached. A single transient 401
+  /// (proxy hiccup, race on cold start) must not destroy a valid session.
+  int _consecutiveUnauthorized = 0;
+
   Future<String?> getToken() async {
-    if (_authToken != null) return _authToken;
+    if (_authToken != null && _authToken!.isNotEmpty) return _authToken;
+
     final prefs = await SharedPreferences.getInstance();
-    _authToken = prefs.getString('auth_token');
-    return _authToken;
+    for (final key in _tokenKeys) {
+      final token = prefs.getString(key);
+      if (token != null && token.isNotEmpty) {
+        _authToken = token;
+        if (key != 'auth_token') {
+          await prefs.setString('auth_token', token);
+        }
+        return _authToken;
+      }
+    }
+
+    return null;
   }
 
   Future<void> setToken(String token) async {
     if (_authToken != token) await LocalCacheService.clear();
     _authToken = token;
+    _consecutiveUnauthorized = 0;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('auth_token', token);
+    await prefs.setString('driver_auth_token', token);
   }
 
   Future<void> clearToken() async {
     _authToken = null;
+    _consecutiveUnauthorized = 0;
     final prefs = await SharedPreferences.getInstance();
-    await prefs.remove('auth_token');
+    for (final key in _tokenKeys) {
+      await prefs.remove(key);
+    }
     await LocalCacheService.clear();
   }
 
   Future<Map<String, String>> _getHeaders() async {
     final token = await getToken();
+    _lastRequestHadToken = token != null && token.isNotEmpty;
     return {
       'Content-Type': 'application/json',
       'Accept': 'application/json',
@@ -82,6 +113,7 @@ class ApiService {
     String endpoint, {
     dynamic data,
     Map<String, dynamic>? queryParams,
+    bool clearTokenOnUnauthorized = true,
   }) async {
     try {
       final uri = Uri.parse('${AppConfig.apiBaseUrl}$endpoint').replace(
@@ -99,7 +131,10 @@ class ApiService {
         body: data != null ? jsonEncode(data) : null,
       );
 
-      return await _handleResponse(response);
+      return await _handleResponse(
+        response,
+        clearTokenOnUnauthorized: clearTokenOnUnauthorized,
+      );
     } catch (e) {
       if (e is ApiException) rethrow;
       throw Exception('Network error: $e');
@@ -136,7 +171,10 @@ class ApiService {
     }
   }
 
-  Future<dynamic> _handleResponse(http.Response response) async {
+  Future<dynamic> _handleResponse(
+    http.Response response, {
+    bool clearTokenOnUnauthorized = true,
+  }) async {
     if (kDebugMode) print('📥 Status: ${response.statusCode}');
 
     if (response.body.trim().isEmpty) {
@@ -152,8 +190,17 @@ class ApiService {
         trimmedBody.startsWith('<!DOCTYPE html>') ||
         trimmedBody.startsWith('<html')) {
       if (trimmedBody.toLowerCase().contains('<title>login')) {
-        await clearToken();
-        throw ApiException('Session expired. Please login again.');
+        _consecutiveUnauthorized++;
+        final path = response.request?.url.path ?? '';
+        final isIdentityCheck = path.endsWith('/user') || path.endsWith('/me');
+        if (clearTokenOnUnauthorized &&
+            _lastRequestHadToken &&
+            isIdentityCheck &&
+            _consecutiveUnauthorized >= 2) {
+          await clearToken();
+          throw ApiException('Session expired. Please login again.');
+        }
+        throw ApiException('Authorization check failed. Retrying...');
       }
       if (kDebugMode) print('HTML response body: ${response.body}');
       throw ApiException('Server returned HTML instead of JSON.');
@@ -168,6 +215,7 @@ class ApiService {
     }
 
     if (response.statusCode >= 200 && response.statusCode < 300) {
+      _consecutiveUnauthorized = 0;
       return data;
     }
 
@@ -195,8 +243,25 @@ class ApiService {
     final normalizedMessage = message.toLowerCase();
     if (response.statusCode == 401 ||
         normalizedMessage.contains('unauthenticated')) {
-      await clearToken();
-      throw ApiException('Session expired. Please login again.');
+      // Ignore a 401 for a request that went out without a token (cold-start
+      // race): the session was never actually rejected.
+      if (!_lastRequestHadToken) {
+        throw ApiException('Not authenticated yet. Please try again.');
+      }
+      _consecutiveUnauthorized++;
+      // Only the identity endpoint (`/user`) is authoritative about a dead
+      // token. A 401 from any other endpoint (permission quirk, transient proxy
+      // failure, a route that briefly 401s under load) must NOT log the driver
+      // out — that was the "session keeps dropping" bug.
+      final path = response.request?.url.path ?? '';
+      final isIdentityCheck = path.endsWith('/user') || path.endsWith('/me');
+      if (clearTokenOnUnauthorized &&
+          isIdentityCheck &&
+          _consecutiveUnauthorized >= 2) {
+        await clearToken();
+        throw ApiException('Session expired. Please login again.');
+      }
+      throw ApiException('Authorization check failed. Retrying...');
     }
 
     throw ApiException(message);

@@ -12,6 +12,7 @@ use App\Services\GigLifecycleService;
 use App\Services\GigDemandForecastService;
 use App\Services\GigMlForecastService;
 use App\Services\GigExternalSignalService;
+use App\Services\GigOperationsBroadcastService;
 use App\Models\AppSetting;
 use App\Models\Wallet;
 use App\Models\WalletTransaction;
@@ -27,21 +28,41 @@ $cronTaskEnabled = static function (string $key): bool {
     return !in_array($key, is_array($disabled) ? $disabled : [], true);
 };
 
-// Auto-cancel pending orders after 15 minutes
-Schedule::call(function () {
-    Order::where('status', 'pending')
-        ->where('created_at', '<', now()->subMinutes(15))
-        ->update([
-            'status' => 'cancelled',
-            'cancelled_at' => now(),
-            'cancellation_reason' => 'Auto-cancelled: Payment not completed'
-        ]);
-})->when(fn () => $cronTaskEnabled('auto_cancel_pending_orders'))->everyFiveMinutes();
 
 // Retry unassigned or unanswered delivery assignments.
 Schedule::call(function () {
     app(AutoAssignDriverService::class)->retryPendingAssignments();
 })->when(fn () => $cronTaskEnabled('retry_pending_driver_assignments'))->everyMinute();
+
+// Exotel fallback: ring the driver / restaurant if an order has been sitting
+// unaccepted longer than the configured threshold (no queue worker on this
+// host, so this is a minute-granularity scan rather than a delayed job).
+Schedule::call(function () {
+    if (! \App\Jobs\OrderAcceptanceAlertCallJob::enabled()) {
+        return;
+    }
+    $delay = \App\Jobs\OrderAcceptanceAlertCallJob::delaySeconds();
+    $now = now();
+
+    Order::query()
+        ->whereNotNull('driver_id')
+        ->whereNull('driver_accepted_at')
+        ->whereIn('status', ['confirmed', 'preparing', 'ready_for_pickup'])
+        ->whereNotNull('driver_assigned_at')
+        ->where('driver_assigned_at', '<=', $now->copy()->subSeconds($delay))
+        ->where('driver_assigned_at', '>=', $now->copy()->subMinutes(10))
+        ->limit(50)
+        ->pluck('id')
+        ->each(fn ($id) => \App\Jobs\OrderAcceptanceAlertCallJob::dispatchSync((int) $id, 'driver'));
+
+    Order::query()
+        ->where('status', 'pending')
+        ->where('created_at', '<=', $now->copy()->subSeconds($delay))
+        ->where('created_at', '>=', $now->copy()->subMinutes(15))
+        ->limit(50)
+        ->pluck('id')
+        ->each(fn ($id) => \App\Jobs\OrderAcceptanceAlertCallJob::dispatchSync((int) $id, 'restaurant'));
+})->when(fn () => $cronTaskEnabled('exotel_order_acceptance_alert_calls'))->everyMinute();
 
 // Move accepted orders to preparing after the 2-minute customer grace window.
 Schedule::call(function () {
@@ -102,5 +123,47 @@ Schedule::command('payouts:generate --auto')->when(fn () => $cronTaskEnabled('ge
 Schedule::command('payouts:process-scheduled')->when(fn () => $cronTaskEnabled('process_scheduled_payouts'))->everyThirtyMinutes();
 Schedule::command('payouts:sync-status')->when(fn () => $cronTaskEnabled('sync_payout_status'))->hourly();
 Schedule::command('payouts:retry-failed --max-retries=3')->when(fn () => $cronTaskEnabled('retry_failed_payouts'))->hourly();
+Schedule::command('payouts:release-stranded-locks')->when(fn () => $cronTaskEnabled('release_stranded_payout_locks'))->hourly();
 Schedule::command('payouts:check-balance --alert-threshold=10000')->when(fn () => $cronTaskEnabled('check_payout_balance'))->dailyAt('08:45');
+Schedule::command('ai:management-cycle operations --trigger=scheduled')->when(fn () => $cronTaskEnabled('ai_management_cycle'))->everyFifteenMinutes();
+// Review whether customers, drivers, and restaurants should get an AI-generated push notification this hour.
+Schedule::call(function () {
+    app(\App\Services\Ai\Managers\AiNotificationManager::class)->run();
+})->when(fn () => $cronTaskEnabled('ai_role_notification_review'))->hourly();
+// Safety net: deliver AI push broadcasts stuck "pending" because their artwork
+// job was never processed (no queue worker). Also sends text-only after a while.
+Schedule::command('ai:flush-stale-notifications')
+    ->when(fn () => $cronTaskEnabled('ai_flush_stale_notifications'))
+    ->everyTwoMinutes()
+    ->withoutOverlapping(10); // 10-min lock TTL so a killed run can't wedge it for 24h
+// Remind customers who left items in their cart without ordering.
+Schedule::call(function () {
+    app(\App\Services\CartRecoveryService::class)->run();
+})->when(fn () => $cronTaskEnabled('cart_recovery_reminders'))->everyFifteenMinutes();
+// Nudge customers who haven't ordered in a while to reorder their favorite.
+Schedule::call(function () {
+    app(\App\Services\ReorderNudgeService::class)->run();
+})->when(fn () => $cronTaskEnabled('reorder_nudges'))->dailyAt('11:00');
 Schedule::call(fn () => app(\App\Services\PayoutScheduleService::class)->sendAdminSummary())->when(fn () => $cronTaskEnabled('send_payout_admin_summary'))->dailyAt('09:00');
+// Send restaurant business reports to owners based on admin-selected frequency.
+Schedule::command('restaurants:business-reports')->when(fn () => $cronTaskEnabled('send_restaurant_business_reports'))->dailyAt((string) AppSetting::getValue('restaurant_business_report_time', '08:00'));
+
+// Nag restaurant owners once a day about AI proposals still pending their approval.
+Schedule::call(function () {
+    app(\App\Services\RestaurantApprovalReminderService::class)->run();
+})->when(fn () => $cronTaskEnabled('restaurant_ai_approval_reminders'))->dailyAt('10:00');
+// Weekly item-wise demand review -- propose menu price changes for restaurant approval.
+Schedule::call(function () {
+    app(\App\Services\Ai\Managers\AiMenuPricingManager::class)->run();
+})->when(fn () => $cronTaskEnabled('ai_menu_pricing_review'))->weeklyOn(1, '07:00');
+// Auto-create gig slots ahead of forecasted driver shortages (opt-in: Settings > AI).
+Schedule::call(function () {
+    app(\App\Services\Ai\Managers\AiGigProvisioningManager::class)->run();
+})->when(fn () => $cronTaskEnabled('ai_gig_autoprovision'))->hourly();
+Schedule::command('sitemap:generate')->dailyAt('03:00');
+// Auto-apply / clear the zone surge fee based on live weather in each delivery area (opt-in via Settings).
+Schedule::command('weather:apply-surge')
+    ->when(fn () => $cronTaskEnabled('apply_weather_surge'))
+    ->everyThirtyMinutes()
+    ->withoutOverlapping(20);
+

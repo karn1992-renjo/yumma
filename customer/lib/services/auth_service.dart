@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -74,8 +75,7 @@ class AuthService {
       await _api.setToken(token);
       final user = User.fromJson(response['data']['user']);
       await persistUser(user);
-      await FirebaseNotificationService.instance
-          .registerDeviceToken(user: user);
+      _registerDeviceTokenInBackground(user);
       if (user.isDriver || user.isRestaurantOwner) {
         await ForegroundServiceManager.startForegroundService();
       }
@@ -104,8 +104,7 @@ class AuthService {
       await _api.setToken(token);
       final user = User.fromJson(response['data']['user']);
       await persistUser(user);
-      await FirebaseNotificationService.instance
-          .registerDeviceToken(user: user);
+      _registerDeviceTokenInBackground(user);
       if (user.isDriver || user.isRestaurantOwner) {
         await ForegroundServiceManager.startForegroundService();
       }
@@ -135,8 +134,7 @@ class AuthService {
       await _api.setToken(token);
       final user = User.fromJson(response['data']['user']);
       await persistUser(user);
-      await FirebaseNotificationService.instance
-          .registerDeviceToken(user: user);
+      _registerDeviceTokenInBackground(user);
       if (user.isDriver || user.isRestaurantOwner) {
         await ForegroundServiceManager.startForegroundService();
       }
@@ -193,8 +191,7 @@ class AuthService {
       await _api.setToken(token);
       final user = User.fromJson(response['data']['user']);
       await persistUser(user);
-      await FirebaseNotificationService.instance
-          .registerDeviceToken(user: user);
+      _registerDeviceTokenInBackground(user);
       if (user.isDriver || user.isRestaurantOwner) {
         await ForegroundServiceManager.startForegroundService();
       }
@@ -329,8 +326,7 @@ class AuthService {
       await _api.setToken(token);
       final user = User.fromJson(response['data']['user']);
       await persistUser(user);
-      await FirebaseNotificationService.instance
-          .registerDeviceToken(user: user);
+      _registerDeviceTokenInBackground(user);
       if (user.isDriver || user.isRestaurantOwner) {
         await ForegroundServiceManager.startForegroundService();
       }
@@ -507,6 +503,12 @@ class AuthService {
 
   String _normalizePhone(String phone) {
     return PhoneNumberUtils.normalizeMobile(phone, log: true).normalizedNumber;
+  }
+
+  void _registerDeviceTokenInBackground(User user) {
+    unawaited(FirebaseNotificationService.instance.registerDeviceToken(
+      user: user,
+    ));
   }
 
   Future<void> _sendMsg91WidgetOtp({

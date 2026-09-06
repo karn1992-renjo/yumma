@@ -17,14 +17,14 @@ class DefaultFirebaseOptions {
   }
 
   static const FirebaseOptions web = FirebaseOptions(
-    apiKey: 'AIzaSyBi-pRKorYRAGhCip1CAe7LQ4FpHMFBXlY',
-    authDomain: 'renjo-technology.firebaseapp.com',
-    databaseURL: 'https://renjo-technology-default-rtdb.firebaseio.com',
-    projectId: 'renjo-technology',
-    storageBucket: 'renjo-technology.firebasestorage.app',
-    messagingSenderId: '737787730111',
-    appId: '1:737787730111:web:55d90999c0a8f468364e0a',
-    measurementId: 'G-KE6C8VJK62',
+    apiKey: 'AIzaSyB6Ixat1fY3Knl7mNiGl4zuNASMxHv23Qg',
+    authDomain: 'yumma-458b0.firebaseapp.com',
+    databaseURL: 'https://yumma-458b0-default-rtdb.firebaseio.com',
+    projectId: 'yumma-458b0',
+    storageBucket: 'yumma-458b0.firebasestorage.app',
+    messagingSenderId: '596992936599',
+    appId: '1:596992936599:web:8d6fa739975dfcf6f6b7d2',
+    measurementId: 'G-0ZTK9YVV43',
   );
 
   static const FirebaseOptions android = FirebaseOptions(

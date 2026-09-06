@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 
 class FoodFlowTheme {
-  static const Color orange = Color(0xFF0A9443);
+  static const Color orange = Color(0xFF2563EB);
   static const Color primaryColor = orange;
-  static const Color orangeDark = Color(0xFF0C7038);
+  static const Color orangeDark = Color(0xFF1D4ED8);
   static const Color crimson = Color(0xFFFF6B00);
   static const Color ink = Color(0xFF111827);
   static const Color inkSoft = Color(0xFF374151);
@@ -17,7 +17,7 @@ class FoodFlowTheme {
   static const Color surfaceCool = Color(0xFFF4F7FB);
   static const Color warmTint = Color(0xFFFFF3E8);
   static const Color warmTintBorder = Color(0xFFFFD7AF);
-  static const Color primaryDark = Color(0xFF0F8F45);
+  static const Color primaryDark = Color(0xFF1D4ED8);
   static const Color success = Color(0xFF22C55E);
   static const Color successDark = Color(0xFF168A35);
   static const Color danger = Color(0xFFE53935);

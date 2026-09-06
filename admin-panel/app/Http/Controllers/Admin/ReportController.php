@@ -111,10 +111,10 @@ class ReportController extends Controller
         $payoutSummary = (clone $payoutQuery)
             ->selectRaw('COUNT(*) as total_payouts')
             ->selectRaw('COALESCE(SUM(amount), 0) as total_amount')
-            ->selectRaw("SUM(CASE WHEN status IN ('processed', 'completed') THEN 1 ELSE 0 END) as processed_count")
+            ->selectRaw("SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as processed_count")
             ->selectRaw("SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending_count")
             ->selectRaw("SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed_count")
-            ->selectRaw("COALESCE(SUM(CASE WHEN status IN ('processed', 'completed') THEN amount ELSE 0 END), 0) as processed_amount")
+            ->selectRaw("COALESCE(SUM(CASE WHEN status = 'completed' THEN amount ELSE 0 END), 0) as processed_amount")
             ->first();
 
         $payoutStatusBreakdown = (clone $payoutQuery)

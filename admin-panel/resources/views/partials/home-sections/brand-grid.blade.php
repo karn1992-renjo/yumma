@@ -23,7 +23,7 @@
                             <a href="/restaurants/{{ $brand['restaurant_id'] ?? $brand['id'] }}" class="text-decoration-none">
                                 <div class="mx-auto rounded-circle border bg-white overflow-hidden d-flex align-items-center justify-content-center shadow-sm" style="width:88px;height:88px;">
                                     @if(!empty($brand['image']) || !empty($brand['logo']) || !empty($brand['logo_image']))
-                                        <img src="{{ $brand['image'] ?? $brand['logo'] ?? $brand['logo_image'] }}" alt="{{ $brand['name'] }}" class="w-100 h-100" style="object-fit: cover;">
+                                        <img src="{{ $brand['image'] ?? $brand['logo'] ?? $brand['logo_image'] }}" alt="{{ $brand['name'] }}" width="160" height="160" loading="lazy" class="w-100 h-100" style="object-fit: cover;">
                                     @else
                                         <span class="fw-bold text-warning">{{ strtoupper(substr($brand['name'], 0, 1)) }}</span>
                                     @endif

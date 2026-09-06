@@ -19,8 +19,10 @@ import 'services/app_update_service.dart';
 import 'config/app_config.dart';
 import 'models/app_branding.dart';
 import 'theme/foodflow_theme.dart';
+import 'theme/aurora_theme.dart';
 import 'theme/responsive_theme.dart';
 import 'providers/auth_provider.dart';
+import 'providers/theme_provider.dart';
 import 'providers/cart_provider.dart';
 import 'providers/order_provider.dart';
 import 'providers/restaurant_provider.dart';
@@ -32,8 +34,12 @@ import 'screens/app_splash_screen.dart';
 import 'screens/driver/driver_dashboard.dart';
 import 'screens/driver/driver_order_chat_screen.dart';
 import 'screens/driver/driver_order_detail_screen.dart';
+import 'screens/driver/driver_restaurant_onboarding_screen.dart';
+import 'screens/driver/driver_gigs_screen.dart';
+import 'screens/driver/driver_notifications_screen.dart';
 import 'screens/driver/privacy_legal_screen.dart';
 import 'screens/driver/driver_support_screen.dart';
+import 'screens/driver/driver_cod_deposit_screen.dart';
 import 'widgets/common/network_image_loader.dart';
 
 void main() {
@@ -50,6 +56,7 @@ void main() {
       providers: [
         ChangeNotifierProvider.value(value: authProvider),
         ChangeNotifierProvider.value(value: cartProvider),
+        ChangeNotifierProvider(create: (_) => ThemeProvider()),
         ChangeNotifierProvider(create: (_) => OrderProvider()),
         ChangeNotifierProvider(create: (_) => RestaurantProvider()),
       ],
@@ -70,6 +77,22 @@ void main() {
         (_) => AppUpdateService.checkForLatestRelease(appKey: 'driver'),
       ),
     );
+    // Re-check for a still-pending incoming order once the UI actually exists.
+    // On a cold start `didChangeAppLifecycleState(resumed)` never fires, so the
+    // earlier restore attempt (during startup, no navigator) is the only one —
+    // retry here so the alert reappears after a kill/relaunch until acted on.
+    unawaited(
+      startupFuture.then((_) async {
+        for (final delay in const [
+          Duration(milliseconds: 600),
+          Duration(seconds: 2),
+          Duration(seconds: 4),
+        ]) {
+          await Future<void>.delayed(delay);
+          await IncomingOrderAlertService.instance.restorePendingOrderState();
+        }
+      }),
+    );
   });
 }
 
@@ -77,23 +100,46 @@ Future<void> _initializeStartup(
   AuthProvider authProvider,
   CartProvider cartProvider,
 ) async {
-  try {
+  // Each step is isolated: a failure in one (most often Firebase's
+  // `[core/duplicate-app]` race) must never stop the session from being
+  // restored, or the driver lands on the login screen despite a valid token.
+  Future<void> step(String label, Future<void> Function() run) async {
+    try {
+      await run();
+    } catch (e) {
+      debugPrint('Startup step "$label" failed: $e');
+    }
+  }
+
+  await step('local cache', () async {
     await LocalCacheService.initialize();
+  });
+  await step('shared prefs', () async {
     await SharedPreferences.getInstance();
+  });
+  await step('sound', () async {
     await SoundService.init();
+  });
+  await step('firebase', () async {
     if (Firebase.apps.isEmpty) {
       await Firebase.initializeApp(
         options: DefaultFirebaseOptions.currentPlatform,
       );
     }
-    await FirebaseNotificationService.instance.initialize();
-    await IncomingOrderAlertService.instance.initialize();
+  });
+  await step('load user', () async {
     await authProvider.loadUser();
-    if (authProvider.isAuthenticated && !authProvider.canUseCurrentApp) {
+  });
+  await step('firebase notifications', () async {
+    await FirebaseNotificationService.instance.initialize();
+  });
+  await step('incoming order alerts', () async {
+    await IncomingOrderAlertService.instance.initialize();
+  });
+  if (authProvider.isAuthenticated && !authProvider.canUseCurrentApp) {
+    await step('logout wrong-app user', () async {
       await authProvider.logout();
-    }
-  } catch (e) {
-    debugPrint('Startup initialization failed: $e');
+    });
   }
   unawaited(cartProvider.loadCart());
 }
@@ -152,13 +198,27 @@ class FoodDeliveryApp extends StatefulWidget {
   State<FoodDeliveryApp> createState() => _FoodDeliveryAppState();
 }
 
-class _FoodDeliveryAppState extends State<FoodDeliveryApp> {
+class _FoodDeliveryAppState extends State<FoodDeliveryApp>
+    with WidgetsBindingObserver {
   AppBranding? _branding;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _loadBranding();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangePlatformBrightness() {
+    // Rebuild so a "system" theme choice tracks the OS switch.
+    if (mounted) setState(() {});
   }
 
   Future<void> _loadBranding() async {
@@ -186,7 +246,7 @@ class _FoodDeliveryAppState extends State<FoodDeliveryApp> {
 
   @override
   Widget build(BuildContext context) {
-    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    final authProvider = Provider.of<AuthProvider>(context);
     final primary = _colorFromHex(
       _branding?.driverPrimaryColorHex,
       AppConfig.primaryColor,
@@ -197,178 +257,25 @@ class _FoodDeliveryAppState extends State<FoodDeliveryApp> {
     );
     foodflow.applyBrandColors(primary: primary, secondary: secondary);
 
+    final themeProvider = context.watch<ThemeProvider>();
+    final platformBrightness =
+        WidgetsBinding.instance.platformDispatcher.platformBrightness;
+    final brightness = themeProvider.resolveBrightness(platformBrightness);
+    // Legacy screens read `foodflow.*` statics directly, so retint them for the
+    // effective brightness before the tree (re)builds.
+    foodflow.applyBrightness(brightness);
+
     return MaterialApp(
       navigatorKey: appNavigatorKey,
       title: _branding?.displayName ?? AppConfig.appName,
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: primary,
-          primary: primary,
-          secondary: secondary,
-          surface: Colors.white,
-          error: foodflow.danger,
-        ),
-        primaryColor: primary,
-        scaffoldBackgroundColor: foodflow.canvas,
-        visualDensity: const VisualDensity(horizontal: -2, vertical: -2),
-        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-        fontFamily: GoogleFonts.nunitoSans().fontFamily,
-        useMaterial3: true,
-        textTheme: AppTypography.material3(
-          base: GoogleFonts.nunitoSansTextTheme(),
-          textColor: foodflow.ink,
-          mutedColor: foodflow.inkSoft,
-        ),
-        appBarTheme: const AppBarTheme(
-          elevation: 0,
-          centerTitle: false,
-          backgroundColor: Colors.white,
-          foregroundColor: foodflow.ink,
-          iconTheme: IconThemeData(color: foodflow.ink),
-          titleTextStyle: TextStyle(
-            color: foodflow.ink,
-            fontSize: 18,
-            fontWeight: FontWeight.w800,
-          ),
-        ),
-        tabBarTheme: TabBarThemeData(
-          labelColor: primary,
-          unselectedLabelColor: foodflow.muted,
-          indicatorColor: primary,
-          labelStyle: const TextStyle(fontWeight: FontWeight.w800),
-          unselectedLabelStyle: const TextStyle(fontWeight: FontWeight.w400),
-        ),
-        dividerTheme: const DividerThemeData(
-          color: foodflow.line,
-          thickness: 1,
-          space: 1,
-        ),
-        listTileTheme: ListTileThemeData(
-          iconColor: primary,
-          textColor: foodflow.ink,
-          titleTextStyle: const TextStyle(
-            color: foodflow.ink,
-            fontSize: 15,
-            fontWeight: FontWeight.w800,
-          ),
-          subtitleTextStyle: const TextStyle(
-            color: foodflow.muted,
-            fontSize: 12,
-            fontWeight: FontWeight.w400,
-          ),
-        ),
-        chipTheme: ChipThemeData(
-          backgroundColor: Colors.white,
-          selectedColor: const Color(0xFFFFF3E8),
-          checkmarkColor: primary,
-          labelStyle: const TextStyle(
-            color: foodflow.ink,
-            fontWeight: FontWeight.w800,
-            fontSize: 12,
-          ),
-          side: const BorderSide(color: foodflow.line),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-        ),
-        bottomNavigationBarTheme: BottomNavigationBarThemeData(
-          backgroundColor: Colors.white,
-          selectedItemColor: primary,
-          unselectedItemColor: foodflow.muted,
-          selectedLabelStyle: const TextStyle(fontWeight: FontWeight.w800),
-          unselectedLabelStyle: const TextStyle(fontWeight: FontWeight.w400),
-          type: BottomNavigationBarType.fixed,
-          showUnselectedLabels: true,
-          elevation: 8,
-        ),
-        inputDecorationTheme: InputDecorationTheme(
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide: BorderSide.none,
-          ),
-          enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide: const BorderSide(color: foodflow.line),
-          ),
-          focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide: BorderSide(color: primary, width: 1.4),
-          ),
-          filled: true,
-          fillColor: Colors.white,
-          contentPadding: AppSpacing.input,
-          prefixIconColor: primary,
-          suffixIconColor: foodflow.muted,
-          labelStyle: const TextStyle(
-            color: foodflow.muted,
-            fontWeight: FontWeight.w800,
-            fontSize: 15,
-          ),
-          hintStyle: const TextStyle(
-            color: foodflow.faint,
-            fontWeight: FontWeight.w400,
-            fontSize: 15,
-          ),
-        ),
-        elevatedButtonTheme: ElevatedButtonThemeData(
-          style: ElevatedButton.styleFrom(
-            backgroundColor: primary,
-            foregroundColor: Colors.white,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(12),
-            ),
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-            elevation: 0,
-            textStyle: const TextStyle(
-              fontSize: 15,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-        ),
-        outlinedButtonTheme: OutlinedButtonThemeData(
-          style: OutlinedButton.styleFrom(
-            side: BorderSide(color: primary),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(12),
-            ),
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
-          ),
-        ),
-        cardTheme: CardThemeData(
-          elevation: 0,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(14),
-          ),
-          margin: EdgeInsets.zero,
-          color: Colors.white,
-        ),
-        snackBarTheme: SnackBarThemeData(
-          backgroundColor: primary,
-          contentTextStyle: const TextStyle(color: Colors.white),
-          behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
-          ),
-        ),
-        bottomSheetTheme: const BottomSheetThemeData(
-          backgroundColor: Colors.white,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-          ),
-        ),
-        floatingActionButtonTheme: FloatingActionButtonThemeData(
-          backgroundColor: primary,
-          foregroundColor: Colors.white,
-          elevation: 5,
-          extendedTextStyle: const TextStyle(fontWeight: FontWeight.w800),
-        ),
-        textButtonTheme: TextButtonThemeData(
-          style: TextButton.styleFrom(
-            foregroundColor: primary,
-            textStyle: const TextStyle(fontWeight: FontWeight.w800),
-          ),
-        ),
+      theme: AuroraTheme.build(
+        brightness: brightness,
+        primary: primary,
+        secondary: secondary,
       ),
       home: AppSplashScreen(
+        branding: _branding,
         startupFuture: widget.startupFuture,
         builder: (_) =>
             authProvider.isAuthenticated && authProvider.canUseCurrentApp
@@ -386,6 +293,17 @@ class _FoodDeliveryAppState extends State<FoodDeliveryApp> {
   }
 
   Route<dynamic>? _generateRoute(RouteSettings settings) {
+    final routeName = settings.name ?? '';
+    if (routeName.startsWith('/driver/restaurant-onboardings/')) {
+      final id = int.tryParse(routeName.split('/').last);
+      if (id == null) {
+        return _errorRoute('Invalid restaurant onboarding ID.');
+      }
+      return MaterialPageRoute(
+        builder: (_) => DriverRestaurantOnboardingDetailScreen(id: id),
+      );
+    }
+
     switch (settings.name) {
       // Auth Routes
       case '/login':
@@ -415,6 +333,10 @@ class _FoodDeliveryAppState extends State<FoodDeliveryApp> {
       // Driver Routes
       case '/driver/dashboard':
         return MaterialPageRoute(builder: (_) => const DriverDashboard());
+      case '/driver/restaurant-onboardings':
+        return MaterialPageRoute(
+          builder: (_) => const DriverRestaurantOnboardingScreen(),
+        );
       case '/driver/order':
         final orderId = _parseOrderId(settings.arguments);
         if (orderId == null) {
@@ -436,12 +358,27 @@ class _FoodDeliveryAppState extends State<FoodDeliveryApp> {
         return MaterialPageRoute(
           builder: (_) => DriverOrderChatScreen(orderId: orderId),
         );
+      case '/driver/gigs':
+        return MaterialPageRoute(builder: (_) => const DriverGigsScreen());
+      case '/driver/notifications':
+        return MaterialPageRoute(
+          builder: (_) => const DriverNotificationsScreen(),
+        );
       case '/support':
       case '/driver/support':
         final args = settings.arguments;
         return MaterialPageRoute(
           builder: (_) => DriverSupportScreen(
             openChat: args is Map && args['openChat'] == true,
+          ),
+        );
+      case '/driver/cod-deposit':
+        final args = settings.arguments;
+        final map = args is Map ? args : const {};
+        return MaterialPageRoute(
+          builder: (_) => DriverCodDepositScreen(
+            amountDue: (map['amount_due'] as num?)?.toDouble() ?? 0,
+            limit: (map['limit'] as num?)?.toDouble() ?? 0,
           ),
         );
 

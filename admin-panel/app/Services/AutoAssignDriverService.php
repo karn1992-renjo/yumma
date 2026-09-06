@@ -20,6 +20,7 @@ use Illuminate\Support\Str;
 class AutoAssignDriverService
 {
     private const DEFAULT_MAX_ASSIGNMENT_ATTEMPTS = 30;
+    private const DEFAULT_ASSIGNMENT_RETRY_WINDOW_HOURS = 3;
     private const DEFAULT_MAX_ACTIVE_ORDERS_PER_DRIVER = 1;
     private const DEFAULT_ROUTE_MATCH_RADIUS_KM = 3;
 
@@ -62,6 +63,13 @@ class AutoAssignDriverService
         $nearestOutsideRadius = null;
         $minOutsideDistance = PHP_FLOAT_MAX;
         $fallbackDriver = null;
+        $candidateOrder = $order ?: new Order([
+            'restaurant_id' => $restaurantId,
+            'branch_id' => $restaurant->branch_id,
+            'delivery_lat' => $deliveryLat,
+            'delivery_lng' => $deliveryLng,
+        ]);
+        $candidateOrder->setRelation('restaurant', $restaurant);
         
         foreach ($drivers as $driver) {
             $status = Cache::get("driver_status_{$driver->id}", ['is_online' => false]);
@@ -70,6 +78,10 @@ class AutoAssignDriverService
             }
 
             if (! app(DriverLocationTrustService::class)->isTrusted($driver->id)) {
+                continue;
+            }
+
+            if (!$this->driverCanTakeOrder($driver, $candidateOrder)) {
                 continue;
             }
 
@@ -93,20 +105,11 @@ class AutoAssignDriverService
                 );
                 
                 if ($distance <= $radius && $distance < $minDistance) {
-                    $candidateOrder = $order ?: new Order([
-                        'restaurant_id' => $restaurantId,
-                        'delivery_lat' => $deliveryLat,
-                        'delivery_lng' => $deliveryLng,
-                    ]);
-                    $candidateOrder->setRelation('restaurant', $restaurant);
-
-                    if ($this->driverCanTakeOrder($driver, $candidateOrder)) {
-                        $routeScore = app(AdvancedRouteBatchingService::class)->score($driver, $candidateOrder, $location, $this);
-                        $candidateScore = min($distance, (float) ($routeScore['score'] ?? $distance));
-                        if ($candidateScore < $minDistance) {
-                            $minDistance = $candidateScore;
-                            $nearestDriver = $driver;
-                        }
+                    $routeScore = app(AdvancedRouteBatchingService::class)->score($driver, $candidateOrder, $location, $this);
+                    $candidateScore = min($distance, (float) ($routeScore['score'] ?? $distance));
+                    if ($candidateScore < $minDistance) {
+                        $minDistance = $candidateScore;
+                        $nearestDriver = $driver;
                     }
                 }
 
@@ -117,7 +120,7 @@ class AutoAssignDriverService
             }
         }
         
-        return $nearestDriver;
+        return $nearestDriver ?? $nearestOutsideRadius ?? $fallbackDriver;
     }
     
     public function calculateDistance($lat1, $lon1, $lat2, $lon2)
@@ -158,8 +161,7 @@ class AutoAssignDriverService
             return User::find($order->driver_id);
         }
 
-        if (($order->driver_assignment_attempts ?? 0) >= $this->maxAssignmentAttempts()) {
-            $this->cancelUnassignedOrder($order);
+        if ($this->assignmentRetryExpired($order)) {
             return null;
         }
 
@@ -209,8 +211,7 @@ class AutoAssignDriverService
         $order->driver_assignment_attempts = (int) ($order->driver_assignment_attempts ?? 0) + 1;
         $order->save();
 
-        if (($order->driver_assignment_attempts ?? 0) >= $this->maxAssignmentAttempts()) {
-            $this->cancelUnassignedOrder($order);
+        if ($this->assignmentRetryExpired($order)) {
             return null;
         }
         
@@ -226,6 +227,9 @@ class AutoAssignDriverService
     public function notifyDriver($driver, Order $order)
     {
         broadcast(new DriverOrderAssignedEvent($order->loadMissing('restaurant'), $driver->id));
+
+        // If the driver doesn't accept in time, a scheduled scan
+        // (routes/console.php) falls back to an Exotel voice call.
 
         $token = method_exists($driver, 'fcmTokenForApp')
             ? $driver->fcmTokenForApp('driver')
@@ -314,8 +318,7 @@ class AutoAssignDriverService
         $order->rejected_driver_ids = $rejectedDriverIds;
         $order->save();
 
-        if (($order->driver_assignment_attempts ?? 0) >= $this->maxAssignmentAttempts()) {
-            $this->cancelUnassignedOrder($order);
+        if ($this->assignmentRetryExpired($order)) {
             return null;
         }
 
@@ -384,6 +387,8 @@ class AutoAssignDriverService
             }
         }
 
+        $nearestDriver ??= $fallbackDriver;
+
         if ($nearestDriver) {
             $routeBatchId = $this->resolveRouteBatchIdForAssignment($nearestDriver, $order, $orderId);
 
@@ -405,58 +410,62 @@ class AutoAssignDriverService
                 ['customer', 'restaurant']
             );
 
-            dispatch(new \App\Jobs\RetryAssignDriverJob($order))->delay(now()->addMinutes(2));
+            dispatch(new \App\Jobs\RetryAssignDriverJob($order))->delay(now()->addSeconds(DeliveryChargeSetting::getOrderAcceptanceTimeoutSeconds()));
             
             return $nearestDriver;
         }
         
-        if (($order->driver_assignment_attempts ?? 0) >= $this->maxAssignmentAttempts()) {
-            $this->cancelUnassignedOrder($order);
+        if ($this->assignmentRetryExpired($order)) {
             return null;
         }
         
-        // Retry after 2 minutes
-        dispatch(new \App\Jobs\RetryAssignDriverJob($order))->delay(now()->addMinutes(2));
+        // Retry after the configured driver acceptance timeout.
+        dispatch(new \App\Jobs\RetryAssignDriverJob($order))->delay(now()->addSeconds(DeliveryChargeSetting::getOrderAcceptanceTimeoutSeconds()));
         
         return null;
     }
 
     public function cancelUnassignedOrder(Order $order): void
     {
+        $this->releaseUnacceptedAssignment($order);
+    }
+
+    public function releaseUnacceptedAssignment(Order $order): void
+    {
         $order->refresh();
 
-        if ($order->status === 'cancelled' || $order->driver_accepted_at) {
+        if ($order->driver_accepted_at || ! in_array($order->status, ['confirmed', 'preparing', 'ready_for_pickup'], true)) {
             return;
         }
 
         $order->driver_id = null;
-        $order->status = 'cancelled';
-        $order->cancelled_at = now();
-        $order->cancellation_reason = 'Auto-cancelled: no delivery partner accepted after ' . $this->maxAssignmentAttempts() . ' assignment attempts';
+        $order->driver_accepted_at = null;
+        $order->route_batch_id = null;
         $order->save();
-
-        if ($order->payment_status === 'success') {
-            app(RefundService::class)->processRefund($order, 'No delivery partner accepted the order');
-        }
-
-        app(OrderStatusPushService::class)->notifyParticipants(
-            $order->fresh(['customer', 'restaurant']),
-            "Your order #{$order->order_number} was cancelled because no delivery partner accepted it."
-        );
     }
 
     public function retryPendingAssignments(int $limit = 50): int
     {
+        $retryWindowStart = now()->subHours($this->assignmentRetryWindowHours());
+        $staleAssignmentCutoff = now()->subSeconds(DeliveryChargeSetting::getOrderAcceptanceTimeoutSeconds());
+
         $orders = Order::whereIn('status', ['confirmed', 'preparing', 'ready_for_pickup'])
             ->visibleToRestaurant()
-            ->where(function ($query) {
+            ->where(function ($window) use ($retryWindowStart) {
+                $window->where('confirmed_at', '>=', $retryWindowStart)
+                    ->orWhere(function ($fallback) use ($retryWindowStart) {
+                        $fallback->whereNull('confirmed_at')
+                            ->where('created_at', '>=', $retryWindowStart);
+                    });
+            })
+            ->where(function ($query) use ($staleAssignmentCutoff) {
                 $query->whereNull('driver_id')
-                    ->orWhere(function ($nested) {
+                    ->orWhere(function ($nested) use ($staleAssignmentCutoff) {
                         $nested->whereNotNull('driver_id')
                             ->whereNull('driver_accepted_at')
-                            ->where(function ($stale) {
+                            ->where(function ($stale) use ($staleAssignmentCutoff) {
                                 $stale->whereNull('driver_assigned_at')
-                                    ->orWhere('driver_assigned_at', '<=', now()->subMinutes(2));
+                                    ->orWhere('driver_assigned_at', '<=', $staleAssignmentCutoff);
                             });
                     });
             })
@@ -477,6 +486,24 @@ class AutoAssignDriverService
         }
 
         return $processed;
+    }
+
+    public function assignmentRetryExpired(Order $order): bool
+    {
+        $startedAt = $order->confirmed_at ?: $order->created_at;
+
+        return $startedAt && $startedAt->lte(now()->subHours($this->assignmentRetryWindowHours()));
+    }
+
+    public function assignmentRetryWindowHours(): int
+    {
+        return max(
+            1,
+            (int) AppSetting::getValue(
+                'driver_assignment_retry_window_hours',
+                self::DEFAULT_ASSIGNMENT_RETRY_WINDOW_HOURS
+            )
+        );
     }
 
     public function maxAssignmentAttempts(): int
@@ -550,6 +577,10 @@ class AutoAssignDriverService
             return false;
         }
 
+        if (!$this->driverWithinCodCashLimit($driver)) {
+            return false;
+        }
+
         $activeOrders = $this->activeOrderCountForDriver($driver, $excludeOrderId);
         $maxOrders = $this->maxActiveOrdersForDriver($driver);
 
@@ -587,6 +618,17 @@ class AutoAssignDriverService
                 'accepted_active_orders' => $this->activeAcceptedOrderCountForDriver($driver, $excludeOrderId),
                 'max_active_orders' => $this->maxActiveOrdersForDriver($driver),
                 'reason' => 'minimum_wallet_balance',
+            ];
+        }
+
+        if (! $this->driverWithinCodCashLimit($driver)) {
+            return [
+                'eligible' => false,
+                'route_matched' => false,
+                'active_orders' => $this->activeOrderCountForDriver($driver, $excludeOrderId),
+                'accepted_active_orders' => $this->activeAcceptedOrderCountForDriver($driver, $excludeOrderId),
+                'max_active_orders' => $this->maxActiveOrdersForDriver($driver),
+                'reason' => 'cod_cash_limit',
             ];
         }
 
@@ -763,6 +805,36 @@ class AutoAssignDriverService
         $balance = (float) (Wallet::where('user_id', $driver->id)->value('balance') ?? 0);
 
         return $balance >= $minimumBalance;
+    }
+
+    /** Admin-set ceiling on undeposited COD cash. Per-order-incentive drivers only. */
+    public static function codCashLimit(): float
+    {
+        return max(0, (float) AppSetting::getValue('driver_cod_cash_limit', 0));
+    }
+
+    public function driverCodCashInHand(User $driver): float
+    {
+        return app(\App\Services\CodReconciliationService::class)->driverBalance($driver);
+    }
+
+    /**
+     * True unless the driver is a commission (per-order incentive) partner whose
+     * undeposited COD cash has reached the admin limit. Salary-mode drivers and a
+     * zero/disabled limit always pass.
+     */
+    public function driverWithinCodCashLimit(User $driver): bool
+    {
+        $limit = self::codCashLimit();
+        if ($limit <= 0) {
+            return true;
+        }
+
+        if (($driver->earning_mode ?? 'commission') === 'salary') {
+            return true;
+        }
+
+        return $this->driverCodCashInHand($driver) < $limit;
     }
 
     protected function isCodOrder(Order $order): bool

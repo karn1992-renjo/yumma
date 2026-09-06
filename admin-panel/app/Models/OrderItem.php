@@ -15,6 +15,8 @@ class OrderItem extends Model
     protected $casts = [
         'selected_variant' => 'array',
         'selected_add_ons' => 'array',
+        'unit_price' => 'decimal:2',
+        'total_price' => 'decimal:2',
     ];
     
     public function order(): BelongsTo

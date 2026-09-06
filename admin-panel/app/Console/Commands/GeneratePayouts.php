@@ -14,10 +14,16 @@ class GeneratePayouts extends Command
     public function handle(PayoutScheduleService $service): int
     {
         $setting = null;
+        $dueTypes = [$this->option('type')];          // manual run: all | restaurant | driver
         if ($this->option('auto')) {
             $setting = PayoutSetting::where('is_active', true)->first();
-            if (! $setting?->auto_generate_enabled || ! $service->shouldRunToday($setting)) {
-                $this->info('Automatic payout generation is not due.');
+            if (! $setting?->auto_generate_enabled) {
+                $this->info('Automatic payout generation is disabled.');
+                return self::SUCCESS;
+            }
+            $dueTypes = $service->dueVendorTypesToday($setting);
+            if (empty($dueTypes)) {
+                $this->info('Automatic payout generation is not due for any vendor type today.');
                 return self::SUCCESS;
             }
         }
@@ -33,13 +39,14 @@ class GeneratePayouts extends Command
                 default => $endDate->copy()->startOfDay(),
             };
         }
-        $result = $service->generateDuePayouts(
-            $this->option('type'),
-            $start,
-            $end,
-            (bool) $this->option('auto')
-        );
-        $this->info("Generated {$result['created']} payouts in batch {$result['batch_id']}.");
+        $total = 0;
+        $batches = [];
+        foreach ($dueTypes as $type) {
+            $result = $service->generateDuePayouts($type, $start, $end, (bool) $this->option('auto'));
+            $total += $result['created'];
+            $batches[] = $result['batch_id'];
+        }
+        $this->info("Generated {$total} payouts (" . implode(', ', $batches) . ").");
         return self::SUCCESS;
     }
 }

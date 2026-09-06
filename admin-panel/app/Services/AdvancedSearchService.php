@@ -2,11 +2,14 @@
 
 namespace App\Services;
 
+use App\Http\Resources\RestaurantResource;
 use App\Models\Category;
 use App\Models\Cuisine;
 use App\Models\MenuItem;
 use App\Models\PromoCode;
+use App\Models\Promotion;
 use App\Models\Restaurant;
+use App\Models\RestaurantAdCampaign;
 use App\Models\SearchIndex;
 use App\Models\SearchLog;
 use App\Models\SearchSynonym;
@@ -54,9 +57,9 @@ class AdvancedSearchService
         $grouped = $rows->groupBy('entity_type');
         $foodRows = $grouped->get('menu_item', collect())->take($limit);
         $response = [
-            'restaurants' => $this->serialize($grouped->get('restaurant', collect())->take($limit)),
+            'restaurants' => $this->serializeRestaurants($grouped->get('restaurant', collect())->take($limit)),
             'foods' => $this->serializeMenuItems($foodRows),
-            'offers' => $this->serialize($grouped->get('offer', collect())->take($limit)),
+            'offers' => $this->serialize($grouped->get('offer', collect())->merge($grouped->get('promotion_offer', collect()))->take($limit)),
             'categories' => $this->serialize($grouped->get('category', collect())->merge($grouped->get('cuisine', collect()))->take($limit)),
             'brands' => $this->serialize($grouped->get('brand', collect())->take($limit)),
             'trending' => $this->trending(),
@@ -137,8 +140,18 @@ class AdvancedSearchService
         $count = 0;
         SearchIndex::query()->delete();
 
-        Restaurant::query()->chunkById(200, function ($restaurants) use (&$count) {
+        // Batch-time relevance boost only -- NOT the billing source of truth.
+        // Which restaurant actually wins a given slot and gets charged is
+        // decided live, per-request, by AdAuctionService; this just makes
+        // currently-sponsored restaurants rank higher in full-text search
+        // between index rebuilds.
+        $sponsoredBids = RestaurantAdCampaign::active()->pluck('max_cpc', 'restaurant_id');
+
+        Restaurant::query()->chunkById(200, function ($restaurants) use (&$count, $sponsoredBids) {
             foreach ($restaurants as $restaurant) {
+                $isSponsored = $sponsoredBids->has($restaurant->id);
+                $sponsoredBoost = $isSponsored ? (float) $sponsoredBids->get($restaurant->id) * 20 : 0.0;
+
                 $this->upsertIndex('restaurant', $restaurant->id, [
                     'title' => $restaurant->name,
                     'description' => $restaurant->description,
@@ -154,7 +167,8 @@ class AdvancedSearchService
                     'latitude' => $restaurant->latitude,
                     'longitude' => $restaurant->longitude,
                     'is_active' => (bool) $restaurant->is_verified,
-                    'search_score' => (float) ($restaurant->rating ?? 0) * 10 + (int) ($restaurant->total_ratings ?? 0),
+                    'is_sponsored' => $isSponsored,
+                    'search_score' => (float) ($restaurant->rating ?? 0) * 10 + (int) ($restaurant->total_ratings ?? 0) + $sponsoredBoost,
                 ]);
                 $count++;
             }
@@ -224,6 +238,26 @@ class AdvancedSearchService
                 $count++;
             }
         });
+
+        Promotion::query()
+            ->active()
+            ->where('application_mode', 'coupon')
+            ->whereHas('couponCodes', fn ($query) => $query->active())
+            ->with('couponCodes')
+            ->chunkById(200, function ($promotions) use (&$count) {
+                foreach ($promotions as $promotion) {
+                    $code = $promotion->couponCodes->first()?->code;
+                    $this->upsertIndex('promotion_offer', $promotion->id, [
+                        'title' => $promotion->title ?: $code,
+                        'description' => $promotion->description,
+                        'keywords' => implode(' ', array_filter([$promotion->title, $code, $promotion->description])),
+                        'restaurant_id' => $promotion->restaurant_id,
+                        'is_active' => true,
+                        'search_score' => (float) ($promotion->discount_value ?? 0),
+                    ]);
+                    $count++;
+                }
+            });
 
         if (Schema::hasTable('brands')) {
             DB::table('brands')->orderBy('id')->chunk(200, function ($brands) use (&$count) {
@@ -308,13 +342,46 @@ class AdvancedSearchService
             'longitude' => $row->longitude,
             'score' => round((float) ($row->final_score ?? $row->search_score), 2),
             'tags' => $row->tags ?? [],
+            'is_sponsored' => (bool) $row->is_sponsored,
         ])->values()->all();
+    }
+
+    /**
+     * Restaurant hits are hydrated into the same card payload the discovery
+     * feed uses (RestaurantResource) so the web autocomplete can render a
+     * real RestaurantCard, while keeping the search index's ranking order
+     * and sponsored flag.
+     */
+    private function serializeRestaurants(Collection $rows): array
+    {
+        if ($rows->isEmpty()) {
+            return [];
+        }
+
+        $restaurants = Restaurant::query()
+            ->whereKey($rows->pluck('entity_id')->filter())
+            ->get()
+            ->keyBy('id');
+
+        return $rows->map(function (SearchIndex $row) use ($restaurants) {
+            $restaurant = $restaurants->get($row->entity_id);
+            if (!$restaurant) {
+                return null;
+            }
+
+            $card = (new RestaurantResource($restaurant))->resolve();
+            $card['type'] = 'restaurant';
+            $card['score'] = round((float) ($row->final_score ?? $row->search_score), 2);
+            $card['is_sponsored'] = (bool) ($row->is_sponsored || ($card['is_sponsored'] ?? false));
+
+            return $card;
+        })->filter()->values()->all();
     }
 
     private function serializeMenuItems(Collection $rows): array
     {
         $items = MenuItem::query()
-            ->with(['category:id,name', 'cuisine:id,name'])
+            ->with(['category:id,name', 'cuisine:id,name', 'restaurant:id,name'])
             ->whereKey($rows->pluck('entity_id')->filter())
             ->get()
             ->keyBy('id');
@@ -330,6 +397,8 @@ class AdvancedSearchService
 
             return array_merge($result, [
                 'name' => $item->name,
+                'restaurant_id' => $item->restaurant_id,
+                'restaurant_name' => $item->restaurant?->name,
                 'price' => (float) $item->price,
                 'discounted_price' => $item->discounted_price !== null
                     ? (float) $item->discounted_price

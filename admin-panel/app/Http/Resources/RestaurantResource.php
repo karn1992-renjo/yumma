@@ -55,7 +55,8 @@ class RestaurantResource extends JsonResource
             'matched_item_names' => $this->matched_item_names ?? [],
             'matched_menu_items' => $this->normalizeMatchedMenuItems($this->matched_menu_items ?? []),
             'weekly_timings' => $this->weekly_timings,
-            'is_featured' => (bool) ($this->is_featured ?? false),
+            'is_sponsored' => (bool) ($this->is_sponsored ?? false),
+            'ad_campaign_id' => $this->ad_campaign_id ?? null,
             'orders_count' => (int) ($this->orders_count ?? $this->orders()->count()),
             'created_at' => optional($this->created_at)->toIso8601String(),
         ];

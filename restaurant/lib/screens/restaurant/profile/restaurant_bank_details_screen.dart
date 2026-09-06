@@ -1,10 +1,14 @@
 // lib/screens/restaurant/profile/restaurant_bank_details_screen.dart
+import 'dart:ui' show ImageFilter;
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../../services/api_service.dart';
 import '../../../config/api_constants.dart';
 import '../../../providers/auth_provider.dart';
 import '../../../theme/foodflow_theme.dart';
+import '../../../theme/aurora_theme.dart';
+import '../../../widgets/aurora/aurora.dart';
 import '../../../utils/payout_gateway_utils.dart';
 
 class RestaurantBankDetailsScreen extends StatefulWidget {
@@ -55,36 +59,41 @@ class _RestaurantBankDetailsScreenState
     super.dispose();
   }
 
+  void _applyBankData(dynamic response) {
+    if (response is! Map || response['success'] != true) return;
+    final data = Map<String, dynamic>.from(response['data'] ?? {});
+    if (!mounted) return;
+    final authUser =
+        Provider.of<AuthProvider>(context, listen: false).currentUser;
+    final provider = data['payout_gateway_provider']?.toString() ??
+        data['payment_gateway_provider']?.toString() ??
+        authUser?.payoutGatewayProvider ??
+        authUser?.paymentGatewayProvider;
+    final countryCode =
+        data['country_code']?.toString() ?? authUser?.countryCode;
+    setState(() {
+      _bankNameController.text = data['bank_name'] ?? '';
+      _accountHolderController.text = data['account_holder_name'] ?? '';
+      _accountNumberController.text = data['account_number'] ?? '';
+      _confirmAccountNumberController.text = data['account_number'] ?? '';
+      _ifscController.text = data['ifsc_code'] ?? '';
+      _upiIdController.text = data['upi_id'] ?? '';
+      _accountIdController.text =
+          data['stripe_account_id'] ?? data['gateway_account_id'] ?? '';
+      _gatewayProfile = resolvePayoutGatewayProfile(
+        provider: provider,
+        countryCode: countryCode,
+      );
+    });
+  }
+
   Future<void> _loadBankDetails() async {
     try {
-      final response = await _api.get(ApiConstants.restaurantSettings);
-      if (response['success'] == true) {
-        final data = Map<String, dynamic>.from(response['data'] ?? {});
-        if (!mounted) return;
-        final authUser =
-            Provider.of<AuthProvider>(context, listen: false).currentUser;
-        final provider = data['payout_gateway_provider']?.toString() ??
-            data['payment_gateway_provider']?.toString() ??
-            authUser?.payoutGatewayProvider ??
-            authUser?.paymentGatewayProvider;
-        final countryCode =
-            data['country_code']?.toString() ?? authUser?.countryCode;
-        setState(() {
-          _bankNameController.text = data['bank_name'] ?? '';
-          _accountHolderController.text = data['account_holder_name'] ?? '';
-          _accountNumberController.text = data['account_number'] ?? '';
-          _confirmAccountNumberController.text = data['account_number'] ?? '';
-          _ifscController.text = data['ifsc_code'] ?? '';
-          _upiIdController.text = data['upi_id'] ?? '';
-          _accountIdController.text = data['stripe_account_id'] ??
-              data['gateway_account_id'] ??
-              '';
-          _gatewayProfile = resolvePayoutGatewayProfile(
-            provider: provider,
-            countryCode: countryCode,
-          );
-        });
-      }
+      final response = await _api.getWithCache(
+        ApiConstants.restaurantSettings,
+        onCache: _applyBankData,
+      );
+      _applyBankData(response);
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -154,62 +163,101 @@ class _RestaurantBankDetailsScreenState
           countryCode: authUser?.countryCode,
         );
 
+    final topPad = MediaQuery.of(context).padding.top + 64;
+
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Bank Details'),
-        elevation: 0,
-        backgroundColor: FoodFlowTheme.orange,
+      backgroundColor: foodflow.canvas,
+      extendBodyBehindAppBar: true,
+      appBar: GlassAppBar(
+        title: Text('Payout account',
+            style: TextStyle(
+                color: foodflow.ink,
+                fontSize: 17,
+                fontWeight: FontWeight.w900)),
       ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
-        child: Form(
-          key: _formKey,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const SizedBox(height: 8),
-              // Info Card
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.blue.withOpacity(0.1),
-                  border: Border.all(color: Colors.blue.withOpacity(0.3)),
-                  borderRadius: BorderRadius.circular(8),
+      bottomNavigationBar: ClipRect(
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+          child: Container(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+            decoration: BoxDecoration(
+              color: foodflow.canvas.withOpacity(0.82),
+              border: Border(top: BorderSide(color: foodflow.glassBorder)),
+            ),
+            child: SafeArea(
+              top: false,
+              child: SizedBox(
+                height: 52,
+                child: ElevatedButton.icon(
+                  onPressed: _isSaving ? null : _saveBankDetails,
+                  icon: _isSaving
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2, color: Colors.white))
+                      : const Icon(Icons.lock_outline_rounded),
+                  label: Text(_isSaving ? 'Saving…' : 'Save payout details'),
+                  style: FoodFlowTheme.zomatoPrimaryButton(),
                 ),
-                child: Row(
-                  children: [
-                    const Icon(Icons.info, color: Colors.blue, size: 20),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Text(
-                        '${profile.displayName} payout details are secure and used only for settlements.',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: Colors.blue.shade700,
-                        ),
+              ),
+            ),
+          ),
+        ),
+      ),
+      body: Stack(children: [
+        ...AuroraTheme.auroraBlobs(),
+        SingleChildScrollView(
+          padding: EdgeInsets.fromLTRB(16, topPad, 16, 24),
+          child: Form(
+            key: _formKey,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    gradient: foodflow.brandGradient,
+                    borderRadius: BorderRadius.circular(20),
+                    boxShadow: [
+                      BoxShadow(
+                        color: foodflow.orange.withOpacity(0.24),
+                        blurRadius: 20,
+                        offset: const Offset(0, 10),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          const Icon(Icons.verified_user_rounded,
+                              color: Colors.white, size: 20),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              'Encrypted · used only for settlements',
+                              style: TextStyle(
+                                color: Colors.white.withOpacity(0.92),
+                                fontSize: 12.5,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 10),
+                      _heroPill('Region  ${profile.countryCode}'),
+                    ],
+                  ),
                 ),
-              ),
-              const SizedBox(height: 12),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  Chip(label: Text('Gateway: ${profile.displayName}')),
-                  Chip(label: Text('Country: ${profile.countryCode}')),
-                ],
-              ),
-              const SizedBox(height: 12),
-              Text(
-                profile.helperText,
-                style: TextStyle(
-                  color: Colors.grey.shade700,
-                  fontSize: 12,
+                const SizedBox(height: 12),
+                Text(
+                  'Payouts are managed by the platform. Add the settlement account the platform should send your earnings to.',
+                  style: TextStyle(color: foodflow.muted, fontSize: 12),
                 ),
-              ),
-              const SizedBox(height: 24),
+                const SizedBox(height: 20),
               // Account Holder Name (always shown)
               const Text(
                 'Account Holder Name',
@@ -345,66 +393,46 @@ class _RestaurantBankDetailsScreenState
                 ),
                 const SizedBox(height: 16),
               ],
-              // Gateway Account ID
+              // Platform payout account reference
               Text(
-                '${profile.accountIdLabel}${profile.requiresAccountId ? '' : ' (Optional)'}',
+                'Payout account ID${profile.requiresAccountId ? '' : ' (Optional)'}',
                 style: const TextStyle(fontWeight: FontWeight.w600),
               ),
               const SizedBox(height: 8),
               TextFormField(
                 controller: _accountIdController,
                 decoration: InputDecoration(
-                  hintText: profile.accountIdHint,
+                  hintText: 'Only if the platform gave you a payout reference',
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(12),
                   ),
                 ),
                 validator: (value) {
                   if (profile.requiresAccountId && (value?.trim().isEmpty ?? true)) {
-                    return 'Please enter ${profile.accountIdLabel.toLowerCase()}';
+                    return 'Please enter your payout account ID';
                   }
                   return null;
                 },
               ),
-              const SizedBox(height: 32),
-              // Save Button
-              SizedBox(
-                width: double.infinity,
-                height: 54,
-                child: ElevatedButton(
-                  onPressed: _isSaving ? null : _saveBankDetails,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: FoodFlowTheme.orange,
-                    disabledBackgroundColor: FoodFlowTheme.faint,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                  ),
-                  child: _isSaving
-                      ? const SizedBox(
-                          width: 20,
-                          height: 20,
-                          child: CircularProgressIndicator(
-                            valueColor:
-                                AlwaysStoppedAnimation<Color>(Colors.white),
-                            strokeWidth: 2,
-                          ),
-                        )
-                      : const Text(
-                          'Update Bank Details',
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w600,
-                            color: Colors.white,
-                          ),
-                        ),
-                ),
-              ),
-              const SizedBox(height: 24),
+              const SizedBox(height: 12),
             ],
           ),
         ),
-      ),
+        ),
+      ]),
     );
   }
+
+  Widget _heroPill(String text) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        decoration: BoxDecoration(
+          color: Colors.white.withOpacity(0.16),
+          borderRadius: BorderRadius.circular(999),
+        ),
+        child: Text(text,
+            style: const TextStyle(
+                color: Colors.white,
+                fontSize: 11,
+                fontWeight: FontWeight.w800)),
+      );
 }

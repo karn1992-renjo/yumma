@@ -29,6 +29,8 @@ class Order {
   final double total;
   final double? driverEarning;
   final double? driverIncentive;
+  final double tipAmount;
+  final DateTime? tipPaidAt;
   final String status;
   final String paymentMethod;
   final String paymentStatus;
@@ -54,6 +56,15 @@ class Order {
   final int? remainingPreparationMinutes;
   final Map<String, dynamic> eta;
   final DateTime? reachedAt;
+  final DateTime? arrivedAtCustomer;
+  final DateTime? deliveryFailedAt;
+  final String? deliveryFailureReason;
+  final int deliveryFailureWaitMinutes;
+  final String? resaleStatus;
+  final double? resalePrice;
+  final DateTime? resaleOfferExpiresAt;
+  final DateTime? foodReturnedAt;
+  final int? originalOrderId;
   final DateTime? deliveredAt;
   final DateTime? cancelledAt;
   final int? restaurantRating;
@@ -91,6 +102,8 @@ class Order {
     required this.total,
     this.driverEarning,
     this.driverIncentive,
+    this.tipAmount = 0,
+    this.tipPaidAt,
     required this.status,
     required this.paymentMethod,
     required this.paymentStatus,
@@ -116,6 +129,15 @@ class Order {
     this.remainingPreparationMinutes,
     this.eta = const {},
     this.reachedAt,
+    this.arrivedAtCustomer,
+    this.deliveryFailedAt,
+    this.deliveryFailureReason,
+    this.deliveryFailureWaitMinutes = 5,
+    this.resaleStatus,
+    this.resalePrice,
+    this.resaleOfferExpiresAt,
+    this.foodReturnedAt,
+    this.originalOrderId,
     this.deliveredAt,
     this.cancelledAt,
     this.restaurantRating,
@@ -210,6 +232,8 @@ class Order {
       driverIncentive: parseNullableDouble(
         source['driver_incentive'] ?? source['incentive'],
       ),
+      tipAmount: parseDoubleValue(source['tip_amount']),
+      tipPaidAt: _parseDate(source['tip_paid_at']),
       status: _normalizeStatus(
         _firstNonEmptyString([source['status'], source['order_status']]) ??
             'pending',
@@ -266,6 +290,16 @@ class Order {
       reachedAt: _parseDate(
         source['reached_at'] ?? source['reached_pickup_at'],
       ),
+      arrivedAtCustomer: _parseDate(source['arrived_at_customer']),
+      deliveryFailedAt: _parseDate(source['delivery_failed_at']),
+      deliveryFailureReason: source['delivery_failure_reason']?.toString(),
+      deliveryFailureWaitMinutes:
+          parseNullableInt(source['delivery_failure_wait_minutes']) ?? 5,
+      resaleStatus: source['resale_status']?.toString(),
+      resalePrice: parseNullableDouble(source['resale_price']),
+      resaleOfferExpiresAt: _parseDate(source['resale_offer_expires_at']),
+      foodReturnedAt: _parseDate(source['food_returned_at']),
+      originalOrderId: parseNullableInt(source['original_order_id']),
       deliveredAt: _parseDate(source['delivered_at']),
       cancelledAt: _parseDate(source['cancelled_at']),
       restaurantRating: parseNullableInt(source['restaurant_rating']),
@@ -301,7 +335,12 @@ class Order {
   bool get isPickedUp => status == 'picked_up';
   bool get isOnTheWay => status == 'on_the_way';
   bool get isDelivered => status == 'delivered';
+  bool get isDeliveryFailed => status == 'delivery_failed';
   bool get isCancelled => status == 'cancelled';
+  bool get isResaleOffered => resaleStatus == 'offered';
+  bool get isResaleClaimed => resaleStatus == 'claimed';
+  bool get isAwaitingFoodReturn => resaleStatus == 'expired';
+  bool get isFoodReturned => resaleStatus == 'returned';
 
   bool get isDriverAssignmentPending =>
       driverId != null &&
@@ -335,7 +374,7 @@ class Order {
     if (isReadyForPickup || isReachedPickup) return 'Ready for pickup';
     if (isPreparationDelayed) {
       final minutes = preparationDelayMinutes <= 0 ? 1 : preparationDelayMinutes;
-      return 'Restaurant delayed by ${minutes} min';
+      return 'Restaurant delayed by $minutes min';
     }
     if (!hasActivePreparationTimer) return statusText;
     final remaining = readyTimeRemaining;
@@ -359,7 +398,10 @@ class Order {
   }
 
   bool get isPaymentPaid => paymentStatus == 'paid' || paymentStatus == 'success';
-  bool get isCodPayment => paymentMethod.toLowerCase() == 'cod';
+  bool get isCodPayment {
+    final m = paymentMethod.toLowerCase();
+    return m == 'cod' || m == 'cash';
+  }
   bool get canCollectPayment =>
       !isPaymentPaid && !isDelivered && !isCancelled && isCodPayment;
   double get driverEarningAmount => driverEarning ?? deliveryFee;
@@ -384,6 +426,8 @@ class Order {
         return 'On The Way';
       case 'delivered':
         return 'Delivered';
+      case 'delivery_failed':
+        return 'Delivery Failed';
       case 'cancelled':
         return 'Cancelled';
       default:
@@ -409,6 +453,8 @@ class Order {
         return Colors.cyan;
       case 'delivered':
         return Colors.green;
+      case 'delivery_failed':
+        return Colors.red.shade900;
       case 'cancelled':
         return Colors.red;
       default:

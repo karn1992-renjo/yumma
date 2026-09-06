@@ -80,6 +80,11 @@ class PartnerApplication extends Model
         return $this->belongsTo(DeliveryArea::class, 'area_id');
     }
 
+    public function restaurantOnboarding()
+    {
+        return $this->hasOne(RestaurantOnboarding::class);
+    }
+
     public function scopePending($query)
     {
         return $query->where('status', 'pending');

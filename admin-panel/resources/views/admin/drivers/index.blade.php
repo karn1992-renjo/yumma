@@ -68,7 +68,7 @@
             <tbody>
                 @forelse($drivers as $driver)
                 <tr>
-                    <td>#{{ $driver->id }}</td>
+                    <td>{{ $driver->driver_code }}</td>
                     <td>
                         <div class="rounded-circle bg-success bg-opacity-10 d-flex align-items-center justify-content-center" style="width: 40px; height: 40px;">
                             <span class="fw-bold text-success">{{ substr($driver->name, 0, 2) }}</span>

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:pusher_channels_flutter/pusher_channels_flutter.dart';
 import 'package:flutter/foundation.dart';
@@ -10,13 +11,33 @@ class WebSocketService {
   static final WebSocketService _instance = WebSocketService._internal();
   factory WebSocketService() => _instance;
   WebSocketService._internal();
-  
+
   PusherChannelsFlutter? _pusher;
   final Set<String> _subscribedChannels = {};
   final Map<String, _RestaurantSocketHandlers> _restaurantHandlers = {};
   final Map<String, _DriverSocketHandlers> _driverHandlers = {};
   final Map<int, Function(Map<String, dynamic>)> _orderChatHandlers = {};
-  
+  final Map<int, Function(Map<String, dynamic>)> _supportChatHandlers = {};
+  final StreamController<Map<String, dynamic>> _driverEventController =
+      StreamController<Map<String, dynamic>>.broadcast();
+
+  Stream<Map<String, dynamic>> get driverEvents =>
+      _driverEventController.stream;
+
+  /// Push a synthetic event into [driverEvents] so screens that already listen
+  /// (dashboard stats, orders list) refresh immediately after a local action
+  /// like accepting/advancing/completing an order — the server does not
+  /// broadcast the driver's own status changes back to their channel.
+  void notifyLocalOrderChange({int? orderId, String? status}) {
+    if (_driverEventController.isClosed) return;
+    _driverEventController.add({
+      '_event': 'local-order-changed',
+      'type': 'local_order_changed',
+      if (orderId != null) 'order_id': orderId,
+      if (status != null) 'status': status,
+    });
+  }
+
   Future<void> init(
     int restaurantId, {
     required Function(Map<String, dynamic>) onNewOrder,
@@ -46,7 +67,7 @@ class WebSocketService {
 
       await _pusher!.subscribe(
         channelName: channelName,
-        onEvent: _handlePusherEvent,
+        onEvent: _handlePusherEventDynamic,
       );
       _subscribedChannels.add(channelName);
     } catch (e) {
@@ -57,19 +78,21 @@ class WebSocketService {
   Future<void> initDriver(
     int driverId, {
     required Function(Map<String, dynamic>) onOrderAssigned,
+    Function(Map<String, dynamic>)? onOrderEvent,
   }) async {
     try {
       await _ensureInitialized();
       final channelName = 'private-driver.$driverId';
       _driverHandlers[channelName] = _DriverSocketHandlers(
         onOrderAssigned: onOrderAssigned,
+        onOrderEvent: onOrderEvent,
       );
       if (_subscribedChannels.contains(channelName)) return;
       debugPrint('Pusher subscribing to $channelName');
 
       await _pusher!.subscribe(
         channelName: channelName,
-        onEvent: _handlePusherEvent,
+        onEvent: _handlePusherEventDynamic,
       );
       _subscribedChannels.add(channelName);
     } catch (e) {
@@ -88,12 +111,35 @@ class WebSocketService {
       if (_subscribedChannels.contains(channelName)) return;
       await _pusher!.subscribe(
         channelName: channelName,
-        onEvent: _handlePusherEvent,
+        onEvent: _handlePusherEventDynamic,
       );
       _subscribedChannels.add(channelName);
     } catch (e) {
       debugPrint('Order chat WebSocket init error: $e');
     }
+  }
+
+  Future<void> initSupportChat(
+    int conversationId, {
+    required Function(Map<String, dynamic>) onMessage,
+  }) async {
+    _supportChatHandlers[conversationId] = onMessage;
+    try {
+      await _ensureInitialized();
+      final channelName = 'private-support.$conversationId';
+      if (_subscribedChannels.contains(channelName)) return;
+      await _pusher!.subscribe(
+        channelName: channelName,
+        onEvent: _handlePusherEventDynamic,
+      );
+      _subscribedChannels.add(channelName);
+    } catch (e) {
+      debugPrint('Support chat WebSocket init error: $e');
+    }
+  }
+
+  void removeSupportChatHandler(int conversationId) {
+    _supportChatHandlers.remove(conversationId);
   }
 
   Future<void> _ensureInitialized() async {
@@ -103,7 +149,8 @@ class WebSocketService {
     final pusherKey = branding.resolvedPusherAppKey;
     final pusherCluster = branding.resolvedPusherAppCluster;
     if (pusherKey.isEmpty) {
-      throw Exception('Pusher key is not configured in admin panel branding settings.');
+      throw Exception(
+          'Pusher key is not configured in admin panel branding settings.');
     }
 
     _pusher = PusherChannelsFlutter.getInstance();
@@ -140,6 +187,23 @@ class WebSocketService {
     await _pusher!.connect();
   }
 
+  /// `PusherChannel.onEvent` (used by `subscribe`) is typed `Function(dynamic)?`,
+  /// so a `void Function(PusherEvent)` cannot be assigned to it directly
+  /// (contravariance) — that mismatch was silently killing every driver channel
+  /// subscription. Wrap it.
+  void _handlePusherEventDynamic(dynamic event) {
+    if (event is PusherEvent) {
+      _handlePusherEvent(event);
+    } else if (event is Map) {
+      _handlePusherEvent(PusherEvent(
+        channelName: event['channelName']?.toString() ?? '',
+        eventName: event['eventName']?.toString() ?? '',
+        data: event['data'],
+        userId: event['userId']?.toString(),
+      ));
+    }
+  }
+
   void _handlePusherEvent(PusherEvent event) {
     final eventName = _normalizeEventName(event.eventName);
     final data = _normalizeOrderPayload(_decodeEventData(event.data));
@@ -159,8 +223,30 @@ class WebSocketService {
     }
 
     final driverHandlers = _driverHandlers[event.channelName];
-    if (driverHandlers != null && _isDriverOrderAssignedEvent(eventName, data)) {
-      driverHandlers.onOrderAssigned(data);
+    if (driverHandlers != null) {
+      final driverData = {
+        ...data,
+        '_event': eventName,
+      };
+      if (!_driverEventController.isClosed) {
+        _driverEventController.add(driverData);
+      }
+      if (_isDriverOrderAssignedEvent(eventName, data)) {
+        driverHandlers.onOrderAssigned(data);
+      } else {
+        driverHandlers.onOrderEvent?.call(driverData);
+      }
+      return;
+    }
+
+    final conversationId = _extractConversationId(data);
+    final supportHandler =
+        conversationId != null ? _supportChatHandlers[conversationId] : null;
+    if (supportHandler != null && _isSupportChatEvent(eventName, data)) {
+      supportHandler({
+        ...data,
+        '_event': eventName,
+      });
       return;
     }
 
@@ -200,8 +286,10 @@ class WebSocketService {
         data.containsKey('driver_id');
   }
 
-  bool _isDriverOrderAssignedEvent(String eventName, Map<String, dynamic> data) {
-    final type = data['type']?.toString().toLowerCase().replaceAll('-', '_') ?? '';
+  bool _isDriverOrderAssignedEvent(
+      String eventName, Map<String, dynamic> data) {
+    final type =
+        data['type']?.toString().toLowerCase().replaceAll('-', '_') ?? '';
     final payloadEvent =
         data['event']?.toString().toLowerCase().replaceAll('-', '_') ?? '';
     return eventName == 'driver-order-assigned' ||
@@ -221,6 +309,18 @@ class WebSocketService {
 
   int? _extractOrderId(Map<String, dynamic> data) {
     final value = data['order_id'] ?? data['orderId'] ?? data['id'];
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    return int.tryParse(value?.toString() ?? '');
+  }
+
+  bool _isSupportChatEvent(String eventName, Map<String, dynamic> data) {
+    final type = data['type']?.toString().toLowerCase() ?? '';
+    return eventName.contains('support') || type.contains('support');
+  }
+
+  int? _extractConversationId(Map<String, dynamic> data) {
+    final value = data['conversation_id'] ?? data['conversationId'];
     if (value is int) return value;
     if (value is num) return value.toInt();
     return int.tryParse(value?.toString() ?? '');
@@ -341,7 +441,7 @@ class WebSocketService {
     }
     return data;
   }
-  
+
   void dispose() {
     _pusher?.disconnect();
     _pusher = null;
@@ -349,6 +449,7 @@ class WebSocketService {
     _restaurantHandlers.clear();
     _driverHandlers.clear();
     _orderChatHandlers.clear();
+    _supportChatHandlers.clear();
   }
 }
 
@@ -365,7 +466,9 @@ class _RestaurantSocketHandlers {
 class _DriverSocketHandlers {
   const _DriverSocketHandlers({
     required this.onOrderAssigned,
+    this.onOrderEvent,
   });
 
   final Function(Map<String, dynamic>) onOrderAssigned;
+  final Function(Map<String, dynamic>)? onOrderEvent;
 }

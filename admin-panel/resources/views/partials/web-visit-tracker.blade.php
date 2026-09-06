@@ -198,18 +198,36 @@
             };
         }
 
-        if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', function () {
-                watchSetLocationCalls();
-                send();
-                setTimeout(sendSavedDeliveryLocation, 400);
-                setTimeout(requestLocationIfAllowed, 1200);
-            });
-        } else {
+        function startTracking() {
+            if (startTracking.started) return;
+            startTracking.started = true;
             watchSetLocationCalls();
             send();
             setTimeout(sendSavedDeliveryLocation, 400);
             setTimeout(requestLocationIfAllowed, 1200);
+        }
+
+        function scheduleTracking() {
+            const start = () => {
+                if ('requestIdleCallback' in window) {
+                    requestIdleCallback(startTracking, { timeout: 2000 });
+                } else {
+                    setTimeout(startTracking, 1000);
+                }
+            };
+
+            ['pointerdown', 'keydown', 'touchstart'].forEach((eventName) => {
+                window.addEventListener(eventName, start, { once: true, passive: true });
+            });
+            setTimeout(start, 2000);
+        }
+
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', function () {
+                scheduleTracking();
+            });
+        } else {
+            scheduleTracking();
         }
     })();
 </script>

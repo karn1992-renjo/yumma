@@ -440,6 +440,24 @@ class PosController extends Controller
             $discount = min(round((float) ($validated['discount_amount'] ?? 0), 2), $subtotal);
             $taxableSubtotal = max(0, round($subtotal - $discount, 2));
             $tax = round((float) TaxSetting::calculateTax($taxableSubtotal, 0), 2);
+
+            // GST mode override (Settings -> Business).
+            $gstService = app(\App\Services\Gst\GstTaxService::class);
+            $gstBreakdown = null;
+            if ($gstService->appliesTo($restaurant)) {
+                $rawLines = $gstService->linesFromRequestItems($orderItems);
+                $grossItems = array_sum(array_column($rawLines, 'line_total'));
+                $scale = $grossItems > 0 ? $taxableSubtotal / $grossItems : 1.0;
+                foreach ($rawLines as &$rl) {
+                    $rl['line_total'] = round($rl['line_total'] * $scale, 2);
+                }
+                unset($rl);
+                $gstBreakdown = $gstService->computeForOrder($restaurant, $rawLines, []);
+                if ($gstBreakdown) {
+                    $tax = $gstBreakdown->taxAdded;
+                }
+            }
+
             $posCommission = CommissionSetting::calculate('pos', $taxableSubtotal, 0);
             $total = round($taxableSubtotal + $tax, 2);
             $customerName = $validated['customer_name'] ?: 'Walk-in Customer';
@@ -476,6 +494,13 @@ class PosController extends Controller
                 'delivery_fee' => 0,
                 'platform_fee' => 0,
                 'tax' => $tax,
+                'tax_breakdown' => $gstBreakdown?->toArray(),
+                'cgst_amount' => $gstBreakdown?->cgstTotal,
+                'sgst_amount' => $gstBreakdown?->sgstTotal,
+                'igst_amount' => $gstBreakdown?->igstTotal,
+                'place_of_supply' => $gstBreakdown?->meta['place_of_supply'] ?? null,
+                'supplier_gstin' => $gstBreakdown?->meta['supplier_gstin'] ?? null,
+                'invoice_type' => $gstBreakdown ? 'tax_invoice' : null,
                 'discount' => $discount,
                 'total' => $total,
                 'payment_method' => $validated['payment_method'],

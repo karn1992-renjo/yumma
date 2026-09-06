@@ -1,8 +1,11 @@
+import 'dart:ui' show ImageFilter;
+
 import 'package:flutter/material.dart';
 import '../../config/api_constants.dart';
 import '../../services/api_service.dart';
 import '../../theme/foodflow_theme.dart';
-import '../../widgets/restaurant/premium_restaurant_widgets.dart';
+import '../../theme/aurora_theme.dart';
+import '../../widgets/aurora/aurora.dart';
 
 class RestaurantInfoScreen extends StatefulWidget {
   const RestaurantInfoScreen({super.key});
@@ -26,6 +29,7 @@ class _RestaurantInfoScreenState extends State<RestaurantInfoScreen> {
   final _minOrder = TextEditingController();
 
   bool _isLoading = true;
+  bool _hasData = false;
   bool _isSaving = false;
   bool _isPureVeg = false;
   bool _autoAccept = false;
@@ -56,8 +60,22 @@ class _RestaurantInfoScreenState extends State<RestaurantInfoScreen> {
   }
 
   Future<void> _loadInfo() async {
-    setState(() => _isLoading = true);
+    if (!_hasData) setState(() => _isLoading = true);
     try {
+      final cachedInfo = await _api.peekCache(ApiConstants.restaurantInfo);
+      final cachedCuisines = await _api.peekCache(ApiConstants.popularCuisines);
+      if (mounted && cachedInfo is Map && cachedInfo['success'] == true) {
+        setState(() {
+          if (cachedCuisines is Map && cachedCuisines['success'] == true) {
+            _availableCuisines =
+                List<dynamic>.from(cachedCuisines['data'] ?? []);
+          }
+          _applyInfo(Map<String, dynamic>.from(cachedInfo['data'] as Map));
+          _hasData = true;
+          _isLoading = false;
+        });
+      }
+
       final infoResponse = await _api.get(ApiConstants.restaurantInfo);
       final cuisinesResponse = await _api.get(ApiConstants.popularCuisines);
 
@@ -68,6 +86,7 @@ class _RestaurantInfoScreenState extends State<RestaurantInfoScreen> {
       if (infoResponse['success'] == true && mounted) {
         final data = Map<String, dynamic>.from(infoResponse['data'] as Map);
         _applyInfo(data);
+        _hasData = true;
       }
     } catch (e) {
       debugPrint('Load restaurant info error: $e');
@@ -177,53 +196,74 @@ class _RestaurantInfoScreenState extends State<RestaurantInfoScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final topPad = MediaQuery.of(context).padding.top + 64;
     return Scaffold(
-      backgroundColor: FoodFlowTheme.canvas,
-      appBar: AppBar(
-        title: const Text('Restaurant Info'),
+      backgroundColor: foodflow.canvas,
+      extendBodyBehindAppBar: true,
+      appBar: GlassAppBar(
+        title: Text('Store profile',
+            style: TextStyle(
+                color: foodflow.ink,
+                fontSize: 17,
+                fontWeight: FontWeight.w900)),
         actions: [
           IconButton(
             onPressed: _isLoading ? null : _loadInfo,
-            icon: const Icon(Icons.refresh),
+            icon: Icon(Icons.refresh_rounded, color: foodflow.ink),
             tooltip: 'Refresh',
           ),
         ],
       ),
-      bottomNavigationBar: SafeArea(
-        child: Container(
-          padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
-          decoration: const BoxDecoration(
-            color: Colors.white,
-            border: Border(top: BorderSide(color: FoodFlowTheme.line)),
-          ),
-          child: ElevatedButton.icon(
-            onPressed: _isSaving || _isLoading ? null : _saveInfo,
-            icon: _isSaving
-                ? const SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Icon(Icons.save_outlined),
-            label: const Text('Save Changes'),
+      bottomNavigationBar: ClipRect(
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+          child: Container(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+            decoration: BoxDecoration(
+              color: foodflow.canvas.withOpacity(0.82),
+              border: Border(top: BorderSide(color: foodflow.glassBorder)),
+            ),
+            child: SafeArea(
+              top: false,
+              child: SizedBox(
+                height: 50,
+                child: ElevatedButton.icon(
+                  onPressed: _isSaving || _isLoading ? null : _saveInfo,
+                  icon: _isSaving
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2, color: Colors.white),
+                        )
+                      : const Icon(Icons.check_rounded),
+                  label: Text(_isSaving ? 'Saving…' : 'Save changes'),
+                  style: FoodFlowTheme.zomatoPrimaryButton(),
+                ),
+              ),
+            ),
           ),
         ),
       ),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : RefreshIndicator(
-              onRefresh: _loadInfo,
-              child: Form(
-                key: _formKey,
-                child: ListView(
-                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
-                  children: [
-                    PremiumRestaurantHeader(
-                      title: _name.text.isEmpty ? 'Store Profile' : _name.text,
-                      subtitle: _ratingSubtitle(),
-                      icon: Icons.storefront,
-                    ),
-                    _branchTile(),
+      body: Stack(children: [
+        ...AuroraTheme.auroraBlobs(),
+        _isLoading
+            ? const Center(child: CircularProgressIndicator())
+            : RefreshIndicator(
+                onRefresh: _loadInfo,
+                child: Form(
+                  key: _formKey,
+                  child: ListView(
+                    padding: EdgeInsets.fromLTRB(16, topPad, 16, 24),
+                    children: [
+                      _InfoIdentityStrip(
+                        name: _name.text.isEmpty
+                            ? 'Your restaurant'
+                            : _name.text,
+                        subtitle: _ratingSubtitle(),
+                      ),
+                      const SizedBox(height: 14),
+                      _branchTile(),
                     _section('Identity', [
                       _field(
                         _name,
@@ -308,7 +348,7 @@ class _RestaurantInfoScreenState extends State<RestaurantInfoScreen> {
                         keyboardType: TextInputType.number,
                         enabled: false,
                       ),
-                      const Padding(
+                      Padding(
                         padding: EdgeInsets.only(bottom: 12),
                         child: Text(
                           'Minimum order, delivery fee, delivery time and radius are controlled by admin.',
@@ -335,30 +375,52 @@ class _RestaurantInfoScreenState extends State<RestaurantInfoScreen> {
                         activeColor: FoodFlowTheme.orange,
                       ),
                     ]),
-                  ],
+                    ],
+                  ),
                 ),
               ),
-            ),
+      ]),
     );
   }
+
+  BoxDecoration get _panel => BoxDecoration(
+        color: foodflow.surfaceColor,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: foodflow.line),
+      );
+
+  static const _sectionIcons = {
+    'Identity': Icons.badge_outlined,
+    'Contact': Icons.contact_phone_outlined,
+    'Location': Icons.location_on_outlined,
+    'Ordering': Icons.tune_rounded,
+  };
 
   Widget _section(String title, List<Widget> children) {
     return Container(
       margin: const EdgeInsets.only(bottom: 14),
-      padding: const EdgeInsets.all(14),
-      decoration: RestaurantPremium.panel(radius: 16),
+      padding: const EdgeInsets.all(16),
+      decoration: _panel,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            title,
-            style: const TextStyle(
-              color: FoodFlowTheme.ink,
-              fontSize: 16,
-              fontWeight: FontWeight.w900,
-            ),
+          Row(
+            children: [
+              Icon(_sectionIcons[title] ?? Icons.circle,
+                  size: 16, color: foodflow.orange),
+              const SizedBox(width: 8),
+              Text(
+                title.toUpperCase(),
+                style: TextStyle(
+                  color: foodflow.muted,
+                  fontSize: 12,
+                  letterSpacing: 0.6,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+            ],
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 14),
           ...children,
         ],
       ),
@@ -383,7 +445,7 @@ class _RestaurantInfoScreenState extends State<RestaurantInfoScreen> {
     return Container(
       margin: const EdgeInsets.only(bottom: 14),
       padding: const EdgeInsets.all(14),
-      decoration: RestaurantPremium.panel(radius: 16),
+      decoration: _panel,
       child: Row(
         children: [
           Container(
@@ -402,7 +464,7 @@ class _RestaurantInfoScreenState extends State<RestaurantInfoScreen> {
                     if (code != null && code.isNotEmpty) code,
                     if (name != null && name.isNotEmpty) name,
                   ].join(' - '),
-                  style: const TextStyle(
+                  style: TextStyle(
                     color: FoodFlowTheme.ink,
                     fontWeight: FontWeight.w900,
                   ),
@@ -412,7 +474,7 @@ class _RestaurantInfoScreenState extends State<RestaurantInfoScreen> {
                     padding: const EdgeInsets.only(top: 3),
                     child: Text(
                       location,
-                      style: const TextStyle(color: FoodFlowTheme.muted),
+                      style: TextStyle(color: FoodFlowTheme.muted),
                     ),
                   ),
               ],
@@ -450,6 +512,70 @@ class _RestaurantInfoScreenState extends State<RestaurantInfoScreen> {
             ? (value) =>
                   value == null || value.trim().isEmpty ? 'Required' : null
             : null,
+      ),
+    );
+  }
+}
+
+class _InfoIdentityStrip extends StatelessWidget {
+  const _InfoIdentityStrip({required this.name, required this.subtitle});
+
+  final String name;
+  final String subtitle;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        gradient: foodflow.brandGradient,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: foodflow.orange.withOpacity(0.24),
+            blurRadius: 20,
+            offset: const Offset(0, 10),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(11),
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.16),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: const Icon(Icons.storefront_rounded, color: Colors.white),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 18,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  subtitle,
+                  style: TextStyle(
+                    color: Colors.white.withOpacity(0.85),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }

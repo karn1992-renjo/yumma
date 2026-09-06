@@ -1,0 +1,12 @@
+@extends('layouts.admin')
+@section('title', 'Gig Fraud Signals')
+@section('content')
+<div class="page-header"><div class="d-flex justify-content-between align-items-center flex-wrap gap-3"><div><h1>Gig Fraud Signals</h1><p>Review automated risk signals from driver gig activity.</p></div><form method="GET" action="{{ route('admin.gigs.fraud-signals') }}" class="d-flex gap-2"><select name="status" class="form-select">@foreach($allowedStatuses as $option)<option value="{{ $option }}" @selected($status === $option)>{{ ucfirst($option) }}</option>@endforeach</select><button class="btn btn-outline-primary">Filter</button></form></div></div>
+<div class="table-card"><div class="table-responsive"><table class="table table-hover align-middle mb-0"><thead><tr><th>Driver</th><th>Slot</th><th>Signal</th><th>Severity</th><th>Evidence</th><th class="text-end">Action</th></tr></thead><tbody>
+@forelse($signals as $signal)
+<tr><td>{{ $signal->driver?->name ?? 'Driver #' . $signal->driver_id }}</td><td><div>{{ $signal->gig?->title ?: 'Gig #' . $signal->driver_gig_id }}</div><div class="small text-muted">{{ $signal->gig?->area?->name ?? 'Global' }}</div></td><td>{{ ucfirst(str_replace('_', ' ', $signal->signal_type)) }}</td><td><span class="badge badge-{{ $signal->severity === 'high' ? 'danger' : ($signal->severity === 'medium' ? 'warning' : 'secondary') }}">{{ ucfirst($signal->severity) }} ({{ $signal->score }})</span></td><td class="small text-muted">{{ is_array($signal->evidence) ? Illuminate\Support\Str::limit(json_encode($signal->evidence), 90) : '-' }}</td><td class="text-end">@if($signal->status === 'open')<div class="d-flex justify-content-end gap-2"><form action="{{ route('admin.gigs.fraud-signals.update', $signal) }}" method="POST">@csrf<input type="hidden" name="status" value="cleared"><button class="btn btn-sm btn-outline-success">Clear</button></form><form action="{{ route('admin.gigs.fraud-signals.update', $signal) }}" method="POST" onsubmit="return confirm('Confirm this as fraud?');">@csrf<input type="hidden" name="status" value="confirmed"><button class="btn btn-sm btn-outline-danger">Confirm</button></form></div>@else<span class="badge badge-secondary">{{ ucfirst($signal->status) }}</span>@endif</td></tr>
+@empty
+<tr><td colspan="6" class="text-center py-5 text-muted">No fraud signals found.</td></tr>
+@endforelse
+</tbody></table></div><div class="p-3">{{ $signals->links() }}</div></div>
+@endsection

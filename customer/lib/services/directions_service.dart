@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'native_config_service.dart';
@@ -44,26 +45,54 @@ class DirectionsService {
     LatLng origin,
     LatLng destination,
   ) async {
+    // 1. Google Directions (best geometry) when the key is present + authorised.
     final googleMapsApiKey = await NativeConfigService.getGoogleMapsApiKey();
-    if (googleMapsApiKey.isEmpty) {
-      return [];
+    if (googleMapsApiKey.isNotEmpty) {
+      try {
+        final points =
+            await _fetchFromGoogle(origin, destination, googleMapsApiKey);
+        if (points.length >= 2) return points;
+      } catch (e) {
+        debugPrint('Google Directions failed: $e');
+      }
     }
 
+    // 2. OSRM public router — no key, follows real roads. Used whenever Google
+    //    is unavailable (missing key, Directions API not enabled, no billing).
+    try {
+      final points = await _fetchFromOsrm(origin, destination);
+      if (points.length >= 2) return points;
+    } catch (e) {
+      debugPrint('OSRM routing failed: $e');
+    }
+
+    return [];
+  }
+
+  static Future<List<LatLng>> _fetchFromGoogle(
+    LatLng origin,
+    LatLng destination,
+    String key,
+  ) async {
     final url = Uri.parse(
       'https://maps.googleapis.com/maps/api/directions/json'
       '?origin=${origin.latitude},${origin.longitude}'
       '&destination=${destination.latitude},${destination.longitude}'
       '&mode=driving'
-      '&key=$googleMapsApiKey',
+      '&key=$key',
     );
 
-    final response = await _client.get(url);
+    final response =
+        await _client.get(url).timeout(const Duration(seconds: 8));
     if (response.statusCode != 200) {
+      debugPrint('Directions API HTTP ${response.statusCode}: ${response.body}');
       return [];
     }
 
     final data = jsonDecode(response.body);
     if (data == null || data['status'] != 'OK') {
+      debugPrint('Directions API status=${data?['status']} '
+          'error=${data?['error_message']}');
       return [];
     }
 
@@ -71,11 +100,38 @@ class DirectionsService {
         ? data['routes'][0]
         : null;
     final polyline = route?['overview_polyline']?['points'];
-    if (polyline == null || polyline is! String) {
+    if (polyline == null || polyline is! String) return [];
+    return decodePolyline(polyline);
+  }
+
+  static Future<List<LatLng>> _fetchFromOsrm(
+    LatLng origin,
+    LatLng destination,
+  ) async {
+    final url = Uri.parse(
+      'https://router.project-osrm.org/route/v1/driving/'
+      '${origin.longitude},${origin.latitude};'
+      '${destination.longitude},${destination.latitude}'
+      '?overview=full&geometries=polyline',
+    );
+
+    final response =
+        await _client.get(url).timeout(const Duration(seconds: 8));
+    if (response.statusCode != 200) {
+      debugPrint('OSRM HTTP ${response.statusCode}');
       return [];
     }
 
-    return decodePolyline(polyline);
+    final data = jsonDecode(response.body);
+    if (data == null || data['code'] != 'Ok') {
+      debugPrint('OSRM code=${data?['code']}');
+      return [];
+    }
+    final routes = data['routes'];
+    final geometry =
+        routes is List && routes.isNotEmpty ? routes[0]['geometry'] : null;
+    if (geometry is! String) return [];
+    return decodePolyline(geometry);
   }
 
   static String _routeKey(LatLng origin, LatLng destination) {

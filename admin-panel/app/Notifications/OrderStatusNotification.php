@@ -2,14 +2,18 @@
 
 namespace App\Notifications;
 
-use Illuminate\Bus\Queueable;
 use Illuminate\Notifications\Notification;
-use Illuminate\Contracts\Queue\ShouldQueue;
 
-class OrderStatusNotification extends Notification implements ShouldQueue
+/**
+ * Always dispatched via notifyNow() (see OrderStatusPushService), never
+ * notify() -- so this deliberately does NOT implement ShouldQueue. Declaring
+ * queueability here would be misleading: notifyNow() sends synchronously
+ * regardless, and this app has no confirmed queue worker running, so a real
+ * ShouldQueue notification would silently never deliver if a future call
+ * site switched to notify().
+ */
+class OrderStatusNotification extends Notification
 {
-    use Queueable;
-    
     protected $order;
     protected $message;
     protected string $role;

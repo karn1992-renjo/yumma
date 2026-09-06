@@ -9,10 +9,10 @@ class AppImageCache {
 
   static final CacheManager instance = CacheManager(
     Config(
-      'Yumma_image_cache_v3',
+      'Swado_image_cache_v3',
       stalePeriod: const Duration(days: 30),
       maxNrOfCacheObjects: 1000,
-      repo: JsonCacheInfoRepository(databaseName: 'Yumma_image_cache_v3'),
+      repo: JsonCacheInfoRepository(databaseName: 'Swado_image_cache_v3'),
       fileService: HttpFileService(),
     ),
   );

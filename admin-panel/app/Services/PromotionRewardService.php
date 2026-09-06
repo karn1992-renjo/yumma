@@ -67,9 +67,9 @@ class PromotionRewardService
         $giftVoucherAmount = 0.0;
         $rewardPayload = [];
 
-        if (in_array($type, ['percentage', 'percentage_discount', 'subscription_discount', 'festival_offer', 'flash_sale', 'clearance_sale', 'ai_promotion'], true)) {
+        if (in_array($type, ['percentage', 'percent', 'percentage_discount', 'percent_discount', 'subscription_discount', 'festival_offer', 'flash_sale', 'clearance_sale', 'ai_promotion'], true)) {
             $discount = $subtotal * ($value / 100);
-        } elseif (in_array($type, ['flat', 'fixed', 'fixed_amount', 'flat_discount'], true)) {
+        } elseif (in_array($type, ['flat', 'fixed', 'fixed_amount', 'fixed_discount', 'flat_discount', 'amount_discount', 'cart_discount'], true)) {
             $discount = $value;
         } elseif (in_array($type, ['fixed_price', 'fixed_selling_price'], true)) {
             $discount = max(0, $subtotal - $value);
@@ -362,10 +362,10 @@ class PromotionRewardService
         $giftVoucher = 0.0;
         $bucket = 'custom_rule';
 
-        if (in_array($type, ['percentage', 'percentage_discount'], true)) {
+        if (in_array($type, ['percentage', 'percent', 'percentage_discount', 'percent_discount'], true)) {
             $discount = $subtotal * ($value / 100);
             $bucket = 'promotion_discount';
-        } elseif (in_array($type, ['flat', 'flat_discount', 'fixed_amount'], true)) {
+        } elseif (in_array($type, ['flat', 'fixed', 'flat_discount', 'fixed_amount', 'fixed_discount', 'amount_discount', 'cart_discount'], true)) {
             $discount = $value;
             $bucket = 'promotion_discount';
         } elseif ($type === 'free_delivery') {

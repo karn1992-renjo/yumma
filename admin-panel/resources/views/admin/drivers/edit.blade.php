@@ -96,6 +96,38 @@
                             @error('license_number') <div class="invalid-feedback">{{ $message }}</div> @enderror
                         </div>
 
+                        <div class="col-md-4">
+                            <label class="form-label fw-semibold">Payout Mode <span class="text-danger">*</span></label>
+                            <select name="earning_mode" id="earning_mode" class="form-select @error('earning_mode') is-invalid @enderror" required>
+                                <option value="commission" @selected(old('earning_mode', $driver->earning_mode ?? 'commission') === 'commission')>Per-delivery commission</option>
+                                <option value="salary" @selected(old('earning_mode', $driver->earning_mode) === 'salary')>Fixed monthly salary</option>
+                            </select>
+                            @error('earning_mode') <div class="invalid-feedback">{{ $message }}</div> @enderror
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label fw-semibold">Monthly Salary</label>
+                            <input type="number" step="0.01" min="0" name="monthly_salary" class="form-control @error('monthly_salary') is-invalid @enderror" value="{{ old('monthly_salary', $driver->monthly_salary) }}" placeholder="Only for salary mode">
+                            @error('monthly_salary') <div class="invalid-feedback">{{ $message }}</div> @enderror
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label fw-semibold">Salary Effective From</label>
+                            <input type="date" name="salary_effective_from" class="form-control @error('salary_effective_from') is-invalid @enderror" value="{{ old('salary_effective_from', optional($driver->salary_effective_from)->format('Y-m-d')) }}">
+                            @error('salary_effective_from') <div class="invalid-feedback">{{ $message }}</div> @enderror
+                        </div>
+
+                        <div class="col-md-4">
+                            <label class="form-label fw-semibold">PAN <span class="text-muted small">(TDS 194-C)</span></label>
+                            <input type="text" name="pan" class="form-control @error('pan') is-invalid @enderror" maxlength="15" value="{{ old('pan', $driver->pan) }}">
+                            @error('pan') <div class="invalid-feedback">{{ $message }}</div> @enderror
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label fw-semibold">Deductee Type</label>
+                            <select name="tax_deductee_type" class="form-select">
+                                <option value="individual" @selected(old('tax_deductee_type', $driver->tax_deductee_type ?? 'individual') === 'individual')>Individual / HUF</option>
+                                <option value="company" @selected(old('tax_deductee_type', $driver->tax_deductee_type) === 'company')>Company / Firm</option>
+                            </select>
+                        </div>
+
                         <div class="col-12">
                             <label class="form-label fw-semibold">Driver Location</label>
                             <div class="input-group mb-2">
@@ -182,20 +214,23 @@
 
 @section('scripts')
 @include('partials.google-maps-shim')
+@php
+    $deliveryAreasForMap = $deliveryAreas->map(function ($area) {
+        return [
+            'id' => $area->id,
+            'name' => $area->name,
+            'area_type' => $area->area_type,
+            'description' => $area->description,
+            'latitude' => $area->latitude,
+            'longitude' => $area->longitude,
+            'radius_km' => $area->radius_km,
+            'polygon_coordinates' => $area->polygon_coordinates,
+        ];
+    })->values();
+@endphp
 <script>
     document.addEventListener('DOMContentLoaded', function () {
-        const deliveryAreas = @json(
-            $deliveryAreas->map(fn ($area) => [
-                'id' => $area->id,
-                'name' => $area->name,
-                'area_type' => $area->area_type,
-                'description' => $area->description,
-                'latitude' => $area->latitude,
-                'longitude' => $area->longitude,
-                'radius_km' => $area->radius_km,
-                'polygon_coordinates' => $area->polygon_coordinates,
-            ])->values()
-        );
+        const deliveryAreas = @json($deliveryAreasForMap);
         const visibleGatewayAccountField = document.getElementById('stripe_account_id');
         const hiddenGatewayAccountField = document.getElementById('gateway_account_id');
         const searchBtn = document.getElementById('searchAddressBtn');

@@ -2,10 +2,10 @@ import 'package:flutter/material.dart';
 import '../../theme/foodflow_theme.dart';
 
 class RestaurantPremium {
-  static const Color navy = FoodFlowTheme.ink;
+  static Color navy = FoodFlowTheme.ink;
   static const Color gold = Color(0xFFFFB84D);
-  static const Color rose = FoodFlowTheme.crimson;
-  static const Color surfaceTint = FoodFlowTheme.warmCanvas;
+  static Color rose = FoodFlowTheme.crimson;
+  static Color surfaceTint = FoodFlowTheme.warmCanvas;
 
   static LinearGradient get darkGradient => LinearGradient(
         begin: Alignment.topLeft,
@@ -15,12 +15,12 @@ class RestaurantPremium {
 
   static BoxDecoration panel({double radius = 16}) {
     return BoxDecoration(
-      color: Colors.white,
+      color: foodflow.isDark ? foodflow.elevatedSurface : Colors.white,
       borderRadius: BorderRadius.circular(radius),
       border: Border.all(color: FoodFlowTheme.line),
       boxShadow: [
         BoxShadow(
-          color: Colors.black.withOpacity(0.035),
+          color: Colors.black.withOpacity(foodflow.isDark ? 0.3 : 0.035),
           blurRadius: 12,
           offset: const Offset(0, 5),
         ),
@@ -160,7 +160,7 @@ class PremiumMetricCard extends StatelessWidget {
                   ),
                   child: Text(
                     caption!,
-                    style: const TextStyle(
+                    style: TextStyle(
                       color: FoodFlowTheme.muted,
                       fontSize: 10,
                       fontWeight: FontWeight.w900,
@@ -174,7 +174,7 @@ class PremiumMetricCard extends StatelessWidget {
             value,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
+            style: TextStyle(
               color: FoodFlowTheme.ink,
               fontSize: 22,
               fontWeight: FontWeight.w800,
@@ -185,7 +185,7 @@ class PremiumMetricCard extends StatelessWidget {
             title,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
+            style: TextStyle(
               color: FoodFlowTheme.muted,
               fontSize: 14,
               fontWeight: FontWeight.w600,
@@ -222,7 +222,7 @@ class PremiumSectionTitle extends StatelessWidget {
               children: [
                 Text(
                   title,
-                  style: const TextStyle(
+                  style: TextStyle(
                     color: FoodFlowTheme.ink,
                     fontSize: 19,
                     fontWeight: FontWeight.w800,
@@ -232,7 +232,7 @@ class PremiumSectionTitle extends StatelessWidget {
                   const SizedBox(height: 2),
                   Text(
                     subtitle!,
-                    style: const TextStyle(
+                    style: TextStyle(
                       color: FoodFlowTheme.muted,
                       fontSize: 14,
                       fontWeight: FontWeight.w700,

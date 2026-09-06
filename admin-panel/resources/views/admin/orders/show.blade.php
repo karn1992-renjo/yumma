@@ -21,6 +21,7 @@
         'picked_up' => ['label' => 'Picked Up', 'icon' => 'person-biking', 'tone' => 'dark'],
         'on_the_way' => ['label' => 'On The Way', 'icon' => 'route', 'tone' => 'info'],
         'delivered' => ['label' => 'Delivered', 'icon' => 'house-circle-check', 'tone' => 'success'],
+        'delivery_failed' => ['label' => 'Delivery Failed', 'icon' => 'triangle-exclamation', 'tone' => 'dark'],
         'cancelled' => ['label' => 'Cancelled', 'icon' => 'ban', 'tone' => 'danger'],
     ];
 
@@ -30,6 +31,18 @@
         'icon' => 'circle',
         'tone' => 'secondary',
     ];
+    $statusUpdateOptions = [
+        'pending' => 'Pending',
+        'confirmed' => 'Confirmed',
+        'preparing' => 'Preparing',
+        'ready_for_pickup' => 'Ready for Pickup',
+        'picked_up' => 'Picked Up',
+        'on_the_way' => 'On The Way',
+        'delivered' => 'Delivered',
+        'delivery_failed' => 'Delivery Failed',
+    ];
+    $canUpdateStatus = $currentStatus !== 'cancelled';
+    $canCancel = ! in_array($currentStatus, ['cancelled', 'delivered'], true);
 
     $paymentStatus = (string) ($order->payment_status ?: 'pending');
     $paymentTone = in_array($paymentStatus, ['success', 'paid', 'completed'], true)
@@ -624,6 +637,48 @@
         </div>
     </section>
 
+    @php $gstOn = (string) \App\Models\AppSetting::getValue('business_gst_enabled', '0') === '1'; @endphp
+    @if($gstOn || $order->invoice_type === 'tax_invoice' || $order->einvoice_status === 'generated')
+    <section class="admin-order-card">
+        <div class="admin-order-card-header">
+            <div>
+                <h2 class="admin-order-card-title">GST / E-Invoice</h2>
+                <div class="admin-order-card-subtitle">
+                    {{ $order->invoice_number ? 'Invoice ' . $order->invoice_number : 'Invoice number allocated on confirmation.' }}
+                    @if($order->place_of_supply) &middot; Place of supply: {{ $order->place_of_supply }} @endif
+                    @if($order->cgst_amount !== null) &middot; CGST {{ number_format((float) $order->cgst_amount, 2) }} + SGST {{ number_format((float) $order->sgst_amount, 2) }} @endif
+                </div>
+            </div>
+            <span class="admin-order-chip {{ $order->einvoice_status === 'generated' ? 'success' : 'neutral' }}">
+                <i class="fas fa-qrcode"></i>{{ ucfirst($order->einvoice_status ?: 'none') }}
+            </span>
+        </div>
+        <div class="admin-order-card-body">
+            @if(session('error'))<div class="alert alert-danger py-2">{{ session('error') }}</div>@endif
+            @if($order->einvoice_status === 'generated')
+                <p class="mb-1 small"><strong>IRN:</strong> {{ $order->einvoice_irn }}</p>
+                @if($order->einvoice_ack_no)<p class="mb-2 small"><strong>Ack:</strong> {{ $order->einvoice_ack_no }} @if($order->einvoice_acked_at)&middot; {{ $order->einvoice_acked_at->format('d M Y, h:i A') }}@endif</p>@endif
+                <form action="{{ route('admin.orders.einvoice.clear', $order->id) }}" method="POST" onsubmit="return confirm('Clear the saved e-invoice?');">
+                    @csrf @method('DELETE')
+                    <button class="btn btn-sm btn-outline-danger">Clear e-invoice</button>
+                </form>
+            @else
+                <form action="{{ route('admin.orders.einvoice.store', $order->id) }}" method="POST" class="row g-2">
+                    @csrf
+                    <div class="col-md-6"><input type="text" name="irn" class="form-control form-control-sm" placeholder="IRN (from govt portal)" required></div>
+                    <div class="col-md-3"><input type="text" name="ack_no" class="form-control form-control-sm" placeholder="Ack No"></div>
+                    <div class="col-md-3"><input type="text" name="ack_date" class="form-control form-control-sm" placeholder="Ack Date"></div>
+                    <div class="col-12"><textarea name="qr" class="form-control form-control-sm" rows="2" placeholder="Signed QR string (optional)"></textarea></div>
+                    <div class="col-12 d-flex gap-2">
+                        <button class="btn btn-sm btn-primary">Save e-invoice (manual)</button>
+                        <button class="btn btn-sm btn-outline-secondary" name="mode" value="generate">Generate via GSP</button>
+                    </div>
+                </form>
+            @endif
+        </div>
+    </section>
+    @endif
+
     <section class="admin-order-summary">
         @foreach($summaryTiles as $tile)
             <div class="admin-order-tile">
@@ -956,7 +1011,7 @@
                     <div class="admin-line-list">
                         <div class="admin-line">
                             <span class="admin-line-label">Restaurant</span>
-                            <span class="admin-line-value">{{ optional($order->restaurant)->name ?? 'N/A' }}</span>
+                            <span class="admin-line-value">{{ optional($order->restaurant)->name ?? 'N/A' }}@if($order->restaurant) ({{ $order->restaurant->code }})@endif</span>
                         </div>
                         <div class="admin-line">
                             <span class="admin-line-label">Restaurant Phone</span>
@@ -986,7 +1041,7 @@
                         <div class="admin-line-list">
                             <div class="admin-line">
                                 <span class="admin-line-label">Driver</span>
-                                <span class="admin-line-value">{{ $order->driver->name }}</span>
+                                <span class="admin-line-value">{{ $order->driver->name }} ({{ $order->driver->driver_code }})</span>
                             </div>
                             <div class="admin-line">
                                 <span class="admin-line-label">Phone</span>
@@ -1039,24 +1094,21 @@
                 </div>
                 <div class="admin-order-card-body">
                     <div class="admin-action-stack">
-                        @if(in_array($currentStatus, ['pending', 'confirmed', 'preparing', 'ready_for_pickup', 'picked_up', 'on_the_way'], true))
+                        @if($canUpdateStatus)
                             <form action="{{ route('admin.orders.update-status', $order->id) }}" method="POST" class="admin-action-stack">
                                 @csrf
                                 @method('PUT')
                                 <div>
                                     <label class="form-label fw-bold">Update Status</label>
-                                    <select name="status" class="form-select" id="statusSelect">
-                                        @foreach(['confirmed', 'preparing', 'ready_for_pickup', 'picked_up', 'on_the_way', 'delivered'] as $status)
-                                            <option value="{{ $status }}" {{ $currentStatus === $status ? 'selected disabled' : '' }}>
-                                                {{ ucfirst(str_replace('_', ' ', $status)) }}
-                                            </option>
+                                    <select name="status" class="form-select" id="statusSelect" required>
+                                        <option value="" selected disabled>Current: {{ $currentStatusMeta['label'] }}</option>
+                                        @foreach($statusUpdateOptions as $status => $label)
+                                            @if($status !== $currentStatus)
+                                                <option value="{{ $status }}">{{ $label }}</option>
+                                            @endif
                                         @endforeach
-                                        <option value="cancelled">Cancel Order</option>
                                     </select>
-                                </div>
-                                <div class="d-none" id="cancellationReasonDiv">
-                                    <label class="form-label fw-bold">Cancellation Reason</label>
-                                    <input type="text" name="cancellation_reason" class="form-control" placeholder="Reason for cancellation">
+                                    <small class="text-muted d-block mt-2">Use Delivery Failed for failed delivery attempts. To cancel the order, use the Cancel Order action below.</small>
                                 </div>
                                 <button type="submit" class="btn btn-primary">
                                     <i class="fas fa-rotate me-2"></i>Update Status
@@ -1065,8 +1117,26 @@
                         @else
                             <div class="admin-empty-state py-2">
                                 <i class="fas fa-circle-check d-block mb-2"></i>
-                                No status action available.
+                                No status action available for cancelled orders.
                             </div>
+                        @endif
+
+                        @if($canCancel)
+                            <hr class="my-2">
+                            <form action="{{ route('admin.orders.cancel', $order->id) }}" method="POST" class="admin-action-stack"
+                                  onsubmit="return confirm('Cancel this order? The customer and restaurant will be notified. This cannot be undone.');">
+                                @csrf
+                                @method('PUT')
+                                <div>
+                                    <label class="form-label fw-bold text-danger">Cancel Order</label>
+                                    <textarea name="cancellation_reason" class="form-control" rows="2" maxlength="500"
+                                              placeholder="Reason for cancellation (optional, shown in the activity log)"></textarea>
+                                    <small class="text-muted d-block mt-2">Sets the order to Cancelled and notifies the customer and restaurant. Any refund due is handled separately in Refund Management.</small>
+                                </div>
+                                <button type="submit" class="btn btn-outline-danger">
+                                    <i class="fas fa-ban me-2"></i>Cancel Order
+                                </button>
+                            </form>
                         @endif
 
                         <hr class="my-2">
@@ -1090,6 +1160,22 @@
                             @endif
                         </div>
 
+                        <hr class="my-2">
+
+                        <details class="alert alert-danger mb-0">
+                            <summary class="fw-bold" style="cursor:pointer; list-style: none;">
+                                <i class="fas fa-triangle-exclamation me-2"></i>Delete from database
+                            </summary>
+                            <div class="small my-3">This permanently removes the order record and cannot be undone. Type the order number to confirm.</div>
+                            <form action="{{ route('admin.orders.destroy', $order->id) }}" method="POST" class="admin-action-stack" onsubmit="return confirm('Permanently delete order #{{ $order->order_number }} from the database? This cannot be undone.');">
+                                @csrf
+                                @method('DELETE')
+                                <input type="text" name="delete_confirmation" class="form-control" placeholder="Type {{ $order->order_number }}" required autocomplete="off">
+                                <button type="submit" class="btn btn-danger">
+                                    <i class="fas fa-trash me-2"></i>Delete Order From Database
+                                </button>
+                            </form>
+                        </details>
                         @if($order->payment_status === 'success' && $order->refund_status !== 'completed')
                             <form action="{{ route('admin.orders.refund', $order->id) }}" method="POST" class="admin-action-stack mt-2">
                                 @csrf
@@ -1155,12 +1241,7 @@
 </div>
 
 <script>
-    document.getElementById('statusSelect')?.addEventListener('change', function() {
-        const reasonDiv = document.getElementById('cancellationReasonDiv');
-        reasonDiv?.classList.toggle('d-none', this.value !== 'cancelled');
-    });
-
-    const driverSelect = document.getElementById('driverSelect');
+const driverSelect = document.getElementById('driverSelect');
     if (driverSelect) {
         fetch('{{ route("admin.orders.available-drivers", $order->id) }}')
             .then(response => response.json())

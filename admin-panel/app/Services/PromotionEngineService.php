@@ -63,6 +63,58 @@ class PromotionEngineService
             })
             ->take($limit)
             ->map(fn (Promotion $promotion) => $this->promotionPayload($promotion))
+            // toBase(): when the filter leaves nothing, Eloquent\Collection::map
+            // keeps the collection typed as an Eloquent collection, and a later
+            // ->merge() of plain-array coupon payloads then calls ->getKey() on
+            // an array and 500s. Callers only ever want arrays here.
+            ->toBase()
+            ->values();
+    }
+
+    /**
+     * Promotions to show in the checkout "coupons & offers" list for a
+     * restaurant: automatic promos the viewer can see (listForViewer) PLUS
+     * every coupon-mode promo whose coupon is available to this viewer
+     * (public or personally assigned). Each entry carries `coupon_code` and an
+     * `offer_applicability.can_apply_now` flag so the client can grey out ones
+     * that don't fit the current cart yet. `listForViewer` alone omits
+     * coupon-mode promos entirely (they need a code in context to pass
+     * checkViewer), which is why admin coupon offers never appeared at
+     * checkout before.
+     */
+    public function listForCheckout(array $context = []): Collection
+    {
+        $limit = max(1, min(100, (int) ($context['limit'] ?? 50)));
+        $normalized = $this->finder->normalizeContext($context);
+        $baseContext = array_merge($context, ['limit' => $limit, 'browse' => true]);
+
+        $automatic = $this->listForViewer($baseContext);
+
+        $couponOffers = $this->finder->activeCoupons($normalized, $limit)
+            ->filter(fn (PromotionCouponCode $coupon) => $coupon->promotion !== null)
+            ->map(function (PromotionCouponCode $coupon) use ($normalized) {
+                $viewer = $this->validator->checkViewer(
+                    $coupon->promotion,
+                    array_merge($normalized, ['coupon_code' => $coupon->code]),
+                    $coupon
+                );
+
+                return array_merge($this->promotionPayload($coupon->promotion, $coupon), [
+                    'source_type' => $this->isScratchRewardPromotion($coupon->promotion)
+                        ? 'scratch_card_reward'
+                        : 'promotion',
+                    'offer_applicability' => [
+                        'can_apply_now' => (bool) ($viewer['eligible'] ?? false),
+                        'reason' => $viewer['reason'] ?? null,
+                        'reason_code' => $viewer['reason_code'] ?? null,
+                    ],
+                ]);
+            });
+
+        return $automatic
+            ->merge($couponOffers)
+            ->unique(fn (array $p) => $p['display_id'] ?? ('promotion:' . ($p['id'] ?? '0')))
+            ->take($limit)
             ->values();
     }
 
@@ -279,12 +331,24 @@ class PromotionEngineService
             ->first(fn (array $line) => ! empty($line['coupon_code']));
 
         if (! $couponApplied) {
-            $reason = collect($result['invalid_reasons'])->first()['reason']
-                ?? 'Coupon does not apply to the current order total';
+            $code = strtoupper((string) ($context['coupon_code'] ?? $context['code'] ?? ''));
+            $invalidForThisCoupon = collect($result['invalid_reasons'] ?? [])
+                ->first(fn (array $r) => strtoupper((string) ($r['coupon_code'] ?? '')) === $code);
+            $coupon = $this->finder->coupon($code);
+
+            // The coupon is a real, currently-usable code but a bigger
+            // automatic offer already covers the order -- say so, rather than
+            // implying the code itself is bad.
+            $reason = $invalidForThisCoupon['reason']
+                ?? ($coupon && $coupon->promotion
+                    ? 'A bigger offer is already applied to this order.'
+                    : 'Coupon does not apply to the current order total');
 
             return array_merge($result, [
                 'success' => false,
                 'message' => $reason,
+                'reason_code' => $invalidForThisCoupon['reason_code']
+                    ?? ($coupon ? 'outperformed_by_automatic_offer' : 'coupon_invalid'),
             ]);
         }
 
@@ -856,7 +920,7 @@ class PromotionEngineService
         }
 
         $items = MenuItem::query()
-            ->with('restaurant:id,name')
+            ->with('restaurant')
             ->whereIn('id', $ids->all())
             ->get()
             ->keyBy('id');
@@ -875,6 +939,8 @@ class PromotionEngineService
                 'discounted_price' => $item->discounted_price !== null ? (float) $item->discounted_price : null,
                 'restaurant_id' => $item->restaurant_id,
                 'restaurant_name' => $item->restaurant?->name,
+                'restaurant_is_open' => (bool) ($item->restaurant?->isOpenNow() ?? true),
+                'is_available' => (bool) ($item->is_available ?? true),
                 'is_veg' => (bool) $item->is_veg,
                 'is_combo' => (bool) $item->is_combo,
                 'is_reward_item' => (int) data_get($reward, 'free_item_id') === (int) $item->id,

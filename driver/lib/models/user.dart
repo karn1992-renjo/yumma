@@ -9,6 +9,7 @@ class User {
   final String phone;
   final String? profileImage;
   final String? role;
+  final List<String> allRoles;
   final bool isActive;
   final String? vehicleType;
   final String? vehicleNumber;
@@ -25,6 +26,7 @@ class User {
     required this.phone,
     this.profileImage,
     this.role,
+    this.allRoles = const [],
     this.isActive = true,
     this.vehicleType,
     this.vehicleNumber,
@@ -37,18 +39,24 @@ class User {
 
   factory User.fromJson(Map<String, dynamic> json) {
     final dynamic rolesJson = json['roles'];
-    String? parsedRole;
-
-    if (json['role'] != null) {
-      parsedRole = json['role'].toString().toLowerCase();
-    } else if (rolesJson is List && rolesJson.isNotEmpty) {
-      final firstRole = rolesJson.first;
-      if (firstRole is Map<String, dynamic>) {
-        parsedRole = firstRole['name']?.toString().toLowerCase();
-      } else if (firstRole is String) {
-        parsedRole = firstRole.toLowerCase();
+    final allRoles = <String>[];
+    if (rolesJson is List) {
+      for (final r in rolesJson) {
+        if (r is Map && r['name'] != null) {
+          allRoles.add(r['name'].toString().toLowerCase());
+        } else if (r is String) {
+          allRoles.add(r.toLowerCase());
+        }
       }
     }
+    // Cached `role` string (from a prior parse) is also authoritative.
+    final cachedRole = json['role']?.toString().toLowerCase();
+    if (cachedRole != null && !allRoles.contains(cachedRole)) {
+      allRoles.add(cachedRole);
+    }
+
+    String? parsedRole = cachedRole ??
+        (allRoles.isNotEmpty ? allRoles.first : null);
 
     return User(
       id: json['id'],
@@ -57,6 +65,7 @@ class User {
       phone: json['phone'] ?? '',
       profileImage: json['profile_image'] ?? json['profile_photo_url'],
       role: parsedRole ?? 'customer',
+      allRoles: allRoles,
       isActive: parseBoolValue(json['is_active'], true),
       vehicleType: json['vehicle_type'],
       vehicleNumber: json['vehicle_number'],
@@ -82,6 +91,7 @@ class User {
       'phone': phone,
       'profile_image': profileImage,
       'role': role,
+      'roles': allRoles,
       'is_active': isActive,
       'vehicle_type': vehicleType,
       'vehicle_number': vehicleNumber,
@@ -105,10 +115,11 @@ class User {
     return normalized.contains('restaurant') || normalized.contains('owner');
   }
 
-  bool get isDriver {
-    if (role == null) return false;
-    final normalized = role!.toLowerCase();
-    return normalized.contains('delivery') || normalized.contains('driver');
+  bool get isDriver => _hasRole('delivery') || _hasRole('driver');
+
+  bool _hasRole(String fragment) {
+    if (role != null && role!.toLowerCase().contains(fragment)) return true;
+    return allRoles.any((r) => r.contains(fragment));
   }
 
   bool get isAdmin {

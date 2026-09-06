@@ -76,7 +76,8 @@ class GigMlForecastService
 
     private function samples(DeliveryArea $area, Carbon $date, int $hour): array
     {
-        $start = $date->copy()->subDays(56)->startOfDay();
+        $lookbackDays = max(7, (int) \App\Models\AppSetting::getValue('gig_ml_forecast_lookback_days', 56));
+        $start = $date->copy()->subDays($lookbackDays)->startOfDay();
         $end = $date->copy()->subDay()->endOfDay();
         $orders = Order::query()
             ->where('status', 'delivered')

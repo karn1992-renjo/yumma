@@ -23,8 +23,8 @@ class DefaultFirebaseOptions {
     projectId: 'yumma-458b0',
     storageBucket: 'yumma-458b0.firebasestorage.app',
     messagingSenderId: '596992936599',
-    appId: '1:596992936599:web:abb75eb61f127ec4364e0a',
-    measurementId: 'G-SPEPT9CS1B',
+    appId: '1:596992936599:web:8d6fa739975dfcf6f6b7d2',
+    measurementId: 'G-0ZTK9YVV43',
   );
 
   static const FirebaseOptions android = FirebaseOptions(

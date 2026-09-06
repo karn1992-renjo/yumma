@@ -9,13 +9,22 @@ use App\Http\Controllers\Api\RestaurantMenuController;
 use App\Http\Controllers\Api\MenuController;
 use App\Http\Controllers\Api\NotificationController;
 use App\Http\Controllers\Api\OrderController;
+use App\Http\Controllers\Api\CartController;
 use App\Http\Controllers\Api\OrderChatController;
 use App\Http\Controllers\Api\DriverController;
+use App\Http\Controllers\Api\DriverRestaurantOnboardingController;
 use App\Http\Controllers\Api\DiningController;
 use App\Http\Controllers\Api\RestaurantDiningController;
 use App\Http\Controllers\Api\DeliveryController;
+use App\Http\Controllers\Api\FlashResaleController;
 use App\Http\Controllers\Api\ReturnController;
 use App\Http\Controllers\Api\CampaignController;
+use App\Http\Controllers\Api\AdCampaignController;
+use App\Http\Controllers\Api\AdWalletController;
+use App\Http\Controllers\Api\AdTrackingController;
+use App\Http\Controllers\Api\AiToolController;
+use App\Http\Controllers\Api\AiSessionTokenController;
+use App\Http\Controllers\Api\VoiceAiConfigController;
 use App\Http\Controllers\Api\ContentController;
 use App\Http\Controllers\Api\AddressController;
 use App\Http\Controllers\Api\PaymentController;
@@ -30,6 +39,10 @@ use App\Http\Controllers\Api\VerificationController;
 use App\Http\Controllers\Api\PromotionController;
 use App\Http\Controllers\Api\ReferralController;
 use App\Http\Controllers\DirectChatController;
+use App\Http\Controllers\Api\Restaurant\RestaurantAssistantController;
+use App\Http\Controllers\Api\Restaurant\MenuAnalyticsController;
+use App\Http\Controllers\Api\Restaurant\RestaurantInvoicesController;
+use App\Http\Controllers\Api\Restaurant\NotificationTestController;
 use App\Http\Resources\RestaurantResource;
 use App\Models\AppSetting;
 use App\Models\DeliveryArea;
@@ -110,6 +123,7 @@ Route::get('/content/legal', function () {
             'terms' => $legalText('legal_terms', 'Use of this platform is subject to account, order, payment, cancellation and support policies.'),
             'privacy' => $legalText('legal_privacy', 'We process customer, restaurant, driver, location and order data to operate delivery and support workflows.'),
             'refund' => $legalText('legal_refund', 'Refund eligibility depends on payment status, restaurant acceptance, delivery progress and support review.'),
+            'account_deletion' => $legalText('legal_account_deletion', 'You can request account deletion from within the app or by emailing support. We remove personal data within 30 days, except records we must retain for tax, fraud-prevention and legal-compliance purposes.'),
             'contact_email' => $contactEmail !== '' ? $contactEmail : 'support@foodflow.com',
         ],
     ]);
@@ -126,8 +140,16 @@ Route::get('/v1/search/suggestions', [SearchController::class, 'suggestions'])->
 Route::get('/v1/search/trending', [SearchController::class, 'trending'])->middleware('throttle:60,1');
 Route::post('/v1/search/click', [SearchController::class, 'trackClick'])->middleware('throttle:120,1');
 
+Route::post('/ai/tools/{tool}', AiToolController::class)->middleware('throttle:120,1');
+Route::get('/ai/status', [VoiceAiConfigController::class, 'status'])->middleware('throttle:30,1');
+Route::get('/ai/settings', [VoiceAiConfigController::class, 'internal'])->middleware('throttle:60,1');
+Route::post('/ai/usage', [VoiceAiConfigController::class, 'usage'])->middleware('throttle:120,1');
+
 // Protected routes
 Route::middleware('auth:sanctum')->group(function () {
+    Route::get('/ai/config', [VoiceAiConfigController::class, 'public'])->middleware('throttle:30,1');
+    Route::post('/ai/session-token', AiSessionTokenController::class)->middleware('throttle:30,1');
+
     Route::post('/broadcasting/auth', function (Request $request) {
         $validated = $request->validate([
             'socket_id' => ['required', 'string'],
@@ -139,6 +161,8 @@ Route::middleware('auth:sanctum')->group(function () {
         $isAuthorized = false;
 
         if ($channelName === 'private-admin.gig-operations') {
+            $isAuthorized = $user->hasRole('admin') || $user->hasRole('super_admin');
+        } elseif ($channelName === 'private-admin.ai-activity') {
             $isAuthorized = $user->hasRole('admin') || $user->hasRole('super_admin');
         } elseif (preg_match('/^private-order\.(\d+)$/', $channelName, $matches)) {
             $order = \App\Models\Order::find((int) $matches[1]);
@@ -201,8 +225,14 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/referrals/summary', [ReferralController::class, 'summary']);
     Route::get('/notifications', [NotificationController::class, 'index']);
     Route::delete('/notifications', [NotificationController::class, 'clear']);
+    Route::delete('/notifications/{id}', [NotificationController::class, 'destroy']);
+    // POST aliases -- some hosts (LiteSpeed/cPanel) block DELETE at the web-server level.
+    Route::post('/notifications/clear', [NotificationController::class, 'clear']);
+    Route::post('/notifications/{id}/delete', [NotificationController::class, 'destroy']);
     Route::post('/notifications/read', [NotificationController::class, 'markRead']);
     Route::post('/notifications/{id}/read', [NotificationController::class, 'markRead']);
+    Route::get('/notification-preferences', [NotificationController::class, 'preferences']);
+    Route::put('/notification-preferences', [NotificationController::class, 'updatePreferences']);
     Route::post('/wallet/top-up', [WalletController::class, 'topUp']);
     Route::post('/wallet/top-up/verify', [WalletController::class, 'verifyTopUp']);
     Route::post('/wallet/gift-card/redeem', [WalletController::class, 'redeemGiftCard']);
@@ -228,7 +258,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/restaurants/{restaurant}/promos', function (Request $request, Restaurant $restaurant, \App\Services\PromotionEngineService $engine) {
         return response()->json([
             'success' => true,
-            'data' => $engine->listForViewer([
+            'data' => $engine->listForCheckout([
                 'restaurant_id' => $restaurant->id,
                 'user_id' => $request->user()?->id,
                 'platform' => 'customer_app',
@@ -269,7 +299,29 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/dashboard', [RestaurantController::class, 'dashboard']);
         Route::get('/stats', [RestaurantController::class, 'getStats']);
         Route::get('/reviews', [RestaurantController::class, 'getReviews'])->middleware('restaurant.permission:view_reports');
+        Route::get('/statements', [RestaurantController::class, 'statements'])->middleware('restaurant.permission:view_reports,view_dashboard');
         Route::get('/analytics/compare', [RestaurantController::class, 'getAnalyticsCompare'])->middleware('restaurant.permission:view_reports');
+
+        // --- BATCH 4f: AI assistant, menu analytics, invoices, notification test ---
+        Route::get('/assistant/status',  [RestaurantAssistantController::class, 'status']);
+        Route::get('/assistant/history', [RestaurantAssistantController::class, 'history'])
+            ->middleware('restaurant.permission:view_dashboard');
+        Route::get('/assistant/conversations', [RestaurantAssistantController::class, 'conversations'])
+            ->middleware('restaurant.permission:view_dashboard');
+        Route::post('/assistant/message', [RestaurantAssistantController::class, 'message'])
+            ->middleware(['restaurant.permission:view_dashboard', 'throttle:20,1']);
+        Route::post('/assistant/action', [RestaurantAssistantController::class, 'action'])
+            ->middleware(['restaurant.permission:view_dashboard', 'throttle:30,1']);
+
+        Route::get('/menu/analytics', [MenuAnalyticsController::class, 'index'])
+            ->middleware('restaurant.permission:view_menu_items,manage_menu');
+
+        Route::get('/invoices', [RestaurantInvoicesController::class, 'index'])
+            ->middleware('restaurant.permission:view_reports,view_dashboard');
+
+        Route::post('/notifications/test', [NotificationTestController::class, 'send'])
+            ->middleware(['restaurant.permission:view_dashboard', 'throttle:6,1']);
+        // --- end BATCH 4f ---
         Route::get('/complaints', [RestaurantController::class, 'getComplaints'])->middleware('restaurant.permission:view_orders,manage_orders');
         Route::post('/toggle-status', [RestaurantController::class, 'toggleStatus'])
             ->middleware('restaurant.permission:view_dashboard');
@@ -277,6 +329,7 @@ Route::middleware('auth:sanctum')->group(function () {
         // Orders Management
         Route::get('/orders', [RestaurantController::class, 'getOrders'])->middleware('restaurant.permission:view_orders,manage_orders');
         Route::get('/orders/{id}', [RestaurantController::class, 'getOrderDetails'])->middleware('restaurant.permission:view_orders,manage_orders');
+        Route::post('/orders/{id}/call-driver', [RestaurantController::class, 'callDriver'])->middleware(['restaurant.permission:view_orders,manage_orders', 'throttle:10,1']);
         Route::get('/orders/{orderId}/chat', [OrderChatController::class, 'index'])->middleware('restaurant.permission:view_orders,manage_orders');
         Route::post('/orders/{orderId}/chat', [OrderChatController::class, 'store'])->middleware('restaurant.permission:view_orders,manage_orders');
         Route::post('/orders/{orderId}/chat/read', [OrderChatController::class, 'markRead'])->middleware('restaurant.permission:view_orders,manage_orders');
@@ -303,6 +356,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/menu/{id}', [RestaurantMenuController::class, 'update'])->middleware('restaurant.permission:manage_menu');
         Route::put('/menu/{id}', [RestaurantMenuController::class, 'update'])->middleware('restaurant.permission:manage_menu');
         Route::delete('/menu/{id}', [RestaurantMenuController::class, 'destroy'])->middleware('restaurant.permission:manage_menu');
+        Route::post('/menu/{id}/delete', [RestaurantMenuController::class, 'destroy'])->middleware('restaurant.permission:manage_menu');
         Route::post('/menu/{id}/toggle', [RestaurantMenuController::class, 'toggleAvailability'])->middleware('restaurant.permission:manage_menu');
         
         // Settings
@@ -328,11 +382,25 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/promos/{id}/toggle', [RestaurantController::class, 'togglePromo'])->middleware('role:restaurant_owner');
         Route::delete('/promos/{id}', [RestaurantController::class, 'deletePromo'])->middleware('role:restaurant_owner');
 
+        // Ads (CPC sponsored placement)
+        Route::get('/ads/wallet', [AdWalletController::class, 'show'])->middleware('role:restaurant_owner');
+        Route::post('/ads/wallet/top-up', [AdWalletController::class, 'topUp'])->middleware('role:restaurant_owner');
+        Route::post('/ads/wallet/top-up/verify', [AdWalletController::class, 'verifyTopUp'])->middleware('role:restaurant_owner');
+        Route::get('/ads/performance', [AdCampaignController::class, 'performance'])->middleware('role:restaurant_owner');
+        Route::get('/ads/campaigns', [AdCampaignController::class, 'index'])->middleware('role:restaurant_owner');
+        Route::post('/ads/campaigns', [AdCampaignController::class, 'store'])->middleware('role:restaurant_owner');
+        Route::get('/ads/campaigns/{id}', [AdCampaignController::class, 'show'])->middleware('role:restaurant_owner');
+        Route::put('/ads/campaigns/{id}', [AdCampaignController::class, 'update'])->middleware('role:restaurant_owner');
+        Route::post('/ads/campaigns/{id}/submit', [AdCampaignController::class, 'submit'])->middleware('role:restaurant_owner');
+        Route::post('/ads/campaigns/{id}/pause', [AdCampaignController::class, 'pause'])->middleware('role:restaurant_owner');
+        Route::post('/ads/campaigns/{id}/resume', [AdCampaignController::class, 'resume'])->middleware('role:restaurant_owner');
+
         // Printers
         Route::get('/printers', [RestaurantController::class, 'getPrinters'])->middleware('role:restaurant_owner');
         Route::post('/printers', [RestaurantController::class, 'createPrinter'])->middleware('role:restaurant_owner');
         Route::post('/printers/settings', [RestaurantController::class, 'updatePrinterSettings'])->middleware('role:restaurant_owner');
         Route::post('/printers/{id}/test', [RestaurantController::class, 'testPrinter'])->middleware('role:restaurant_owner');
+        Route::post('/printers/{id}/test-invoice', [RestaurantController::class, 'testPrinterInvoice'])->middleware('role:restaurant_owner');
         Route::post('/printers/{id}/default', [RestaurantController::class, 'setDefaultPrinter'])->middleware('role:restaurant_owner');
         Route::delete('/printers/{id}', [RestaurantController::class, 'deletePrinter'])->middleware('role:restaurant_owner');
         
@@ -355,6 +423,7 @@ Route::middleware('auth:sanctum')->group(function () {
     // Orders (Customer)
     Route::post('/orders/summary', [OrderController::class, 'summary'])->middleware('throttle:20,1');
     Route::post('/orders', [OrderController::class, 'store'])->middleware('throttle:10,1');
+    Route::post('/cart/sync', [CartController::class, 'sync'])->middleware('throttle:30,1');
     Route::post('/coupons/validate', [PromotionController::class, 'validateCoupon']);
     Route::post('/promotions/calculate', [PromotionController::class, 'calculate']);
     Route::post('/promotions/coupon/validate', [PromotionController::class, 'validateCoupon']);
@@ -373,9 +442,11 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/orders/{orderId}/chat/read', [OrderChatController::class, 'markRead']);
     Route::post('/orders/{orderId}/chat/typing', [OrderChatController::class, 'typing']);
     Route::post('/orders/{id}/feedback', [OrderController::class, 'submitFeedback']);
+    Route::post('/orders/{id}/notes', [OrderController::class, 'updateNotes'])->middleware('throttle:30,1');
     Route::post('/orders/{id}/tip', [OrderController::class, 'tip'])->middleware('throttle:20,1');
     Route::post('/orders/{id}/cancel', [OrderController::class, 'cancel']);
     Route::get('/orders/{id}/track', [OrderController::class, 'track']);
+    Route::get('/orders/{id}/call-number', [OrderController::class, 'callNumber'])->middleware('throttle:20,1');
     Route::post('/orders/{id}/refund-request', [OrderController::class, 'requestRefund']);
     Route::post('/orders/{id}/pay', [OrderPaymentController::class, 'pay'])->middleware('throttle:20,1');
     Route::post('/orders/{id}/driver/payment-link', [OrderPaymentController::class, 'driverPaymentLink'])->middleware('throttle:20,1');
@@ -413,18 +484,35 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/request/{orderId}', [ReturnController::class, 'requestReturn']);
         Route::get('/status/{orderId}', [ReturnController::class, 'getReturnStatus']);
     });
-    
+
+    // Flash resale
+    Route::post('/flash-resale/{orderId}/claim', [FlashResaleController::class, 'claim'])->middleware('throttle:5,1');
+
+
     // Campaigns
     Route::get('/campaigns', [CampaignController::class, 'index']);
     Route::get('/campaigns/{id}', [CampaignController::class, 'show']);
     Route::post('/campaigns/{id}/track-click', [CampaignController::class, 'trackClick']);
     Route::post('/campaigns/{id}/track-impression', [CampaignController::class, 'trackImpression']);
+
+    // Ad tracking (sponsored restaurant placement)
+    Route::post('/ads/impressions', [AdTrackingController::class, 'trackImpression']);
+    Route::post('/ads/clicks', [AdTrackingController::class, 'trackClick'])->middleware('throttle:30,1');
     
     // Driver specific routes
     Route::middleware('role:delivery_partner')->prefix('driver')->group(function () {
+        Route::get('/restaurant-onboardings/summary', [DriverRestaurantOnboardingController::class, 'summary']);
+        Route::get('/restaurant-onboardings', [DriverRestaurantOnboardingController::class, 'index']);
+        Route::post('/restaurant-onboardings', [DriverRestaurantOnboardingController::class, 'store']);
+        Route::get('/restaurant-onboardings/{restaurantOnboarding}', [DriverRestaurantOnboardingController::class, 'show']);
+        Route::post('/restaurant-onboardings/{restaurantOnboarding}/draft', [DriverRestaurantOnboardingController::class, 'draft']);
+        Route::post('/restaurant-onboardings/{restaurantOnboarding}/submit', [DriverRestaurantOnboardingController::class, 'submit']);
+        Route::post('/restaurant-onboardings/{restaurantOnboarding}/owner-otp/send', [DriverRestaurantOnboardingController::class, 'sendOwnerOtp']);
+        Route::post('/restaurant-onboardings/{restaurantOnboarding}/owner-otp/verify', [DriverRestaurantOnboardingController::class, 'verifyOwnerOtp']);
         Route::post('/location', [DriverController::class, 'updateLocation']);
         Route::get('/orders', [DriverController::class, 'getAssignedOrders']);
         Route::get('/orders/{orderId}', [DriverController::class, 'getOrderDetails']);
+        Route::post('/orders/{orderId}/call', [DriverController::class, 'callParticipant'])->middleware('throttle:10,1');
         Route::get('/orders/{orderId}/chat', [OrderChatController::class, 'index']);
         Route::post('/orders/{orderId}/chat', [OrderChatController::class, 'store']);
         Route::post('/orders/{orderId}/chat/read', [OrderChatController::class, 'markRead']);
@@ -433,6 +521,9 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/orders/{orderId}/reject', [DriverController::class, 'rejectOrder']);
         Route::post('/orders/{orderId}/status', [DriverController::class, 'updateOrderStatus']);
         Route::put('/orders/{orderId}/status', [DriverController::class, 'updateOrderStatus']);
+        Route::post('/orders/{orderId}/arrived', [DriverController::class, 'markArrivedAtCustomer']);
+        Route::post('/orders/{orderId}/report-delivery-failed', [DriverController::class, 'reportDeliveryFailed']);
+        Route::post('/orders/{orderId}/confirm-food-returned', [DriverController::class, 'confirmFoodReturned']);
         Route::post('/orders/{id}/payment-link', [OrderPaymentController::class, 'driverPaymentLink'])->middleware('throttle:20,1');
         Route::post('/orders/{id}/cash', [OrderPaymentController::class, 'driverCash'])->middleware('throttle:20,1');
         Route::get('/gigs', [DriverController::class, 'getMyGigs']);
@@ -446,3 +537,8 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/toggle-status', [DriverController::class, 'toggleStatus']);
     });
 });
+
+
+
+// Inbound webhooks from the standalone Accounts / HRMS apps (HMAC-verified in the controller).
+Route::post('/ingest/employee-user', [\App\Http\Controllers\Api\IngestController::class, 'employeeUser']);

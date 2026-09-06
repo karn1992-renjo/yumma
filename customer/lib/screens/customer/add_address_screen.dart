@@ -376,15 +376,6 @@ class _AddAddressScreenState extends State<AddAddressScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
-                          'Delivery pin',
-                          style: TextStyle(
-                            color: profileTextColor(context),
-                            fontSize: 16,
-                            fontWeight: FontWeight.w800,
-                          ),
-                        ),
-                        const SizedBox(height: 8),
                         TextFormField(
                           controller: _manualSearchController,
                           onChanged: _onManualSearchChanged,
@@ -465,30 +456,47 @@ class _AddAddressScreenState extends State<AddAddressScreen> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          'Address details',
-                          style: TextStyle(
-                            color: profileTextColor(context),
-                            fontSize: 16,
-                            fontWeight: FontWeight.w800,
-                          ),
-                        ),
-                        const SizedBox(height: 6),
-                        Text(
-                          'Add clear address details so delivery is faster and smoother.',
+                          'Save this address as',
                           style: TextStyle(
                             color: profileMutedColor(context),
                             fontSize: 12,
-                            fontWeight: FontWeight.w500,
-                            height: 1.35,
+                            fontWeight: FontWeight.w700,
                           ),
                         ),
-                        const SizedBox(height: 18),
+                        const SizedBox(height: 10),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            for (final t in const [
+                              ('Home', LucideIcons.house),
+                              ('Work', LucideIcons.briefcase),
+                              ('Hotel', LucideIcons.bed_double),
+                              ('Other', LucideIcons.map_pin),
+                            ])
+                              _LabelChip(
+                                label: t.$1,
+                                icon: t.$2,
+                                selected: _nameController.text.trim()
+                                        .toLowerCase() ==
+                                    t.$1.toLowerCase(),
+                                onTap: () {
+                                  setState(() {
+                                    _nameController.text =
+                                        t.$1 == 'Other' ? '' : t.$1;
+                                  });
+                                },
+                              ),
+                          ],
+                        ),
+                        const SizedBox(height: 16),
                         TextFormField(
                           controller: _nameController,
+                          onChanged: (_) => setState(() {}),
                           decoration: _inputDecoration(
                             label: 'Address Name',
                             hint: 'Home, Office, etc.',
-                            icon: LucideIcons.house,
+                            icon: LucideIcons.tag,
                           ),
                           validator: (value) {
                             if (value == null || value.trim().isEmpty) {
@@ -659,6 +667,56 @@ class _AddAddressScreenState extends State<AddAddressScreen> {
         borderRadius: BorderRadius.circular(16),
         borderSide:
             BorderSide(color: Theme.of(context).colorScheme.error, width: 1.4),
+      ),
+    );
+  }
+}
+
+class _LabelChip extends StatelessWidget {
+  const _LabelChip({
+    required this.label,
+    required this.icon,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final IconData icon;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = profileAccentColor(context);
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(999),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+        decoration: BoxDecoration(
+          color: selected ? profileSoftColor(context) : Colors.transparent,
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(
+            color: selected ? accent.withOpacity(0.4) : profileLineColor(context),
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon,
+                size: 15,
+                color: selected ? accent : profileMutedColor(context)),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 12.5,
+                fontWeight: FontWeight.w800,
+                color: selected ? accent : profileTextColor(context),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

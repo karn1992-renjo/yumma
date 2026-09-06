@@ -57,6 +57,59 @@
             </div>
         </div>
 
+
+        <div class="settings-span-4">
+            <div class="settings-card h-100">
+                <div class="settings-card-header">
+                    <div>
+                        <h2 class="settings-card-title">Restaurant Business Reports</h2>
+                        <p class="settings-card-subtitle">Email scheduled performance reports to restaurant owners.</p>
+                    </div>
+                </div>
+                <div class="settings-card-body">
+                    <form action="{{ route('admin.settings.business-reports') }}" method="POST">
+                        @csrf
+                        <div class="form-check form-switch mb-3">
+                            <input type="hidden" name="restaurant_business_report_enabled" value="0">
+                            <input
+                                class="form-check-input"
+                                type="checkbox"
+                                role="switch"
+                                id="restaurant-business-report-enabled"
+                                name="restaurant_business_report_enabled"
+                                value="1"
+                                @checked(($settings['restaurant_business_report_enabled'] ?? '0') == '1')
+                            >
+                            <label class="form-check-label fw-semibold" for="restaurant-business-report-enabled">Send reports by email</label>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">Frequency</label>
+                            <select name="restaurant_business_report_frequency" class="form-select" required>
+                                @foreach(['daily' => 'Daily', 'weekly' => 'Weekly', 'monthly' => 'Monthly'] as $value => $label)
+                                    <option value="{{ $value }}" @selected(($settings['restaurant_business_report_frequency'] ?? 'weekly') === $value)>{{ $label }}</option>
+                                @endforeach
+                            </select>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">Send Time</label>
+                            <input type="time" name="restaurant_business_report_time" class="form-control" value="{{ $settings['restaurant_business_report_time'] ?? '08:00' }}" required>
+                            <div class="form-text">Uses the server timezone configured for Laravel.</div>
+                        </div>
+
+                        <div class="alert alert-light border small mb-3">
+                            <div class="fw-semibold mb-1">Report includes:</div>
+                            <div>Email summary plus an attached Excel workbook. Sheet 1 is Summary. Sheet 2 is Orders with order number, dates, items, payment/status, subtotal, fees, discount, tax, admin commission, restaurant commission, gateway/GST charges, and final payable amount.</div>
+                        </div>
+
+                        <button type="submit" class="btn btn-primary w-100">
+                            <i class="fas fa-envelope me-2"></i>Save Report Schedule
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </div>
         <div class="settings-span-8">
             <div class="settings-card h-100">
                 <div class="settings-card-header">

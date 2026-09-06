@@ -40,12 +40,10 @@ class RetryAssignDriverJob implements ShouldQueue
             
             $order = $order->fresh();
 
-            if (($order->driver_assignment_attempts ?? 0) >= $autoAssignService->maxAssignmentAttempts()) {
-                $autoAssignService->cancelUnassignedOrder($order);
-            } elseif ($driver) {
-                dispatch(new self($order))->delay(now()->addMinutes(2));
+            if (! $autoAssignService->assignmentRetryExpired($order)) {
+                dispatch(new self($order))->delay(now()->addSeconds(\App\Models\DeliveryChargeSetting::getOrderAcceptanceTimeoutSeconds()));
             } else {
-                dispatch(new self($order))->delay(now()->addMinutes(2));
+                $autoAssignService->releaseUnacceptedAssignment($order);
             }
         }
     }

@@ -52,6 +52,35 @@ class OrderReleaseService
             ]);
         }
 
+        // If the restaurant doesn't accept in time, a scheduled scan
+        // (routes/console.php) falls back to an Exotel voice call.
+
+        try {
+            app(\App\Services\Tax\TaxLedgerService::class)->recordOrderGst($order);
+        } catch (\Throwable $e) {
+            Log::warning('Order GST ledger write failed.', [
+                'order_id' => $order->id,
+                'message' => $e->getMessage(),
+            ]);
+        }
+
+        try {
+            $fresh = $order->fresh();
+            $entry = app(\App\Services\Accounting\LedgerPostingService::class)->postOrderPlaced($fresh);
+            \App\Services\Integration\LedgerEventEmitter::journal($entry, \App\Services\Integration\LedgerEventEmitter::orderMirror($fresh));
+        } catch (\Throwable $e) {
+            Log::warning('Order placed journal failed.', ['order_id' => $order->id, 'message' => $e->getMessage()]);
+        }
+
+        try {
+            app(OrderEmailService::class)->sendOrderConfirmation($order);
+        } catch (\Throwable $e) {
+            Log::warning('Customer order confirmation email failed.', [
+                'order_id' => $order->id,
+                'message' => $e->getMessage(),
+            ]);
+        }
+
         try {
             $this->printerService->autoPrintNewOrder($order);
         } catch (\Throwable $e) {

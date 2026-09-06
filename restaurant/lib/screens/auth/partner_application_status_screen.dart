@@ -334,7 +334,7 @@ class _PartnerApplicationStatusScreenState
               ),
               enabledBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(14),
-                borderSide: const BorderSide(color: FoodFlowTheme.line),
+                borderSide: BorderSide(color: FoodFlowTheme.line),
               ),
               focusedBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(14),

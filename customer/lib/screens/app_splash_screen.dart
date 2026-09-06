@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../config/app_config.dart';
 import '../models/app_branding.dart';
+import '../theme/brand_palette.dart';
 
 class AppSplashScreen extends StatefulWidget {
   const AppSplashScreen({
@@ -42,21 +43,27 @@ class _AppSplashScreenState extends State<AppSplashScreen> {
           return widget.builder(context);
         }
 
-        return const _SplashView();
+        return _SplashView(branding: widget.branding);
       },
     );
   }
 }
 
 class _SplashView extends StatelessWidget {
-  const _SplashView();
+  const _SplashView({this.branding});
 
-  static const Color _splashBackground = Color(0xFF5F008C);
+  final AppBranding? branding;
+
+  // Yumma! logo purple (sampled from assets/images/logo.png).
+  static const Color _fallbackSplashBackground = Color(0xFF5C0298);
 
   @override
   Widget build(BuildContext context) {
+    final splashBackground =
+        colorFromHex(branding?.primaryColorHex) ?? _fallbackSplashBackground;
+
     return Scaffold(
-      backgroundColor: _splashBackground,
+      backgroundColor: splashBackground,
       body: SafeArea(
         child: Center(
           child: Column(

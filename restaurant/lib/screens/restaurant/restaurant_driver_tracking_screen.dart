@@ -2,7 +2,6 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import '../../config/api_constants.dart';
 import '../../services/api_service.dart';
@@ -165,7 +164,6 @@ class _RestaurantDriverTrackingScreenState
     final restaurantLocation = _restaurantLocation(order);
     final arrived = _hasArrived(order);
     final partnerName = _firstText([order['driver_name'], driver['name']]);
-    final partnerPhone = _firstText([order['driver_phone'], driver['phone']]);
     final initialLocation = driverLocation ?? restaurantLocation;
 
     return Scaffold(
@@ -175,7 +173,7 @@ class _RestaurantDriverTrackingScreenState
         surfaceTintColor: Colors.white,
         elevation: 0,
         titleSpacing: 0,
-        title: const Text(
+        title: Text(
           'Track Partner',
           style: TextStyle(
             color: FoodFlowTheme.ink,
@@ -265,7 +263,7 @@ class _RestaurantDriverTrackingScreenState
                       child: Container(
                         width: double.infinity,
                         padding: const EdgeInsets.fromLTRB(18, 15, 18, 14),
-                        decoration: const BoxDecoration(
+                        decoration: BoxDecoration(
                           color: Colors.white,
                           border: Border(
                             top: BorderSide(color: FoodFlowTheme.line),
@@ -296,7 +294,7 @@ class _RestaurantDriverTrackingScreenState
                                     partnerName ?? 'Delivery partner',
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
+                                    style: TextStyle(
                                       color: FoodFlowTheme.ink,
                                       fontSize: 15,
                                       fontWeight: FontWeight.w800,
@@ -309,7 +307,7 @@ class _RestaurantDriverTrackingScreenState
                                         : driverLocation == null
                                             ? 'Waiting for live location'
                                             : 'Live location updates automatically',
-                                    style: const TextStyle(
+                                    style: TextStyle(
                                       color: FoodFlowTheme.muted,
                                       fontSize: 12,
                                       fontWeight: FontWeight.w500,
@@ -318,10 +316,10 @@ class _RestaurantDriverTrackingScreenState
                                 ],
                               ),
                             ),
-                            if (partnerPhone != null)
+                            if (partnerName != null)
                               IconButton.filled(
                                 tooltip: 'Call Partner',
-                                onPressed: () => _call(partnerPhone),
+                                onPressed: _call,
                                 style: IconButton.styleFrom(
                                   backgroundColor: FoodFlowTheme.orange,
                                   foregroundColor: Colors.white,
@@ -337,13 +335,25 @@ class _RestaurantDriverTrackingScreenState
     );
   }
 
-  Future<void> _call(String phone) async {
-    final uri = Uri(scheme: 'tel', path: phone);
-    if (!await launchUrl(uri, mode: LaunchMode.externalApplication) &&
-        mounted) {
+  Future<void> _call() async {
+    try {
+      final response = await _api.post(
+        ApiConstants.restaurantCallDriver(widget.orderId),
+      );
+      if (!mounted) return;
+      final success = response is Map && response['success'] == true;
+      final message = response is Map ? response['message']?.toString() : null;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-            content: Text('Calling is not available on this device.')),
+        SnackBar(
+          content: Text(
+            success ? 'Connecting your call…' : (message ?? 'Could not place the call.'),
+          ),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not place the call.')),
       );
     }
   }
@@ -414,7 +424,7 @@ class _TrackingError extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(
+            Icon(
               Icons.location_off_outlined,
               size: 50,
               color: FoodFlowTheme.muted,
@@ -423,7 +433,7 @@ class _TrackingError extends StatelessWidget {
             Text(
               message,
               textAlign: TextAlign.center,
-              style: const TextStyle(
+              style: TextStyle(
                 color: FoodFlowTheme.inkSoft,
                 fontSize: 14,
                 fontWeight: FontWeight.w600,
@@ -447,7 +457,7 @@ class _LocationUnavailable extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Center(
+    return Center(
       child: Padding(
         padding: EdgeInsets.all(28),
         child: Column(

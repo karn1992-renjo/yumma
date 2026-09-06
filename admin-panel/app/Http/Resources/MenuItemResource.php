@@ -52,6 +52,8 @@ class MenuItemResource extends JsonResource
             'price' => $this->price,
             'discounted_price' => $this->discounted_price,
             'is_price_inclusive_gst' => (bool) $this->is_price_inclusive_gst,
+            'gst_rate' => $this->gst_rate !== null ? (float) $this->gst_rate : null,
+            'hsn_code' => $this->hsn_code,
             'final_price' => $this->getFinalPriceAttribute(),
             'images' => $images,
             'image' => $images[0] ?? null,

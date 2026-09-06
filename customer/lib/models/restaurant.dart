@@ -5,6 +5,11 @@ class Restaurant {
   final int id;
   final String name;
   final String slug;
+
+  /// Public restaurant identifier, e.g. RES00042.
+  String get code =>
+      _serverCode ?? 'RES${id.toString().padLeft(5, '0')}';
+  final String? _serverCode;
   final String email;
   final String phone;
   final String? description;
@@ -31,7 +36,8 @@ class Restaurant {
   final int reviewCount;
   final bool isOpen;
   final bool isVerified;
-  final bool isFeatured;
+  final bool isSponsored;
+  final int? adCampaignId;
   final bool isPureVeg;
   final String? restaurantType;
   final double? diningCharge;
@@ -51,6 +57,7 @@ class Restaurant {
     required this.slug,
     required this.email,
     required this.phone,
+    String? code,
     this.description,
     required this.address,
     required this.city,
@@ -75,7 +82,8 @@ class Restaurant {
     this.reviewCount = 0,
     required this.isOpen,
     this.isVerified = false,
-    this.isFeatured = false,
+    this.isSponsored = false,
+    this.adCampaignId,
     this.isPureVeg = false,
     this.restaurantType,
     this.diningCharge,
@@ -88,7 +96,7 @@ class Restaurant {
     this.reviewHighlights = const [],
     this.similarRestaurants = const [],
     required this.createdAt,
-  });
+  }) : _serverCode = code;
 
   static double _parseDouble(dynamic value, {required double fallback}) {
     if (value is double) return value;
@@ -146,10 +154,11 @@ class Restaurant {
         json['price_for_one'] ??
         json['cost_for_one'] ??
         json['lowest_price'];
-    final delRadius = json['delivery_radius'] ?? 15.0;
+    final delRadius = json['delivery_radius'];
 
     return Restaurant(
       id: _parseInt(json['id'], fallback: 0),
+      code: json['code']?.toString(),
       name: (json['restaurant_name'] ??
               json['restaurantName'] ??
               json['store_name'] ??
@@ -174,7 +183,7 @@ class Restaurant {
       pincode: json['pincode'] ?? '',
       latitude: _parseDouble(json['latitude'], fallback: 0.0),
       longitude: _parseDouble(json['longitude'], fallback: 0.0),
-      deliveryRadius: _parseDouble(delRadius, fallback: 10.0),
+      deliveryRadius: _parseDouble(delRadius, fallback: 0.0),
       minOrderAmount: _parseDouble(minOrder, fallback: 0.0),
       amountForOne: amountForOne != null
           ? _parseDouble(amountForOne, fallback: 0.0)
@@ -232,7 +241,10 @@ class Restaurant {
       isOpen:
           _parseBool(json['is_open_now'] ?? json['is_open'], fallback: false),
       isVerified: _parseBool(json['is_verified'], fallback: false),
-      isFeatured: _parseBool(json['is_featured'], fallback: false),
+      isSponsored: _parseBool(json['is_sponsored'], fallback: false),
+      adCampaignId: json['ad_campaign_id'] is num
+          ? (json['ad_campaign_id'] as num).toInt()
+          : int.tryParse(json['ad_campaign_id']?.toString() ?? ''),
       isPureVeg: _parseBool(
         json['is_pure_veg'] ?? json['pure_veg'] ?? json['is_veg'],
         fallback: false,
@@ -301,7 +313,8 @@ class Restaurant {
       'review_count': reviewCount,
       'is_open': isOpen,
       'is_verified': isVerified,
-      'is_featured': isFeatured,
+      'is_sponsored': isSponsored,
+      'ad_campaign_id': adCampaignId,
       'is_pure_veg': isPureVeg,
       'restaurant_type': restaurantType,
       'dining_charge': diningCharge,
@@ -388,3 +401,4 @@ List<String> _parseCuisineNames(Map<String, dynamic> json) {
 
   return const [];
 }
+

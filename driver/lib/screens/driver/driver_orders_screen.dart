@@ -2,12 +2,13 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import '../../services/api_service.dart';
+import '../../services/websocket_service.dart';
 import '../../config/api_constants.dart';
 import '../../models/order.dart';
 import '../../theme/foodflow_theme.dart';
+import '../../widgets/aurora/aurora.dart';
 import '../../utils/currency_utils.dart';
 import '../../widgets/common/network_error_screen.dart';
-import '../../widgets/new_order_notification_dialog.dart';
 
 class DriverOrdersScreen extends StatefulWidget {
   const DriverOrdersScreen({super.key});
@@ -27,17 +28,29 @@ class _DriverOrdersScreenState extends State<DriverOrdersScreen>
   Set<int> _knownOrderIds = {};
   Set<int> _notifiedOrderIds = {};
   Timer? _pollingTimer;
+  Timer? _realtimeRefreshDebounce;
+  StreamSubscription<Map<String, dynamic>>? _driverEventsSubscription;
+  bool _pendingRealtimeNewOrderNotification = false;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _loadOrders();
+    _subscribeToRealtimeOrders();
     _startPolling();
   }
 
-  Future<void> _loadOrders({bool notifyNewOrder = false}) async {
-    if (!_isLoading) {
+  Future<void> _openOrder(int id) async {
+    await Navigator.pushNamed(context, '/driver/order', arguments: id);
+    if (mounted) _loadOrders(showLoader: false);
+  }
+
+  Future<void> _loadOrders({
+    bool notifyNewOrder = false,
+    bool showLoader = true,
+  }) async {
+    if (showLoader && !_isLoading) {
       setState(() => _isLoading = true);
     }
 
@@ -53,19 +66,12 @@ class _DriverOrdersScreenState extends State<DriverOrdersScreen>
             orders.map((order) => order.id).whereType<int>().toSet();
         final newIds = currentIds.difference(_knownOrderIds);
 
-        if (notifyNewOrder &&
-            _knownOrderIds.isNotEmpty &&
-            newIds.isNotEmpty &&
-            mounted) {
-          // Show notification dialog for new orders
-          for (int orderId in newIds) {
-            if (!_notifiedOrderIds.contains(orderId)) {
-              final newOrder =
-                  orders.firstWhere((order) => order.id == orderId);
-              _notifiedOrderIds.add(orderId);
-              _showNewOrderNotification(newOrder);
-            }
-          }
+        // NOTE: the incoming-order alert UI is owned solely by
+        // IncomingOrderAlertService (driven from the dashboard). This screen
+        // used to also pop its own NewOrderNotificationDialog here, which
+        // caused two stacked popups — it now just refreshes the list.
+        if (notifyNewOrder && newIds.isNotEmpty) {
+          _notifiedOrderIds.addAll(newIds);
         }
 
         if (!mounted) return;
@@ -96,8 +102,42 @@ class _DriverOrdersScreenState extends State<DriverOrdersScreen>
     _pollingTimer?.cancel();
     _pollingTimer = Timer.periodic(const Duration(seconds: 20), (_) {
       if (mounted) {
-        _loadOrders(notifyNewOrder: true);
+        _loadOrders(notifyNewOrder: true, showLoader: false);
       }
+    });
+  }
+
+  void _subscribeToRealtimeOrders() {
+    _driverEventsSubscription = WebSocketService().driverEvents.listen((event) {
+      final isNewAssignment = _isDriverAssignmentEvent(event);
+      _pendingRealtimeNewOrderNotification =
+          _pendingRealtimeNewOrderNotification || isNewAssignment;
+      _scheduleRealtimeOrderRefresh();
+    });
+  }
+
+  bool _isDriverAssignmentEvent(Map<String, dynamic> event) {
+    final eventName = event['_event']?.toString().toLowerCase() ?? '';
+    final type =
+        event['type']?.toString().toLowerCase().replaceAll('-', '_') ?? '';
+    final payloadEvent =
+        event['event']?.toString().toLowerCase().replaceAll('-', '_') ?? '';
+    return eventName == 'driver-order-assigned' ||
+        eventName.endsWith('driverorderassignedevent') ||
+        type == 'driver_order_assigned' ||
+        payloadEvent == 'driver_order_assigned';
+  }
+
+  void _scheduleRealtimeOrderRefresh() {
+    _realtimeRefreshDebounce?.cancel();
+    _realtimeRefreshDebounce = Timer(const Duration(milliseconds: 350), () {
+      if (!mounted) return;
+      final notifyNewOrder = _pendingRealtimeNewOrderNotification;
+      _pendingRealtimeNewOrderNotification = false;
+      _loadOrders(
+        notifyNewOrder: notifyNewOrder,
+        showLoader: false,
+      );
     });
   }
 
@@ -134,6 +174,7 @@ class _DriverOrdersScreenState extends State<DriverOrdersScreen>
     try {
       final response = await _api.post(ApiConstants.driverAcceptOrder(orderId));
       if (response['success'] == true) {
+        WebSocketService().notifyLocalOrderChange(orderId: orderId);
         await _loadOrders();
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -159,6 +200,7 @@ class _DriverOrdersScreenState extends State<DriverOrdersScreen>
         data: {'reason': 'Rejected by driver'},
       );
       if (response['success'] == true) {
+        WebSocketService().notifyLocalOrderChange(orderId: orderId);
         await _loadOrders();
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -185,18 +227,6 @@ class _DriverOrdersScreenState extends State<DriverOrdersScreen>
     return message.isEmpty ? 'Unable to update delivery' : message;
   }
 
-  void _showNewOrderNotification(Order order) {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => NewOrderNotificationDialog(
-        order: order,
-        onAccept: () => _acceptAssignment(order.id),
-        onReject: () => _rejectAssignment(order.id),
-      ),
-    );
-  }
-
   String _driverEarningText(Order order) {
     final earning = formatCurrency(context, order.driverEarningAmount);
     if (order.driverIncentiveAmount > 0) {
@@ -208,63 +238,108 @@ class _DriverOrdersScreenState extends State<DriverOrdersScreen>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
-      _loadOrders(notifyNewOrder: true);
+      _loadOrders(notifyNewOrder: true, showLoader: false);
     }
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _realtimeRefreshDebounce?.cancel();
+    _driverEventsSubscription?.cancel();
     _pollingTimer?.cancel();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    final filteredOrders = _selectedStatus == 'all'
+    final filtered = _selectedStatus == 'all'
         ? _orders
         : _selectedStatus == 'new'
-            ? _orders
-                .where((order) => order.isDriverAssignmentPending)
-                .toList()
+            ? _orders.where((o) => o.isDriverAssignmentPending).toList()
             : _selectedStatus == 'running'
                 ? _orders
-                    .where((order) =>
-                        !order.isDriverAssignmentPending &&
-                        !order.isDelivered &&
-                        !order.isCancelled)
+                    .where((o) =>
+                        !o.isDriverAssignmentPending &&
+                        !o.isDelivered &&
+                        !o.isCancelled)
                     .toList()
-                : _orders
-                    .where((order) => order.status == _selectedStatus)
-                    .toList();
+                : _orders.where((o) => o.status == _selectedStatus).toList();
 
-    return Scaffold(
-      backgroundColor: foodflow.canvas,
-      appBar: AppBar(
-        title: const Text('Orders'),
-        backgroundColor: Colors.white,
-        foregroundColor: foodflow.ink,
-        elevation: 0,
+    const filters = [
+      ('all', 'All'),
+      ('new', 'New'),
+      ('running', 'Running'),
+      ('picked_up', 'Picked up'),
+      ('on_the_way', 'On the way'),
+      ('delivered', 'Delivered'),
+    ];
+
+    return AuroraScaffold(
+      appBar: GlassAppBar(
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              'Deliveries',
+              style: TextStyle(
+                color: foodflow.ink,
+                fontSize: 18,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            if (!_isLoading)
+              Text(
+                '${_orders.length} total • ${_orders.where((o) => !o.isDelivered && !o.isCancelled).length} active',
+                style: TextStyle(
+                  color: foodflow.muted,
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+          ],
+        ),
         bottom: PreferredSize(
-          preferredSize: const Size.fromHeight(50),
-          child: Container(
-            height: 50,
-            margin: const EdgeInsets.symmetric(horizontal: 16),
-            child: ListView(
+          preferredSize: const Size.fromHeight(52),
+          child: SizedBox(
+            height: 52,
+            child: ListView.separated(
               scrollDirection: Axis.horizontal,
-              children: [
-                _buildFilterChip('All', 'all'),
-                const SizedBox(width: 8),
-                _buildFilterChip('New', 'new'),
-                const SizedBox(width: 8),
-                _buildFilterChip('Running', 'running'),
-                const SizedBox(width: 8),
-                _buildFilterChip('Picked Up', 'picked_up'),
-                const SizedBox(width: 8),
-                _buildFilterChip('On The Way', 'on_the_way'),
-                const SizedBox(width: 8),
-                _buildFilterChip('Delivered', 'delivered'),
-              ],
+              padding: const EdgeInsets.fromLTRB(16, 4, 16, 10),
+              itemCount: filters.length,
+              separatorBuilder: (_, __) => const SizedBox(width: 8),
+              itemBuilder: (context, i) {
+                final (value, label) = filters[i];
+                final selected = _selectedStatus == value;
+                return GestureDetector(
+                  onTap: () {
+                    setState(() => _selectedStatus = value);
+                  },
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 150),
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: selected
+                          ? foodflow.orange
+                          : foodflow.surfaceColor,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: selected ? foodflow.orange : foodflow.line,
+                      ),
+                    ),
+                    child: Text(
+                      label,
+                      style: TextStyle(
+                        color: selected ? Colors.white : foodflow.inkSoft,
+                        fontWeight: FontWeight.w700,
+                        fontSize: 13,
+                      ),
+                    ),
+                  ),
+                );
+              },
             ),
           ),
         ),
@@ -272,287 +347,264 @@ class _DriverOrdersScreenState extends State<DriverOrdersScreen>
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
           : _loadError != null && _orders.isEmpty
-              ? NetworkErrorView(
-                  message: _loadError,
-                  onRetry: _loadOrders,
-                )
-          : filteredOrders.isEmpty
-              ? foodflow.emptyState(
-                  icon: Icons.delivery_dining_outlined,
-                  title: 'No deliveries found',
-                  subtitle: 'Assigned delivery orders will appear here.',
-                )
-          : ListView.builder(
-                  padding: const EdgeInsets.all(16),
-                  itemCount: filteredOrders.length,
-                  itemBuilder: (context, index) {
-                    final order = filteredOrders[index];
-                    final isNew = order.isDriverAssignmentPending;
-                    return InkWell(
-                      onTap: () {
-                        Navigator.pushNamed(
-                          context,
-                          '/driver/order',
-                          arguments: order.id,
-                        );
-                      },
-                      borderRadius: BorderRadius.circular(12),
-                      child: Container(
-                      margin: const EdgeInsets.only(bottom: 14),
-                      decoration: foodflow.surface(radius: 12),
-                      clipBehavior: Clip.antiAlias,
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          if (isNew)
-                            Container(
-                              width: double.infinity,
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 14,
-                                vertical: 10,
-                              ),
-                              decoration: const BoxDecoration(
-                                gradient: LinearGradient(
-                                  colors: [
-                                    Color(0xFF15191F),
-                                    Color(0xFF26313A),
-                                  ],
-                                ),
-                              ),
-                              child: Row(
-                                children: [
-                                  const Icon(
-                                    Icons.notifications_active,
-                                    color: foodflow.success,
-                                    size: 18,
-                                  ),
-                                  const SizedBox(width: 8),
-                                  Expanded(
-                                    child: Text(
-                                      'New Delivery Request',
-                                      style: const TextStyle(
-                                        color: Colors.white,
-                                        fontWeight: FontWeight.w800,
-                                      ),
-                                    ),
-                                  ),
-                                  Text(
-                                    _driverEarningText(order),
-                                    style: const TextStyle(
-                                      color: foodflow.success,
-                                      fontWeight: FontWeight.w800,
-                                      fontSize: 18,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          Padding(
-                            padding: const EdgeInsets.all(16),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              Text(
-                                'Order #${order.orderNumber}',
-                                style: const TextStyle(
-                                  color: foodflow.ink,
-                                  fontWeight: FontWeight.w800,
-                                  fontSize: 16,
-                                ),
-                              ),
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 8,
-                                  vertical: 4,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: order.statusColor.withOpacity(0.10),
-                                  borderRadius: BorderRadius.circular(6),
-                                ),
-                                child: Text(
-                                  order.statusText,
-                                  style: TextStyle(
-                                    color: order.statusColor,
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w800,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                          if (order.isPartOfRouteBatch) ...[
-                            const SizedBox(height: 8),
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 10,
-                                vertical: 7,
-                              ),
-                              decoration: BoxDecoration(
-                                color: const Color(0xFFEEF6FF),
-                                borderRadius: BorderRadius.circular(8),
-                                border: Border.all(
-                                  color: const Color(0xFFBFDBFE),
-                                ),
-                              ),
-                              child: Row(
-                                children: [
-                                  const Icon(
-                                    Icons.route,
-                                    size: 16,
-                                    color: Color(0xFF2563EB),
-                                  ),
-                                  const SizedBox(width: 8),
-                                  Expanded(
-                                    child: Text(
-                                      'Grouped route: ${order.routeBatch!.ordersCount} orders • Active ${order.routeBatch!.activeOrderIds.length}',
-                                      style: const TextStyle(
-                                        color: Color(0xFF1D4ED8),
-                                        fontSize: 12,
-                                        fontWeight: FontWeight.w800,
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ],
-                          const SizedBox(height: 8),
-                          _buildLocationLine(
-                            Icons.storefront_outlined,
-                            order.restaurant?.name ?? 'Store',
-                            order.restaurant?.address ?? 'Pickup location',
-                            foodflow.crimson,
-                          ),
-                          const SizedBox(height: 12),
-                          _buildLocationLine(
-                            Icons.person_pin_circle_outlined,
-                            order.customerName,
-                            order.deliveryAddress,
-                            foodflow.success,
-                          ),
-                          const SizedBox(height: 14),
-                          Row(
-                            children: [
-                              _buildMiniMeta(Icons.route, '4.6 km'),
-                              const SizedBox(width: 10),
-                              _buildMiniMeta(
-                                Icons.shopping_bag_outlined,
-                                '${order.items.length} items',
-                              ),
-                              if (order.isPartOfRouteBatch) ...[
-                                const SizedBox(width: 10),
-                                _buildMiniMeta(
-                                  Icons.layers_outlined,
-                                  'Batch ${order.routeBatch!.ordersCount}',
-                                ),
-                              ],
-                              const Spacer(),
-                              Text(
-                                _driverEarningText(order),
-                                style: const TextStyle(
-                                  color: foodflow.success,
-                                  fontWeight: FontWeight.w800,
-                                  fontSize: 16,
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 14),
-                          if (order.isDriverAssignmentPending)
-                            Row(
-                              children: [
-                                Expanded(
-                                  child: OutlinedButton(
-                                    onPressed: () =>
-                                        _rejectAssignment(order.id),
-                                    style: OutlinedButton.styleFrom(
-                                      foregroundColor: foodflow.ink,
-                                      side: const BorderSide(
-                                        color: foodflow.line,
-                                      ),
-                                      shape: RoundedRectangleBorder(
-                                        borderRadius: BorderRadius.circular(8),
-                                      ),
-                                    ),
-                                    child: const Text('Reject'),
-                                  ),
-                                ),
-                                const SizedBox(width: 10),
-                                Expanded(
-                                  child: ElevatedButton(
-                                    onPressed: () =>
-                                        _acceptAssignment(order.id),
-                                    style: ElevatedButton.styleFrom(
-                                      backgroundColor: foodflow.success,
-                                      foregroundColor: Colors.white,
-                                      elevation: 0,
-                                      shape: RoundedRectangleBorder(
-                                        borderRadius: BorderRadius.circular(8),
-                                      ),
-                                    ),
-                                    child: const Text('Accept'),
-                                  ),
-                                ),
-                              ],
-                            )
-                          else
-                            Row(
-                              children: [
-                                Expanded(
-                                  child: ElevatedButton.icon(
-                                    onPressed: () {
-                                      Navigator.pushNamed(
-                                        context,
-                                        '/driver/order',
-                                        arguments: order.id,
-                                      );
-                                    },
-                                    icon: const Icon(Icons.navigation),
-                                    label: const Text('Open Delivery'),
-                                    style: ElevatedButton.styleFrom(
-                                      backgroundColor: foodflow.crimson,
-                                      foregroundColor: Colors.white,
-                                      elevation: 0,
-                                      shape: RoundedRectangleBorder(
-                                        borderRadius: BorderRadius.circular(8),
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                              ],
-                            ),
-                          ),
-                        ],
+              ? SafeArea(
+                  child: NetworkErrorView(
+                      message: _loadError, onRetry: _loadOrders))
+              : filtered.isEmpty
+                  ? ListView(
+                      children: [
+                        const SizedBox(height: 60),
+                        foodflow.emptyState(
+                          icon: Icons.local_shipping_outlined,
+                          title: 'No deliveries here',
+                          subtitle:
+                              'Assigned and past deliveries show up on this list.',
+                        ),
+                      ],
+                    )
+                  : RefreshIndicator(
+                      onRefresh: _loadOrders,
+                      child: ListView.builder(
+                        physics: const AlwaysScrollableScrollPhysics(),
+                        padding: const EdgeInsets.fromLTRB(16, 12, 16, 100),
+                        itemCount: filtered.length,
+                        itemBuilder: (context, index) => AuroraEntrance(
+                          delay: Duration(
+                              milliseconds: (index * 55).clamp(0, 350)),
+                          child: _orderCard(filtered[index]),
+                        ),
                       ),
                     ),
-                    );
-                  },
-                ),
     );
   }
 
-  Widget _buildLocationLine(
-    IconData icon,
-    String title,
-    String subtitle,
-    Color color,
-  ) {
+  Widget _orderCard(Order order) {
+    final pending = order.isDriverAssignmentPending;
+    final done = order.isDelivered || order.isCancelled;
+
+    return GlassCard(
+      solid: true,
+      margin: const EdgeInsets.only(bottom: 14),
+      padding: EdgeInsets.zero,
+      radius: 18,
+      onTap: () => _openOrder(order.id),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (pending)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
+              decoration: BoxDecoration(
+                gradient: foodflow.brandGradient,
+                borderRadius:
+                    const BorderRadius.vertical(top: Radius.circular(18)),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.bolt_rounded, color: Colors.white, size: 18),
+                  const SizedBox(width: 8),
+                  const Expanded(
+                    child: Text(
+                      'New delivery request',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w800,
+                        fontSize: 13,
+                      ),
+                    ),
+                  ),
+                  Text(
+                    _driverEarningText(order),
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w800,
+                      fontSize: 15,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        '#${order.orderNumber}',
+                        style: TextStyle(
+                          color: foodflow.ink,
+                          fontWeight: FontWeight.w800,
+                          fontSize: 15,
+                        ),
+                      ),
+                    ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 9, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: order.statusColor.withOpacity(0.12),
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: Text(
+                        order.statusText,
+                        style: TextStyle(
+                          color: order.statusColor,
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                if (order.isPartOfRouteBatch) ...[
+                  const SizedBox(height: 10),
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: foodflow.orange.withOpacity(0.10),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.alt_route_rounded,
+                            size: 15, color: foodflow.orange),
+                        const SizedBox(width: 6),
+                        Text(
+                          'Grouped route • ${order.routeBatch!.ordersCount} stops',
+                          style: TextStyle(
+                            color: foodflow.orange,
+                            fontSize: 11.5,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 12),
+                _routeRow(
+                  Icons.storefront_rounded,
+                  foodflow.orange,
+                  order.restaurant?.name ?? 'Pickup',
+                  order.restaurant?.address ?? '',
+                ),
+                Padding(
+                  padding: const EdgeInsets.only(left: 15),
+                  child: SizedBox(
+                    height: 14,
+                    child: VerticalDivider(
+                      color: foodflow.line,
+                      thickness: 2,
+                      width: 2,
+                    ),
+                  ),
+                ),
+                _routeRow(
+                  Icons.location_on_rounded,
+                  foodflow.success,
+                  order.customerName,
+                  order.deliveryAddress,
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    _meta(Icons.shopping_bag_outlined,
+                        '${order.items.length} item${order.items.length == 1 ? '' : 's'}'),
+                    const SizedBox(width: 14),
+                    _meta(
+                      order.isCodPayment
+                          ? Icons.payments_outlined
+                          : Icons.credit_card_outlined,
+                      order.isCodPayment
+                          ? (order.isPaymentPaid ? 'COD · paid' : 'COD')
+                          : 'Prepaid',
+                    ),
+                    const Spacer(),
+                    if (!pending)
+                      Text(
+                        _driverEarningText(order),
+                        style: TextStyle(
+                          color: foodflow.success,
+                          fontWeight: FontWeight.w800,
+                          fontSize: 15,
+                        ),
+                      ),
+                  ],
+                ),
+                if (pending) ...[
+                  const SizedBox(height: 14),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: () => _rejectAssignment(order.id),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: foodflow.inkSoft,
+                            side: BorderSide(color: foodflow.line),
+                            padding: const EdgeInsets.symmetric(vertical: 13),
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12)),
+                          ),
+                          child: const Text('Reject'),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        flex: 2,
+                        child: FilledButton(
+                          onPressed: () => _acceptAssignment(order.id),
+                          style: FilledButton.styleFrom(
+                            backgroundColor: foodflow.success,
+                            minimumSize: const Size.fromHeight(46),
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12)),
+                          ),
+                          child: const Text('Accept delivery'),
+                        ),
+                      ),
+                    ],
+                  ),
+                ] else if (!done) ...[
+                  const SizedBox(height: 14),
+                  FilledButton.icon(
+                    onPressed: () => _openOrder(order.id),
+                    icon: const Icon(Icons.navigation_rounded, size: 18),
+                    label: const Text('Continue delivery'),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: foodflow.orange,
+                      minimumSize: const Size.fromHeight(46),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12)),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _routeRow(IconData icon, Color color, String title, String subtitle) {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Container(
-          width: 34,
-          height: 34,
+          width: 30,
+          height: 30,
+          alignment: Alignment.center,
           decoration: BoxDecoration(
-            color: color.withOpacity(0.10),
-            borderRadius: BorderRadius.circular(8),
+            color: color.withOpacity(0.12),
+            borderRadius: BorderRadius.circular(9),
           ),
-          child: Icon(icon, size: 18, color: color),
+          child: Icon(icon, size: 16, color: color),
         ),
         const SizedBox(width: 10),
         Expanded(
@@ -561,24 +613,24 @@ class _DriverOrdersScreenState extends State<DriverOrdersScreen>
             children: [
               Text(
                 title,
-                style: const TextStyle(
-                  fontWeight: FontWeight.w800,
-                  color: foodflow.ink,
-                ),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-              ),
-              const SizedBox(height: 2),
-              Text(
-                subtitle,
-                style: const TextStyle(
-                  fontSize: 12,
-                  color: foodflow.muted,
-                  fontWeight: FontWeight.w400,
+                style: TextStyle(
+                  fontWeight: FontWeight.w800,
+                  color: foodflow.ink,
+                  fontSize: 13.5,
                 ),
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
               ),
+              if (subtitle.trim().isNotEmpty)
+                Text(
+                  subtitle,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: foodflow.muted,
+                  ),
+                ),
             ],
           ),
         ),
@@ -586,45 +638,24 @@ class _DriverOrdersScreenState extends State<DriverOrdersScreen>
     );
   }
 
-  Widget _buildMiniMeta(IconData icon, String label) {
+  Widget _meta(IconData icon, String label) {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
         Icon(icon, size: 15, color: foodflow.faint),
-        const SizedBox(width: 4),
+        const SizedBox(width: 5),
         Text(
           label,
-          style: const TextStyle(
+          style: TextStyle(
             color: foodflow.muted,
             fontSize: 12,
-            fontWeight: FontWeight.w800,
+            fontWeight: FontWeight.w700,
           ),
         ),
       ],
     );
   }
 
-  Widget _buildFilterChip(String label, String value) {
-    final isSelected = _selectedStatus == value;
-    return FilterChip(
-      label: Text(label),
-      selected: isSelected,
-      onSelected: (selected) {
-        setState(() {
-          _selectedStatus = value;
-        });
-        _loadOrders();
-      },
-      backgroundColor: Colors.white,
-      selectedColor: foodflow.crimson.withOpacity(0.1),
-      checkmarkColor: foodflow.crimson,
-      side: BorderSide(
-        color: isSelected ? foodflow.crimson : foodflow.line,
-      ),
-      labelStyle: TextStyle(
-        color: isSelected ? foodflow.crimson : foodflow.ink,
-        fontWeight: FontWeight.w800,
-      ),
-    );
-  }
+
+
 }

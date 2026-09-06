@@ -62,7 +62,7 @@ class _DriverPrivacyLegalScreenState extends State<DriverPrivacyLegalScreen> {
       backgroundColor: const Color(0xFFFFFBFA),
       appBar: AppBar(
         title: const Text('Privacy & Legal'),
-        backgroundColor: Colors.white,
+        backgroundColor: foodflow.surfaceColor,
         foregroundColor: foodflow.ink,
         elevation: 0,
       ),
@@ -84,7 +84,7 @@ class _DriverPrivacyLegalScreenState extends State<DriverPrivacyLegalScreen> {
               children: [
                 Text(
                   section.$1,
-                  style: const TextStyle(
+                  style:  TextStyle(
                     color: foodflow.ink,
                     fontWeight: FontWeight.w800,
                     fontSize: 16,
@@ -93,7 +93,7 @@ class _DriverPrivacyLegalScreenState extends State<DriverPrivacyLegalScreen> {
                 const SizedBox(height: 8),
                 Text(
                   section.$2,
-                  style: const TextStyle(
+                  style:  TextStyle(
                     color: foodflow.muted,
                     height: 1.45,
                     fontWeight: FontWeight.w400,

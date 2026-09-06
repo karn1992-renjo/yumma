@@ -60,7 +60,7 @@ class CartItemCard extends StatelessWidget {
                   const SizedBox(height: 8),
                   Text(
                     item.menuItem.name,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 15,
                       fontWeight: FontWeight.w900,
                       color: FoodFlowTheme.ink,

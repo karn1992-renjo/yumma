@@ -13,7 +13,7 @@
     <div class="d-flex justify-content-between align-items-start flex-wrap gap-3">
         <div>
             <h1>{{ $driver->name }}</h1>
-            <p class="text-muted mb-0">Driver ID: #{{ $driver->id }}</p>
+            <p class="text-muted mb-0">Driver ID: <strong>{{ $driver->driver_code }}</strong></p>
         </div>
         <div class="d-flex gap-2 flex-wrap">
             <a href="{{ route('admin.drivers.edit', $driver->id) }}" class="btn btn-primary">
@@ -131,7 +131,24 @@
                         <label class="form-label fw-semibold text-muted small">License Number</label>
                         <div class="fw-semibold">{{ $driver->license_number ?? 'N/A' }}</div>
                     </div>
-                    
+
+                    <div class="col-md-6">
+                        <label class="form-label fw-semibold text-muted small">Payout Mode</label>
+                        <div class="fw-semibold">
+                            @if(($driver->earning_mode ?? 'commission') === 'salary')
+                                Fixed monthly salary
+                                @if($driver->monthly_salary)
+                                    &mdash; {{ \App\Models\AppSetting::sanitizedCurrencySymbol() }}{{ number_format((float) $driver->monthly_salary, 2) }}/mo
+                                @endif
+                                @if($driver->salary_effective_from)
+                                    <span class="text-muted small">(from {{ optional($driver->salary_effective_from)->format('d M Y') }})</span>
+                                @endif
+                            @else
+                                Per-delivery commission
+                            @endif
+                        </div>
+                    </div>
+
                     <div class="col-md-6">
                         <label class="form-label fw-semibold text-muted small">Max Active Orders</label>
                         <div class="fw-semibold">

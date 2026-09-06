@@ -3,6 +3,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import '../models/order.dart';
+import '../theme/foodflow_theme.dart';
 import '../utils/currency_utils.dart';
 
 class NewOrderNotificationDialog extends StatefulWidget {
@@ -24,13 +25,18 @@ class NewOrderNotificationDialog extends StatefulWidget {
 
 class _NewOrderNotificationDialogState extends State<NewOrderNotificationDialog>
     with SingleTickerProviderStateMixin {
-  late AnimationController _animationController;
+  late final AnimationController _c = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 420),
+  )..forward();
+  late final Animation<double> _in =
+      CurvedAnimation(parent: _c, curve: Curves.easeOutCubic);
+
   bool _isAccepting = false;
   bool _isRejecting = false;
-
   bool get _isBusy => _isAccepting || _isRejecting;
 
-  String _driverEarningText(BuildContext context) {
+  String _earningText(BuildContext context) {
     final earning = formatCurrency(context, widget.order.driverEarningAmount);
     if (widget.order.driverIncentiveAmount > 0) {
       return '$earning + ${formatCurrency(context, widget.order.driverIncentiveAmount)} incentive';
@@ -39,265 +45,174 @@ class _NewOrderNotificationDialogState extends State<NewOrderNotificationDialog>
   }
 
   @override
-  void initState() {
-    super.initState();
-    _animationController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 600),
-    );
-    _animationController.forward();
-  }
-
-  @override
   void dispose() {
-    _animationController.dispose();
+    _c.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    return ScaleTransition(
-      scale: Tween<double>(begin: 0.8, end: 1.0).animate(
-        CurvedAnimation(parent: _animationController, curve: Curves.easeOutCubic),
-      ),
-      child: Dialog(
-        backgroundColor: Colors.transparent,
-        insetPadding: const EdgeInsets.all(16),
-        child: GestureDetector(
-          onTap: () {}, // Prevent dismiss on tap
+    final order = widget.order;
+    return Dialog(
+      backgroundColor: Colors.transparent,
+      insetPadding: const EdgeInsets.all(16),
+      child: FadeTransition(
+        opacity: _in,
+        child: ScaleTransition(
+          scale: Tween<double>(begin: 0.92, end: 1).animate(_in),
           child: Container(
             decoration: BoxDecoration(
-              gradient: const LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [
-                  Color(0xFFFFFFFF),
-                  Color(0xFFFAFAFA),
-                ],
-              ),
+              color: foodflow.surfaceColor,
               borderRadius: BorderRadius.circular(24),
               boxShadow: [
                 BoxShadow(
-                  color: Colors.black.withOpacity(0.15),
-                  blurRadius: 30,
-                  offset: const Offset(0, 10),
+                  color: Colors.black.withOpacity(0.25),
+                  blurRadius: 40,
+                  offset: const Offset(0, 16),
                 ),
               ],
             ),
+            clipBehavior: Clip.antiAlias,
             child: SingleChildScrollView(
-              child: Padding(
-                padding: const EdgeInsets.all(18),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    // Animated Bell Icon
-                    Container(
-                      width: 64,
-                      height: 64,
-                      decoration: BoxDecoration(
-                        gradient: const LinearGradient(
-                          colors: [
-                            Color(0xFF0E9F6E),
-                            Color(0xFFFF6B35),
-                          ],
-                        ),
-                        shape: BoxShape.circle,
-                        boxShadow: [
-                          BoxShadow(
-                            color: const Color(0xFF0E9F6E).withOpacity(0.3),
-                            blurRadius: 20,
-                            offset: const Offset(0, 8),
-                          ),
-                        ],
-                      ),
-                      child: const Icon(
-                        Icons.notifications_active,
-                        color: Colors.white,
-                        size: 32,
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-
-                    // Header
-                    const Text(
-                      'New Delivery Request',
-                      style: TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.w800,
-                        color: Color(0xFF1C1C1C),
-                      ),
-                      textAlign: TextAlign.center,
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      'Earn ${_driverEarningText(context)} for this delivery',
-                      style: const TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w800,
-                        color: Color(0xFF0E9F6E),
-                      ),
-                      textAlign: TextAlign.center,
-                    ),
-                    const SizedBox(height: 18),
-
-                    // Order Details Card
-                    Container(
-                      decoration: BoxDecoration(
-                        color: Colors.grey.shade50,
-                        borderRadius: BorderRadius.circular(16),
-                        border: Border.all(
-                          color: Colors.grey.shade200,
-                        ),
-                      ),
-                      padding: const EdgeInsets.all(14),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          // Order Number
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              Text(
-                                'Order #${widget.order.orderNumber}',
-                                style: const TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.w800,
-                                  color: Color(0xFF1C1C1C),
-                                ),
-                              ),
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 10,
-                                  vertical: 4,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: Colors.green.withOpacity(0.15),
-                                  borderRadius: BorderRadius.circular(20),
-                                ),
-                                child: const Text(
-                                  'Waiting',
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w800,
-                                    color: Colors.green,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 12),
-
-                          // Pickup Location
-                          _buildDetailRow(
-                            icon: Icons.restaurant,
-                            label: widget.order.restaurant?.name ?? 'Store',
-                            value:
-                                widget.order.restaurant?.address ?? 'Pickup location',
-                            iconColor: Colors.red,
-                          ),
-                          const SizedBox(height: 10),
-
-                          // Delivery Location
-                          _buildDetailRow(
-                            icon: Icons.location_on,
-                            label: widget.order.customerName,
-                            value: widget.order.deliveryAddress,
-                            iconColor: Colors.green,
-                          ),
-                          const SizedBox(height: 10),
-
-                          // Distance & Items
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              _buildMiniInfo(
-                                icon: Icons.route,
-                                label: '4.6 km',
-                              ),
-                              _buildMiniInfo(
-                                icon: Icons.shopping_bag_outlined,
-                                label: '${widget.order.items.length} items',
-                              ),
-                              _buildMiniInfo(
-                                icon: Icons.timer_outlined,
-                                label: '30 mins',
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 18),
-
-                    // Action Buttons
-                    Row(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // Gradient header
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.fromLTRB(20, 22, 20, 20),
+                    decoration: BoxDecoration(gradient: foodflow.brandGradient),
+                    child: Column(
                       children: [
-                        Expanded(
-                          child: ElevatedButton.icon(
-                            onPressed: _isBusy ? null : _reject,
-                            icon: _isRejecting
-                                ? const SizedBox(
-                                    width: 18,
-                                    height: 18,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                    ),
-                                  )
-                                : const Icon(Icons.clear, size: 18),
-                            label: const Text(
-                              'Reject',
-                              style: TextStyle(
-                                fontWeight: FontWeight.w800,
-                                fontSize: 13,
-                              ),
-                            ),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.grey.shade100,
-                              foregroundColor: Colors.grey.shade700,
-                              padding: const EdgeInsets.symmetric(vertical: 13),
-                              elevation: 0,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                            ),
+                        _PulseIcon(animation: _c),
+                        const SizedBox(height: 14),
+                        const Text(
+                          'New delivery request',
+                          style: TextStyle(
+                            fontSize: 19,
+                            fontWeight: FontWeight.w800,
+                            color: Colors.white,
                           ),
                         ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: ElevatedButton.icon(
-                            onPressed: _isBusy ? null : _accept,
-                            icon: _isAccepting
-                                ? const SizedBox(
-                                    width: 18,
-                                    height: 18,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                      color: Colors.white,
-                                    ),
-                                  )
-                                : const Icon(Icons.check, size: 18),
-                            label: const Text(
-                              'Accept',
-                              style: TextStyle(
-                                fontWeight: FontWeight.w800,
-                                fontSize: 13,
-                              ),
-                            ),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: const Color(0xFF0E9F6E),
-                              foregroundColor: Colors.white,
-                              padding: const EdgeInsets.symmetric(vertical: 13),
-                              elevation: 2,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                            ),
+                        const SizedBox(height: 6),
+                        Text(
+                          'You earn ${_earningText(context)}',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                            color: Colors.white.withOpacity(0.92),
                           ),
                         ),
                       ],
                     ),
-                  ],
-                ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.all(18),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                'Order #${order.orderNumber}',
+                                style: TextStyle(
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w800,
+                                  color: foodflow.ink,
+                                ),
+                              ),
+                            ),
+                            _meta(
+                              order.isCodPayment
+                                  ? Icons.payments_outlined
+                                  : Icons.credit_card_outlined,
+                              order.isCodPayment ? 'COD' : 'Prepaid',
+                            ),
+                            const SizedBox(width: 12),
+                            _meta(Icons.shopping_bag_outlined,
+                                '${order.items.length} item${order.items.length == 1 ? '' : 's'}'),
+                          ],
+                        ),
+                        const SizedBox(height: 14),
+                        _row(
+                          Icons.storefront_rounded,
+                          foodflow.orange,
+                          order.restaurant?.name ?? 'Pickup',
+                          order.restaurant?.address ?? '',
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.only(left: 15),
+                          child: SizedBox(
+                            height: 16,
+                            child: VerticalDivider(
+                              color: foodflow.line,
+                              thickness: 2,
+                              width: 2,
+                            ),
+                          ),
+                        ),
+                        _row(
+                          Icons.location_on_rounded,
+                          foodflow.success,
+                          order.customerName,
+                          order.deliveryAddress,
+                        ),
+                        const SizedBox(height: 18),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: OutlinedButton(
+                                onPressed: _isBusy ? null : _reject,
+                                style: OutlinedButton.styleFrom(
+                                  foregroundColor: foodflow.inkSoft,
+                                  side: BorderSide(color: foodflow.line),
+                                  minimumSize: const Size.fromHeight(48),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(13),
+                                  ),
+                                ),
+                                child: _isRejecting
+                                    ? const SizedBox(
+                                        width: 18,
+                                        height: 18,
+                                        child: CircularProgressIndicator(
+                                            strokeWidth: 2),
+                                      )
+                                    : const Text('Reject'),
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              flex: 2,
+                              child: FilledButton(
+                                onPressed: _isBusy ? null : _accept,
+                                style: FilledButton.styleFrom(
+                                  backgroundColor: foodflow.success,
+                                  minimumSize: const Size.fromHeight(48),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(13),
+                                  ),
+                                ),
+                                child: _isAccepting
+                                    ? const SizedBox(
+                                        width: 18,
+                                        height: 18,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                          color: Colors.white,
+                                        ),
+                                      )
+                                    : const Text('Accept delivery'),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
               ),
             ),
           ),
@@ -320,51 +235,42 @@ class _NewOrderNotificationDialogState extends State<NewOrderNotificationDialog>
     Navigator.pop(context);
   }
 
-  Widget _buildDetailRow({
-    required IconData icon,
-    required String label,
-    required String value,
-    required Color iconColor,
-  }) {
+  Widget _row(IconData icon, Color color, String title, String subtitle) {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Container(
-          padding: const EdgeInsets.all(8),
+          width: 30,
+          height: 30,
+          alignment: Alignment.center,
           decoration: BoxDecoration(
-            color: iconColor.withOpacity(0.15),
-            borderRadius: BorderRadius.circular(8),
+            color: color.withOpacity(0.14),
+            borderRadius: BorderRadius.circular(9),
           ),
-          child: Icon(
-            icon,
-            size: 16,
-            color: iconColor,
-          ),
+          child: Icon(icon, size: 16, color: color),
         ),
-        const SizedBox(width: 12),
+        const SizedBox(width: 10),
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                label,
-                style: const TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w400,
-                  color: Colors.grey,
-                ),
-              ),
-              const SizedBox(height: 2),
-              Text(
-                value,
-                style: const TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w800,
-                  color: Color(0xFF1C1C1C),
-                ),
-                maxLines: 2,
+                title,
+                maxLines: 1,
                 overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 13.5,
+                  fontWeight: FontWeight.w800,
+                  color: foodflow.ink,
+                ),
               ),
+              if (subtitle.trim().isNotEmpty)
+                Text(
+                  subtitle,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 12, color: foodflow.muted),
+                ),
             ],
           ),
         ),
@@ -372,33 +278,50 @@ class _NewOrderNotificationDialogState extends State<NewOrderNotificationDialog>
     );
   }
 
-  Widget _buildMiniInfo({
-    required IconData icon,
-    required String label,
-  }) {
-    return Flexible(
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(
-            icon,
-            size: 14,
-            color: Colors.grey.shade600,
+  Widget _meta(IconData icon, String label) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 14, color: foodflow.faint),
+        const SizedBox(width: 4),
+        Text(
+          label,
+          style: TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w700,
+            color: foodflow.muted,
           ),
-          const SizedBox(width: 4),
-          Flexible(
-            child: Text(
-              label,
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w400,
-                color: Colors.grey.shade700,
-              ),
-              overflow: TextOverflow.ellipsis,
+        ),
+      ],
+    );
+  }
+}
+
+class _PulseIcon extends StatelessWidget {
+  const _PulseIcon({required this.animation});
+  final Animation<double> animation;
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: animation,
+      builder: (context, _) {
+        final t = animation.value;
+        return Container(
+          width: 60,
+          height: 60,
+          decoration: BoxDecoration(
+            color: Colors.white.withOpacity(0.18),
+            shape: BoxShape.circle,
+            border: Border.all(
+              color: Colors.white.withOpacity(0.35 + 0.25 * t),
+              width: 2,
             ),
           ),
-        ],
-      ),
+          child: const Icon(Icons.notifications_active_rounded,
+              color: Colors.white, size: 28),
+        );
+      },
     );
   }
 }

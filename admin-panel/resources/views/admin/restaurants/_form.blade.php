@@ -11,6 +11,16 @@
     $restaurantTypes = App\Models\Restaurant::validServiceTypes();
     $commissionType = old('commission_calculation_type', $restaurant?->commission_calculation_type ?? 'global');
     $field = fn ($name, $fallback = null) => old($name, $restaurant?->{$name} ?? $fallback);
+    $payoutValues = [
+        'account_holder_name' => old('account_holder_name', $owner?->account_holder_name),
+        'bank_name' => old('bank_name', $owner?->bank_name),
+        'account_number' => old('account_number', $owner?->account_number),
+        'routing_code' => old('routing_code', $owner?->routing_code ?? $owner?->ifsc_code),
+        'ifsc_code' => old('ifsc_code', $owner?->ifsc_code),
+        'upi_id' => old('upi_id', $owner?->upi_id),
+        'stripe_account_id' => old('stripe_account_id', $owner?->stripe_account_id ?? $owner?->gateway_account_id),
+        'gateway_account_id' => old('gateway_account_id', $owner?->gateway_account_id ?? $owner?->stripe_account_id),
+    ];
 @endphp
 
 <div class="restaurant-form-grid">
@@ -53,7 +63,9 @@
                     <label class="form-label fw-bold">Cuisine</label>
                     <select name="cuisine[]" class="form-select" multiple>
                         @forelse($cuisines as $cuisine)
-                            @php($cuisineValue = (string) ($cuisineValueField === 'name' ? $cuisine->name : $cuisine->id))
+                            @php
+                                $cuisineValue = (string) ($cuisineValueField === 'name' ? $cuisine->name : $cuisine->id);
+                            @endphp
                             <option value="{{ $cuisineValue }}" @selected(in_array($cuisineValue, array_map('strval', $selectedCuisines), true))>
                                 {{ $cuisine->name }}
                             </option>
@@ -151,6 +163,48 @@
                     @error('pincode') <div class="invalid-feedback">{{ $message }}</div> @enderror
                 </div>
             </div>
+
+            <hr class="my-3">
+            <h3 class="h6 fw-bold mb-2">GST / Tax Invoice</h3>
+            <p class="text-muted small">Applies only when GST invoicing is enabled in Settings &rarr; Business. A GST-registered restaurant is the supplier of record on its customer invoices.</p>
+            <div class="row g-3">
+                <div class="col-lg-3 col-md-6">
+                    <div class="form-check form-switch mt-2">
+                        <input type="hidden" name="is_gst_registered" value="0">
+                        <input class="form-check-input" type="checkbox" role="switch" id="is_gst_registered" name="is_gst_registered" value="1" @checked((bool) $field('is_gst_registered'))>
+                        <label class="form-check-label fw-semibold" for="is_gst_registered">GST registered</label>
+                    </div>
+                </div>
+                <div class="col-lg-3 col-md-6">
+                    <label class="form-label fw-bold">GSTIN</label>
+                    <input type="text" name="gstin" class="form-control @error('gstin') is-invalid @enderror" maxlength="20" value="{{ $field('gstin') }}">
+                    @error('gstin') <div class="invalid-feedback">{{ $message }}</div> @enderror
+                </div>
+                <div class="col-lg-3 col-md-6">
+                    <label class="form-label fw-bold">PAN</label>
+                    <input type="text" name="pan" class="form-control @error('pan') is-invalid @enderror" maxlength="15" value="{{ $field('pan') }}">
+                    @error('pan') <div class="invalid-feedback">{{ $message }}</div> @enderror
+                </div>
+                <div class="col-lg-3 col-md-6">
+                    <label class="form-label fw-bold">GST State Code</label>
+                    <input type="text" name="state_code" class="form-control @error('state_code') is-invalid @enderror" maxlength="2" placeholder="e.g. 27" value="{{ $field('state_code') }}">
+                    @error('state_code') <div class="invalid-feedback">{{ $message }}</div> @enderror
+                </div>
+                <div class="col-lg-3 col-md-6">
+                    <label class="form-label fw-bold">Deductee Type (TDS 194-O)</label>
+                    <select name="tax_deductee_type" class="form-select">
+                        <option value="individual" @selected($field('tax_deductee_type', 'individual') === 'individual')>Individual / HUF</option>
+                        <option value="company" @selected($field('tax_deductee_type') === 'company')>Company / Firm</option>
+                    </select>
+                </div>
+                <div class="col-lg-3 col-md-6">
+                    <div class="form-check mt-4">
+                        <input type="hidden" name="tds_pan_verified" value="0">
+                        <input class="form-check-input" type="checkbox" id="tds_pan_verified" name="tds_pan_verified" value="1" @checked((bool) $field('tds_pan_verified'))>
+                        <label class="form-check-label" for="tds_pan_verified">PAN verified</label>
+                    </div>
+                </div>
+            </div>
         </div>
     </section>
 
@@ -215,6 +269,20 @@
                     <input type="time" name="close_time" class="form-control @error('close_time') is-invalid @enderror" value="{{ old('close_time', $restaurant?->close_time ?? '22:00') }}">
                     @error('close_time') <div class="invalid-feedback">{{ $message }}</div> @enderror
                 </div>
+                @php
+                    $mondayTiming = $restaurant?->weekly_timings['monday'] ?? [];
+                @endphp
+                <div class="col-lg-3 col-md-6">
+                    <label class="form-label fw-bold">Break Start <span class="text-muted fw-normal">(optional)</span></label>
+                    <input type="time" name="break_start" class="form-control @error('break_start') is-invalid @enderror" value="{{ old('break_start', $mondayTiming['break_start'] ?? '') }}">
+                    <div class="form-text">Kitchen closed between these times each day.</div>
+                    @error('break_start') <div class="invalid-feedback">{{ $message }}</div> @enderror
+                </div>
+                <div class="col-lg-3 col-md-6">
+                    <label class="form-label fw-bold">Break End</label>
+                    <input type="time" name="break_end" class="form-control @error('break_end') is-invalid @enderror" value="{{ old('break_end', $mondayTiming['break_end'] ?? '') }}">
+                    @error('break_end') <div class="invalid-feedback">{{ $message }}</div> @enderror
+                </div>
                 <div class="col-lg-3 col-md-6">
                     <label class="form-label fw-bold">Timezone</label>
                     <input type="text" name="timezone" class="form-control @error('timezone') is-invalid @enderror" value="{{ $field('timezone', 'Asia/Kolkata') }}">
@@ -238,12 +306,6 @@
                         <div class="restaurant-toggle-box">
                             <input class="form-check-input" type="checkbox" name="is_verified" value="1" id="isVerified" @checked(old('is_verified', $restaurant?->is_verified))>
                             <label class="form-check-label fw-bold" for="isVerified">Verified</label>
-                        </div>
-                    </div>
-                    <div class="col-lg-4 col-md-6">
-                        <div class="restaurant-toggle-box">
-                            <input class="form-check-input" type="checkbox" name="is_featured" value="1" id="isFeatured" @checked(old('is_featured', $restaurant?->is_featured))>
-                            <label class="form-check-label fw-bold" for="isFeatured">Featured</label>
                         </div>
                     </div>
                 @endif
@@ -300,15 +362,7 @@
         </div>
         <div class="restaurant-form-panel-body">
             <div class="row g-3">
-                @include('admin.partials.payout-account-fields', ['values' => [
-                    'account_holder_name' => old('account_holder_name', $owner?->account_holder_name),
-                    'bank_name' => old('bank_name', $owner?->bank_name),
-                    'account_number' => old('account_number', $owner?->account_number),
-                    'ifsc_code' => old('ifsc_code', $owner?->ifsc_code),
-                    'upi_id' => old('upi_id', $owner?->upi_id),
-                    'stripe_account_id' => old('stripe_account_id', $owner?->stripe_account_id ?? $owner?->gateway_account_id),
-                    'gateway_account_id' => old('gateway_account_id', $owner?->gateway_account_id ?? $owner?->stripe_account_id),
-                ]])
+                @include('admin.partials.payout-account-fields', ['values' => $payoutValues])
             </div>
         </div>
     </section>

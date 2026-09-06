@@ -21,9 +21,15 @@ class Restaurant extends Model
         'address', 
         'city', 
         'state',
-        'pincode', 
-        'latitude', 
-        'longitude', 
+        'state_code',
+        'pincode',
+        'is_gst_registered',
+        'gstin',
+        'pan',
+        'tax_deductee_type',
+        'tds_pan_verified',
+        'latitude',
+        'longitude',
         'delivery_radius', 
         'phone', 
         'email', 
@@ -39,14 +45,12 @@ class Restaurant extends Model
         'restaurant_type',
         'dining_charge',
         'dining_settings',
-        'rating', 
+        'rating',
         'total_ratings', 
         'banner_image',
         'logo_image', 
-        'cover_image', 
-        'is_featured', 
-        'is_verified', 
-        'ad_expiry',
+        'cover_image',
+        'is_verified',
         // Day-wise timing fields
         'open_time',
         'close_time',
@@ -66,13 +70,15 @@ class Restaurant extends Model
         'dining_settings' => 'array',
         'is_open' => 'boolean',
         'is_pure_veg' => 'boolean',
-        'is_featured' => 'boolean',
         'is_verified' => 'boolean',
+        'is_gst_registered' => 'boolean',
+        'tds_pan_verified' => 'boolean',
         'dining_charge' => 'decimal:2',
+        'min_order_amount' => 'decimal:2',
+        'delivery_fee' => 'decimal:2',
         'auto_accept_orders' => 'boolean',
         'auto_print_new_orders' => 'boolean',
         'same_day_delivery' => 'boolean',
-        'ad_expiry' => 'datetime',
         'latitude' => 'decimal:8',
         'longitude' => 'decimal:8',
         'delivery_radius' => 'decimal:2',
@@ -82,7 +88,6 @@ class Restaurant extends Model
     protected $dates = [
         'created_at',
         'updated_at',
-        'ad_expiry'
     ];
     
     protected $appends = [
@@ -91,7 +96,17 @@ class Restaurant extends Model
         'is_open_now',
         'cuisine_names',
         'cuisine_text',
+        'code',
     ];
+
+    /**
+     * Human-readable public identifier, e.g. RES00042. Derived from the row id
+     * so it is always stable and unique without a separate column.
+     */
+    public function getCodeAttribute(): string
+    {
+        return 'RES' . str_pad((string) $this->id, 5, '0', STR_PAD_LEFT);
+    }
 
     public function getCuisineNamesAttribute(): array
     {
@@ -193,7 +208,22 @@ class Restaurant extends Model
     {
         return $this->belongsTo(Branch::class);
     }
-    
+
+    public function restaurantOnboarding()
+    {
+        return $this->hasOne(RestaurantOnboarding::class);
+    }
+
+    public function adWallet()
+    {
+        return $this->hasOne(RestaurantAdWallet::class);
+    }
+
+    public function adCampaigns()
+    {
+        return $this->hasMany(RestaurantAdCampaign::class);
+    }
+
     public function categories()
     {
         return $this->hasMany(Category::class);
@@ -783,14 +813,6 @@ class Restaurant extends Model
     }
     
     /**
-     * Scope a query to only include featured restaurants
-     */
-    public function scopeFeatured($query)
-    {
-        return $query->where('is_featured', true);
-    }
-    
-    /**
      * Scope a query to only include pure veg restaurants
      */
     public function scopePureVeg($query)
@@ -837,10 +859,10 @@ class Restaurant extends Model
     /**
      * Scope a query to get restaurants near a location
      */
-    public function scopeNearby($query, float $latitude, float $longitude, float $radius = 10)
+    public function scopeNearby($query, float $latitude, float $longitude, ?float $radius = null)
     {
         $table = $query->getModel()->getTable();
-        $radius = max(0.1, $radius);
+        $radius = max(0.1, $radius ?? AppSetting::defaultDeliveryRadius());
         $latitudeDelta = $radius / 111.045;
         $longitudeDelta = $radius / (111.045 * max(0.01, cos(deg2rad($latitude))));
         $cosine = "(cos(radians(?))
@@ -961,3 +983,4 @@ class Restaurant extends Model
         return $this->isOpenAt($now);
     }
 }
+

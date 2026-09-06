@@ -10,24 +10,22 @@ class BackgroundLocationDisclosureScreen extends StatefulWidget {
   const BackgroundLocationDisclosureScreen({super.key});
 
   static const acceptedPreferenceKey =
-      'driver_background_location_disclosure_accepted_v2';
+      'driver_background_location_disclosure_accepted_v4';
 
   static Future<bool> ensureAccepted(
     BuildContext context, {
     bool forceDisclosure = false,
   }) async {
     final prefs = await SharedPreferences.getInstance();
-    if (!forceDisclosure &&
-        prefs.getBool(acceptedPreferenceKey) == true) {
+    if (!forceDisclosure && prefs.getBool(acceptedPreferenceKey) == true) {
       return true;
     }
 
     if (!context.mounted) return false;
-    final accepted = await Navigator.of(context).push<bool>(
-      MaterialPageRoute(
-        fullscreenDialog: true,
-        builder: (_) => const BackgroundLocationDisclosureScreen(),
-      ),
+    final accepted = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const _BackgroundLocationDisclosureDialog(),
     );
 
     if (accepted == true) {
@@ -41,6 +39,44 @@ class BackgroundLocationDisclosureScreen extends StatefulWidget {
   @override
   State<BackgroundLocationDisclosureScreen> createState() =>
       _BackgroundLocationDisclosureScreenState();
+}
+
+class _BackgroundLocationDisclosureDialog extends StatelessWidget {
+  const _BackgroundLocationDisclosureDialog();
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Background location access'),
+      content: const SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'This app collects location data to enable live delivery assignment, route tracking, ETA updates, and pickup/drop-off verification even when the app is closed or not in use.',
+              style: TextStyle(fontWeight: FontWeight.w800, height: 1.4),
+            ),
+            SizedBox(height: 12),
+            Text(
+              'Yumma! Rider transmits and stores precise location data on Yumma! servers and shares live delivery location with assigned restaurants and assigned customers while you are online for active delivery work. Going offline stops live delivery tracking. We do not sell this data or use it for advertising.',
+              style: TextStyle(height: 1.4),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(false),
+          child: const Text('I do not agree'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.of(context).pop(true),
+          child: const Text('Agree'),
+        ),
+      ],
+    );
+  }
 }
 
 class _BackgroundLocationDisclosureScreenState
@@ -68,7 +104,7 @@ class _BackgroundLocationDisclosureScreenState
         backgroundColor: foodflow.canvas,
         appBar: AppBar(
           automaticallyImplyLeading: false,
-          backgroundColor: Colors.white,
+          backgroundColor: foodflow.surfaceColor,
           foregroundColor: foodflow.ink,
           elevation: 0,
           title: const Text('Background location access'),
@@ -94,12 +130,12 @@ class _BackgroundLocationDisclosureScreenState
                             width: 44,
                             height: 44,
                             decoration: BoxDecoration(
-                              color: foodflow.crimson.withOpacity(0.1),
+                              color: foodflow.orange.withOpacity(0.1),
                               borderRadius: BorderRadius.circular(8),
                             ),
-                            child: const Icon(
+                            child: Icon(
                               Icons.location_on_outlined,
-                              color: foodflow.crimson,
+                              color: foodflow.orange,
                               size: 26,
                             ),
                           ),
@@ -110,7 +146,7 @@ class _BackgroundLocationDisclosureScreenState
                               children: [
                                 Text(
                                   '$_appName collects precise location data',
-                                  style: GoogleFonts.nunitoSans(
+                                  style: GoogleFonts.plusJakartaSans(
                                     color: foodflow.ink,
                                     fontSize: 19,
                                     fontWeight: FontWeight.w900,
@@ -119,8 +155,8 @@ class _BackgroundLocationDisclosureScreenState
                                 ),
                                 const SizedBox(height: 8),
                                 Text(
-                                  '$_appName collects, transmits, and stores your precise location to enable live delivery assignment, route tracking, ETA updates, and pickup/drop-off verification when you are online, including when the app is closed or not in use.',
-                                  style: GoogleFonts.nunitoSans(
+                                  '$_appName collects, transmits, stores, and shares your precise location with $_appName servers, assigned restaurants, and assigned customers to enable live delivery assignment, route tracking, ETA updates, and pickup/drop-off verification when you are online, including when the app is closed or not in use.',
+                                  style: GoogleFonts.plusJakartaSans(
                                     color: foodflow.inkSoft,
                                     fontSize: 13,
                                     height: 1.45,
@@ -161,7 +197,7 @@ class _BackgroundLocationDisclosureScreenState
                       ),
                       child: Text(
                         'After you agree, Android will ask for location permission. To go online for deliveries, allow location access and choose "Allow all the time" if Android opens the app location settings.',
-                        style: GoogleFonts.nunitoSans(
+                        style: GoogleFonts.plusJakartaSans(
                           color: foodflow.inkSoft,
                           fontSize: 13,
                           height: 1.4,
@@ -174,7 +210,7 @@ class _BackgroundLocationDisclosureScreenState
               ),
               Container(
                 padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
-                decoration: const BoxDecoration(
+                decoration:  BoxDecoration(
                   color: Colors.white,
                   border: Border(top: BorderSide(color: foodflow.line)),
                 ),
@@ -185,7 +221,7 @@ class _BackgroundLocationDisclosureScreenState
                     ElevatedButton(
                       onPressed: () => Navigator.of(context).pop(true),
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: foodflow.crimson,
+                        backgroundColor: foodflow.orange,
                         foregroundColor: Colors.white,
                         elevation: 0,
                         padding: const EdgeInsets.symmetric(vertical: 14),
@@ -231,7 +267,7 @@ class _DisclosureItem extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(icon, color: foodflow.crimson, size: 24),
+          Icon(icon, color: foodflow.orange, size: 24),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
@@ -239,7 +275,7 @@ class _DisclosureItem extends StatelessWidget {
               children: [
                 Text(
                   title,
-                  style: GoogleFonts.nunitoSans(
+                  style: GoogleFonts.plusJakartaSans(
                     color: foodflow.ink,
                     fontSize: 15,
                     fontWeight: FontWeight.w900,
@@ -248,7 +284,7 @@ class _DisclosureItem extends StatelessWidget {
                 const SizedBox(height: 4),
                 Text(
                   body,
-                  style: GoogleFonts.nunitoSans(
+                  style: GoogleFonts.plusJakartaSans(
                     color: foodflow.muted,
                     fontSize: 13,
                     height: 1.35,

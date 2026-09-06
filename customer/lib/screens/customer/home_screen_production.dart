@@ -7,6 +7,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:http/http.dart' as http;
 import 'package:lottie/lottie.dart';
@@ -37,6 +38,7 @@ import '../../utils/currency_utils.dart';
 import '../../widgets/common/lucide_icon.dart';
 import '../../widgets/customer/menu_item_card.dart';
 import '../../widgets/customer/order_feedback_dialog.dart';
+import '../../widgets/customer/promotion_detail_sheet.dart';
 import '../customer/cart_screen.dart';
 import '../customer/menu_price_filter_screen.dart';
 import '../customer/menu_taxonomy_filter_screen.dart';
@@ -360,6 +362,7 @@ class _CustomerHomeScreenProductionState
   bool _showDiningMode = false;
   bool _hasPromptedForLocation = false;
   bool _bottomNavVisible = true;
+  bool _showVoiceAssistant = false;
   String _currentCity = 'Home';
   String _currentAddress = 'Select your delivery address';
   double? _currentLat;
@@ -374,6 +377,7 @@ class _CustomerHomeScreenProductionState
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _ensureLocationSelected();
       _loadMenuPriceFilterConfig();
+      _loadVoiceAiVisibility();
       if (_hasCustomerAccountAccess(context)) {
         final orderProvider = context.read<OrderProvider>();
         if (orderProvider.orders.isEmpty) {
@@ -425,6 +429,7 @@ class _CustomerHomeScreenProductionState
       unawaited(_loadLocation());
       _refresh();
       unawaited(_refreshActiveOrders());
+      unawaited(_loadVoiceAiVisibility());
     }
   }
 
@@ -448,6 +453,7 @@ class _CustomerHomeScreenProductionState
     final order = context.read<OrderProvider>().applyOrderStatusUpdate(data);
     if (order == null) {
       unawaited(_refreshActiveOrders());
+      unawaited(_loadVoiceAiVisibility());
       return;
     }
 
@@ -560,7 +566,7 @@ class _CustomerHomeScreenProductionState
     final openStore = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Enjoying foodflow?'),
+        title: const Text('Enjoying Yumma!?'),
         content: const Text('Would you like to rate us on the Play Store?'),
         actions: [
           TextButton(
@@ -799,9 +805,36 @@ class _CustomerHomeScreenProductionState
     );
   }
 
+  Future<void> _loadVoiceAiVisibility() async {
+    try {
+      final response = await _api.get(
+        ApiConstants.aiStatus,
+        includeAuth: false,
+        cachePolicy: ApiCachePolicy.screen,
+        cacheFirst: true,
+        refreshCached: true,
+        onCacheRefreshed: _applyVoiceAiVisibility,
+      );
+      _applyVoiceAiVisibility(response);
+    } catch (_) {
+      if (!mounted || !_showVoiceAssistant) return;
+      setState(() => _showVoiceAssistant = false);
+    }
+  }
+
+  void _applyVoiceAiVisibility(dynamic response) {
+    if (!mounted || response is! Map) return;
+    final data = response['data'];
+    if (data is! Map) return;
+    final serviceEnabled = data['service_enabled'] == true;
+    if (_showVoiceAssistant == serviceEnabled) return;
+    setState(() => _showVoiceAssistant = serviceEnabled);
+  }
+
   Future<void> _loadMenuPriceFilterConfig() async {
     try {
       final queryParams = <String, dynamic>{
+        'platform': 'app',
         if (_currentLat != null && _currentLng != null) ...{
           'lat': _currentLat,
           'lng': _currentLng,
@@ -1102,10 +1135,36 @@ class _CustomerHomeScreenProductionState
     }
   }
 
+  DateTime? _lastBackPress;
+
   @override
   Widget build(BuildContext context) {
     final bottomInset = MediaQuery.of(context).padding.bottom;
-    return Scaffold(
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) return;
+        // On a non-home tab, back returns to the home feed (never exits).
+        if (_currentIndex != 0) {
+          setState(() => _currentIndex = 0);
+          return;
+        }
+        // On the home feed, require a double-press to leave the app.
+        final now = DateTime.now();
+        if (_lastBackPress == null ||
+            now.difference(_lastBackPress!) > const Duration(seconds: 2)) {
+          _lastBackPress = now;
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Press back again to exit'),
+              duration: Duration(seconds: 2),
+            ),
+          );
+          return;
+        }
+        SystemNavigator.pop();
+      },
+      child: Scaffold(
       extendBody: true,
       backgroundColor: _homeBg,
       body: Stack(
@@ -1144,10 +1203,14 @@ class _CustomerHomeScreenProductionState
                     ignoring: !_bottomNavVisible,
                     child: _HomeBottomNavBar(
                       currentIndex: _currentIndex,
+                      showVoiceAssistant: _showVoiceAssistant,
                       onTap: (index) {
                         _setBottomNavVisible(true);
                         if (index == -1) {
-                          _openMenuPriceFilterScreen();
+                          if (!_openLoginForAccountFeature(context)) {
+                            return;
+                          }
+                          Navigator.pushNamed(context, '/ai-voice');
                           return;
                         }
                         if ((index == 2 || index == 3) &&
@@ -1164,6 +1227,7 @@ class _CustomerHomeScreenProductionState
               ),
             ),
         ],
+      ),
       ),
     );
   }
@@ -1224,6 +1288,12 @@ class _CustomerHomeFeedState extends State<_CustomerHomeFeed> {
   int _homeLayoutRevision = 0;
   int _renderableSectionsRevision = -1;
   List<Map<String, dynamic>>? _renderableSectionsCache;
+  // Cached so the hero banner list keeps the SAME instance across unrelated
+  // rebuilds (e.g. the bottom-nav-visibility setState at the start of a
+  // fling). Otherwise the pinned-header delegate's shouldRebuild sees a new
+  // list every time and tears down + rebuilds the banner PageView mid-scroll.
+  int _heroBannerItemsRevision = -1;
+  List<dynamic>? _heroBannerItemsCache;
 
   @override
   void initState() {
@@ -1253,6 +1323,8 @@ class _CustomerHomeFeedState extends State<_CustomerHomeFeed> {
     _homeLayoutRevision++;
     _renderableSectionsRevision = -1;
     _renderableSectionsCache = null;
+    _heroBannerItemsRevision = -1;
+    _heroBannerItemsCache = null;
   }
 
   Future<void> _loadVegModePreference() async {
@@ -1388,6 +1460,7 @@ class _CustomerHomeFeedState extends State<_CustomerHomeFeed> {
         _safeHomeGet(
           ApiConstants.homeSections,
           queryParams: <String, dynamic>{
+            'platform': 'app',
             if (lat != null && lng != null) ...<String, dynamic>{
               'lat': lat,
               'lng': lng,
@@ -1500,6 +1573,7 @@ class _CustomerHomeFeedState extends State<_CustomerHomeFeed> {
         ),
         _safeHomeGet(
           '${ApiConstants.bannersByType}/home',
+          queryParams: const <String, dynamic>{'platform': 'app'},
           cacheFirst: cacheFirst,
           refreshCached: refreshCached,
         ),
@@ -2943,10 +3017,85 @@ class _CustomerHomeFeedState extends State<_CustomerHomeFeed> {
         'resolved_items': items,
       });
     }
-    final resolved = sections.isEmpty ? _fallbackSections() : sections;
+    final resolved = _consolidatePromotionSections(
+      sections.isEmpty ? _fallbackSections() : sections,
+    );
     _renderableSectionsCache = resolved;
     _renderableSectionsRevision = _homeLayoutRevision;
     return resolved;
+  }
+
+  /// Fold every promo section (`deals_for_you`, `promotion_type_section`, …)
+  /// into at most two: one "Offers & Coupons" strip for banner-only offers,
+  /// and one "Deals on Dishes" product rail for offers that map menu items.
+  /// Keeps the position of the first promo section.
+  List<Map<String, dynamic>> _consolidatePromotionSections(
+    List<Map<String, dynamic>> sections,
+  ) {
+    bool isPromo(String t) =>
+        t == 'deals_for_you' || t == 'promotion_type_section';
+
+    final firstPromoIndex = sections.indexWhere(
+      (s) => isPromo(s['type']?.toString() ?? ''),
+    );
+    if (firstPromoIndex < 0) return sections;
+
+    final bannerOffers = <Map<String, dynamic>>[];
+    final itemOffers = <Map<String, dynamic>>[];
+    final seenBanner = <String>{};
+    final seenItem = <String>{};
+
+    for (final s in sections) {
+      if (!isPromo(s['type']?.toString() ?? '')) continue;
+      final items = s['resolved_items'];
+      if (items is! List) continue;
+      for (final raw in items.whereType<Map>()) {
+        final offer = Map<String, dynamic>.from(raw);
+        final key = (offer['display_id'] ??
+                offer['id'] ??
+                offer['coupon_code'] ??
+                offer['title'] ??
+                offer.hashCode)
+            .toString();
+        if (_offerHasShoppableItems(offer)) {
+          if (seenItem.add(key)) itemOffers.add(offer);
+        } else {
+          if (seenBanner.add(key)) bannerOffers.add(offer);
+        }
+      }
+    }
+
+    final out = <Map<String, dynamic>>[];
+    var injected = false;
+    for (var i = 0; i < sections.length; i++) {
+      final s = sections[i];
+      if (!isPromo(s['type']?.toString() ?? '')) {
+        out.add(s);
+        continue;
+      }
+      if (injected) continue; // drop the other promo section shells
+      injected = true;
+      if (bannerOffers.isNotEmpty) {
+        out.add(<String, dynamic>{
+          'token': 'offers_strip',
+          'type': 'offers_strip',
+          'title': 'Offers & Coupons',
+          'subtitle': 'All active offers and coupons in one place',
+          'resolved_items': bannerOffers,
+        });
+      }
+      if (itemOffers.isNotEmpty) {
+        out.add(<String, dynamic>{
+          'token': 'promotion_dish_deals',
+          'type': 'promotion_type_section',
+          'card_mode': 'menu_cards',
+          'title': 'Deals on Dishes',
+          'subtitle': 'Discounts, combos and free items on dishes',
+          'resolved_items': itemOffers,
+        });
+      }
+    }
+    return out;
   }
 
   String? _primaryBannerToken() {
@@ -2973,6 +3122,17 @@ class _CustomerHomeFeedState extends State<_CustomerHomeFeed> {
   }
 
   List<dynamic> _heroBannerItems() {
+    final cached = _heroBannerItemsCache;
+    if (cached != null && _heroBannerItemsRevision == _homeLayoutRevision) {
+      return cached;
+    }
+    final resolved = _resolveHeroBannerItems();
+    _heroBannerItemsCache = resolved;
+    _heroBannerItemsRevision = _homeLayoutRevision;
+    return resolved;
+  }
+
+  List<dynamic> _resolveHeroBannerItems() {
     final banners = _regularBannerItems(_banners);
     if (banners.isNotEmpty) return banners;
     for (final section in _homeSections) {
@@ -3275,6 +3435,19 @@ class _CustomerHomeFeedState extends State<_CustomerHomeFeed> {
       ),
       item: _menuItemFromDishSectionItem(item),
       restaurant: _restaurantFromDishSectionItem(item),
+      restaurantOpen: _parseBool(
+        item['restaurant_is_open'] ??
+            item['restaurant_open'] ??
+            (item['restaurant'] is Map
+                ? (item['restaurant'] as Map)['is_open_now'] ??
+                    (item['restaurant'] as Map)['is_open']
+                : null),
+        fallback: true,
+      ),
+      available: _parseBool(
+        item['is_available'] ?? item['available'],
+        fallback: true,
+      ),
     );
   }
 
@@ -3915,9 +4088,32 @@ class _CustomerHomeFeedState extends State<_CustomerHomeFeed> {
     return '';
   }
 
+  void _trackSponsoredRestaurantClick(
+    Map<String, dynamic> restaurant, {
+    String surface = 'home',
+  }) {
+    final campaignId = _parseInt(
+      restaurant['ad_campaign_id'] ?? restaurant['adCampaignId'],
+    );
+    final sponsored = _parseBool(
+      restaurant['is_sponsored'] ?? restaurant['isSponsored'],
+    );
+    if (!sponsored || campaignId <= 0) return;
+
+    unawaited(
+      _api.post(ApiConstants.adClicks, data: <String, dynamic>{
+        'campaign_id': campaignId,
+        'surface': surface,
+      }).catchError((Object error) {
+        debugPrint('Ad click tracking error: $error');
+      }),
+    );
+  }
+
   void _openRestaurant(Map<String, dynamic> restaurant) {
     final id = _restaurantId(restaurant);
     if (id <= 0) return;
+    _trackSponsoredRestaurantClick(restaurant);
     Navigator.push(
       context,
       MaterialPageRoute(
@@ -4387,20 +4583,23 @@ class _CustomerHomeFeedState extends State<_CustomerHomeFeed> {
                   ),
                 ),
               if (!hasCategoryFilter)
-                for (final entry in sections.asMap().entries)
-                  SliverToBoxAdapter(
-                    child: Padding(
-                      padding: EdgeInsets.only(
-                        top: entry.key == 0 ? 18 : 20,
-                      ),
+                // Lazily built: only sections near the viewport are
+                // constructed, so a scroll-start rebuild and the first frame
+                // don't pay for every section's subtree at once.
+                SliverList(
+                  delegate: SliverChildBuilderDelegate(
+                    (context, index) => Padding(
+                      padding: EdgeInsets.only(top: index == 0 ? 18 : 20),
                       child: RepaintBoundary(
                         child: _HomeSectionContainer(
-                          section: entry.value,
-                          child: _buildSectionContent(entry.value),
+                          section: sections[index],
+                          child: _buildSectionContent(sections[index]),
                         ),
                       ),
                     ),
+                    childCount: sections.length,
                   ),
+                ),
               SliverToBoxAdapter(
                 child: SizedBox(
                   height: MediaQuery.of(context).padding.bottom + 110,
@@ -4574,8 +4773,10 @@ class _CustomerHomeFeedState extends State<_CustomerHomeFeed> {
 
   Widget _buildSectionContent(Map<String, dynamic> section) {
     final type = section['type']?.toString() ?? '';
-    final items =
-        section['resolved_items'] as List<dynamic>? ?? const <dynamic>[];
+    final rawItems = section['resolved_items'];
+    final items = rawItems is List
+        ? List<dynamic>.from(rawItems)
+        : const <dynamic>[];
     if (items.isEmpty) {
       if (_isLoadingRestaurantFeed && _sectionUsesRestaurantFeed(type)) {
         return _buildSectionLoading(section);
@@ -4804,6 +5005,7 @@ class _CustomerHomeFeedState extends State<_CustomerHomeFeed> {
         );
       case 'restaurant_discovery':
       case 'nearby_restaurants':
+        final rdItems = _interleaveSponsoredRestaurants(items);
         return Column(
           children: <Widget>[
             _SectionHeader(
@@ -4813,7 +5015,7 @@ class _CustomerHomeFeedState extends State<_CustomerHomeFeed> {
               onAction: () => _showRestaurantListSheet(
                 _plainText(
                     section['title']?.toString() ?? 'Restaurants Near You'),
-                items
+                rdItems
                     .whereType<Map>()
                     .map((e) => Map<String, dynamic>.from(e))
                     .toList(),
@@ -4823,14 +5025,14 @@ class _CustomerHomeFeedState extends State<_CustomerHomeFeed> {
               padding: const EdgeInsets.symmetric(horizontal: 20),
               child: Column(
                 children: List<Widget>.generate(
-                  items.length,
+                  rdItems.length,
                   (index) {
                     final restaurant = _restaurantWithLoadedMenuItems(
-                      Map<String, dynamic>.from(items[index] as Map),
+                      Map<String, dynamic>.from(rdItems[index] as Map),
                     );
                     return Padding(
                       padding: EdgeInsets.only(
-                        bottom: index == items.length - 1 ? 0 : 12,
+                        bottom: index == rdItems.length - 1 ? 0 : 12,
                       ),
                       child: _RestaurantListTileModern(
                         restaurant: restaurant,
@@ -4982,6 +5184,52 @@ class _CustomerHomeFeedState extends State<_CustomerHomeFeed> {
             ),
           ],
         );
+      case 'offers_strip':
+        // Consolidated banner-only offers & coupons (free delivery, cashback,
+        // flat cart discounts, coupons with no product mapping).
+        final stripOffers = _homePromotionDisplayOffers(
+          items,
+          splitItemRewards: false,
+          vegOnly: _vegOnlyMode,
+        );
+        if (stripOffers.isEmpty) return const SizedBox.shrink();
+        return Column(
+          children: <Widget>[
+            _SectionHeader(
+              title: section['title']?.toString() ?? 'Offers & Coupons',
+              subtitle: section['subtitle']?.toString(),
+              actionLabel: 'See All',
+              onAction: () => Navigator.pushNamed(context, '/offers'),
+            ),
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final cardWidth =
+                    max(150.0, (constraints.maxWidth - 50) / 2);
+                return SizedBox(
+                  height: 154,
+                  child: ListView.separated(
+                    scrollDirection: Axis.horizontal,
+                    padding: const EdgeInsets.symmetric(horizontal: 20),
+                    itemCount: min(stripOffers.length, 12),
+                    separatorBuilder: (_, __) => const SizedBox(width: 10),
+                    itemBuilder: (context, index) {
+                      final offer = stripOffers[index];
+                      return _OfferTile(
+                        offer: offer,
+                        width: cardWidth,
+                        compact: true,
+                        showCoupon: false,
+                        showText: false,
+                        showRewardAndValidityOnly: true,
+                        onTap: () => _openPromotionOfferItems(section, offer),
+                      );
+                    },
+                  ),
+                );
+              },
+            ),
+          ],
+        );
       case 'deals_for_you':
       case 'promotion_type_section':
         final isCombinedDealsSection = type == 'deals_for_you';
@@ -5130,8 +5378,12 @@ class _CustomerHomeFeedState extends State<_CustomerHomeFeed> {
 
   Widget _buildPromotionMenuCardSection(
     Map<String, dynamic> section,
-    List<Map<String, dynamic>> offers,
+    List<Map<String, dynamic>> allOffers,
   ) {
+    // Only render menu cards for offers that actually map items; a mixed
+    // section drops its order-level (banner) offers from the rail.
+    final offers =
+        allOffers.where(_offerHasShoppableItems).toList(growable: false);
     if (offers.isEmpty) return const SizedBox.shrink();
 
     return Column(
@@ -5178,8 +5430,21 @@ class _CustomerHomeFeedState extends State<_CustomerHomeFeed> {
     final offers = items
         .whereType<Map>()
         .map((item) => Map<String, dynamic>.from(item))
-        .where((offer) => offer['menu_items'] is List)
         .toList(growable: false);
+    final shoppable = offers
+        .where(_offerHasShoppableItems)
+        .toList(growable: false);
+
+    // No mapped products anywhere in this section -> it's banner-only.
+    // Show the offer(s) as a detail sheet, never an empty product grid.
+    if (shoppable.isEmpty) {
+      if (offers.length == 1) {
+        _openPromotionOfferItems(section, offers.first);
+      } else {
+        _showPromotionOffersSheet(section, offers);
+      }
+      return;
+    }
 
     Navigator.pushNamed(
       context,
@@ -5189,9 +5454,23 @@ class _CustomerHomeFeedState extends State<_CustomerHomeFeed> {
         'subtitle': section['subtitle']?.toString(),
         'promotion_type': section['promotion_type']?.toString(),
         'veg_only': _vegOnlyMode,
-        'offers': offers,
+        'offers': shoppable,
       },
     );
+  }
+
+  bool _offerHasShoppableItems(Map<String, dynamic> offer) {
+    bool hasRealItems(dynamic v) {
+      if (v is! List) return false;
+      return v.whereType<Map>().any((m) {
+        final id = m['menu_item_id'] ?? m['id'] ?? m['item_id'];
+        final name = (m['name'] ?? m['title'] ?? '').toString().trim();
+        return (int.tryParse('${id ?? ''}') ?? 0) > 0 || name.isNotEmpty;
+      });
+    }
+
+    return hasRealItems(offer['menu_items']) ||
+        hasRealItems(offer['reward_menu_items']);
   }
 
   void _showPromotionOffersSheet(
@@ -5325,9 +5604,24 @@ class _CustomerHomeFeedState extends State<_CustomerHomeFeed> {
       return;
     }
 
-    _openPromotionProductGrid(
-      <String, dynamic>{
-        ...section,
+    // Banner-only offer (free delivery, cashback, flat cart coupon, …) —
+    // open the detail sheet instead of an empty product screen.
+    if (!_offerHasShoppableItems(offer)) {
+      final restaurantId = _parseInt(offer['restaurant_id']);
+      showPromotionDetailSheet(
+        context,
+        offer,
+        onPrimaryAction: restaurantId != null && restaurantId > 0
+            ? () => _openRestaurant(<String, dynamic>{'id': restaurantId})
+            : null,
+      );
+      return;
+    }
+
+    Navigator.pushNamed(
+      context,
+      '/promotion-products',
+      arguments: {
         'title': (offer['title'] ?? section['title'] ?? 'Promotion Items')
             .toString(),
         'subtitle':
@@ -5335,8 +5629,9 @@ class _CustomerHomeFeedState extends State<_CustomerHomeFeed> {
                 ?.toString(),
         'promotion_type':
             offer['promotion_type']?.toString() ?? section['promotion_type'],
+        'veg_only': _vegOnlyMode,
+        'offers': [offer],
       },
-      [offer],
     );
   }
 
@@ -5399,8 +5694,12 @@ class _CustomerHomeFeedState extends State<_CustomerHomeFeed> {
 
   void _showRestaurantListSheet(
     String title,
-    List<Map<String, dynamic>> restaurants,
+    List<Map<String, dynamic>> restaurantsRaw,
   ) {
+    final restaurants = _interleaveSponsoredRestaurants(restaurantsRaw)
+        .whereType<Map>()
+        .map((e) => Map<String, dynamic>.from(e))
+        .toList();
     showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -7277,9 +7576,71 @@ class _HomeHeroPinnedDelegate extends SliverPersistentHeaderDelegate {
   final void Function(dynamic category) onTapCategory;
   final VoidCallback onMore;
 
-  double get _panelHeight => categories.isNotEmpty ? 164 : 74;
+  double get _panelHeight => categories.isNotEmpty ? 178 : 74;
 
   double get _expandedCuisineBandHeight => categories.isNotEmpty ? 112 : 0;
+
+  // ---- per-scroll-frame widget caches -------------------------------------
+  // `build(context, shrinkOffset, ...)` is called on every scroll pixel while
+  // the header is visible. The delegate itself is only recreated when
+  // `_HomeState.build()` runs, so caching the heavy children here means a
+  // scroll frame only rebuilds the cheap Positioned/Opacity wrappers instead
+  // of the PageView + Lottie + cuisine rows underneath.
+  Widget? _bannerCache;
+  Widget? _headerCache;
+  Widget? _expandedBandCache;
+  Widget? _pinnedStripCache;
+  bool? _pinnedStripTransparent;
+
+  Widget _banner() => _bannerCache ??= RepaintBoundary(
+        child: _HomePromoBanner(
+          banners: banners,
+          onTapRestaurant: onTapRestaurant,
+          height: maxExtent - _expandedCuisineBandHeight,
+          borderRadius: 0,
+          showIndicators: false,
+        ),
+      );
+
+  Widget _header() => _headerCache ??= RepaintBoundary(
+        child: _HomeHeader(
+          currentCity: currentCity,
+          currentAddress: currentAddress,
+          notificationCount: notificationCount,
+          profileInitial: profileInitial,
+          profileImage: profileImage,
+          onLocationTap: onLocationTap,
+          onWalletTap: onWalletTap,
+          onNotificationTap: onNotificationTap,
+        ),
+      );
+
+  Widget _expandedBand() => _expandedBandCache ??= RepaintBoundary(
+        child: _ExpandedCuisineBand(
+          categories: categories,
+          onTapCategory: onTapCategory,
+          onMore: onMore,
+        ),
+      );
+
+  Widget _pinnedStrip({required bool transparent}) {
+    if (_pinnedStripCache == null || _pinnedStripTransparent != transparent) {
+      _pinnedStripTransparent = transparent;
+      _pinnedStripCache = RepaintBoundary(
+        child: _PinnedSearchCuisineStrip(
+          categories: const <dynamic>[],
+          vegOnlyMode: vegOnlyMode,
+          onSearchTap: onSearchTap,
+          onVoiceTap: onVoiceTap,
+          onVegModeChanged: onVegModeChanged,
+          onTapCategory: onTapCategory,
+          onMore: onMore,
+          transparent: transparent,
+        ),
+      );
+    }
+    return _pinnedStripCache!;
+  }
 
   @override
   double get minExtent => topInset + _panelHeight;
@@ -7293,108 +7654,103 @@ class _HomeHeroPinnedDelegate extends SliverPersistentHeaderDelegate {
     final range = maxExtent - minExtent;
     final progress =
         range <= 0 ? 1.0 : (shrinkOffset / range).clamp(0.0, 1.0).toDouble();
-    final searchTop = ui.lerpDouble(topInset + 78, topInset, progress)!;
     final heroOpacity = 1.0 - progress;
-    final showExpandedCuisine = categories.isNotEmpty && progress < 0.72;
-    final showPinnedCuisine = categories.isNotEmpty && progress >= 0.92;
+    final hasCategories = categories.isNotEmpty;
+    final bandHeight = _expandedCuisineBandHeight;
+    // Current painted height of the header (shrinks maxExtent -> minExtent).
+    final currentExtent = (maxExtent - shrinkOffset).clamp(minExtent, maxExtent);
+    const searchStripHeight = 74.0;
+    // Anchor the search strip just above the cuisine band and let it ride up
+    // with the band as the header collapses — clamped so at rest it stays at
+    // its normal spot near the top, and never slides under the status bar.
+    // This closes the gap between search and categories by ~2/3 of the scroll
+    // instead of leaving a stranded band mid-collapse.
+    final bandTop = hasCategories ? currentExtent - bandHeight : currentExtent;
+    final searchTop = (bandTop - searchStripHeight)
+        .clamp(topInset, topInset + 78)
+        .toDouble();
 
     return ClipRect(
       child: Stack(
         fit: StackFit.expand,
         children: <Widget>[
+          // Promo banner — fixed height, painted first. Where the collapsing
+          // header shrinks over it, the opaque cuisine band (last child) and
+          // the white overlay cover it, so it never bleeds through the
+          // categories the way a faded overlapping layer used to.
           Positioned(
             left: 0,
             right: 0,
             top: 0,
-            height: maxExtent - _expandedCuisineBandHeight,
-            child: Opacity(
-              opacity: heroOpacity,
-              child: _HomePromoBanner(
-                banners: banners,
-                onTapRestaurant: onTapRestaurant,
-                height: maxExtent - _expandedCuisineBandHeight,
-                borderRadius: 0,
-                showIndicators: false,
-              ),
-            ),
+            height: (maxExtent - bandHeight).clamp(0.0, maxExtent),
+            child: _fade(heroOpacity, _banner()),
           ),
           if (progress < 1)
-            Opacity(
-              opacity: heroOpacity,
-              child: DecoratedBox(
+            _fade(
+              heroOpacity,
+              const DecoratedBox(
                 decoration: BoxDecoration(
                   gradient: LinearGradient(
                     begin: Alignment.topCenter,
                     end: Alignment.bottomCenter,
                     colors: <Color>[
-                      Colors.black.withOpacity(0.38),
-                      Colors.black.withOpacity(0.10),
-                      Colors.transparent,
+                      Color(0x61000000),
+                      Color(0x1A000000),
+                      Color(0x00000000),
                     ],
-                    stops: const <double>[0, 0.42, 1],
+                    stops: <double>[0, 0.42, 1],
                   ),
                 ),
               ),
             ),
-          if (progress > 0.55)
+          if (progress > 0.22)
             Positioned.fill(
               child: ColoredBox(
-                color: Colors.white.withOpacity((progress - 0.55) / 0.45),
+                color: Colors.white
+                    .withOpacity(((progress - 0.22) / 0.32).clamp(0.0, 1.0)),
               ),
             ),
-          if (progress < 0.88)
+          if (progress < 0.34)
             Positioned(
               left: 20,
               right: 20,
               top: topInset + 8,
-              child: Opacity(
-                opacity: ((0.88 - progress) / 0.88).clamp(0.0, 1.0),
-                child: _HomeHeader(
-                  currentCity: currentCity,
-                  currentAddress: currentAddress,
-                  notificationCount: notificationCount,
-                  profileInitial: profileInitial,
-                  profileImage: profileImage,
-                  onLocationTap: onLocationTap,
-                  onWalletTap: onWalletTap,
-                  onNotificationTap: onNotificationTap,
-                ),
+              // Fade the location row out quickly so it doesn't linger as a
+              // ghost over the search bar for most of the scroll.
+              child: _fade(
+                ((0.34 - progress) / 0.34).clamp(0.0, 1.0),
+                _header(),
               ),
             ),
+          // Search strip slides up with the collapsing header.
           Positioned(
             left: 0,
             right: 0,
             top: searchTop,
-            child: _PinnedSearchCuisineStrip(
-              categories: showPinnedCuisine ? categories : const <dynamic>[],
-              vegOnlyMode: vegOnlyMode,
-              onSearchTap: onSearchTap,
-              onVoiceTap: onVoiceTap,
-              onVegModeChanged: onVegModeChanged,
-              onTapCategory: onTapCategory,
-              onMore: onMore,
-              transparent: progress < 0.2,
-            ),
+            child: _pinnedStrip(transparent: progress < 0.2),
           ),
-          if (showExpandedCuisine)
+          // Cuisine band — glued to the bottom of the header, ALWAYS opaque
+          // and fully visible. As the header collapses it becomes the pinned
+          // category row; there is no fade-out / re-pop, so nothing "freezes".
+          if (hasCategories)
             Positioned(
               left: 0,
               right: 0,
               bottom: 0,
-              height: _expandedCuisineBandHeight,
-              child: Opacity(
-                opacity: ((0.72 - progress) / 0.72).clamp(0.0, 1.0),
-                child: _ExpandedCuisineBand(
-                  categories: categories,
-                  onTapCategory: onTapCategory,
-                  onMore: onMore,
-                ),
-              ),
+              height: bandHeight,
+              child: _expandedBand(),
             ),
         ],
       ),
     );
   }
+
+  /// Keeps the element tree stable (so the cached child is never remounted)
+  /// while fading. `RenderOpacity` already short-circuits compositing at
+  /// alpha 0 and 255, and every child here is a RepaintBoundary, so a
+  /// mid-fade frame is just a cached-layer alpha blend.
+  static Widget _fade(double opacity, Widget child) =>
+      Opacity(opacity: opacity.clamp(0.0, 1.0), child: child);
 
   @override
   bool shouldRebuild(covariant _HomeHeroPinnedDelegate oldDelegate) {
@@ -7527,7 +7883,19 @@ class _ExpandedCuisineBand extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return DecoratedBox(
-      decoration: const BoxDecoration(color: Colors.white),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: Border(
+          bottom: BorderSide(color: _homeBorder.withOpacity(0.6)),
+        ),
+        boxShadow: <BoxShadow>[
+          BoxShadow(
+            color: Colors.black.withOpacity(0.04),
+            blurRadius: 12,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
       child: Padding(
         padding: const EdgeInsets.fromLTRB(14, 8, 14, 8),
         child: Row(
@@ -7831,6 +8199,10 @@ class _HomePromoBannerState extends State<_HomePromoBanner> {
   final Map<int, Duration> _mediaDurations = <int, Duration>{};
   final Set<int> _loadingGifDurations = <int>{};
   int _currentPage = 0;
+  // Drives ONLY the indicator dots — page changes must not rebuild the whole
+  // PageView (that re-runs every itemBuilder and, mid vertical scroll, causes
+  // the visible stutter the hero banner was blamed for).
+  final ValueNotifier<int> _pageNotifier = ValueNotifier<int>(0);
   DateTime _pageShownAt = DateTime.now();
 
   @override
@@ -7871,6 +8243,28 @@ class _HomePromoBannerState extends State<_HomePromoBanner> {
 
     _timer = Timer(delay, () {
       if (!_controller.hasClients || !mounted) return;
+      // Don't drive the carousel (and the rebuild it triggers) while another
+      // route is on top or the banner is scrolled out of view.
+      final route = ModalRoute.of(context);
+      if (route != null && !route.isCurrent) {
+        _scheduleNextSlide();
+        return;
+      }
+      final position = _controller.position;
+      if (!position.hasContentDimensions || position.isScrollingNotifier.value) {
+        _scheduleNextSlide();
+        return;
+      }
+      // Also hold off while the page itself is being scrolled vertically —
+      // advancing the PageView mid-fling rebuilds every banner page and shows
+      // as a stutter in the hero. Only auto-advance when the feed is at rest
+      // and the hero is still near the top.
+      final vertical = Scrollable.maybeOf(context)?.position;
+      if (vertical != null &&
+          (vertical.isScrollingNotifier.value || vertical.pixels > 40)) {
+        _scheduleNextSlide();
+        return;
+      }
       final next = (_currentPage + 1) % widget.banners.length;
       _controller.animateToPage(
         next,
@@ -7919,6 +8313,7 @@ class _HomePromoBannerState extends State<_HomePromoBanner> {
   void dispose() {
     _timer?.cancel();
     _controller.dispose();
+    _pageNotifier.dispose();
     super.dispose();
   }
 
@@ -8410,12 +8805,14 @@ class _HomePromoBannerState extends State<_HomePromoBanner> {
     if (isLottie) {
       return Lottie.network(
         effectiveUrl,
-        key: ValueKey<String>(
-            'home-promo-lottie-$index-$isActive-$effectiveUrl'),
+        // Key on the URL only. Including $isActive/$index tore the widget down
+        // and RE-DOWNLOADED + re-parsed the Lottie on every page change — the
+        // multi-hundred-ms hitch that froze scrolling.
+        key: ValueKey<String>('home-promo-lottie-$effectiveUrl'),
         fit: BoxFit.contain,
-        animate: isActive,
+        animate: true,
         repeat: false,
-        frameRate: FrameRate.max,
+        frameRate: const FrameRate(30),
         width: double.infinity,
         height: double.infinity,
         onLoaded: (composition) {
@@ -8584,10 +8981,10 @@ class _HomePromoBannerState extends State<_HomePromoBanner> {
             itemCount: widget.banners.length,
             onPageChanged: (index) {
               if (!mounted) return;
-              setState(() {
-                _currentPage = index;
-                _pageShownAt = DateTime.now();
-              });
+              // No setState — only the dots listen to _pageNotifier.
+              _currentPage = index;
+              _pageShownAt = DateTime.now();
+              _pageNotifier.value = index;
               _scheduleNextSlide();
             },
             itemBuilder: (context, index) {
@@ -8596,14 +8993,16 @@ class _HomePromoBannerState extends State<_HomePromoBanner> {
                   : Map<String, dynamic>.from(widget.banners[index] as Map);
               final mediaUrl = _resolveImageUrl(banner);
               if (_isPromoCardBanner(banner)) {
-                return GestureDetector(
-                  onTap: () => _handleBannerTap(banner),
-                  child: _buildPromoCardBanner(
-                    banner,
-                    mediaUrl,
-                    index: index,
-                    isActive: index == _currentPage,
-                    height: bannerHeight,
+                return RepaintBoundary(
+                  child: GestureDetector(
+                    onTap: () => _handleBannerTap(banner),
+                    child: _buildPromoCardBanner(
+                      banner,
+                      mediaUrl,
+                      index: index,
+                      isActive: true,
+                      height: bannerHeight,
+                    ),
                   ),
                 );
               }
@@ -8632,7 +9031,8 @@ class _HomePromoBannerState extends State<_HomePromoBanner> {
                       headline.isNotEmpty ||
                       subtitle.isNotEmpty ||
                       cta.isNotEmpty);
-              return GestureDetector(
+              return RepaintBoundary(
+                child: GestureDetector(
                 onTap: () => _handleBannerTap(banner),
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(widget.borderRadius),
@@ -8657,7 +9057,7 @@ class _HomePromoBannerState extends State<_HomePromoBanner> {
                           mediaUrl,
                           banner,
                           index: index,
-                          isActive: index == _currentPage,
+                          isActive: true,
                           fit: BoxFit.cover,
                         ),
                         if (hasText)
@@ -8758,25 +9158,29 @@ class _HomePromoBannerState extends State<_HomePromoBanner> {
                     ),
                   ),
                 ),
+              ),
               );
             },
           ),
         ),
         if (widget.banners.length > 1 && widget.showIndicators) ...<Widget>[
           const SizedBox(height: 10),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: List<Widget>.generate(
-              widget.banners.length,
-              (index) => Container(
-                width: index == _currentPage ? 10 : 8,
-                height: index == _currentPage ? 10 : 8,
-                margin: const EdgeInsets.symmetric(horizontal: 4),
-                decoration: BoxDecoration(
-                  color: index == _currentPage
-                      ? _homeGreen
-                      : const Color(0xFFD7DCE4),
-                  shape: BoxShape.circle,
+          ValueListenableBuilder<int>(
+            valueListenable: _pageNotifier,
+            builder: (context, current, _) => Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: List<Widget>.generate(
+                widget.banners.length,
+                (index) => Container(
+                  width: index == current ? 10 : 8,
+                  height: index == current ? 10 : 8,
+                  margin: const EdgeInsets.symmetric(horizontal: 4),
+                  decoration: BoxDecoration(
+                    color: index == current
+                        ? _homeGreen
+                        : const Color(0xFFD7DCE4),
+                    shape: BoxShape.circle,
+                  ),
                 ),
               ),
             ),
@@ -9898,6 +10302,31 @@ class _RecommendedRestaurantCard extends StatelessWidget {
                       ),
                     ),
                   ),
+                if (restaurant['is_sponsored'] == true ||
+                    restaurant['is_sponsored'] == 1 ||
+                    restaurant['is_sponsored'] == '1')
+                  Positioned(
+                    left: 6,
+                    bottom: 6,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 6,
+                        vertical: 3,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withOpacity(0.6),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: const Text(
+                        'Ad',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 9.5,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  ),
                 Positioned(
                   right: 6,
                   top: 6,
@@ -10530,7 +10959,9 @@ class _OfferTile extends StatelessWidget {
               child: imageUrl.isNotEmpty
                   ? AppCachedImage(
                       imageUrl: imageUrl,
-                      fit: BoxFit.contain,
+                      // cover so the artwork fills the whole card (no
+                      // letterbox gap); the text overlay sits on the gradient.
+                      fit: BoxFit.cover,
                       width: width.isFinite ? width : null,
                       height: compact ? 154 : 220,
                       loadingBuilder: (context, _, __) =>
@@ -11044,6 +11475,15 @@ bool _homePromotionSectionUsesMenuCards(
   final displayMode = section['display_mode']?.toString();
   if (cardMode == 'menu_cards' || displayMode == 'menu_cards') return true;
 
+  // Any offer that actually maps menu items -> show the section as a product
+  // rail. Order-level offers (free delivery, cashback, flat cart coupon) stay
+  // as banner offer cards.
+  final anyShoppable = offers.any((o) {
+    final mi = o['menu_items'];
+    return mi is List && mi.whereType<Map>().isNotEmpty;
+  });
+  if (anyShoppable) return true;
+
   final promotionTypes = <String>[
     section['promotion_type']?.toString() ?? '',
     ...((section['promotion_types'] is List
@@ -11522,8 +11962,13 @@ class _HomePromotionMenuCard extends StatelessWidget {
     final originalPrice = _homePromotionOriginalPrice(offer, priceItems);
     final savings = (originalPrice - dealPrice).clamp(0, double.infinity);
     final tag = _homePromotionTypeLabel(offer);
+    final orderable = _homePromotionOfferOrderable(offer);
 
-    return InkWell(
+    return _unavailableWrap(
+      orderable: orderable,
+      radius: 22,
+      label: 'Closed',
+      child: InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(22),
       child: Container(
@@ -11731,6 +12176,7 @@ class _HomePromotionMenuCard extends StatelessWidget {
             ),
           ],
         ),
+      ),
       ),
     );
   }
@@ -12010,6 +12456,28 @@ class _HomePromotionAddControl extends StatelessWidget {
   }
 }
 
+/// A promo dish card is orderable only if at least one of its (paid) menu
+/// items is available and its restaurant is open.
+bool _homePromotionOfferOrderable(Map<String, dynamic> offer) {
+  bool flag(dynamic v) {
+    if (v == null) return true; // absent -> assume ok
+    if (v is bool) return v;
+    if (v is num) return v != 0;
+    final s = v.toString().toLowerCase().trim();
+    return s == 'true' || s == '1' || s == 'yes';
+  }
+
+  final raw = <dynamic>[
+    if (offer['menu_items'] is List) ...(offer['menu_items'] as List),
+  ];
+  final maps = raw.whereType<Map>().toList(growable: false);
+  if (maps.isEmpty) return true;
+  return maps.any((m) =>
+      m['is_reward_item'] != true &&
+      flag(m['is_available'] ?? m['available']) &&
+      flag(m['restaurant_is_open'] ?? m['restaurant_open']));
+}
+
 List<MenuItem> _homePromotionOfferMenuItems(Map<String, dynamic> offer) {
   final rawItems = <dynamic>[
     if (offer['menu_items'] is List) ...(offer['menu_items'] as List),
@@ -12197,7 +12665,10 @@ class _DishPreviewCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
+    return _unavailableWrap(
+      orderable: dish.orderable,
+      label: dish.restaurantOpen ? 'Unavailable' : 'Closed',
+      child: GestureDetector(
       onTap: onTap,
       child: Container(
         width: _cardWidth,
@@ -12290,6 +12761,7 @@ class _DishPreviewCard extends StatelessWidget {
             ),
           ],
         ),
+      ),
       ),
     );
   }
@@ -12818,6 +13290,90 @@ Widget _restaurantRatingOrNewBadge(
       ],
     ),
   );
+}
+
+const List<double> _kGrayscaleMatrix = <double>[
+  0.2126, 0.7152, 0.0722, 0, 0, //
+  0.2126, 0.7152, 0.0722, 0, 0, //
+  0.2126, 0.7152, 0.0722, 0, 0, //
+  0, 0, 0, 1, 0, //
+];
+
+/// Greys + dims a card and stamps a corner label when the item/restaurant
+/// can't be ordered right now — matches the closed-restaurant treatment.
+Widget _unavailableWrap({
+  required bool orderable,
+  required Widget child,
+  String label = 'Unavailable',
+  double radius = 20,
+}) {
+  if (orderable) return child;
+  return ClipRRect(
+    borderRadius: BorderRadius.circular(radius),
+    child: Stack(
+      children: <Widget>[
+        Opacity(
+          opacity: 0.55,
+          child: ColorFiltered(
+            colorFilter: const ColorFilter.matrix(_kGrayscaleMatrix),
+            child: child,
+          ),
+        ),
+        Positioned(
+          left: 6,
+          top: 6,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+            decoration: BoxDecoration(
+              color: Colors.black.withOpacity(0.62),
+              borderRadius: BorderRadius.circular(7),
+            ),
+            child: Text(
+              label.toUpperCase(),
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 8.5,
+                letterSpacing: 0.4,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+bool _isSponsoredRestaurant(Map<dynamic, dynamic> m) {
+  final v = m['is_sponsored'] ?? m['isSponsored'];
+  return v == true || v == 1 || v == '1' || v.toString().toLowerCase() == 'true';
+}
+
+/// Re-lays a restaurant list so a sponsored ("Ad") restaurant appears after
+/// every [every] organic cards. Sponsored entries are pulled out first, then
+/// slotted back in; leftovers go at the end. No-op when nothing is sponsored.
+List<dynamic> _interleaveSponsoredRestaurants(List<dynamic> items,
+    {int every = 2}) {
+  final maps = items
+      .whereType<Map>()
+      .map((e) => Map<String, dynamic>.from(e))
+      .toList(growable: false);
+  final sponsored = maps.where(_isSponsoredRestaurant).toList();
+  if (sponsored.isEmpty) return items;
+  final organic = maps.where((m) => !_isSponsoredRestaurant(m)).toList();
+
+  final out = <dynamic>[];
+  var s = 0;
+  for (var i = 0; i < organic.length; i++) {
+    out.add(organic[i]);
+    if ((i + 1) % every == 0 && s < sponsored.length) {
+      out.add(sponsored[s++]);
+    }
+  }
+  while (s < sponsored.length) {
+    out.add(sponsored[s++]);
+  }
+  return out;
 }
 
 bool _restaurantAcceptsOrders(Map<String, dynamic> restaurant) {
@@ -13648,7 +14204,10 @@ class _RunningOrderCardState extends State<_RunningOrderCard>
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final steps = _runningOrderSteps(widget.order);
+    final order = widget.order;
+    final steps = _runningOrderSteps(order);
+    final restaurantName = order.restaurant?.name ?? 'Your order';
+    final onTheWay = order.status == 'on_the_way' || order.status == 'picked_up';
 
     return Container(
       decoration: BoxDecoration(
@@ -13657,8 +14216,8 @@ class _RunningOrderCardState extends State<_RunningOrderCard>
         border: Border.all(color: _homeBorder),
         boxShadow: <BoxShadow>[
           BoxShadow(
-            color: scheme.primary.withOpacity(0.10),
-            blurRadius: 20,
+            color: scheme.primary.withOpacity(0.08),
+            blurRadius: 18,
             offset: const Offset(0, 8),
           ),
         ],
@@ -13666,94 +14225,90 @@ class _RunningOrderCardState extends State<_RunningOrderCard>
       clipBehavior: Clip.antiAlias,
       child: InkWell(
         onTap: _openTracking,
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              Row(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 14, 12, 12),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: <Widget>[
-                  AnimatedBuilder(
-                    animation: _pulseController,
-                    builder: (context, _) {
-                      final scale = 1 + (_pulseController.value * 0.06);
-                      return Transform.scale(
-                        scale: scale,
-                        child: Container(
-                          width: 44,
-                          height: 44,
-                          decoration: BoxDecoration(
-                            color: scheme.primary.withOpacity(0.12),
-                            shape: BoxShape.circle,
-                          ),
-                          child: Icon(
-                            Icons.delivery_dining_rounded,
-                            color: scheme.primary,
-                            size: 22,
-                          ),
-                        ),
-                      );
-                    },
-                  ),
-                  const SizedBox(width: 12),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: <Widget>[
-                        Row(
-                          children: <Widget>[
-                            Container(
-                              width: 6,
-                              height: 6,
-                              decoration: const BoxDecoration(
-                                color: _homeGreen,
-                                shape: BoxShape.circle,
-                              ),
-                            ),
-                            const SizedBox(width: 6),
-                            Expanded(
-                              child: Text(
-                                _runningOrderTitle(widget.order),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  color: _homeText,
-                                  fontSize: 14.5,
-                                  fontWeight: FontWeight.w800,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 4),
                         Text(
-                          '${_runningOrderEta(widget.order)} • ${_runningOrderItemSummary(widget.order)}',
+                          restaurantName,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: const TextStyle(
                             color: _homeMuted,
                             fontSize: 12,
-                            fontWeight: FontWeight.w600,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        const SizedBox(height: 3),
+                        Text(
+                          _runningOrderTitle(order),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: _homeText,
+                            fontSize: 16.5,
+                            fontWeight: FontWeight.w900,
+                            height: 1.1,
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 10, vertical: 5),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFF1F3F7),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: <Widget>[
+                              Text(
+                                _runningOrderEta(order),
+                                style: const TextStyle(
+                                  color: _homeText,
+                                  fontSize: 11.5,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                              const Text(
+                                '  ·  On time',
+                                style: TextStyle(
+                                  color: _homeGreen,
+                                  fontSize: 11.5,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                            ],
                           ),
                         ),
                       ],
                     ),
                   ),
-                  const SizedBox(width: 8),
-                  Icon(Icons.chevron_right_rounded,
-                      color: _homeMuted, size: 24),
+                  const SizedBox(width: 12),
+                  _MiniRouteThumb(onTheWay: onTheWay),
                 ],
               ),
-              const SizedBox(height: 16),
-              Row(
+            ),
+            // slim progress bar
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+              child: Row(
                 children: List<Widget>.generate(
                   steps.length,
                   (index) => Expanded(
                     child: Row(
                       children: <Widget>[
                         Container(
-                          width: 8,
-                          height: 8,
+                          width: 7,
+                          height: 7,
                           decoration: BoxDecoration(
                             color:
                                 steps[index].$2 ? scheme.primary : Colors.white,
@@ -13770,7 +14325,8 @@ class _RunningOrderCardState extends State<_RunningOrderCard>
                           Expanded(
                             child: Container(
                               height: 2,
-                              margin: const EdgeInsets.symmetric(horizontal: 4),
+                              margin:
+                                  const EdgeInsets.symmetric(horizontal: 4),
                               decoration: BoxDecoration(
                                 color: steps[index].$2
                                     ? scheme.primary.withOpacity(0.3)
@@ -13784,49 +14340,149 @@ class _RunningOrderCardState extends State<_RunningOrderCard>
                   ),
                 ),
               ),
-              const SizedBox(height: 7),
-              Text(
-                steps.map((step) => step.$1).join('   ·   '),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: _homeMuted,
-                  fontSize: 10.5,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              const SizedBox(height: 12),
-              Align(
-                alignment: Alignment.centerRight,
-                child: TextButton.icon(
-                  onPressed: () => Navigator.pushNamed(
-                    context,
-                    '/support',
-                    arguments: <String, dynamic>{
-                      'order': widget.order,
-                      'openChat': true,
-                    },
-                  ),
-                  icon: const Icon(Icons.support_agent_rounded, size: 15),
-                  label: const Text('Need help?'),
-                  style: TextButton.styleFrom(
-                    foregroundColor: _homeMuted,
-                    padding: EdgeInsets.zero,
-                    minimumSize: Size.zero,
-                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    textStyle: const TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w700,
+            ),
+            Container(height: 1, color: _homeBorder),
+            Row(
+              children: <Widget>[
+                Expanded(
+                  child: TextButton.icon(
+                    onPressed: () => Navigator.pushNamed(
+                      context,
+                      '/support',
+                      arguments: <String, dynamic>{
+                        'order': order,
+                        'openChat': true,
+                      },
+                    ),
+                    icon: const Icon(Icons.support_agent_rounded, size: 15),
+                    label: const Text('Need help?'),
+                    style: TextButton.styleFrom(
+                      foregroundColor: _homeMuted,
+                      padding: const EdgeInsets.symmetric(vertical: 11),
+                      textStyle: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
                   ),
                 ),
-              ),
-            ],
-          ),
+                Container(width: 1, height: 22, color: _homeBorder),
+                Expanded(
+                  child: TextButton.icon(
+                    onPressed: _openTracking,
+                    icon: const Icon(Icons.near_me_rounded, size: 15),
+                    label: const Text('Track order'),
+                    style: TextButton.styleFrom(
+                      foregroundColor: scheme.primary,
+                      padding: const EdgeInsets.symmetric(vertical: 11),
+                      textStyle: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
         ),
       ),
     );
   }
+}
+
+/// Lightweight schematic route thumbnail for the home running-order card —
+/// avoids spinning up a GoogleMap instance inside the feed.
+class _MiniRouteThumb extends StatelessWidget {
+  const _MiniRouteThumb({required this.onTheWay});
+
+  final bool onTheWay;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      width: 104,
+      height: 92,
+      decoration: BoxDecoration(
+        color: const Color(0xFFEFF1F5),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: _homeBorder),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Stack(
+        children: <Widget>[
+          Positioned.fill(
+            child: CustomPaint(painter: _MiniRoutePainter(color: scheme.primary)),
+          ),
+          Positioned(
+            right: 6,
+            top: 6,
+            child: Container(
+              padding: const EdgeInsets.all(4),
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                shape: BoxShape.circle,
+              ),
+              child: Icon(Icons.open_in_full_rounded,
+                  size: 11, color: _homeMuted),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MiniRoutePainter extends CustomPainter {
+  _MiniRoutePainter({required this.color});
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    // faint street grid
+    final grid = Paint()
+      ..color = const Color(0xFFDDE1E8)
+      ..strokeWidth = 1;
+    for (double x = 12; x < size.width; x += 22) {
+      canvas.drawLine(Offset(x, 0), Offset(x, size.height), grid);
+    }
+    for (double y = 12; y < size.height; y += 22) {
+      canvas.drawLine(Offset(0, y), Offset(size.width, y), grid);
+    }
+
+    final a = Offset(size.width * 0.78, size.height * 0.22); // restaurant
+    final b = Offset(size.width * 0.24, size.height * 0.78); // home
+
+    // dashed route
+    final route = Paint()
+      ..color = const Color(0xFF1A1A1A)
+      ..strokeWidth = 2.4
+      ..strokeCap = StrokeCap.round;
+    final path = Path()
+      ..moveTo(a.dx, a.dy)
+      ..lineTo(a.dx, size.height * 0.5)
+      ..lineTo(b.dx, size.height * 0.5)
+      ..lineTo(b.dx, b.dy);
+    for (final metric in path.computeMetrics()) {
+      double d = 0;
+      while (d < metric.length) {
+        canvas.drawPath(
+            metric.extractPath(d, (d + 4).clamp(0, metric.length)), route);
+        d += 7;
+      }
+    }
+
+    // restaurant dot
+    canvas.drawCircle(a, 4.5, Paint()..color = const Color(0xFF1A1A1A));
+    canvas.drawCircle(a, 2, Paint()..color = Colors.white);
+    // home dot
+    canvas.drawCircle(b, 4.5, Paint()..color = color);
+    canvas.drawCircle(b, 2, Paint()..color = Colors.white);
+  }
+
+  @override
+  bool shouldRepaint(covariant _MiniRoutePainter old) => old.color != color;
 }
 
 String _runningOrderTitle(Order order) {
@@ -14248,10 +14904,12 @@ class _AllCartsSheetRow extends StatelessWidget {
 class _HomeBottomNavBar extends StatelessWidget {
   const _HomeBottomNavBar({
     required this.currentIndex,
+    required this.showVoiceAssistant,
     required this.onTap,
   });
 
   final int currentIndex;
+  final bool showVoiceAssistant;
   final ValueChanged<int> onTap;
 
   @override
@@ -14301,10 +14959,11 @@ class _HomeBottomNavBar extends StatelessWidget {
                       active: currentIndex == 1,
                       onTap: () => onTap(1),
                     ),
-                    _CenterActionNavItem(
-                      label: 'Offer',
-                      onTap: () => onTap(-1),
-                    ),
+                    if (showVoiceAssistant)
+                      _CenterActionNavItem(
+                        label: 'Voice',
+                        onTap: () => onTap(-1),
+                      ),
                     _NavItem(
                       icon: AppIcons.receipt,
                       label: 'Orders',
@@ -14435,12 +15094,24 @@ class _CenterActionNavItem extends StatelessWidget {
                       ),
                     ],
                   ),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(18),
-                    child: Image.asset(
-                      'android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png',
-                      fit: BoxFit.cover,
-                      filterQuality: FilterQuality.high,
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: <Color>[
+                          primary,
+                          const Color(0xFFFF7A00),
+                        ],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                      borderRadius: BorderRadius.circular(18),
+                    ),
+                    child: const Center(
+                      child: Icon(
+                        Icons.mic_rounded,
+                        color: Colors.white,
+                        size: 30,
+                      ),
                     ),
                   ),
                 ),
@@ -14478,7 +15149,13 @@ class _HomeDishCardData {
     this.etaMinutes = 0,
     this.item,
     this.restaurant,
+    this.restaurantOpen = true,
+    this.available = true,
   });
+
+  /// True when this dish can be ordered right now — its restaurant is open and
+  /// the item itself is available. Closed/unavailable dishes are shown greyed.
+  bool get orderable => available && restaurantOpen && (item?.isAvailable ?? true);
 
   final String name;
   final String imageUrl;
@@ -14490,6 +15167,8 @@ class _HomeDishCardData {
   final int etaMinutes;
   final MenuItem? item;
   final Restaurant? restaurant;
+  final bool restaurantOpen;
+  final bool available;
 
   int get effectiveRestaurantId {
     if (restaurantId > 0) return restaurantId;

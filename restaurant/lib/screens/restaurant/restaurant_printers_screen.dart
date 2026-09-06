@@ -4,6 +4,8 @@ import '../../config/api_constants.dart';
 import '../../services/api_service.dart';
 import '../../services/printer_discovery_service.dart';
 import '../../theme/foodflow_theme.dart';
+import '../../theme/aurora_theme.dart';
+import '../../widgets/aurora/aurora.dart';
 import '../../widgets/restaurant/premium_restaurant_widgets.dart';
 
 class RestaurantPrintersScreen extends StatefulWidget {
@@ -19,6 +21,7 @@ class _RestaurantPrintersScreenState extends State<RestaurantPrintersScreen> {
 
   List<dynamic> _printers = [];
   bool _isLoading = true;
+  bool _hasData = false;
   bool _autoPrintNewOrders = false;
   bool _isUpdatingAutoPrint = false;
 
@@ -28,17 +31,27 @@ class _RestaurantPrintersScreenState extends State<RestaurantPrintersScreen> {
     _loadPrinters();
   }
 
+  void _applyPrinters(dynamic response) {
+    if (response is! Map || response['success'] != true) return;
+    _printers = response['data'] ?? [];
+    _autoPrintNewOrders = response['settings']?['auto_print_new_orders'] == true;
+    _hasData = true;
+  }
+
   Future<void> _loadPrinters() async {
-    setState(() => _isLoading = true);
+    if (!_hasData) setState(() => _isLoading = true);
     try {
-      final response = await _api.get(ApiConstants.restaurantPrinters);
-      if (response['success'] == true && mounted) {
-        setState(() {
-          _printers = response['data'] ?? [];
-          _autoPrintNewOrders =
-              response['settings']?['auto_print_new_orders'] == true;
-        });
-      }
+      final response = await _api.getWithCache(
+        ApiConstants.restaurantPrinters,
+        onCache: (cached) {
+          if (!mounted) return;
+          setState(() {
+            _applyPrinters(cached);
+            _isLoading = false;
+          });
+        },
+      );
+      if (mounted) setState(() => _applyPrinters(response));
     } catch (e) {
       debugPrint('Load printers error: $e');
     } finally {
@@ -191,6 +204,9 @@ class _RestaurantPrintersScreenState extends State<RestaurantPrintersScreen> {
       final path = '${printer['usb_path'] ?? ''}'.trim();
       return path.isEmpty ? 'USB printer' : 'USB • $path';
     }
+    if (type == 'sunmi') {
+      return 'Sunmi built-in printer';
+    }
 
     final ip = '${printer['ip_address'] ?? ''}'.trim();
     final port = printer['port'];
@@ -204,208 +220,467 @@ class _RestaurantPrintersScreenState extends State<RestaurantPrintersScreen> {
         return Icons.bluetooth_rounded;
       case 'usb':
         return Icons.usb_rounded;
+      case 'sunmi':
+        return Icons.point_of_sale_rounded;
       default:
         return Icons.wifi_tethering_rounded;
     }
   }
 
+  String _roleLabel(String? role) {
+    switch ((role ?? 'both').toLowerCase()) {
+      case 'kot':
+        return 'KOT';
+      case 'invoice':
+        return 'Invoice';
+      default:
+        return 'KOT + Invoice';
+    }
+  }
+
+  Future<void> _testInvoice(int printerId) async {
+    try {
+      final response = await _api
+          .post('${ApiConstants.restaurantPrinters}/$printerId/test-invoice');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(response['message']?.toString() ??
+              'Sample invoice sent to printer'),
+        ),
+      );
+    } catch (e) {
+      debugPrint('Test invoice error: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to print sample invoice: $e')),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    final topPad = MediaQuery.of(context).padding.top + 64;
+    final defaultPrinter = _printers.cast<dynamic>().firstWhere(
+          (p) => p is Map && p['is_default'] == true,
+          orElse: () => null,
+        );
+
     return Scaffold(
-      backgroundColor: FoodFlowTheme.canvas,
-      appBar: AppBar(
-        title: const Text('Printers'),
+      backgroundColor: foodflow.canvas,
+      extendBodyBehindAppBar: true,
+      appBar: GlassAppBar(
+        title: Text(
+          'Printers',
+          style: TextStyle(
+            color: foodflow.ink,
+            fontSize: 17,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
         actions: [
           IconButton(
-            icon: const Icon(Icons.add),
+            icon: Icon(Icons.add_rounded, color: foodflow.ink),
             onPressed: _openAddPrinterScreen,
           ),
         ],
       ),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : _printers.isEmpty
-              ? Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
+      body: Stack(
+        children: [
+          ...AuroraTheme.auroraBlobs(),
+          _isLoading
+              ? const Center(child: CircularProgressIndicator())
+              : RefreshIndicator(
+                  onRefresh: _loadPrinters,
+                  child: ListView(
+                    padding: EdgeInsets.fromLTRB(16, topPad, 16, 32),
+                    children: [
+                      _PrintHubHero(
+                        printerCount: _printers.length,
+                        defaultName: defaultPrinter is Map
+                            ? '${defaultPrinter['printer_name']}'
+                            : null,
+                        autoPrint: _autoPrintNewOrders,
+                        busy: _isUpdatingAutoPrint,
+                        onAutoPrintChanged:
+                            _isUpdatingAutoPrint ? null : _updateAutoPrint,
+                        onAdd: _openAddPrinterScreen,
+                      ),
+                      const SizedBox(height: 14),
+                      if (_printers.isEmpty)
+                        _PrintersEmpty(onSearch: _openAddPrinterScreen)
+                      else
+                        ..._printers.map((raw) {
+                          final printer = Map<String, dynamic>.from(raw);
+                          return Padding(
+                            padding: const EdgeInsets.only(bottom: 12),
+                            child: _PrinterCard(
+                              printer: printer,
+                              icon: _printerIcon(
+                                  '${printer['printer_type'] ?? 'network'}'),
+                              connectionLabel: _connectionLabel(printer),
+                              roleLabel: _roleLabel(
+                                  printer['printer_role'] as String?),
+                              onSetDefault: () =>
+                                  _setDefaultPrinter(printer['id'] as int),
+                              onTest: () => _testPrinter(printer['id'] as int),
+                              onSampleBill: () =>
+                                  _testInvoice(printer['id'] as int),
+                              onDelete: () =>
+                                  _deletePrinter(printer['id'] as int),
+                            ),
+                          );
+                        }),
+                    ],
+                  ),
+                ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PrintHubHero extends StatelessWidget {
+  const _PrintHubHero({
+    required this.printerCount,
+    required this.defaultName,
+    required this.autoPrint,
+    required this.busy,
+    required this.onAutoPrintChanged,
+    required this.onAdd,
+  });
+
+  final int printerCount;
+  final String? defaultName;
+  final bool autoPrint;
+  final bool busy;
+  final ValueChanged<bool>? onAutoPrintChanged;
+  final VoidCallback onAdd;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        gradient: foodflow.brandGradient,
+        borderRadius: BorderRadius.circular(22),
+        boxShadow: [
+          BoxShadow(
+            color: foodflow.orange.withOpacity(0.28),
+            blurRadius: 22,
+            offset: const Offset(0, 12),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.16),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Icon(Icons.print_rounded, color: Colors.white),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    FoodFlowTheme.emptyState(
-                      icon: Icons.print_outlined,
-                      title: 'No printers configured',
-                      subtitle:
-                          'Search nearby Bluetooth or Wi-Fi printers and save them for KOT printing.',
+                    const Text(
+                      'Kitchen print hub',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 17,
+                        fontWeight: FontWeight.w900,
+                      ),
                     ),
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 28),
-                      child: ElevatedButton.icon(
-                        onPressed: _openAddPrinterScreen,
-                        icon: const Icon(Icons.radar_rounded),
-                        label: const Text('Search Printers'),
+                    Text(
+                      defaultName != null
+                          ? 'Default · $defaultName'
+                          : '$printerCount printer${printerCount == 1 ? '' : 's'} configured',
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.85),
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
                       ),
                     ),
                   ],
-                )
-              : ListView.builder(
-                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                  itemCount: _printers.length + 1,
-                  itemBuilder: (context, index) {
-                    if (index == 0) {
-                      return Column(
-                        children: [
-                          PremiumRestaurantHeader(
-                            title: 'Kitchen Print Hub',
-                            subtitle:
-                                '${_printers.length} printer${_printers.length == 1 ? '' : 's'} ready for live tickets.',
-                            icon: Icons.print,
-                            trailing: IconButton(
-                              onPressed: _openAddPrinterScreen,
-                              icon: const Icon(Icons.add),
-                              color: Colors.white,
-                              style: IconButton.styleFrom(
-                                backgroundColor: Colors.white.withOpacity(0.14),
-                              ),
+                ),
+              ),
+              IconButton(
+                onPressed: onAdd,
+                icon: const Icon(Icons.add_rounded, color: Colors.white),
+                style: IconButton.styleFrom(
+                  backgroundColor: Colors.white.withOpacity(0.16),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Container(
+            padding: const EdgeInsets.fromLTRB(14, 6, 8, 6),
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.14),
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Auto-print new orders',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w800,
+                          fontSize: 13,
+                        ),
+                      ),
+                      Text(
+                        autoPrint
+                            ? 'KOT prints automatically on the default printer'
+                            : 'Print KOT manually after reviewing each order',
+                        style: TextStyle(
+                          color: Colors.white.withOpacity(0.8),
+                          fontSize: 11,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                busy
+                    ? const Padding(
+                        padding: EdgeInsets.all(10),
+                        child: SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            valueColor:
+                                AlwaysStoppedAnimation<Color>(Colors.white),
+                          ),
+                        ),
+                      )
+                    : Switch.adaptive(
+                        value: autoPrint,
+                        onChanged: onAutoPrintChanged,
+                        activeColor: Colors.white,
+                        activeTrackColor: Colors.white.withOpacity(0.45),
+                      ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PrintersEmpty extends StatelessWidget {
+  const _PrintersEmpty({required this.onSearch});
+
+  final VoidCallback onSearch;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 34, horizontal: 22),
+      decoration: BoxDecoration(
+        color: foodflow.surfaceColor,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: foodflow.line),
+      ),
+      child: Column(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: foodflow.orange.withOpacity(0.10),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(Icons.print_outlined, color: foodflow.orange, size: 30),
+          ),
+          const SizedBox(height: 14),
+          Text(
+            'No printers configured',
+            style: TextStyle(
+              color: foodflow.ink,
+              fontWeight: FontWeight.w900,
+              fontSize: 16,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'Search nearby Bluetooth or Wi-Fi printers and save them for KOT printing.',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: foodflow.muted, fontSize: 13),
+          ),
+          const SizedBox(height: 16),
+          ElevatedButton.icon(
+            onPressed: onSearch,
+            icon: const Icon(Icons.radar_rounded),
+            label: const Text('Search printers'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PrinterCard extends StatelessWidget {
+  const _PrinterCard({
+    required this.printer,
+    required this.icon,
+    required this.connectionLabel,
+    required this.roleLabel,
+    required this.onSetDefault,
+    required this.onTest,
+    required this.onSampleBill,
+    required this.onDelete,
+  });
+
+  final Map<String, dynamic> printer;
+  final IconData icon;
+  final String connectionLabel;
+  final String roleLabel;
+  final VoidCallback onSetDefault;
+  final VoidCallback onTest;
+  final VoidCallback onSampleBill;
+  final VoidCallback onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    final type = '${printer['printer_type'] ?? 'network'}';
+    final isDefault = printer['is_default'] == true;
+    final isActive = printer['is_active'] == true;
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: foodflow.surfaceColor,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: isDefault ? foodflow.orange.withOpacity(0.5) : foodflow.line,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: foodflow.orange.withOpacity(0.10),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(icon, color: foodflow.orange),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Flexible(
+                          child: Text(
+                            '${printer['printer_name']}',
+                            style: TextStyle(
+                              fontWeight: FontWeight.w900,
+                              fontSize: 15,
+                              color: foodflow.ink,
                             ),
                           ),
+                        ),
+                        if (isDefault) ...[
+                          const SizedBox(width: 8),
                           Container(
-                            margin: const EdgeInsets.only(bottom: 12),
-                            decoration: RestaurantPremium.panel(radius: 16),
-                            child: SwitchListTile(
-                              value: _autoPrintNewOrders,
-                              onChanged: _isUpdatingAutoPrint
-                                  ? null
-                                  : _updateAutoPrint,
-                              title: const Text(
-                                'Auto print on new order',
-                                style: TextStyle(fontWeight: FontWeight.w700),
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 8, vertical: 3),
+                            decoration: BoxDecoration(
+                              color: foodflow.orange.withOpacity(0.12),
+                              borderRadius: BorderRadius.circular(999),
+                            ),
+                            child: Text(
+                              'DEFAULT',
+                              style: TextStyle(
+                                fontSize: 9,
+                                letterSpacing: 0.5,
+                                color: foodflow.orange,
+                                fontWeight: FontWeight.w900,
                               ),
-                              subtitle: Text(
-                                _autoPrintNewOrders
-                                    ? 'New orders will automatically print on the active default printer.'
-                                    : 'Keep this off if you want to manually print KOT after review.',
-                              ),
-                              secondary: _isUpdatingAutoPrint
-                                  ? const SizedBox(
-                                      width: 20,
-                                      height: 20,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2,
-                                      ),
-                                    )
-                                  : const Icon(Icons.print_rounded),
                             ),
                           ),
                         ],
-                      );
-                    }
-
-                    final printer = Map<String, dynamic>.from(_printers[index - 1]);
-                    final type = '${printer['printer_type'] ?? 'network'}';
-
-                    return Container(
-                      margin: const EdgeInsets.only(bottom: 12),
-                      decoration: RestaurantPremium.panel(radius: 16),
-                      child: Padding(
-                        padding: const EdgeInsets.all(16),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              children: [
-                                Container(
-                                  padding: const EdgeInsets.all(10),
-                                  decoration: BoxDecoration(
-                                    color: FoodFlowTheme.orange
-                                        .withOpacity(0.10),
-                                    borderRadius: BorderRadius.circular(10),
-                                  ),
-                                  child: Icon(
-                                    _printerIcon(type),
-                                    color: FoodFlowTheme.orange,
-                                  ),
-                                ),
-                                const SizedBox(width: 12),
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        '${printer['printer_name']}',
-                                        style: const TextStyle(
-                                          fontWeight: FontWeight.bold,
-                                          fontSize: 16,
-                                        ),
-                                      ),
-                                      const SizedBox(height: 2),
-                                      Text(
-                                        _connectionLabel(printer),
-                                        style: TextStyle(
-                                          fontSize: 12,
-                                          color: Colors.grey.shade700,
-                                        ),
-                                      ),
-                                      Text(
-                                        '${type.toUpperCase()} • ${printer['paper_size']}mm',
-                                        style: TextStyle(
-                                          fontSize: 12,
-                                          color: Colors.grey.shade500,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                                if (printer['is_default'] == true)
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 8,
-                                      vertical: 4,
-                                    ),
-                                    decoration: BoxDecoration(
-                                      color: Colors.green.shade100,
-                                      borderRadius: BorderRadius.circular(999),
-                                    ),
-                                    child: const Text(
-                                      'Default',
-                                      style: TextStyle(
-                                        fontSize: 10,
-                                        color: Colors.green,
-                                        fontWeight: FontWeight.w700,
-                                      ),
-                                    ),
-                                  ),
-                              ],
-                            ),
-                            const SizedBox(height: 14),
-                            Row(
-                              children: [
-                                if (printer['is_default'] != true)
-                                  TextButton(
-                                    onPressed: () =>
-                                        _setDefaultPrinter(printer['id'] as int),
-                                    child: const Text('Set as Default'),
-                                  ),
-                                const Spacer(),
-                                if (printer['is_active'] == true)
-                                  TextButton(
-                                    onPressed: () =>
-                                        _testPrinter(printer['id'] as int),
-                                    child: const Text('Test Print'),
-                                  ),
-                                IconButton(
-                                  icon: const Icon(
-                                    Icons.delete_outline,
-                                    color: Colors.red,
-                                  ),
-                                  onPressed: () =>
-                                      _deletePrinter(printer['id'] as int),
-                                ),
-                              ],
-                            ),
-                          ],
+                      ],
+                    ),
+                    const SizedBox(height: 3),
+                    Row(
+                      children: [
+                        Container(
+                          width: 7,
+                          height: 7,
+                          decoration: BoxDecoration(
+                            color: isActive
+                                ? const Color(0xFF16A34A)
+                                : foodflow.muted,
+                            shape: BoxShape.circle,
+                          ),
                         ),
-                      ),
-                    );
-                  },
+                        const SizedBox(width: 6),
+                        Flexible(
+                          child: Text(
+                            connectionLabel,
+                            style:
+                                TextStyle(fontSize: 12, color: foodflow.muted),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      '${type.toUpperCase()} • ${printer['paper_size']}mm • $roleLabel',
+                      style: TextStyle(fontSize: 11, color: foodflow.faint),
+                    ),
+                  ],
                 ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Divider(height: 1, color: foodflow.line),
+          const SizedBox(height: 4),
+          Row(
+            children: [
+              if (!isDefault)
+                TextButton(
+                  onPressed: onSetDefault,
+                  child: const Text('Set default'),
+                ),
+              if (isActive)
+                TextButton(onPressed: onTest, child: const Text('Test')),
+              if (isActive && roleLabel != 'KOT')
+                TextButton(
+                  onPressed: onSampleBill,
+                  child: const Text('Sample bill'),
+                ),
+              const Spacer(),
+              IconButton(
+                icon: Icon(Icons.delete_outline_rounded,
+                    color: foodflow.danger),
+                onPressed: onDelete,
+              ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 }
@@ -428,6 +703,8 @@ class _AddPrinterScreenState extends State<_AddPrinterScreen> {
   final TextEditingController _bluetoothMacController = TextEditingController();
 
   String _printerType = 'network';
+  String _printerRole = 'both';
+  String _brand = 'generic';
   int _paperSize = 80;
   bool _isScanning = false;
   bool _isSaving = false;
@@ -507,6 +784,8 @@ class _AddPrinterScreenState extends State<_AddPrinterScreen> {
         data: {
           'printer_name': _nameController.text.trim(),
           'printer_type': _printerType,
+          'printer_role': _printerRole,
+          'brand': _brand,
           'ip_address':
               _printerType == 'network' ? _ipController.text.trim() : null,
           'port': _printerType == 'network'
@@ -640,7 +919,7 @@ class _AddPrinterScreenState extends State<_AddPrinterScreen> {
                     margin: const EdgeInsets.only(bottom: 10),
                     padding: const EdgeInsets.all(14),
                     decoration: BoxDecoration(
-                      color: Colors.white,
+                      color: foodflow.surfaceColor,
                       borderRadius: BorderRadius.circular(14),
                       border: Border.all(color: Colors.grey.shade200),
                     ),
@@ -686,7 +965,7 @@ class _AddPrinterScreenState extends State<_AddPrinterScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: FoodFlowTheme.canvas,
+      backgroundColor: foodflow.canvas,
       appBar: AppBar(
         title: const Text('Add Printer'),
       ),
@@ -770,29 +1049,64 @@ class _AddPrinterScreenState extends State<_AddPrinterScreen> {
                       ),
                     ),
                     const SizedBox(height: 14),
+                    const Text(
+                      'Connection',
+                      style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+                    ),
+                    const SizedBox(height: 8),
                     Wrap(
                       spacing: 8,
                       runSpacing: 8,
                       children: [
-                        ChoiceChip(
-                          label: const Text('Wi-Fi'),
-                          selected: _printerType == 'network',
-                          onSelected: (_) =>
-                              setState(() => _printerType = 'network'),
-                        ),
-                        ChoiceChip(
-                          label: const Text('Bluetooth'),
-                          selected: _printerType == 'bluetooth',
-                          onSelected: (_) =>
-                              setState(() => _printerType = 'bluetooth'),
-                        ),
-                        ChoiceChip(
-                          label: const Text('USB'),
-                          selected: _printerType == 'usb',
-                          onSelected: (_) =>
-                              setState(() => _printerType = 'usb'),
-                        ),
+                        for (final entry in const {
+                          'network': 'Wi-Fi',
+                          'bluetooth': 'Bluetooth',
+                          'usb': 'USB',
+                          'sunmi': 'Sunmi built-in',
+                        }.entries)
+                          ChoiceChip(
+                            label: Text(entry.value),
+                            selected: _printerType == entry.key,
+                            onSelected: (_) => setState(() {
+                              _printerType = entry.key;
+                              if (entry.key == 'sunmi') _brand = 'sunmi';
+                            }),
+                          ),
                       ],
+                    ),
+                    const SizedBox(height: 14),
+                    const Text(
+                      'What this printer prints',
+                      style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+                    ),
+                    const SizedBox(height: 8),
+                    SegmentedButton<String>(
+                      segments: const [
+                        ButtonSegment(value: 'kot', label: Text('KOT')),
+                        ButtonSegment(value: 'invoice', label: Text('Invoice')),
+                        ButtonSegment(value: 'both', label: Text('Both')),
+                      ],
+                      selected: {_printerRole},
+                      showSelectedIcon: false,
+                      onSelectionChanged: (value) =>
+                          setState(() => _printerRole = value.first),
+                    ),
+                    const SizedBox(height: 14),
+                    DropdownButtonFormField<String>(
+                      value: _brand,
+                      decoration: const InputDecoration(
+                        labelText: 'Printer brand / protocol',
+                        border: OutlineInputBorder(),
+                      ),
+                      items: const [
+                        DropdownMenuItem(
+                            value: 'generic', child: Text('Generic ESC/POS')),
+                        DropdownMenuItem(value: 'epson', child: Text('Epson')),
+                        DropdownMenuItem(value: 'star', child: Text('Star')),
+                        DropdownMenuItem(value: 'sunmi', child: Text('Sunmi')),
+                      ],
+                      onChanged: (value) =>
+                          setState(() => _brand = value ?? 'generic'),
                     ),
                     const SizedBox(height: 14),
                     TextFormField(

@@ -39,12 +39,20 @@ class User extends Authenticatable
         'password',
         'is_active',
         'reward_points_balance',
+        'voice_remaining_seconds',
+        'voice_last_recharged_order_id',
+        'voice_last_recharged_at',
         'referral_code',
         'referred_by_user_id',
         'referral_registered_at',
         'vehicle_type',
         'vehicle_number',
         'license_number',
+        'earning_mode',
+        'monthly_salary',
+        'salary_effective_from',
+        'pan',
+        'tax_deductee_type',
         'current_restaurant_id',
         'branch_id',
         'address',
@@ -55,6 +63,9 @@ class User extends Authenticatable
         'customer_fcm_token',
         'restaurant_fcm_token',
         'driver_fcm_token',
+        'notify_order_updates',
+        'notify_offers_promotions',
+        'reorder_nudged_at',
         'firebase_uid',
         'social_provider',
         'social_provider_id',
@@ -115,7 +126,17 @@ class User extends Authenticatable
      */
     protected $appends = [
         'profile_photo_url',
+        'driver_code',
     ];
+
+    /**
+     * Human-readable public identifier for a delivery partner, e.g. DRV00042.
+     * Derived from the row id so it is always stable without a separate column.
+     */
+    public function getDriverCodeAttribute(): string
+    {
+        return 'DRV' . str_pad((string) $this->id, 5, '0', STR_PAD_LEFT);
+    }
 
     /**
      * Get the attributes that should be cast.
@@ -129,9 +150,16 @@ class User extends Authenticatable
             'password' => 'hashed',
             'social_accounts' => 'array',
             'reward_points_balance' => 'integer',
+            'voice_remaining_seconds' => 'integer',
+            'voice_last_recharged_at' => 'datetime',
+            'notify_order_updates' => 'boolean',
+            'notify_offers_promotions' => 'boolean',
+            'reorder_nudged_at' => 'datetime',
             'referral_registered_at' => 'datetime',
             'mollie_token_expires_at' => 'datetime',
             'payout_provider_meta' => 'array',
+            'monthly_salary' => 'decimal:2',
+            'salary_effective_from' => 'date',
         ];
     }
 
@@ -244,6 +272,16 @@ class User extends Authenticatable
         return $this->hasMany(Order::class, 'driver_id');
     }
 
+    public function restaurantOnboardings()
+    {
+        return $this->hasMany(RestaurantOnboarding::class, 'driver_id');
+    }
+
+    public function restaurantOnboardingIncentives()
+    {
+        return $this->hasMany(RestaurantOnboardingIncentive::class, 'driver_id');
+    }
+
     public function wallet()
     {
         return $this->hasOne(Wallet::class);
@@ -294,3 +332,4 @@ class User extends Authenticatable
         );
     }
 }
+

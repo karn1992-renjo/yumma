@@ -12,6 +12,8 @@ import '../../services/api_service.dart';
 import '../../services/app_order_overlay_service.dart';
 import '../../services/restaurant_order_realtime_service.dart';
 import '../../theme/foodflow_theme.dart';
+import '../../theme/aurora_theme.dart';
+import '../../widgets/aurora/aurora.dart';
 import '../../utils/currency_utils.dart';
 import '../../widgets/common/network_image_loader.dart';
 import '../../widgets/common/network_error_screen.dart';
@@ -34,6 +36,7 @@ class _RestaurantOrdersScreenState extends State<RestaurantOrdersScreen> {
   bool _isProviderListenerAttached = false;
   List<Order> _orders = [];
   bool _isLoading = true;
+  bool _hasData = false;
   String? _loadError;
   String _selectedFilter = 'all';
   Map<String, dynamic>? _incomingOrderPayload;
@@ -180,8 +183,18 @@ class _RestaurantOrdersScreenState extends State<RestaurantOrdersScreen> {
     super.dispose();
   }
 
+  void _applyOrders(dynamic response) {
+    if (response is! Map || response['success'] != true) return;
+    _orders = _extractOrders(response['data'])
+        .whereType<Map>()
+        .map((json) => Order.fromJson(Map<String, dynamic>.from(json)))
+        .toList();
+    _loadError = null;
+    _hasData = true;
+  }
+
   Future<void> _loadOrders() async {
-    setState(() => _isLoading = true);
+    if (!_hasData) setState(() => _isLoading = true);
     try {
       final restaurantProvider = Provider.of<RestaurantProvider>(
         context,
@@ -192,16 +205,19 @@ class _RestaurantOrdersScreenState extends State<RestaurantOrdersScreen> {
             restaurantProvider.selectedRestaurantId?.toString() ?? 'all',
       };
       if (_selectedFilter != 'all') params['status'] = _selectedFilter;
-      final response =
-          await _api.get(ApiConstants.restaurantOrders, queryParams: params);
+      final response = await _api.getWithCache(
+        ApiConstants.restaurantOrders,
+        queryParams: params,
+        onCache: (cached) {
+          if (!mounted) return;
+          setState(() {
+            _applyOrders(cached);
+            _isLoading = false;
+          });
+        },
+      );
       if (response['success'] == true && mounted) {
-        setState(() {
-          _orders = _extractOrders(response['data'])
-              .whereType<Map>()
-              .map((json) => Order.fromJson(Map<String, dynamic>.from(json)))
-              .toList();
-          _loadError = null;
-        });
+        setState(() => _applyOrders(response));
       }
     } catch (e) {
       debugPrint('Load orders error: $e');
@@ -246,8 +262,18 @@ class _RestaurantOrdersScreenState extends State<RestaurantOrdersScreen> {
   }
 
   Future<void> _updateStatus(int orderId, String status) async {
+    String? rejectReason;
+    if (status == 'cancelled') {
+      rejectReason = await _askRejectReason();
+      if (!mounted || rejectReason == null) return;
+    }
+
     try {
-      final response = await _sendOrderAction(orderId, status);
+      final response = await _sendOrderAction(
+        orderId,
+        status,
+        rejectReason: rejectReason,
+      );
       if (response['success'] == true) {
         await _loadOrders();
         if (mounted) {
@@ -294,7 +320,11 @@ class _RestaurantOrdersScreenState extends State<RestaurantOrdersScreen> {
     }
   }
 
-  Future<dynamic> _sendOrderAction(int orderId, String status) async {
+  Future<dynamic> _sendOrderAction(
+    int orderId,
+    String status, {
+    String? rejectReason,
+  }) async {
     if (status == 'verify_takeaway_otp') {
       final otp = await _askPickupOtp();
       if (otp == null) return {'success': false};
@@ -310,7 +340,7 @@ class _RestaurantOrdersScreenState extends State<RestaurantOrdersScreen> {
       return _api.post(ApiConstants.restaurantOrderReady(orderId));
     }
     if (status == 'cancelled') {
-      final reason = await _askRejectReason();
+      final reason = rejectReason;
       if (reason == null) return {'success': false};
       return _api.post(
         ApiConstants.restaurantRejectOrder(orderId),
@@ -415,8 +445,8 @@ class _RestaurantOrdersScreenState extends State<RestaurantOrdersScreen> {
         return success;
       },
       onReject: (id, reason) async {
-        final selectedReason = await _askRejectReason();
-        if (selectedReason == null) return false;
+        final selectedReason =
+            reason.trim().isEmpty ? 'Rejected by restaurant' : reason.trim();
         final success = await _restaurantProvider.rejectOrder(
           id,
           selectedReason,
@@ -436,107 +466,187 @@ class _RestaurantOrdersScreenState extends State<RestaurantOrdersScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final canManageOrders =
-        Provider.of<AuthProvider>(context).currentUser?.canManageOrders ?? true;
+    Widget list;
+    if (_isLoading) {
+      list = Center(child: CircularProgressIndicator(color: foodflow.orange));
+    } else if (_loadError != null && _orders.isEmpty) {
+      list = NetworkErrorView(message: _loadError, onRetry: _loadOrders);
+    } else if (_orders.isEmpty) {
+      list = FoodFlowTheme.emptyState(
+        icon: Icons.receipt_long_outlined,
+        title: 'No orders found',
+        subtitle: 'New restaurant orders will appear here.',
+      );
+    } else {
+      final groups = _groupByDay(_orders);
+      final rows = <Widget>[];
+      var idx = 0;
+      groups.forEach((header, orders) {
+        rows.add(_DateGroupHeader(label: header, count: orders.length));
+        for (final order in orders) {
+          rows.add(AuroraEntrance(
+            delay: Duration(milliseconds: (idx++ * 35).clamp(0, 280)),
+            child: _OrderTicketRow(
+              order: order,
+              onTap: () => Navigator.pushNamed(
+                context,
+                '/restaurant/order',
+                arguments: order.id,
+              ).then((_) => _loadOrders()),
+            ),
+          ));
+        }
+      });
+      list = RefreshIndicator(
+        onRefresh: _loadOrders,
+        color: foodflow.orange,
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(14, 6, 14, 120),
+          children: rows,
+        ),
+      );
+    }
+
     return Scaffold(
-      backgroundColor: FoodFlowTheme.canvas,
+      backgroundColor: foodflow.canvas,
+      extendBodyBehindAppBar: widget.showAppBar,
       appBar: widget.showAppBar
-          ? AppBar(
-              title: const Text('Orders',
-                  style: TextStyle(fontWeight: FontWeight.w900)),
+          ? GlassAppBar(
+              leading: const BackButton(),
+              title: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    'Orders',
+                    style: TextStyle(
+                      color: foodflow.ink,
+                      fontSize: 18,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  Text(
+                    '${_orders.length} ${_orders.length == 1 ? 'ticket' : 'tickets'} - ${_OrdersSummaryHeader._label(_selectedFilter)}',
+                    style: TextStyle(
+                      color: foodflow.muted,
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ),
               actions: [
                 IconButton(
                   onPressed: _loadOrders,
-                  icon: const Icon(Icons.refresh),
+                  icon: Icon(Icons.refresh_rounded, color: foodflow.ink),
                   tooltip: 'Refresh',
                 ),
               ],
             )
           : null,
-      body: Column(
+      body: Stack(
         children: [
-          _OrdersSummaryHeader(
-            totalOrders: _orders.length,
-            activeFilter: _selectedFilter,
+          Positioned.fill(
+            child: DecoratedBox(
+              decoration: BoxDecoration(color: foodflow.canvas),
+              child: Stack(children: AuroraTheme.auroraBlobs()),
+            ),
           ),
-          Container(
-            color: Colors.white,
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 10),
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Row(
-                children: _filters
-                    .map(
-                      (filter) => Padding(
-                        padding: const EdgeInsets.only(right: 7),
-                        child: ChoiceChip(
-                          label: Text(_filterLabel(filter)),
+          Positioned.fill(
+            child: SafeArea(
+              bottom: false,
+              child: Column(
+                children: [
+                  if (!widget.showAppBar) const SizedBox(height: 4),
+                  SizedBox(
+                    height: 48,
+                    child: ListView.separated(
+                      scrollDirection: Axis.horizontal,
+                      padding: const EdgeInsets.symmetric(horizontal: 14),
+                      itemCount: _filters.length,
+                      separatorBuilder: (_, __) => const SizedBox(width: 8),
+                      itemBuilder: (context, i) {
+                        final filter = _filters[i];
+                        return _OrdersFilterPill(
+                          label: _filterLabel(filter),
                           selected: _selectedFilter == filter,
-                          onSelected: (_) {
+                          onTap: () {
+                            if (_selectedFilter == filter) return;
                             setState(() => _selectedFilter = filter);
                             _loadOrders();
                           },
-                          selectedColor: FoodFlowTheme.orange,
-                          backgroundColor: FoodFlowTheme.canvas,
-                          side: const BorderSide(color: FoodFlowTheme.line),
-                          labelStyle: TextStyle(
-                            color: _selectedFilter == filter
-                                ? Colors.white
-                                : FoodFlowTheme.ink,
-                            fontWeight: FontWeight.w800,
-                            fontSize: 11,
-                            height: 1,
-                          ),
-                          padding: const EdgeInsets.symmetric(horizontal: 8),
-                          visualDensity: VisualDensity.compact,
-                        ),
-                      ),
-                    )
-                    .toList(),
+                        );
+                      },
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  if (!_isLoading && _orders.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(14, 0, 14, 4),
+                      child: _OrdersSummaryBar(orders: _orders),
+                    ),
+                  Expanded(child: list),
+                ],
               ),
             ),
           ),
-          Expanded(
-            child: _isLoading
-                ? const Center(child: CircularProgressIndicator())
-                : _loadError != null && _orders.isEmpty
-                    ? NetworkErrorView(
-                        message: _loadError,
-                        onRetry: _loadOrders,
-                      )
-                    : _orders.isEmpty
-                        ? FoodFlowTheme.emptyState(
-                            icon: Icons.receipt_long_outlined,
-                            title: 'No orders found',
-                            subtitle: 'New restaurant orders will appear here.',
-                          )
-                        : RefreshIndicator(
-                            onRefresh: _loadOrders,
-                            child: ListView.builder(
-                              padding:
-                                  const EdgeInsets.fromLTRB(16, 12, 16, 20),
-                              itemCount: _orders.length,
-                              itemBuilder: (context, index) {
-                                final order = _orders[index];
-                                return _RestaurantOrderCard(
-                                  order: order,
-                                  canManageOrders: canManageOrders,
-                                  onUpdateStatus: _updateStatus,
-                                  onExtendPrepTime: _extendPrepTime,
-                                );
-                              },
-                            ),
-                          ),
-          ),
           if (_incomingOrderPayload != null)
-            _IncomingOrderSlideBanner(
-              visible: _showIncomingOrderBanner,
-              loading: _isOpeningIncomingOrder,
-              payload: _incomingOrderPayload!,
-              onTap: _openIncomingOrderAcceptScreen,
-              onDismiss: () => setState(() => _showIncomingOrderBanner = false),
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              child: _IncomingOrderSlideBanner(
+                visible: _showIncomingOrderBanner,
+                loading: _isOpeningIncomingOrder,
+                payload: _incomingOrderPayload!,
+                onTap: _openIncomingOrderAcceptScreen,
+                onDismiss: () =>
+                    setState(() => _showIncomingOrderBanner = false),
+              ),
             ),
         ],
+      ),
+    );
+  }
+}
+
+class _OrdersFilterPill extends StatelessWidget {
+  const _OrdersFilterPill({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 180),
+        alignment: Alignment.center,
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        decoration: BoxDecoration(
+          color: selected
+              ? foodflow.orange
+              : (foodflow.isDark ? foodflow.elevatedSurface : Colors.white),
+          borderRadius: BorderRadius.circular(13),
+          border: Border.all(
+            color: selected ? foodflow.orange : foodflow.line,
+          ),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            color: selected ? Colors.white : foodflow.ink,
+            fontSize: 12.5,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
       ),
     );
   }
@@ -699,7 +809,7 @@ class _OrdersSummaryHeader extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text(
+                Text(
                   'Orders',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
@@ -715,7 +825,7 @@ class _OrdersSummaryHeader extends StatelessWidget {
                   '$totalOrders tickets - ${_label(activeFilter)}',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
+                  style: TextStyle(
                     color: FoodFlowTheme.muted,
                     fontSize: 11,
                     height: 1.15,
@@ -742,471 +852,292 @@ class _OrdersSummaryHeader extends StatelessWidget {
   }
 }
 
-class _RestaurantOrderCard extends StatelessWidget {
-  final Order order;
-  final bool canManageOrders;
-  final Future<void> Function(int orderId, String status) onUpdateStatus;
-  final Future<void> Function(int orderId, int minutes) onExtendPrepTime;
+double orderPayout(Order order) {
+  if (order.restaurantEarning > 0) return order.restaurantEarning;
+  final calc = order.subtotal -
+      order.platformCommission -
+      order.gstOnCommission -
+      order.paymentGatewayFee;
+  return calc > 0 ? calc : order.subtotal;
+}
 
-  const _RestaurantOrderCard({
-    required this.order,
-    required this.canManageOrders,
-    required this.onUpdateStatus,
-    required this.onExtendPrepTime,
-  });
+String _orderClock(DateTime value) {
+  final d = value.toLocal();
+  final h = d.hour % 12 == 0 ? 12 : d.hour % 12;
+  final m = d.minute.toString().padLeft(2, '0');
+  return '$h:$m ${d.hour >= 12 ? 'PM' : 'AM'}';
+}
+
+Map<String, List<Order>> _groupByDay(List<Order> orders) {
+  final now = DateTime.now();
+  final today = DateTime(now.year, now.month, now.day);
+  final out = <String, List<Order>>{};
+  for (final o in orders) {
+    final d = o.createdAt.toLocal();
+    final day = DateTime(d.year, d.month, d.day);
+    final diff = today.difference(day).inDays;
+    final key = diff == 0
+        ? 'Today'
+        : diff == 1
+            ? 'Yesterday'
+            : '${day.day.toString().padLeft(2, '0')} '
+                '${const [
+                'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+              ][day.month - 1]}';
+    (out[key] ??= []).add(o);
+  }
+  return out;
+}
+
+/// A one-line at-a-glance report for the current filter.
+class _OrdersSummaryBar extends StatelessWidget {
+  const _OrdersSummaryBar({required this.orders});
+  final List<Order> orders;
 
   @override
   Widget build(BuildContext context) {
+    final payout =
+        orders.fold<double>(0, (sum, o) => sum + orderPayout(o));
+    final delivered = orders.where((o) => o.isDelivered).length;
+    final pct = orders.isEmpty ? 0 : (delivered * 100 / orders.length).round();
+
     return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      decoration: RestaurantPremium.panel(radius: 14),
-      child: Theme(
-        data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
-        child: ExpansionTile(
-          tilePadding: const EdgeInsets.fromLTRB(12, 4, 8, 4),
-          childrenPadding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-          leading: _OrderItemImage(item: _firstItem(), size: 38),
-          title: Row(
-            children: [
-              Expanded(
-                child: Text(
-                  '#${order.orderNumber}',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: FoodFlowTheme.ink,
-                    fontSize: 13,
-                    height: 1.1,
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              _StatusPill(text: order.statusText, color: order.statusColor),
-            ],
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [foodflow.orange, foodflow.orangeDark],
+        ),
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: foodflow.orange.withOpacity(0.28),
+            blurRadius: 16,
+            offset: const Offset(0, 8),
           ),
-          subtitle: Padding(
-            padding: const EdgeInsets.only(top: 5),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        '${_itemsLabel()} - Payout ${formatCurrency(context, _restaurantPayout())}',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: FoodFlowTheme.muted,
-                          fontSize: 11,
-                          height: 1.15,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      _formatOrderTime(order.createdAt),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: FoodFlowTheme.muted,
-                        fontSize: 10,
-                        height: 1.15,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 5),
-                Text(
-                  order.customerName,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: FoodFlowTheme.inkSoft,
-                    fontSize: 11,
-                    height: 1.15,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ],
-            ),
-          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          _sumCell('${orders.length}', 'orders'),
+          _sumDivider(),
+          _sumCell(formatCurrency(context, payout), 'payout'),
+          _sumDivider(),
+          _sumCell('$pct%', 'delivered'),
+        ],
+      ),
+    );
+  }
+
+  Widget _sumCell(String v, String l) => Expanded(
+        child: Column(
           children: [
-            const Divider(height: 14),
-            if (order.hasActivePreparationTimer) ...[
-              _PreparationTimingPanel(
-                order: order,
-                canExtend: canManageOrders,
-                onExtend: (minutes) => onExtendPrepTime(order.id, minutes),
-              ),
-              const SizedBox(height: 10),
-            ],
-            _detailTile(
-              Icons.person_outline,
-              'Customer',
-              order.customerName,
-            ),
-            const SizedBox(height: 8),
-            _detailTile(
-              Icons.location_on_outlined,
-              order.isTakeaway ? 'Pickup' : 'Address',
-              order.deliveryAddress,
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                const Expanded(
-                  child: Text(
-                    'Items',
-                    style: TextStyle(
-                      color: FoodFlowTheme.ink,
-                      fontSize: 12,
-                      height: 1.1,
-                      fontWeight: FontWeight.w900,
-                    ),
-                  ),
-                ),
-                _PaymentPill(text: _paymentLabel()),
-              ],
-            ),
-            const SizedBox(height: 8),
-            if (order.items.isEmpty)
-              const Text(
-                'No item data available',
+            Text(v,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 15,
+                  fontWeight: FontWeight.w900,
+                )),
+            Text(l,
                 style: TextStyle(
-                  color: FoodFlowTheme.muted,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ...order.items.map(
-              (item) => Padding(
-                padding: const EdgeInsets.symmetric(vertical: 4),
-                child: Row(
-                  children: [
-                    _OrderItemImage(item: item, size: 34),
-                    const SizedBox(width: 9),
-                    Expanded(
-                      child: Text(
-                        '${item.quantity}x ${item.name}',
-                        style: const TextStyle(
-                          color: FoodFlowTheme.muted,
-                          fontSize: 11,
-                          height: 1.15,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ),
-                    Text(
-                      formatCurrency(context, item.totalPrice),
-                      style: const TextStyle(
-                        color: FoodFlowTheme.ink,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            const Divider(height: 18),
-            _payoutBreakdown(context),
-            const SizedBox(height: 10),
-            _actions(),
+                  color: Colors.white.withOpacity(0.8),
+                  fontSize: 10.5,
+                  fontWeight: FontWeight.w700,
+                )),
           ],
         ),
-      ),
-    );
-  }
-
-  Widget _detailTile(IconData icon, String label, String value) {
-    return Container(
-      padding: const EdgeInsets.all(9),
-      decoration: BoxDecoration(
-        color: FoodFlowTheme.canvas,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: FoodFlowTheme.line),
-      ),
-      child: Row(
-        children: [
-          Icon(icon, size: 15, color: FoodFlowTheme.orange),
-          const SizedBox(width: 7),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: FoodFlowTheme.muted,
-                    fontSize: 10,
-                    height: 1.1,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                const SizedBox(height: 3),
-                Text(
-                  value.isEmpty ? '-' : value,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: FoodFlowTheme.ink,
-                    fontSize: 11,
-                    height: 1.15,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _payoutBreakdown(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: FoodFlowTheme.canvas,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: FoodFlowTheme.line),
-      ),
-      child: Column(
-        children: [
-          _payoutRow(context, 'Item subtotal', order.subtotal),
-          if (order.discount > 0)
-            _payoutRow(context, 'Discount', order.discount),
-          _payoutRow(
-            context,
-            _commissionLabel(context),
-            order.platformCommission,
-            isDeduction: true,
-          ),
-          if (order.gstOnCommission > 0)
-            _payoutRow(
-              context,
-              'GST on commission',
-              order.gstOnCommission,
-              isDeduction: true,
-            ),
-          if (order.paymentGatewayFee > 0)
-            _payoutRow(
-              context,
-              'Payment gateway fee',
-              order.paymentGatewayFee,
-              isDeduction: true,
-            ),
-          const Divider(height: 16),
-          _payoutRow(
-            context,
-            'Total payout',
-            _restaurantPayout(),
-            isTotal: true,
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _payoutRow(
-    BuildContext context,
-    String label,
-    num value, {
-    bool isDeduction = false,
-    bool isTotal = false,
-  }) {
-    final amount = isDeduction
-        ? '-${formatCurrency(context, value)}'
-        : formatCurrency(context, value);
-
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 6),
-      child: Row(
-        children: [
-          Expanded(
-            child: Text(
-              label,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: isTotal ? FoodFlowTheme.ink : FoodFlowTheme.muted,
-                fontSize: isTotal ? 12 : 11,
-                height: 1.15,
-                fontWeight: isTotal ? FontWeight.w900 : FontWeight.w700,
-              ),
-            ),
-          ),
-          const SizedBox(width: 10),
-          Text(
-            amount,
-            style: TextStyle(
-              color: isTotal
-                  ? FoodFlowTheme.orange
-                  : isDeduction
-                      ? FoodFlowTheme.danger
-                      : FoodFlowTheme.ink,
-              fontSize: isTotal ? 13 : 11,
-              height: 1.15,
-              fontWeight: FontWeight.w900,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _actions() {
-    if (!canManageOrders) {
-      return Container(
-        width: double.infinity,
-        padding: const EdgeInsets.all(10),
-        decoration: BoxDecoration(
-          color: FoodFlowTheme.orange.withOpacity(0.10),
-          borderRadius: BorderRadius.circular(10),
-        ),
-        child: Text(
-          'View-only order access',
-          textAlign: TextAlign.center,
-          style: TextStyle(
-            color: FoodFlowTheme.orange,
-            fontSize: 11,
-            fontWeight: FontWeight.w900,
-          ),
-        ),
       );
-    }
 
-    if (order.canRestaurantAccept) {
-      return Row(
+  Widget _sumDivider() =>
+      Container(width: 1, height: 26, color: Colors.white.withOpacity(0.25));
+}
+
+class _DateGroupHeader extends StatelessWidget {
+  const _DateGroupHeader({required this.label, required this.count});
+  final String label;
+  final int count;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(4, 16, 4, 8),
+      child: Row(
         children: [
-          Expanded(
-            child: OutlinedButton(
-              onPressed: () => onUpdateStatus(order.id, 'cancelled'),
-              style: _outlineActionStyle(Colors.red),
-              child: const Text('Reject'),
+          Text(
+            label.toUpperCase(),
+            style: TextStyle(
+              color: foodflow.muted,
+              fontSize: 11,
+              fontWeight: FontWeight.w900,
+              letterSpacing: 1,
             ),
           ),
           const SizedBox(width: 8),
-          Expanded(
-            child: ElevatedButton(
-              onPressed: () => onUpdateStatus(order.id, 'confirmed'),
-              style: _primaryActionStyle(),
-              child: const Text('Accept'),
+          Text(
+            '$count',
+            style: TextStyle(
+              color: foodflow.faint,
+              fontSize: 11,
+              fontWeight: FontWeight.w800,
             ),
           ),
+          const SizedBox(width: 10),
+          Expanded(child: Divider(color: foodflow.line, height: 1)),
         ],
-      );
-    }
-
-    if (order.canRestaurantStartPreparing) {
-      return SizedBox(
-        width: double.infinity,
-        child: ElevatedButton(
-          onPressed: () => onUpdateStatus(order.id, 'preparing'),
-          style: _primaryActionStyle(),
-          child: const Text('Start Preparing'),
-        ),
-      );
-    }
-
-    if (order.canRestaurantMarkReady) {
-      return SizedBox(
-        width: double.infinity,
-        child: ElevatedButton(
-          onPressed: () => onUpdateStatus(order.id, 'ready_for_pickup'),
-          style: _primaryActionStyle(),
-          child: const Text('Mark Ready'),
-        ),
-      );
-    }
-
-    if (order.canRestaurantVerifyTakeawayPickup) {
-      return SizedBox(
-        width: double.infinity,
-        child: ElevatedButton.icon(
-          onPressed: () => onUpdateStatus(order.id, 'verify_takeaway_otp'),
-          icon: const Icon(Icons.password),
-          style: _primaryActionStyle(),
-          label: const Text('Verify Pickup OTP'),
-        ),
-      );
-    }
-
-    return const SizedBox.shrink();
-  }
-
-  ButtonStyle _primaryActionStyle() {
-    return ElevatedButton.styleFrom(
-      backgroundColor: FoodFlowTheme.orange,
-      foregroundColor: Colors.white,
-      elevation: 0,
-      minimumSize: const Size.fromHeight(38),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-      textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w900),
+      ),
     );
   }
+}
 
-  ButtonStyle _outlineActionStyle(Color color) {
-    return OutlinedButton.styleFrom(
-      foregroundColor: color,
-      minimumSize: const Size.fromHeight(38),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      side: BorderSide(color: color.withOpacity(0.35)),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-      textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w900),
+/// Compact order ticket: status-coloured spine, key facts, payout, tap -> detail.
+class _OrderTicketRow extends StatelessWidget {
+  const _OrderTicketRow({required this.order, required this.onTap});
+  final Order order;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final n = order.items.length;
+    final cod = order.paymentMethod.toLowerCase().contains('cod') ||
+        order.paymentMethod.toLowerCase().contains('cash');
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Material(
+        color: foodflow.isDark ? foodflow.elevatedSurface : Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: onTap,
+          child: IntrinsicHeight(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Container(width: 4, color: order.statusColor),
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(13, 12, 12, 12),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                '#${order.orderNumber}',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: foodflow.ink,
+                                  fontSize: 14.5,
+                                  fontWeight: FontWeight.w900,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 8, vertical: 3),
+                              decoration: BoxDecoration(
+                                color: order.statusColor.withOpacity(0.14),
+                                borderRadius: BorderRadius.circular(99),
+                              ),
+                              child: Text(
+                                order.statusText,
+                                style: TextStyle(
+                                  color: order.statusColor,
+                                  fontSize: 10.5,
+                                  fontWeight: FontWeight.w900,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 4),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                order.customerName,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: foodflow.inkSoft,
+                                  fontSize: 12.5,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ),
+                            Text(
+                              _orderClock(order.createdAt),
+                              style: TextStyle(
+                                color: foodflow.muted,
+                                fontSize: 11.5,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        Row(
+                          children: [
+                            Icon(Icons.lunch_dining_outlined,
+                                size: 14, color: foodflow.muted),
+                            const SizedBox(width: 4),
+                            Text(
+                              '$n ${n == 1 ? 'item' : 'items'}',
+                              style: TextStyle(
+                                color: foodflow.muted,
+                                fontSize: 11.5,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Icon(
+                              cod
+                                  ? Icons.payments_outlined
+                                  : Icons.credit_card_rounded,
+                              size: 14,
+                              color: foodflow.muted,
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              cod ? 'COD' : 'Prepaid',
+                              style: TextStyle(
+                                color: foodflow.muted,
+                                fontSize: 11.5,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            const Spacer(),
+                            Text(
+                              formatCurrency(context, orderPayout(order)),
+                              style: TextStyle(
+                                color: foodflow.orange,
+                                fontSize: 13.5,
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.only(right: 6),
+                  child: Icon(Icons.chevron_right_rounded,
+                      color: foodflow.faint),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
-  }
-
-  String _itemsLabel() {
-    final count = order.items.length;
-    return '$count ${count == 1 ? 'Item' : 'Items'}';
-  }
-
-  double _restaurantPayout() {
-    if (order.restaurantEarning > 0) return order.restaurantEarning;
-    final calculated = order.subtotal -
-        order.platformCommission -
-        order.gstOnCommission -
-        order.paymentGatewayFee;
-    return calculated > 0 ? calculated : order.subtotal;
-  }
-
-  String _commissionLabel(BuildContext context) {
-    final type = order.restaurantCommissionType.toLowerCase();
-    final value = order.restaurantCommissionValue;
-    if (type == 'fixed') {
-      return 'Platform commission (${formatCurrency(context, value)} fixed)';
-    }
-
-    final percentage = value == value.roundToDouble()
-        ? value.toStringAsFixed(0)
-        : value.toStringAsFixed(2);
-    return 'Platform commission ($percentage%)';
-  }
-
-  OrderItem? _firstItem() {
-    return order.items.isEmpty ? null : order.items.first;
-  }
-
-  String _paymentLabel() {
-    final raw = order.paymentMethod.toLowerCase();
-    if (raw.contains('cod') || raw.contains('cash')) return 'COD';
-    return 'Online';
-  }
-
-  String _formatOrderTime(DateTime value) {
-    final local = value.toLocal();
-    final hour = local.hour % 12 == 0 ? 12 : local.hour % 12;
-    final minute = local.minute.toString().padLeft(2, '0');
-    final period = local.hour >= 12 ? 'PM' : 'AM';
-    return '$hour:$minute $period';
   }
 }
 
@@ -1267,7 +1198,7 @@ class _PreparationTimingPanel extends StatelessWidget {
                       message,
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
+                      style: TextStyle(
                         color: FoodFlowTheme.ink,
                         fontSize: 11,
                         fontWeight: FontWeight.w700,
@@ -1377,7 +1308,7 @@ class _PaymentPill extends StatelessWidget {
         text,
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
-        style: const TextStyle(
+        style: TextStyle(
           color: FoodFlowTheme.success,
           fontSize: 10,
           height: 1.1,

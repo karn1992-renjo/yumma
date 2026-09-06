@@ -1241,37 +1241,44 @@ class _RestaurantDetailScreenState extends State<RestaurantDetailScreen> {
             slivers: [
               if (restaurant.bannerUrl.isNotEmpty)
                 SliverToBoxAdapter(
-                  child: SizedBox(
-                    height: 180,
-                    child: Stack(
-                      fit: StackFit.expand,
-                      children: [
-                        AppCachedImage(
-                          imageUrl: restaurant.bannerUrl,
-                          fit: BoxFit.cover,
-                          errorBuilder: (_, __, ___) => const SizedBox.shrink(),
-                        ),
-                        Positioned(
-                          left: 10,
-                          top: 10,
-                          child: _CircleIconButton(
-                            icon: Icons.arrow_back_rounded,
-                            background: Colors.black.withOpacity(0.45),
-                            iconColor: Colors.white,
-                            onTap: () => Navigator.of(context).maybePop(),
+                  child: ClipRRect(
+                    borderRadius: const BorderRadius.only(
+                      bottomLeft: Radius.circular(28),
+                      bottomRight: Radius.circular(28),
+                    ),
+                    child: SizedBox(
+                      height: 240,
+                      child: Stack(
+                        fit: StackFit.expand,
+                        children: [
+                          AppCachedImage(
+                            imageUrl: restaurant.bannerUrl,
+                            fit: BoxFit.cover,
+                            errorBuilder: (_, __, ___) =>
+                                const SizedBox.shrink(),
                           ),
-                        ),
-                        Positioned(
-                          right: 10,
-                          top: 10,
-                          child: _CircleIconButton(
-                            icon: Icons.share_outlined,
-                            background: Colors.black.withOpacity(0.45),
-                            iconColor: Colors.white,
-                            onTap: _shareRestaurant,
+                          Positioned(
+                            left: 10,
+                            top: 10,
+                            child: _CircleIconButton(
+                              icon: Icons.arrow_back_rounded,
+                              background: Colors.black.withOpacity(0.45),
+                              iconColor: Colors.white,
+                              onTap: () => Navigator.of(context).maybePop(),
+                            ),
                           ),
-                        ),
-                      ],
+                          Positioned(
+                            right: 10,
+                            top: 10,
+                            child: _CircleIconButton(
+                              icon: Icons.share_outlined,
+                              background: Colors.black.withOpacity(0.45),
+                              iconColor: Colors.white,
+                              onTap: _shareRestaurant,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 ),

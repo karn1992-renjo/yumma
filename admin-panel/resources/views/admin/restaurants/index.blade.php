@@ -301,6 +301,7 @@
                                     @endif
                                     <div>
                                         <div class="ar-name">{{ $restaurant->name }}</div>
+                                        <div class="ar-muted"><strong>{{ $restaurant->code }}</strong></div>
                                         <div class="ar-muted">{{ $restaurant->email }}</div>
                                         <div class="ar-muted">{{ $restaurant->phone }}</div>
                                     </div>

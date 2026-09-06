@@ -199,7 +199,7 @@ class RestaurantCard extends StatelessWidget {
                   children: [
                     Text(
                       name,
-                      style: const TextStyle(
+                      style:  TextStyle(
                         fontSize: 17,
                         fontWeight: FontWeight.w800,
                         color: foodflow.ink,
@@ -221,7 +221,7 @@ class RestaurantCard extends StatelessWidget {
                         const SizedBox(width: 5),
                         Text(
                           '${hasVisibleRating ? rating.toStringAsFixed(1) : 'New'} - $deliveryTime mins',
-                          style: const TextStyle(
+                          style:  TextStyle(
                             fontSize: 13,
                             fontWeight: FontWeight.w800,
                             color: foodflow.ink,
@@ -235,7 +235,7 @@ class RestaurantCard extends StatelessWidget {
                           ? 'North Indian, Fast Food'
                           : cuisineText,
                       style:
-                          const TextStyle(fontSize: 13, color: foodflow.muted),
+                           TextStyle(fontSize: 13, color: foodflow.muted),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),
@@ -243,7 +243,7 @@ class RestaurantCard extends StatelessWidget {
                     Text(
                       '${restaurant['area'] ?? 'Nearby'} - Min ${formatCurrency(context, minOrderAmount)}',
                       style:
-                          const TextStyle(fontSize: 12, color: foodflow.faint),
+                           TextStyle(fontSize: 12, color: foodflow.faint),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),

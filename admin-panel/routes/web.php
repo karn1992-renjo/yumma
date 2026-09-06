@@ -1,13 +1,12 @@
 <?php
 
 use Illuminate\Support\Facades\Route;
+use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Http\Request;
 use App\Models\AppSetting;
 use App\Http\Controllers\Admin\DashboardController;
-use App\Http\Controllers\Admin\SearchController;
-use App\Http\Controllers\Admin\NotificationController;
 use App\Http\Controllers\Admin\RestaurantController;
 use App\Http\Controllers\Admin\BranchController;
 use App\Http\Controllers\Admin\OrderController;
@@ -17,6 +16,7 @@ use App\Http\Controllers\Admin\ReviewController;
 use App\Http\Controllers\Admin\SupportController;
 use App\Http\Controllers\Admin\ReportController;
 use App\Http\Controllers\Admin\DriverController;
+use App\Http\Controllers\Admin\CodManagementController;
 use App\Http\Controllers\Admin\DeliveryAreaController;
 use App\Http\Controllers\Admin\GigController;
 use App\Http\Controllers\Admin\FleetController;
@@ -24,15 +24,23 @@ use App\Http\Controllers\Admin\HomeSectionController;
 use App\Http\Controllers\Admin\PayoutController;
 use App\Http\Controllers\Admin\PayoutSettingsController;
 use App\Http\Controllers\Admin\RestaurantApprovalController;
+use App\Http\Controllers\Admin\RestaurantOnboardingController;
 use App\Http\Controllers\Admin\VendorBankController;
 use App\Http\Controllers\Admin\WalletController;
 use App\Http\Controllers\Admin\GiftCardController;
 use App\Http\Controllers\Admin\RefundController;
+use App\Http\Controllers\Admin\ReturnController;
 use App\Http\Controllers\Admin\BannerController;
 use App\Http\Controllers\Admin\PromotionEngineController;
+use App\Http\Controllers\Admin\AdsEngineController;
+use App\Http\Controllers\Admin\NotificationTemplateController;
+use App\Http\Controllers\Admin\EmailTemplateController;
+use App\Http\Controllers\Admin\NotificationLogController;
 use App\Http\Controllers\Admin\PosController;
 use App\Http\Controllers\Admin\PartnerApplicationController;
 use App\Http\Controllers\Admin\SettingController;
+use App\Http\Controllers\Admin\AiControlCenterController;
+use App\Http\Controllers\Admin\VoiceAiSettingsController;
 use App\Http\Controllers\Admin\CuisineController;
 use App\Http\Controllers\Admin\GlobalMenuCategoryController;
 use App\Http\Controllers\Admin\MasterMenuItemController;
@@ -105,6 +113,20 @@ Route::view('/help', 'help')->name('help');
 Route::view('/contact', 'contact')->name('contact');
 Route::view('/faqs', 'faqs')->name('faqs');
 
+Route::get('/sitemap.xml', function () {
+    $sitemapPath = public_path('sitemap.xml');
+
+    if (! File::exists($sitemapPath)) {
+        Artisan::call('sitemap:generate');
+    }
+
+    abort_unless(File::exists($sitemapPath), 404);
+
+    return response()->file($sitemapPath, [
+        'Content-Type' => 'application/xml; charset=UTF-8',
+    ]);
+})->name('sitemap');
+
 Route::get('/media/branding/{file}', function (string $file) {
     $path = 'branding/' . basename($file);
 
@@ -154,6 +176,7 @@ Route::post('/webhook/{gateway}', OrderPaymentWebhookController::class)
     ->name('webhooks.order-payments');
 Route::post('/webhooks/cashfree/payout', CashfreeWebhookController::class)->name('webhooks.cashfree.payout');
 Route::post('/webhooks/paystack/payout', PaystackWebhookController::class)->name('webhooks.paystack.payout');
+Route::post('/webhooks/exotel/call-status', \App\Http\Controllers\Webhook\ExotelWebhookController::class)->name('webhooks.exotel.call-status');
 
 // Auth routes
 require __DIR__.'/auth.php';
@@ -203,12 +226,17 @@ Route::middleware(['auth', 'role:branch_owner|branch_manager|branch_staff'])->pr
     Route::get('/drivers/{driver}/edit', [BranchDashboardController::class, 'editDriver'])->name('drivers.edit');
     Route::put('/drivers/{driver}', [BranchDashboardController::class, 'updateDriver'])->name('drivers.update');
     Route::get('/drivers', [BranchDashboardController::class, 'drivers'])->name('drivers');
+    Route::get('/cod', [BranchDashboardController::class, 'cod'])->name('cod');
+    Route::post('/cod/settle', [BranchDashboardController::class, 'codSettle'])->name('cod.settle');
+    Route::get('/cod/history', [BranchDashboardController::class, 'codHistory'])->name('cod.history');
+    Route::get('/cod/export', [BranchDashboardController::class, 'codExport'])->name('cod.export');
     Route::get('/territories', [BranchDashboardController::class, 'zones'])->name('zones');
     Route::get('/wallet', [BranchDashboardController::class, 'wallet'])->name('wallet');
     Route::get('/wallet/export', [BranchDashboardController::class, 'exportWallet'])->name('wallet.export');
     Route::post('/wallet/withdrawals', [BranchDashboardController::class, 'requestWithdrawal'])->name('wallet.withdrawals.store');
     Route::get('/settlements', [BranchDashboardController::class, 'settlements'])->name('settlements');
     Route::post('/settlements', [BranchDashboardController::class, 'storeSettlement'])->name('settlements.store');
+    Route::get('/tax-settlements', [BranchDashboardController::class, 'taxSettlements'])->name('tax-settlements');
     Route::get('/reports', [BranchDashboardController::class, 'reports'])->name('reports');
     Route::get('/reports/export', [BranchDashboardController::class, 'exportReports'])->name('reports.export');
     Route::get('/settings', [BranchDashboardController::class, 'settings'])->name('settings');
@@ -262,17 +290,6 @@ Route::middleware(['auth', 'role:super_admin|admin'])->prefix('admin')->name('ad
     // Dashboard
     Route::get('/dashboard', [DashboardController::class, 'index'])->name('dashboard');
 
-    // Global Search (header search)
-    Route::get('/search', [SearchController::class, 'search'])->name('search');
-    Route::post('/search/clear-recent', [SearchController::class, 'clearRecent'])->name('search.clear-recent');
-
-    // Notification Center (header notifications)
-    Route::get('/notifications/recent', [NotificationController::class, 'recent'])->name('notifications.recent');
-    Route::get('/notifications/stats', [NotificationController::class, 'stats'])->name('notifications.stats');
-    Route::post('/notifications/{id}/read', [NotificationController::class, 'markAsRead'])->name('notifications.read');
-    Route::post('/notifications/read-all', [NotificationController::class, 'markAllAsRead'])->name('notifications.read-all');
-    Route::delete('/notifications/{id}', [NotificationController::class, 'destroy'])->name('notifications.destroy');
-
     // Branch Management
     Route::get('/branches/users', [BranchController::class, 'users'])->name('branches.users');
     Route::post('/branches/users', [BranchController::class, 'storeUser'])->name('branches.users.store');
@@ -303,6 +320,10 @@ Route::middleware(['auth', 'role:super_admin|admin'])->prefix('admin')->name('ad
     Route::get('/pos', [PosController::class, 'index'])->name('pos.index');
     Route::redirect('/pos-terminal', '/admin/pos')->name('pos-terminal.index');
     Route::get('/orders/statistics', [OrderController::class, 'statistics'])->name('orders.statistics');
+    Route::get('/orders/live', [OrderController::class, 'live'])->name('orders.live');
+    Route::get('/orders/live-data', [OrderController::class, 'liveData'])->name('orders.live-data');
+    Route::get('/orders/check-new', [OrderController::class, 'checkNewOrders'])->name('orders.check-new');
+    Route::get('/orders/notification-counts', [OrderController::class, 'notificationCounts'])->name('orders.notification-counts');
     Route::get('/orders/export', [OrderController::class, 'export'])->name('orders.export');
     Route::post('/orders/bulk-status', [OrderController::class, 'bulkUpdateStatus'])->name('orders.bulk-status');
     Route::resource('orders', OrderController::class);
@@ -310,11 +331,54 @@ Route::middleware(['auth', 'role:super_admin|admin'])->prefix('admin')->name('ad
     Route::resource('reports', ReportController::class);
     Route::get('/web-tracking', [AdminWebVisitTrackController::class, 'index'])->name('web-tracking.index');
     Route::put('/orders/{order}/status', [OrderController::class, 'updateStatus'])->name('orders.update-status');
+    Route::put('/orders/{order}/cancel', [OrderController::class, 'cancelOrder'])->name('orders.cancel');
     Route::post('/orders/{order}/assign-driver', [OrderController::class, 'assignDriver'])->name('orders.assign-driver');
     Route::get('/orders/{order}/available-drivers', [OrderController::class, 'getAvailableDrivers'])->name('orders.available-drivers');
     Route::get('/orders/{order}/invoice', [OrderController::class, 'invoice'])->name('orders.invoice');
+    Route::post('/orders/{order}/einvoice', [OrderController::class, 'einvoiceStore'])->name('orders.einvoice.store');
+    Route::delete('/orders/{order}/einvoice', [OrderController::class, 'einvoiceClear'])->name('orders.einvoice.clear');
     Route::post('/orders/{order}/refund', [OrderController::class, 'processRefund'])->name('orders.refund');
-    
+
+    // GST reporting — the standalone page is retired; GST reports now live under
+    // Business Accounting. The index redirects there; raw exports are kept.
+    Route::get('/gst-reports', fn () => redirect()->route('admin.accounting.gst'))->name('gst-reports.index');
+    Route::get('/gst-reports/gstr1', [\App\Http\Controllers\Admin\GstReportController::class, 'exportGstr1'])->name('gst-reports.gstr1');
+    Route::get('/gst-reports/gstr1.json', [\App\Http\Controllers\Admin\GstReportController::class, 'exportJson'])->name('gst-reports.gstr1-json');
+
+    // Business Accounting (GST 9(5) + TCS + TDS 194-O / 194-C). Gated in the
+    // controller on business_gst_enabled.
+    Route::prefix('accounting')->name('accounting.')->group(function () {
+        Route::get('/', [\App\Http\Controllers\Admin\AccountingController::class, 'overview'])->name('overview');
+        Route::get('/gst', [\App\Http\Controllers\Admin\AccountingController::class, 'gst'])->name('gst');
+        Route::get('/tds', [\App\Http\Controllers\Admin\AccountingController::class, 'tds'])->name('tds');
+        Route::get('/tcs', [\App\Http\Controllers\Admin\AccountingController::class, 'tcs'])->name('tcs');
+        Route::get('/settlements', [\App\Http\Controllers\Admin\AccountingController::class, 'settlements'])->name('settlements');
+        Route::get('/ledger', [\App\Http\Controllers\Admin\AccountingController::class, 'ledger'])->name('ledger');
+        Route::get('/documents', [\App\Http\Controllers\Admin\AccountingController::class, 'documents'])->name('documents');
+        Route::get('/compliance', [\App\Http\Controllers\Admin\AccountingController::class, 'compliance'])->name('compliance');
+        Route::get('/compliance/export', [\App\Http\Controllers\Admin\AccountingController::class, 'complianceExport'])->name('compliance.export');
+        Route::post('/compliance', [\App\Http\Controllers\Admin\AccountingController::class, 'updateCompliance'])->name('compliance.update');
+        Route::get('/cess', [\App\Http\Controllers\Admin\AccountingController::class, 'cess'])->name('cess');
+        Route::post('/mark-filed', [\App\Http\Controllers\Admin\AccountingController::class, 'markFiled'])->name('mark-filed');
+        Route::get('/export/{doc}', [\App\Http\Controllers\Admin\AccountingController::class, 'export'])->name('export');
+
+        // General ledger + financial statements
+        Route::prefix('gl')->name('gl.')->group(function () {
+            $gl = \App\Http\Controllers\Admin\GeneralLedgerController::class;
+            Route::get('/chart', [$gl, 'chart'])->name('chart');
+            Route::post('/chart', [$gl, 'storeAccount'])->name('chart.store');
+            Route::get('/journals', [$gl, 'journals'])->name('journals');
+            Route::post('/journals', [$gl, 'storeJournal'])->name('journals.store');
+            Route::post('/journals/{journal}/void', [$gl, 'voidJournal'])->name('journals.void');
+            Route::get('/trial-balance', [$gl, 'trialBalance'])->name('trial-balance');
+            Route::get('/balance-sheet', [$gl, 'balanceSheet'])->name('balance-sheet');
+            Route::get('/profit-loss', [$gl, 'profitLoss'])->name('profit-loss');
+            Route::get('/cash-flow', [$gl, 'cashFlow'])->name('cash-flow');
+            Route::post('/close-period', [$gl, 'closePeriod'])->name('close-period');
+            Route::get('/export/{doc}', [$gl, 'export'])->name('export');
+        });
+    });
+
     // Users Management
     Route::get('/users/template', [UserController::class, 'downloadTemplate'])->name('users.template');
     Route::get('/users/export', [UserController::class, 'export'])->name('users.export');
@@ -330,17 +394,37 @@ Route::middleware(['auth', 'role:super_admin|admin'])->prefix('admin')->name('ad
     Route::post('/drivers/{driver}/wallet/topup', [DriverController::class, 'topupWallet'])->name('drivers.wallet-topup');
     Route::post('/drivers/{driver}/cash-collection', [DriverController::class, 'collectCash'])->name('drivers.cash-collection');
     Route::post('/drivers/{driver}/toggle-status', [DriverController::class, 'toggleStatus'])->name('drivers.toggle-status');
+    Route::get('/driver-restaurant-onboardings/settings', [RestaurantOnboardingController::class, 'settings'])->name('restaurant-onboardings.settings');
+    Route::post('/driver-restaurant-onboardings/settings', [RestaurantOnboardingController::class, 'updateSettings'])->name('restaurant-onboardings.settings.update');
+    Route::get('/restaurant-onboardings', [RestaurantOnboardingController::class, 'index'])->name('restaurant-onboardings.index');
+    Route::get('/restaurant-onboardings/{restaurantOnboarding}', [RestaurantOnboardingController::class, 'show'])->name('restaurant-onboardings.show');
+    Route::post('/restaurant-onboardings/{restaurantOnboarding}/correction', [RestaurantOnboardingController::class, 'requestCorrection'])->name('restaurant-onboardings.correction');
+    Route::post('/restaurant-onboardings/{restaurantOnboarding}/reject', [RestaurantOnboardingController::class, 'reject'])->name('restaurant-onboardings.reject');
+
+    // COD Management
+    Route::get('/cod', [CodManagementController::class, 'index'])->name('cod.index');
+    Route::post('/cod/settle', [CodManagementController::class, 'settle'])->name('cod.settle');
+    Route::get('/cod/history', [CodManagementController::class, 'history'])->name('cod.history');
+    Route::get('/cod/export', [CodManagementController::class, 'export'])->name('cod.export');
 
     // Fleet Management
     Route::get('/fleet', [FleetController::class, 'dashboard'])->name('fleet.dashboard');
     Route::get('/fleet/markers', [FleetController::class, 'markers'])->name('fleet.markers');
     
     // Gigs Management
+    Route::get('/gigs/analytics', [GigController::class, 'analytics'])->name('gigs.analytics');
+    Route::get('/gigs/bulk-create', [GigController::class, 'bulk'])->name('gigs.bulk');
+    Route::get('/gigs/payout-approvals', [GigController::class, 'payoutApprovals'])->name('gigs.payout-approvals');
+    Route::get('/gigs/fraud-signals', [GigController::class, 'fraudSignals'])->name('gigs.fraud-signals');
+    Route::get('/gigs/disputes', [GigController::class, 'disputes'])->name('gigs.disputes');
     Route::get('/gigs/operations', [GigController::class, 'operations'])->name('gigs.operations');
     Route::post('/gigs/forecast', [GigController::class, 'forecast'])->name('gigs.forecast');
+    Route::get('/gigs/forecast-lookup', [GigController::class, 'forecastLookup'])->name('gigs.forecast-lookup');
+    Route::post('/gigs/forecast-settings', [GigController::class, 'updateForecastSettings'])->name('gigs.forecast-settings.update');
     Route::post('/gigs/signals', [GigController::class, 'ingestSignal'])->name('gigs.signals.ingest');
     Route::post('/gigs/payout-approvals/{approval}', [GigController::class, 'approvePayout'])->name('gigs.payout-approvals.update');
     Route::post('/gigs/fraud-signals/{signal}', [GigController::class, 'resolveFraudSignal'])->name('gigs.fraud-signals.update');
+    Route::post('/gigs/disputes/{dispute}', [GigController::class, 'resolveDispute'])->name('gigs.disputes.update');
     Route::get('/gigs/heatmap', [GigController::class, 'heatmap'])->name('gigs.heatmap');
     Route::resource('gigs', GigController::class)->except(['show']);
     Route::post('/gigs/bulk', [GigController::class, 'bulkCreate'])->name('gigs.bulk-create');
@@ -352,6 +436,7 @@ Route::middleware(['auth', 'role:super_admin|admin'])->prefix('admin')->name('ad
     Route::get('/payouts/data', [PayoutController::class, 'data'])->name('payouts.data');
     Route::get('/payouts/export', [PayoutController::class, 'export'])->name('payouts.export');
     Route::get('/payouts/failed', [PayoutController::class, 'failed'])->name('payouts.failed');
+    Route::get('/payouts/vendor-wallet', [PayoutController::class, 'vendorWallet'])->name('payouts.vendor-wallet');
     Route::post('/payouts/bulk-process', [PayoutController::class, 'bulkProcess'])->name('payouts.bulk-process');
     Route::resource('payouts', PayoutController::class);
     Route::post('/payouts/restaurant/generate', [PayoutController::class, 'generateRestaurantPayouts'])->name('payouts.generate-restaurant');
@@ -361,6 +446,7 @@ Route::middleware(['auth', 'role:super_admin|admin'])->prefix('admin')->name('ad
     Route::post('/payouts/{payout}/process', [PayoutController::class, 'process'])->name('payouts.process');
     Route::post('/payouts/process/{payout}', [PayoutController::class, 'process']);
     Route::post('/payouts/{payout}/cash-paid', [PayoutController::class, 'markCashPaid'])->name('payouts.cash-paid');
+    Route::post('/payouts/{payout}/cancel', [PayoutController::class, 'cancel'])->name('payouts.cancel');
     Route::post('/payouts/retry/{payout}', [PayoutController::class, 'retry'])->name('payouts.retry');
     Route::get('/payouts/{payout}/status', [PayoutController::class, 'status'])->name('payouts.status');
     Route::post('/payouts/{payout}/deduction/revoke', [PayoutController::class, 'revokeDeduction'])->name('payouts.deductions.revoke');
@@ -384,7 +470,10 @@ Route::middleware(['auth', 'role:super_admin|admin'])->prefix('admin')->name('ad
     Route::post('/restaurant-approvals/{locationRequest}/reject', [RestaurantApprovalController::class, 'reject'])->name('restaurant-approvals.reject');
     Route::get('/refunds', [RefundController::class, 'index'])->name('refunds.index');
     Route::post('/refunds', [RefundController::class, 'store'])->name('refunds.store');
-    
+    Route::get('/returns', [ReturnController::class, 'index'])->name('returns.index');
+    Route::post('/returns/{order}/approve', [ReturnController::class, 'approve'])->name('returns.approve');
+    Route::post('/returns/{order}/reject', [ReturnController::class, 'reject'])->name('returns.reject');
+
     // Banners Management
     Route::post('/banners/settings', [BannerController::class, 'updateSettings'])->name('banners.settings');
     Route::resource('banners', BannerController::class);
@@ -403,13 +492,51 @@ Route::middleware(['auth', 'role:super_admin|admin'])->prefix('admin')->name('ad
         Route::get('/bank-partner-settlements/api', [PromotionEngineController::class, 'bankPartnerSettlementsApi'])->name('bank-partner-settlements.api');
         Route::get('/bank-partner-settlements/export', [PromotionEngineController::class, 'bankPartnerSettlementsExport'])->name('bank-partner-settlements.export');
         Route::get('/coupons', [PromotionEngineController::class, 'coupons'])->name('coupons');
+        Route::get('/scratch-cards', [PromotionEngineController::class, 'scratchCards'])->name('scratch-cards');
+        Route::get('/referrals', [PromotionEngineController::class, 'referrals'])->name('referrals');
         Route::get('/logs', [PromotionEngineController::class, 'logs'])->name('logs');
         Route::get('/{promotion}/edit', [PromotionEngineController::class, 'edit'])->name('edit');
         Route::put('/{promotion}', [PromotionEngineController::class, 'update'])->name('update');
         Route::post('/{promotion}/toggle', [PromotionEngineController::class, 'toggle'])->name('toggle');
         Route::delete('/{promotion}', [PromotionEngineController::class, 'destroy'])->name('destroy');
     });
-    
+
+    Route::prefix('ads-engine')->name('ads-engine.')->group(function () {
+        Route::get('/', [AdsEngineController::class, 'index'])->name('index');
+        Route::post('/{campaign}/approve', [AdsEngineController::class, 'approve'])->name('approve');
+        Route::post('/{campaign}/reject', [AdsEngineController::class, 'reject'])->name('reject');
+        Route::get('/click-log', [AdsEngineController::class, 'clickLog'])->name('click-log');
+        Route::get('/fraud-signals', [AdsEngineController::class, 'fraudSignals'])->name('fraud-signals');
+        Route::post('/fraud-signals/{signal}', [AdsEngineController::class, 'resolveFraudSignal'])->name('fraud-signals.update');
+    });
+
+    Route::prefix('notification-templates')->name('notification-templates.')->group(function () {
+        Route::get('/', [NotificationTemplateController::class, 'index'])->name('index');
+        Route::get('/{notificationTemplate}/edit', [NotificationTemplateController::class, 'edit'])->name('edit');
+        Route::put('/{notificationTemplate}', [NotificationTemplateController::class, 'update'])->name('update');
+    });
+
+    Route::prefix('email-templates')->name('email-templates.')->group(function () {
+        Route::get('/', [EmailTemplateController::class, 'index'])->name('index');
+        Route::post('/upload-image', [EmailTemplateController::class, 'uploadImage'])->name('upload-image');
+        Route::get('/{emailTemplate}/edit', [EmailTemplateController::class, 'edit'])->name('edit');
+        Route::put('/{emailTemplate}', [EmailTemplateController::class, 'update'])->name('update');
+        Route::post('/{emailTemplate}/send-test', [EmailTemplateController::class, 'sendTest'])->name('send-test');
+    });
+
+    Route::get('/notification-logs', [NotificationLogController::class, 'index'])->name('notification-logs.index');
+
+    Route::get('/call-history', [\App\Http\Controllers\Admin\CallHistoryController::class, 'index'])->name('call-history.index');
+
+    Route::prefix('call-masking')->name('call-masking.')->group(function () {
+        Route::get('/pool', [\App\Http\Controllers\Admin\CallMaskingPoolController::class, 'index'])->name('pool.index');
+        Route::post('/pool', [\App\Http\Controllers\Admin\CallMaskingPoolController::class, 'store'])->name('pool.store');
+        Route::put('/pool/{pool}', [\App\Http\Controllers\Admin\CallMaskingPoolController::class, 'update'])->name('pool.update');
+        Route::delete('/pool/{pool}', [\App\Http\Controllers\Admin\CallMaskingPoolController::class, 'destroy'])->name('pool.destroy');
+        Route::post('/pool/{pool}/disable', [\App\Http\Controllers\Admin\CallMaskingPoolController::class, 'disable'])->name('pool.disable');
+        Route::post('/pool/{pool}/enable', [\App\Http\Controllers\Admin\CallMaskingPoolController::class, 'enable'])->name('pool.enable');
+    });
+
     // Partner Applications
     Route::get('/partner-applications', [PartnerApplicationController::class, 'index'])->name('partner-applications.index');
     Route::get('/partner-applications/create', [PartnerApplicationController::class, 'create'])->name('partner-applications.create');
@@ -426,9 +553,7 @@ Route::middleware(['auth', 'role:super_admin|admin'])->prefix('admin')->name('ad
     Route::prefix('commissions')->group(function () {
         Route::get('/', [CommissionController::class, 'index'])->name('commissions');
         Route::put('/settings', [CommissionController::class, 'updateSettings'])->name('commissions.settings');
-        Route::get('/payout-history', [CommissionController::class, 'payoutHistory'])->name('payouts.history');
         Route::post('/generate-payouts', [CommissionController::class, 'generatePayouts'])->name('payouts.generate');
-        Route::post('/payouts/{id}/complete', [CommissionController::class, 'markPayoutCompleted'])->name('payouts.complete');
     });
 
     // Cuisine Management Routes
@@ -559,13 +684,42 @@ Route::middleware(['auth', 'role:super_admin|admin'])->prefix('admin')->name('ad
     Route::get('/settings/privacy', [SettingController::class, 'privacy'])->name('settings.privacy');
     Route::get('/settings/driver-assignment', [SettingController::class, 'driverAssignment'])->name('settings.driver_assignment');
     Route::get('/settings/communication', [SettingController::class, 'communication'])->name('settings.communication');
+    Route::get('/settings/business', [SettingController::class, 'business'])->name('settings.business');
+    Route::get('/settings/tax-charges', [SettingController::class, 'taxCharges'])->name('settings.tax-charges');
+    Route::get('/settings/integrations', [SettingController::class, 'integrations'])->name('settings.integrations');
+    Route::post('/settings/integrations/ping/{target}', [SettingController::class, 'integrationsPing'])->name('settings.integrations.ping');
+    Route::post('/settings/integrations/retry/{delivery}', [SettingController::class, 'integrationsRetry'])->name('settings.integrations.retry');
+    Route::post('/settings/integrations/sync/{target}', [SettingController::class, 'integrationsSync'])->name('settings.integrations.sync');
+    Route::get('/settings/taxation-setup', [SettingController::class, 'taxationSetup'])->name('settings.taxation-setup');
+    Route::post('/settings/taxation-setup', [SettingController::class, 'saveTaxationSetup'])->name('settings.taxation-setup.save');
     Route::get('/settings/notifications', [SettingController::class, 'notifications'])->name('settings.notifications');
     Route::get('/settings/map', [SettingController::class, 'map'])->name('settings.map');
+    Route::get('/settings/voice-ai', [VoiceAiSettingsController::class, 'edit'])->name('settings.voice-ai');
+    Route::post('/settings/voice-ai', [VoiceAiSettingsController::class, 'update'])->name('settings.voice-ai.update');
     Route::post('/settings', [SettingController::class, 'update'])->name('settings.update');
     Route::post('/settings/app-branding', [SettingController::class, 'updateAppBranding'])->name('settings.branding.post');
     Route::post('/settings/payment', [SettingController::class, 'updatePaymentSettings'])->name('settings.payment.post');
     Route::post('/settings/cron/install', [SettingController::class, 'installCron'])->name('settings.cron.install');
     Route::post('/settings/cron/tasks', [SettingController::class, 'updateCronTasks'])->name('settings.cron.tasks');
+    Route::post('/settings/business-reports', [SettingController::class, 'updateBusinessReportSettings'])->name('settings.business-reports');
+    // Autonomous AI Management
+    Route::prefix('ai')->name('ai.')->middleware('ai.enabled')->group(function () {
+        Route::get('/', [AiControlCenterController::class, 'index'])->name('index');
+        Route::post('/run', [AiControlCenterController::class, 'run'])->name('run');
+        Route::get('/settings', [AiControlCenterController::class, 'settings'])->name('settings');
+        Route::post('/settings', [AiControlCenterController::class, 'updateSettings'])->name('settings.update');
+        Route::post('/settings/test-connection', [AiControlCenterController::class, 'testConnection'])->name('settings.test-connection');
+        Route::post('/kill-switch', [AiControlCenterController::class, 'killSwitch'])->name('kill-switch');
+        Route::post('/resume', [AiControlCenterController::class, 'resumeAi'])->name('resume');
+        Route::get('/decisions', [AiControlCenterController::class, 'decisions'])->name('decisions.index');
+        Route::get('/decisions/{decision}', [AiControlCenterController::class, 'showDecision'])->name('decisions.show');
+        Route::get('/approvals', [AiControlCenterController::class, 'approvals'])->name('approvals.index');
+        Route::post('/approvals/{approval}/approve', [AiControlCenterController::class, 'approve'])->name('approvals.approve');
+        Route::post('/approvals/{approval}/reject', [AiControlCenterController::class, 'reject'])->name('approvals.reject');
+        Route::get('/chat', [AiControlCenterController::class, 'chat'])->name('chat');
+        Route::post('/chat', [AiControlCenterController::class, 'chatAsk'])->name('chat.ask');
+        Route::get('/reports', [AiControlCenterController::class, 'reports'])->name('reports');
+    });
 });
 
 
@@ -599,3 +753,6 @@ Route::fallback(function () {
 
     return redirect()->route('login');
 });
+
+
+

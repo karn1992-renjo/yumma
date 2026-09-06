@@ -46,6 +46,13 @@ class GigExternalSignalService
         );
     }
 
+    /**
+     * Raw weather/traffic/events baselines only -- deliberately excludes
+     * the 'ml_prediction' source (written by GigMlForecastService), which
+     * is itself derived from historical order averages. Including it here
+     * would double-count that demand signal on top of
+     * GigDemandForecastService's own historical-average calculation.
+     */
     public function signalsFor(?int $areaId, Carbon $date, int $hour): array
     {
         if (! Schema::hasTable('gig_external_signals')) {
@@ -55,6 +62,7 @@ class GigExternalSignalService
         $signals = GigExternalSignal::where('area_id', $areaId)
             ->whereDate('date', $date->toDateString())
             ->where('hour', $hour)
+            ->whereIn('source', ['weather', 'traffic', 'events'])
             ->get();
 
         return [

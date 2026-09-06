@@ -102,6 +102,11 @@
         <input name="pan_number" class="form-control" value="{{ old('pan_number', $branch->pan_number ?? '') }}">
     </div>
     <div class="col-md-4">
+        <label class="form-label">TAN</label>
+        <input name="tan" class="form-control text-uppercase" maxlength="10" value="{{ old('tan', $branch->tan ?? '') }}" placeholder="AAAA99999A">
+        @error('tan')<div class="text-danger small mt-1">{{ $message }}</div>@enderror
+    </div>
+    <div class="col-md-4">
         <label class="form-label">Trade License</label>
         <input name="trade_license" class="form-control" value="{{ old('trade_license', $branch->trade_license ?? '') }}">
     </div>

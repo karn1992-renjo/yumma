@@ -160,7 +160,7 @@ class PremiumMetricCard extends StatelessWidget {
                   ),
                   child: Text(
                     caption!,
-                    style: const TextStyle(
+                    style:  TextStyle(
                       color: foodflow.muted,
                       fontSize: 10,
                       fontWeight: FontWeight.w800,
@@ -174,7 +174,7 @@ class PremiumMetricCard extends StatelessWidget {
             value,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
+            style:  TextStyle(
               color: foodflow.ink,
               fontSize: 20,
               fontWeight: FontWeight.w800,
@@ -185,7 +185,7 @@ class PremiumMetricCard extends StatelessWidget {
             title,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
+            style:  TextStyle(
               color: foodflow.muted,
               fontSize: 12,
               fontWeight: FontWeight.w800,
@@ -222,7 +222,7 @@ class PremiumSectionTitle extends StatelessWidget {
               children: [
                 Text(
                   title,
-                  style: const TextStyle(
+                  style:  TextStyle(
                     color: foodflow.ink,
                     fontSize: 18,
                     fontWeight: FontWeight.w800,
@@ -232,7 +232,7 @@ class PremiumSectionTitle extends StatelessWidget {
                   const SizedBox(height: 2),
                   Text(
                     subtitle!,
-                    style: const TextStyle(
+                    style:  TextStyle(
                       color: foodflow.muted,
                       fontSize: 12,
                       fontWeight: FontWeight.w800,

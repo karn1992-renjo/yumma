@@ -60,6 +60,26 @@ class PromotionStackingService
                 ->values();
         }
 
+        // Single-promotion mode: normally the highest-value offer wins. But an
+        // explicitly-applied coupon should take that one slot whenever it is at
+        // least as good as the best automatic promo -- otherwise a customer who
+        // enters a valid coupon worth the same as (or marginally less than) an
+        // already-active auto promo is told "coupon doesn't apply", because no
+        // coupon line ends up in the result.
+        $couponCandidate = $eligible->first(
+            fn (array $candidate) => $candidate['promotion']->isCouponBased()
+        );
+
+        if ($couponCandidate) {
+            $bestValue = $eligible
+                ->map(fn (array $candidate) => $this->candidateValue($candidate))
+                ->max();
+
+            if ($this->candidateValue($couponCandidate) >= ((float) $bestValue - 0.01)) {
+                return collect([$couponCandidate])->values();
+            }
+        }
+
         return $eligible
             ->sortByDesc(fn (array $candidate) => $this->candidateValue($candidate))
             ->take(1)

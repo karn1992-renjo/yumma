@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\AppSetting;
+use App\Models\NotificationTemplate;
 use App\Models\Order;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -12,7 +13,7 @@ class SmsService
     public function sendOtp(string $phone, string $otp, ?string $appSignature = null): string
     {
         $provider = $this->otpProvider();
-        $template = AppSetting::getValue('message_template_otp', 'Your OTP code is {{otp}}. It is valid for 10 minutes.');
+        $template = $this->rawTemplateBody('sms.otp', 'Your OTP code is {{otp}}. It is valid for 10 minutes.');
         $message = $this->withSmsRetrieverSignature(
             $this->renderTemplate($template, ['otp' => $otp]),
             $appSignature
@@ -21,7 +22,8 @@ class SmsService
         return match ($provider) {
             'twilio' => $this->sendTwilio($phone, $message, 'OTP'),
             'msg91' => $this->sendMsg91Otp($phone, $otp),
-            'firebase' => throw new \RuntimeException('Firebase OTP is not supported for this API login flow. Configure Twilio or MSG91 in admin settings.'),
+            'exotel' => $this->sendExotel($phone, $message, 'OTP'),
+            'firebase' => throw new \RuntimeException('Firebase OTP is not supported for this API login flow. Configure Twilio, MSG91 or Exotel in admin settings.'),
             default => throw new \RuntimeException('OTP service provider is not configured in admin settings.'),
         };
     }
@@ -145,8 +147,8 @@ class SmsService
     }
     public function sendOrderConfirmation(Order $order): bool
     {
-        $template = AppSetting::getValue(
-            'message_template_order_confirmation',
+        $template = $this->rawTemplateBody(
+            'sms.order_confirmation',
             'Your order has been confirmed. Order number: {{order_number}}.'
         );
 
@@ -155,8 +157,8 @@ class SmsService
 
     public function sendDeliveryUpdate(Order $order, ?string $message = null): bool
     {
-        $template = AppSetting::getValue(
-            'message_template_delivery_update',
+        $template = $this->rawTemplateBody(
+            'sms.delivery_update',
             'Your order is on the way. Order number: {{order_number}}.'
         );
 
@@ -171,26 +173,36 @@ class SmsService
 
     public function sendDeliveryOtp(Order $order): bool
     {
-        $template = AppSetting::getValue(
-            'message_template_delivery_update',
+        $template = $this->rawTemplateBody(
+            'sms.delivery_update',
             'Your delivery OTP for order {{order_number}} is {{delivery_otp}}.'
         );
 
         return $this->sendOrderMessage($order, $template, 'msg91_delivery_update_template_id', 'delivery OTP');
     }
 
+    /**
+     * Raw (unrendered) template body from the admin-editable NotificationTemplate
+     * registry, falling back to the caller's hardcoded default when no active
+     * template row exists for the key.
+     */
+    private function rawTemplateBody(string $key, string $fallback): string
+    {
+        return NotificationTemplate::where('key', $key)->where('is_active', true)->value('body') ?? $fallback;
+    }
+
     public function otpProvider(): string
     {
         $provider = strtolower(trim((string) AppSetting::getValue('otp_service_provider', '')));
 
-        return in_array($provider, ['firebase', 'twilio', 'msg91'], true) ? $provider : '';
+        return in_array($provider, ['firebase', 'twilio', 'msg91', 'exotel'], true) ? $provider : '';
     }
 
     public function messageProvider(): string
     {
         $provider = strtolower(trim((string) AppSetting::getValue('message_service', '')));
 
-        return in_array($provider, ['twilio', 'firebase', 'msg91'], true) ? $provider : '';
+        return in_array($provider, ['twilio', 'firebase', 'msg91', 'exotel'], true) ? $provider : '';
     }
 
     private function sendOrderMessage(
@@ -229,6 +241,12 @@ class SmsService
                 }
 
                 $this->sendMsg91Flow($phone, $templateId, $variables);
+
+                return true;
+            }
+
+            if ($provider === 'exotel') {
+                $this->sendExotel($phone, $message, $purpose);
 
                 return true;
             }
@@ -271,6 +289,17 @@ class SmsService
         }
 
         return 'twilio';
+    }
+
+    private function sendExotel(string $phone, string $message, string $purpose): string
+    {
+        try {
+            app(\App\Services\ExotelService::class)->sendSms($phone, $message);
+        } catch (\Throwable $e) {
+            throw new \RuntimeException("Exotel {$purpose} send failed: " . $e->getMessage());
+        }
+
+        return 'exotel';
     }
 
     private function sendMsg91Otp(string $phone, string $otp): string

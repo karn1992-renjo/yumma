@@ -20,13 +20,13 @@
                 <div class="row g-4">
                     @foreach($section['items'] as $cuisine)
                         @php
-                            $image = $cuisine->image ? asset('storage/'.$cuisine->image) : null;
+                            $image = \App\Services\MediaStorage::url($cuisine->image);
                         @endphp
                         <div class="col-md-2 col-4">
                             <div class="category-card" onclick="searchByCategory('{{ e($cuisine->name) }}')">
                                 <div class="category-icon overflow-hidden">
                                     @if($image)
-                                        <img src="{{ $image }}" alt="{{ $cuisine->name }}" class="w-100 h-100" style="object-fit: cover;">
+                                        <img src="{{ $image }}" alt="{{ $cuisine->name }}" width="160" height="160" loading="lazy" class="w-100 h-100" style="object-fit: cover;">
                                     @else
                                         <i class="{{ $cuisine->icon ?: 'fas fa-utensils' }}"></i>
                                     @endif

@@ -17,10 +17,10 @@ class AppBranding {
   const AppBranding({
     required this.appName,
     this.appFaviconUrl = '',
-    this.primaryColorHex = '#0A9443',
-    this.secondaryColorHex = '#0C7038',
-    this.driverPrimaryColorHex = '#0A9443',
-    this.driverSecondaryColorHex = '#0C7038',
+    this.primaryColorHex = '#5C0298',
+    this.secondaryColorHex = '#1D4ED8',
+    this.driverPrimaryColorHex = '#5C0298',
+    this.driverSecondaryColorHex = '#1D4ED8',
     this.supportEmail = '',
     this.supportPhone = '',
     this.defaultMobileCountryCode = '+91',
@@ -33,16 +33,16 @@ class AppBranding {
     return AppBranding(
       appName: (json['app_name'] ?? AppConfig.appName).toString().trim(),
       appFaviconUrl: (json['app_favicon'] ?? '').toString().trim(),
-      primaryColorHex: (json['primary_color'] ?? '#0A9443').toString().trim(),
+      primaryColorHex: (json['primary_color'] ?? '#5C0298').toString().trim(),
       secondaryColorHex:
-          (json['secondary_color'] ?? '#0C7038').toString().trim(),
+          (json['secondary_color'] ?? '#1D4ED8').toString().trim(),
       driverPrimaryColorHex:
-          (json['driver_primary_color'] ?? json['primary_color'] ?? '#0A9443')
+          (json['driver_primary_color'] ?? json['primary_color'] ?? '#5C0298')
               .toString()
               .trim(),
       driverSecondaryColorHex: (json['driver_secondary_color'] ??
               json['secondary_color'] ??
-              '#0C7038')
+              '#1D4ED8')
           .toString()
           .trim(),
       supportEmail: (json['support_email'] ?? '').toString().trim(),

@@ -11,7 +11,7 @@ class AppConfig {
     defaultValue: 'com.adgraph.yamma_delivery',
   );
 
-  static const String appName = 'Yumma';
+  static const String appName = 'Yumma! Go';
   static const String apiBaseUrl = String.fromEnvironment(
     'API_BASE_URL',
     defaultValue: 'https://yumma.in/api',
@@ -20,7 +20,7 @@ class AppConfig {
     'GOOGLE_MAPS_API_KEY',
     defaultValue: '',
   );
-  static const Color primaryColor = Color(0xFF0E9F6E);
+  static const Color primaryColor = Color(0xFF2563EB);
   static const Color secondaryColor = Color(0xFF282C3F);
   static const Color backgroundColor = Color(0xFFF7F7F7);
 
@@ -32,11 +32,11 @@ class AppConfig {
 
   static const String supportPhone = String.fromEnvironment(
     'SUPPORT_PHONE',
-    defaultValue: '+917038666066',
+    defaultValue: '+917030666066',
   );
   static const String supportEmail = String.fromEnvironment(
     'SUPPORT_EMAIL',
-    defaultValue: 'info@yumma.in',
+    defaultValue: 'info@yumma.ine',
   );
 
   static bool get isCustomerApp => appRole == 'customer';

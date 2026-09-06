@@ -88,7 +88,7 @@ class _DiningBookingCheckoutScreenState
           'key': data['key'],
           'amount': data['amount'],
           'currency': data['currency'] ?? 'INR',
-          'name': 'FoodFlow Dining',
+          'name': 'Yumma! Dining',
           'description': 'Dining table booking',
           'order_id': data['order_id'],
           'prefill': {
@@ -135,7 +135,7 @@ class _DiningBookingCheckoutScreenState
         paymentSheetParameters: SetupPaymentSheetParameters(
           paymentIntentClientSecret: clientSecret,
           style: ThemeMode.system,
-          merchantDisplayName: 'FoodFlow Dining',
+          merchantDisplayName: 'Yumma! Dining',
           googlePay: const PaymentSheetGooglePay(merchantCountryCode: 'IN'),
           applePay: const PaymentSheetApplePay(merchantCountryCode: 'IN'),
         ),

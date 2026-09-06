@@ -23,6 +23,7 @@ class DeliveryChargeSetting extends Model
         'free_delivery_days' => 'array',
         'free_delivery_area_ids' => 'array',
         'order_acceptance_timeout_seconds' => 'integer',
+        'free_delivery_threshold' => 'decimal:2',
     ];
     
     public static function getDeliveryCharge($distance = null)

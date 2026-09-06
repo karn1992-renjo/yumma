@@ -28,6 +28,19 @@
             <div class="p-4">
                 <form action="{{ route('admin.settings.branding.post') }}" method="POST" enctype="multipart/form-data">
                     @csrf
+                    <div class="border rounded-3 p-3 mb-4" style="background: linear-gradient(135deg, #f5f3ff, #fff); border-color: #ddd6fe !important;">
+                        <div class="d-flex align-items-center justify-content-between gap-3">
+                            <div>
+                                <h6 class="fw-bold mb-1"><i class="fas fa-brain me-2" style="color:#7c3aed;"></i>AI Control Center</h6>
+                                <div class="text-muted small mb-0">Enable AI-driven operations, fleet, finance, and notification management. When disabled, the AI menu is hidden and every scheduled AI job (management cycle, role notifications, cart reminders, reorder nudges) stops running.</div>
+                            </div>
+                            <div class="form-check form-switch mb-0 flex-shrink-0">
+                                <input type="hidden" name="ai_feature_enabled" value="0">
+                                <input class="form-check-input" type="checkbox" role="switch" style="width: 3em; height: 1.5em;" name="ai_feature_enabled" value="1" {{ $aiFeatureEnabled ? 'checked' : '' }}>
+                                <label class="form-check-label fw-semibold">{{ $aiFeatureEnabled ? 'Enabled' : 'Disabled' }}</label>
+                            </div>
+                        </div>
+                    </div>
                     <div class="mb-3">
                         <label class="form-label fw-semibold">App Name</label>
                         <input type="text" name="app_name" class="form-control" value="{{ $settings['app_name'] ?? 'FoodFlow' }}">

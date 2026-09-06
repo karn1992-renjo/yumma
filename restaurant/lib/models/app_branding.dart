@@ -21,10 +21,10 @@ class AppBranding {
     this.appLogoUrl = '',
     this.appIconUrl = '',
     this.appFaviconUrl = '',
-    this.primaryColorHex = '#0A9443',
-    this.secondaryColorHex = '#0C7038',
-    this.restaurantPrimaryColorHex = '#0A9443',
-    this.restaurantSecondaryColorHex = '#0C7038',
+    this.primaryColorHex = '#2563EB',
+    this.secondaryColorHex = '#1D4ED8',
+    this.restaurantPrimaryColorHex = '#2563EB',
+    this.restaurantSecondaryColorHex = '#1D4ED8',
     this.supportEmail = '',
     this.supportPhone = '',
     this.defaultMobileCountryCode = '+91',
@@ -39,16 +39,17 @@ class AppBranding {
       appLogoUrl: (json['app_logo'] ?? '').toString().trim(),
       appIconUrl: (json['app_icon'] ?? '').toString().trim(),
       appFaviconUrl: (json['app_favicon'] ?? '').toString().trim(),
-      primaryColorHex: (json['primary_color'] ?? '#0A9443').toString().trim(),
+      primaryColorHex: (json['primary_color'] ?? '#2563EB').toString().trim(),
       secondaryColorHex:
-          (json['secondary_color'] ?? '#0C7038').toString().trim(),
-      restaurantPrimaryColorHex:
-          (json['restaurant_primary_color'] ?? json['primary_color'] ?? '#0A9443')
-              .toString()
-              .trim(),
+          (json['secondary_color'] ?? '#1D4ED8').toString().trim(),
+      restaurantPrimaryColorHex: (json['restaurant_primary_color'] ??
+              json['primary_color'] ??
+              '#2563EB')
+          .toString()
+          .trim(),
       restaurantSecondaryColorHex: (json['restaurant_secondary_color'] ??
               json['secondary_color'] ??
-              '#0C7038')
+              '#1D4ED8')
           .toString()
           .trim(),
       supportEmail: (json['support_email'] ?? '').toString().trim(),

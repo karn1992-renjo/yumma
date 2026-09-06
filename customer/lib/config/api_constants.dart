@@ -1,4 +1,4 @@
-﻿// lib/config/api_constants.dart
+// lib/config/api_constants.dart
 
 class ApiConstants {
   // Base URL - Update this with your actual API URL
@@ -29,9 +29,17 @@ class ApiConstants {
   static const String updateProfile = '/user/profile';
   static const String deleteAccount = '/user/account';
   static const String registerFcmToken = '/user/fcm-token';
+  static const String aiStatus = '/ai/status';
+  static const String aiSessionToken = '/ai/session-token';
   static const String notifications = '/notifications';
   static const String markNotificationsRead = '/notifications/read';
   static String markNotificationRead(String id) => '/notifications/$id/read';
+  // POST aliases -- some hosts block DELETE at the web-server level.
+  static String deleteNotification(String id) => '/notifications/$id/delete';
+  static const String clearNotifications = '/notifications/clear';
+  static const String notificationPreferences = '/notification-preferences';
+  static String orderCallNumber(int orderId, String target) =>
+      '/orders/$orderId/call-number?target=$target';
   static const String changePassword = '/user/change-password';
   static const String updatePassword = changePassword;
   static const String wallet = '/wallet';
@@ -47,9 +55,6 @@ class ApiConstants {
   static const String rewardPoints = '/rewards/points';
   static const String rewardPointsRedeem = '/rewards/points/redeem';
   static const String referralSummary = '/referrals/summary';
-  static const String supportTickets = '/support/tickets';
-  static String supportTicketReply(int ticketId) =>
-      '/support/tickets/$ticketId/reply';
   static const String supportConversations = '/support/conversations';
   static String supportConversation(int id) => '/support/conversations/$id';
   static String supportConversationMessages(int id) =>
@@ -68,6 +73,7 @@ class ApiConstants {
   // Restaurant Customer endpoints
   static const String nearbyRestaurants = '/restaurants/nearby';
   static const String searchRestaurants = '/restaurants/search';
+  static const String universalSearch = '/v1/search';
   static const String advancedSearch = '/v1/search';
   static const String searchSuggestions = '/v1/search/suggestions';
   static const String searchTrending = '/v1/search/trending';
@@ -92,6 +98,7 @@ class ApiConstants {
   static const String banners = '/banners';
   static const String bannersByType = '/banners';
   static const String activeOffers = '/offers/active';
+  static const String deliveryAreasActive = '/delivery-areas/active';
   static const String legalContent = '/content/legal';
   static const String parcelEstimate = '/parcel/estimate';
   static const String parcelOrders = '/parcel/orders';
@@ -105,9 +112,11 @@ class ApiConstants {
   static const String myOrders = '/orders';
   static const String orderDetails = '/orders';
   static String cancelOrder(int orderId) => '/orders/$orderId/cancel';
+  static String claimFlashResale(int orderId) => '/flash-resale/$orderId/claim';
   static const String trackOrder = '/orders/track';
   static String requestRefund(int orderId) => '/orders/$orderId/refund-request';
   static String orderFeedback(int orderId) => '/orders/$orderId/feedback';
+  static String orderNotes(int orderId) => '/orders/$orderId/notes';
   static String orderTip(int orderId) => '/orders/$orderId/tip';
   static const String refundPolicy = '/refund-policy';
 
@@ -119,6 +128,7 @@ class ApiConstants {
   // Coupon endpoints
   static const String validateCoupon = '/promotions/coupon/validate';
   static const String offers = '/offers';
+  static const String promotions = '/promotions';
 
   // Payment endpoints
   static const String createPayment = '/payments/create';
@@ -204,5 +214,8 @@ class ApiConstants {
       '/campaigns/$campaignId/track-click';
   static String campaignTrackImpression(int campaignId) =>
       '/campaigns/$campaignId/track-impression';
-}
 
+  // Ad tracking (sponsored restaurant placement)
+  static const String adImpressions = '/ads/impressions';
+  static const String adClicks = '/ads/clicks';
+}

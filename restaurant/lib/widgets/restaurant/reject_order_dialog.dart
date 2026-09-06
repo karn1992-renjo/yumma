@@ -2,6 +2,13 @@ import 'package:flutter/material.dart';
 
 import '../../theme/foodflow_theme.dart';
 
+const _rejectPresets = [
+  'Kitchen at capacity right now',
+  'Item(s) out of stock',
+  'Closing soon',
+  'Address outside delivery range',
+];
+
 Future<String?> showRestaurantRejectOrderDialog(BuildContext context) async {
   final controller = TextEditingController();
 
@@ -10,12 +17,35 @@ Future<String?> showRestaurantRejectOrderDialog(BuildContext context) async {
       context: context,
       barrierDismissible: true,
       builder: (dialogContext) {
-        return Dialog(
+        return _RejectDialogBody(controller: controller);
+      },
+    );
+  } finally {
+    controller.dispose();
+  }
+}
+
+class _RejectDialogBody extends StatefulWidget {
+  const _RejectDialogBody({required this.controller});
+  final TextEditingController controller;
+
+  @override
+  State<_RejectDialogBody> createState() => _RejectDialogBodyState();
+}
+
+class _RejectDialogBodyState extends State<_RejectDialogBody> {
+  String? _selectedPreset;
+
+  @override
+  Widget build(BuildContext dialogContext) {
+    final controller = widget.controller;
+    {
+      return Dialog(
           backgroundColor: Colors.transparent,
           insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
           child: Container(
             decoration: BoxDecoration(
-              color: Colors.white,
+              color: foodflow.isDark ? foodflow.elevatedSurface : Colors.white,
               borderRadius: BorderRadius.circular(28),
               boxShadow: [
                 BoxShadow(
@@ -35,60 +65,97 @@ Future<String?> showRestaurantRejectOrderDialog(BuildContext context) async {
                     width: 52,
                     height: 52,
                     decoration: BoxDecoration(
-                      color: const Color(0xFFFFF1F0),
+                      color: foodflow.danger.withOpacity(0.12),
                       borderRadius: BorderRadius.circular(16),
                     ),
-                    child: const Icon(
+                    child: Icon(
                       Icons.close_rounded,
-                      color: Color(0xFFD92D20),
+                      color: foodflow.danger,
                       size: 28,
                     ),
                   ),
                   const SizedBox(height: 18),
-                  const Text(
+                  Text(
                     'Reject order',
                     style: TextStyle(
-                      color: FoodFlowTheme.ink,
+                      color: foodflow.ink,
                       fontSize: 22,
                       fontWeight: FontWeight.w800,
                     ),
                   ),
                   const SizedBox(height: 8),
-                  const Text(
+                  Text(
                     'Let the customer know why this order cannot be prepared right now.',
                     style: TextStyle(
-                      color: FoodFlowTheme.muted,
+                      color: foodflow.muted,
                       fontSize: 14,
                       height: 1.45,
                     ),
                   ),
-                  const SizedBox(height: 18),
+                  const SizedBox(height: 16),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: _rejectPresets.map((preset) {
+                      final selected = _selectedPreset == preset;
+                      return GestureDetector(
+                        onTap: () => setState(() {
+                          _selectedPreset = selected ? null : preset;
+                          if (!selected) controller.clear();
+                        }),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 8),
+                          decoration: BoxDecoration(
+                            color: selected
+                                ? foodflow.danger.withOpacity(0.12)
+                                : (foodflow.isDark
+                                    ? foodflow.surfaceColor
+                                    : foodflow.canvas),
+                            borderRadius: BorderRadius.circular(999),
+                            border: Border.all(
+                              color: selected
+                                  ? foodflow.danger
+                                  : foodflow.line,
+                            ),
+                          ),
+                          child: Text(
+                            preset,
+                            style: TextStyle(
+                              color: selected
+                                  ? foodflow.danger
+                                  : foodflow.ink,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ),
+                      );
+                    }).toList(),
+                  ),
+                  const SizedBox(height: 14),
                   Container(
                     padding: const EdgeInsets.all(14),
                     decoration: BoxDecoration(
-                      color: const Color(0xFFF8FAFC),
+                      color: foodflow.isDark ? foodflow.surfaceColor : foodflow.canvas,
                       borderRadius: BorderRadius.circular(18),
-                      border: Border.all(color: FoodFlowTheme.line),
+                      border: Border.all(color: foodflow.line),
                     ),
                     child: TextField(
                       controller: controller,
-                      autofocus: true,
-                      minLines: 3,
-                      maxLines: 5,
+                      minLines: 2,
+                      maxLines: 4,
                       textCapitalization: TextCapitalization.sentences,
+                      onChanged: (_) {
+                        if (_selectedPreset != null) {
+                          setState(() => _selectedPreset = null);
+                        }
+                      },
                       decoration: const InputDecoration(
-                        hintText: 'Example: Kitchen is at capacity for the next 30 minutes.',
+                        hintText: 'Or type a custom reason…',
                         border: InputBorder.none,
                         isCollapsed: true,
                       ),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  const Text(
-                    'Leave it blank to send the default rejection message.',
-                    style: TextStyle(
-                      color: FoodFlowTheme.muted,
-                      fontSize: 12,
                     ),
                   ),
                   const SizedBox(height: 22),
@@ -99,7 +166,7 @@ Future<String?> showRestaurantRejectOrderDialog(BuildContext context) async {
                           onPressed: () => Navigator.of(dialogContext).pop(),
                           style: OutlinedButton.styleFrom(
                             minimumSize: const Size.fromHeight(52),
-                            side: const BorderSide(color: FoodFlowTheme.line),
+                            side: BorderSide(color: foodflow.line),
                             shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(16),
                             ),
@@ -111,13 +178,15 @@ Future<String?> showRestaurantRejectOrderDialog(BuildContext context) async {
                       Expanded(
                         child: ElevatedButton(
                           onPressed: () {
-                            final value = controller.text.trim();
-                            Navigator.of(dialogContext).pop(
-                              value.isEmpty ? 'Rejected by restaurant' : value,
-                            );
+                            final typed = controller.text.trim();
+                            final value = _selectedPreset ??
+                                (typed.isEmpty
+                                    ? 'Rejected by restaurant'
+                                    : typed);
+                            Navigator.of(dialogContext).pop(value);
                           },
                           style: ElevatedButton.styleFrom(
-                            backgroundColor: const Color(0xFFD92D20),
+                            backgroundColor: foodflow.danger,
                             foregroundColor: Colors.white,
                             minimumSize: const Size.fromHeight(52),
                             elevation: 0,
@@ -138,9 +207,6 @@ Future<String?> showRestaurantRejectOrderDialog(BuildContext context) async {
             ),
           ),
         );
-      },
-    );
-  } finally {
-    controller.dispose();
+    }
   }
 }

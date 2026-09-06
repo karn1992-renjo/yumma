@@ -42,13 +42,17 @@ class WalletRechargePaymentService {
   Future<void> start({
     required double amount,
     required User? user,
+    String purpose = 'wallet_topup',
   }) async {
     final provider = user?.paymentGatewayProvider ?? 'razorpay';
 
     final response = await _api.post(ApiConstants.walletTopUp, data: {
       'amount': amount,
       'payment_method': provider,
-      'description': 'Wallet recharge',
+      'purpose': purpose,
+      'description': purpose == 'cod_settlement'
+          ? 'COD cash deposit'
+          : 'Wallet recharge',
     });
 
     if (response['success'] != true) {
@@ -70,7 +74,7 @@ class WalletRechargePaymentService {
         'key': data['key'],
         'amount': data['amount'],
         'currency': data['currency'] ?? 'INR',
-        'name': 'Yumma',
+        'name': 'Yumma!',
         'description': 'Wallet recharge',
         'order_id': data['order_id'],
         'prefill': {
@@ -109,7 +113,7 @@ class WalletRechargePaymentService {
     await Stripe.instance.initPaymentSheet(
       paymentSheetParameters: SetupPaymentSheetParameters(
         paymentIntentClientSecret: clientSecret,
-        merchantDisplayName: 'Yumma',
+        merchantDisplayName: 'Yumma!',
         style: ThemeMode.system,
         googlePay: const PaymentSheetGooglePay(merchantCountryCode: 'IN'),
         applePay: const PaymentSheetApplePay(merchantCountryCode: 'IN'),

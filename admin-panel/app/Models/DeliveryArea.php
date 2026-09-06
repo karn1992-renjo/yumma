@@ -25,8 +25,13 @@ class DeliveryArea extends Model
         'is_active',
         'free_delivery_enabled',
         'free_delivery_threshold',
+        'surge_fee_active',
+        'surge_fee_amount',
+        'surge_fee_reason',
+        'surge_fee_activated_at',
+        'surge_fee_ai_decision_id',
     ];
-    
+
     protected $casts = [
         'is_active' => 'boolean',
         'latitude' => 'float',
@@ -35,6 +40,9 @@ class DeliveryArea extends Model
         'max_daily_bookings' => 'integer',
         'free_delivery_enabled' => 'boolean',
         'free_delivery_threshold' => 'float',
+        'surge_fee_active' => 'boolean',
+        'surge_fee_amount' => 'decimal:2',
+        'surge_fee_activated_at' => 'datetime',
         'created_at' => 'datetime',
         'updated_at' => 'datetime',
         'deleted_at' => 'datetime',

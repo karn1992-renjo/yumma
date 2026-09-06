@@ -5,8 +5,6 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_cashfree_pg_sdk/api/cferrorresponse/cferrorresponse.dart';
 import 'package:flutter_cashfree_pg_sdk/api/cfpayment/cfdropcheckoutpayment.dart';
-import 'package:flutter_cashfree_pg_sdk/api/cfpayment/cfupi.dart';
-import 'package:flutter_cashfree_pg_sdk/api/cfpayment/cfupipayment.dart';
 import 'package:flutter_cashfree_pg_sdk/api/cfpaymentgateway/cfpaymentgatewayservice.dart';
 import 'package:flutter_cashfree_pg_sdk/api/cfpaymentcomponents/cfpaymentcomponent.dart';
 import 'package:flutter_cashfree_pg_sdk/api/cfupi/cfupiutils.dart';
@@ -49,7 +47,8 @@ class FlexibleOrderPaymentService {
     }
 
     _completion = Completer<_GatewayPaymentResult>();
-    _paymentTrace('orderPay.start orderId=$orderId selectedGateway=$selectedGateway mode=$paymentMode cashfreeUpiApp=${cashfreeUpiAppId ?? '-'}');
+    _paymentTrace(
+        'orderPay.start orderId=$orderId selectedGateway=$selectedGateway mode=$paymentMode cashfreeUpiApp=${cashfreeUpiAppId ?? '-'}');
     final response = await _api.post(
       ApiConstants.orderPay(orderId),
       data: {
@@ -64,8 +63,10 @@ class FlexibleOrderPaymentService {
           'customer_phone': customerPhone!.trim(),
       },
     );
-    _paymentTrace('orderPay.response success=${response['success']} message=${response['message']} dataKeys=${_mapKeys(response['data'])}');
-    _paymentTrace('checkoutPay.response success=${response['success']} message=${response['message']} dataKeys=${_mapKeys(response['data'])}');
+    _paymentTrace(
+        'orderPay.response success=${response['success']} message=${response['message']} dataKeys=${_mapKeys(response['data'])}');
+    _paymentTrace(
+        'checkoutPay.response success=${response['success']} message=${response['message']} dataKeys=${_mapKeys(response['data'])}');
     if (response['success'] != true) {
       throw StateError(
           response['message']?.toString() ?? 'Payment could not start.');
@@ -74,7 +75,14 @@ class FlexibleOrderPaymentService {
     final data = Map<String, dynamic>.from(response['data'] ?? const {});
     final resolved =
         data['gateway']?.toString().toLowerCase() ?? selectedGateway;
-    _paymentTrace('orderPay.resolved selected=$selectedGateway resolved=$resolved responsePaymentMethod=${data['payment_method']} orderId=${data['order_id']} sessionPresent=${_firstNonEmptyString(data, const ['payment_session_id', 'paymentSessionId', 'payment_session_token', 'paymentSessionToken', 'order_token']) != null}');
+    _paymentTrace(
+        'orderPay.resolved selected=$selectedGateway resolved=$resolved responsePaymentMethod=${data['payment_method']} orderId=${data['order_id']} sessionPresent=${_firstNonEmptyString(data, const [
+                  'payment_session_id',
+                  'paymentSessionId',
+                  'payment_session_token',
+                  'paymentSessionToken',
+                  'order_token'
+                ]) != null}');
     var gatewaySucceeded = false;
     try {
       if (resolved == 'razorpay') {
@@ -140,12 +148,13 @@ class FlexibleOrderPaymentService {
           .map(CashfreeUpiApp.fromSdkValue)
           .where((app) => app.id.isNotEmpty && app.displayName.isNotEmpty)
           .toList(growable: false);
-      final appSummary = parsed
-          .map((app) => '${app.id}:${app.displayName}')
-          .join('|');
-      _paymentTrace('cashfreeUpiApps.rawType=${apps.runtimeType} rawCount=${apps.length} parsedCount=${parsed.length} apps=$appSummary');
+      final appSummary =
+          parsed.map((app) => '${app.id}:${app.displayName}').join('|');
+      _paymentTrace(
+          'cashfreeUpiApps.rawType=${apps.runtimeType} rawCount=${apps.length} parsedCount=${parsed.length} apps=$appSummary');
       for (final app in parsed) {
-        _paymentTrace('cashfreeUpiApps.app id=${app.id} name=${app.displayName} iconPresent=${app.icon.isNotEmpty}');
+        _paymentTrace(
+            'cashfreeUpiApps.app id=${app.id} name=${app.displayName} iconPresent=${app.icon.isNotEmpty}');
       }
       return parsed;
     } catch (error, stackTrace) {
@@ -202,7 +211,8 @@ class FlexibleOrderPaymentService {
     final amountMinor = amount is num
         ? amount.round()
         : int.tryParse(amount?.toString().trim() ?? '');
-    _paymentTrace('razorpay.open mode=$paymentMode orderId=$orderId amount=$amountMinor keyPresent=${key != null}');
+    _paymentTrace(
+        'razorpay.open mode=$paymentMode orderId=$orderId amount=$amountMinor keyPresent=${key != null}');
     if (key == null ||
         orderId == null ||
         amountMinor == null ||
@@ -367,7 +377,8 @@ class FlexibleOrderPaymentService {
       'paymentSessionToken',
       'order_token',
     ]);
-    _paymentTrace('cashfree.open mode=$paymentMode orderId=$gatewayOrderId sessionPresent=${sessionId != null} selectedUpiApp=${cashfreeUpiAppId ?? '-'} environment=${data['environment']}');
+    _paymentTrace(
+        'cashfree.open mode=$paymentMode orderId=$gatewayOrderId sessionPresent=${sessionId != null} selectedUpiApp=${cashfreeUpiAppId ?? '-'} environment=${data['environment']}');
     if (gatewayOrderId == null || sessionId == null) {
       throw StateError(
         data['message']?.toString() ??
@@ -383,22 +394,9 @@ class FlexibleOrderPaymentService {
         .setPaymentSessionId(sessionId)
         .build();
     if (paymentMode == 'upi') {
-      final selectedUpiApp = cashfreeUpiAppId?.trim() ?? '';
-      final upiBuilder = CFUPIBuilder();
-      if (selectedUpiApp.isNotEmpty) {
-        _paymentTrace('cashfree.upi channel=INTENT selectedUpiApp=$selectedUpiApp');
-        upiBuilder.setChannel(CFUPIChannel.INTENT).setUPIID(selectedUpiApp);
-      } else {
-        _paymentTrace('cashfree.upi channel=INTENT_WITH_UI selectedUpiApp=none');
-        upiBuilder.setChannel(CFUPIChannel.INTENT_WITH_UI);
-      }
-      final payment = CFUPIPaymentBuilder()
-          .setSession(session)
-          .setUPI(upiBuilder.build())
-          .build();
-
-      _cashfree.doPayment(payment);
-      return;
+      _paymentTrace(
+        'cashfree.upi channel=DROP_CHECKOUT selectedUpiApp=${cashfreeUpiAppId?.trim().isNotEmpty == true ? cashfreeUpiAppId!.trim() : '-'}',
+      );
     }
 
     final component = _cashfreePaymentComponentForMode(paymentMode);
@@ -415,6 +413,7 @@ class FlexibleOrderPaymentService {
 
   CFPaymentComponent? _cashfreePaymentComponentForMode(String paymentMode) {
     final mode = switch (paymentMode) {
+      'upi' => CFPaymentModes.UPI,
       'card' => CFPaymentModes.CARD,
       'wallet' => CFPaymentModes.WALLET,
       'netbanking' => CFPaymentModes.NETBANKING,
@@ -464,13 +463,15 @@ class FlexibleOrderPaymentService {
       ...data,
     };
 
-    _paymentTrace('verifyPayment.request orderId=$orderId paymentMethod=$paymentMethod keys=${payload.keys.join(',')}');
+    _paymentTrace(
+        'verifyPayment.request orderId=$orderId paymentMethod=$paymentMethod keys=${payload.keys.join(',')}');
     final response = await _api.post(
       ApiConstants.verifyPayment,
       data: payload,
     );
 
-    _paymentTrace('verifyPayment.response success=${response['success']} message=${response['message']}');
+    _paymentTrace(
+        'verifyPayment.response success=${response['success']} message=${response['message']}');
     if (response['success'] == true) return true;
     throw StateError(
       response['message']?.toString() ?? 'Payment verification failed.',
@@ -552,7 +553,8 @@ extension FlexibleOrderPaymentCheckout on FlexibleOrderPaymentService {
       );
     }
 
-    final resolved = data['gateway']?.toString().toLowerCase() ?? selectedGateway;
+    final resolved =
+        data['gateway']?.toString().toLowerCase() ?? selectedGateway;
     final sessionPresent = _firstNonEmptyString(data, const [
           'payment_session_id',
           'paymentSessionId',
@@ -565,7 +567,8 @@ extension FlexibleOrderPaymentCheckout on FlexibleOrderPaymentService {
       'checkoutPay.resolved selected=$selectedGateway resolved=$resolved '
       'responsePaymentMethod=${data['payment_method']} tokenPresent=${token != null} '
       'orderId=${data['order_id']} sessionPresent=$sessionPresent',
-    );    try {
+    );
+    try {
       if (resolved == 'razorpay') {
         _openRazorpayPayment(
           data,
@@ -606,7 +609,8 @@ extension FlexibleOrderPaymentCheckout on FlexibleOrderPaymentService {
         },
       );
 
-      _paymentTrace('checkoutVerify.response success=${verifyResponse['success']} message=${verifyResponse['message']} dataKeys=${_mapKeys(verifyResponse['data'])}');
+      _paymentTrace(
+          'checkoutVerify.response success=${verifyResponse['success']} message=${verifyResponse['message']} dataKeys=${_mapKeys(verifyResponse['data'])}');
       if (verifyResponse['success'] == true) {
         final data = verifyResponse['data'];
         final orderData = data is Map ? data['order'] : null;

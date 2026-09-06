@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_lucide/flutter_lucide.dart';
 import 'package:intl/intl.dart' show DateFormat;
 
 import '../../config/api_constants.dart';
@@ -8,6 +9,7 @@ import '../../theme/foodflow_theme.dart';
 import '../../utils/currency_utils.dart';
 import '../../widgets/common/app_cached_image.dart';
 import '../../widgets/common/app_skeleton.dart';
+import '../../widgets/customer/profile_screen_chrome.dart';
 import '../../widgets/customer/scratch_card_art.dart';
 import '../../widgets/customer/scratch_card_reveal_dialog.dart';
 
@@ -219,38 +221,78 @@ class _ScratchCardsScreenState extends State<ScratchCardsScreen> {
             : (expired.isNotEmpty ? expired.first : null));
 
     return Scaffold(
-      backgroundColor: Colors.white,
-      appBar: AppBar(
-        centerTitle: true,
-        title: const Text(
-          'Scratch Card',
-          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
-        ),
-        backgroundColor: Colors.white,
-        foregroundColor: FoodFlowTheme.ink,
-        surfaceTintColor: Colors.white,
-        elevation: 0,
-        actions: [
-          IconButton(
-            onPressed: _showInfo,
-            icon: const Icon(Icons.help_outline_rounded),
-          ),
-        ],
-      ),
-      body: _loading
-          ? const AppSkeletonListView(itemCount: 4, itemHeight: 126)
+      backgroundColor: profileCanvasColor(context),
+      body: SafeArea(
+        child: _loading
+          ? Padding(
+              padding: const EdgeInsets.fromLTRB(18, 14, 18, 0),
+              child: Column(
+                children: [
+                  const ProfilePageTopBar(
+                    title: 'Scratch Cards',
+                    subtitle: 'Scratch to reveal your rewards',
+                  ),
+                  const SizedBox(height: 20),
+                  const Expanded(
+                    child: AppSkeletonListView(itemCount: 4, itemHeight: 126),
+                  ),
+                ],
+              ),
+            )
           : RefreshIndicator(
               onRefresh: () => _loadCards(forceRefresh: true),
+              color: profileAccentColor(context),
               child: ListView(
-                padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+                physics: const AlwaysScrollableScrollPhysics(),
+                padding: const EdgeInsets.fromLTRB(16, 14, 16, 24),
                 children: [
-                  const _ScratchHero(),
+                  ProfilePageTopBar(
+                    title: 'Scratch Cards',
+                    subtitle: available.isNotEmpty
+                        ? '${available.length} ready to scratch'
+                        : 'Scratch to reveal your rewards',
+                    actions: [
+                      const SizedBox(width: 12),
+                      ProfileRoundButton(
+                        icon: LucideIcons.circle_question_mark,
+                        onTap: _showInfo,
+                      ),
+                    ],
+                  ),
                   const SizedBox(height: 20),
-                  _ScratchCountStrip(
-                    count: available.length,
-                    onHowToPlay: _showInfo,
+
+                  // compact stats
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _ScratchStat(
+                          icon: LucideIcons.gift,
+                          value: '${available.length}',
+                          label: 'To scratch',
+                          highlight: available.isNotEmpty,
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: _ScratchStat(
+                          icon: LucideIcons.badge_check,
+                          value: '${scratched.length}',
+                          label: 'Revealed',
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: _ScratchStat(
+                          icon: LucideIcons.sparkles,
+                          value: '$_pointsBalance',
+                          label: 'Points',
+                        ),
+                      ),
+                    ],
                   ),
                   const SizedBox(height: 18),
+
+                  // focal card
                   if (primaryCard != null)
                     _PrimaryScratchCard(
                       card: primaryCard,
@@ -258,10 +300,13 @@ class _ScratchCardsScreenState extends State<ScratchCardsScreen> {
                     )
                   else
                     const _EmptyScratchState(),
-                  const SizedBox(height: 18),
-                  const _TermsCard(),
                   const SizedBox(height: 22),
-                  _RewardsSection(cards: _cards, onTap: _openScratchCard),
+
+                  _RewardsSection(
+                    cards: _cards,
+                    onTap: _openScratchCard,
+                    onViewAll: _cards.length > 4 ? _showAllRewards : null,
+                  ),
                   const SizedBox(height: 14),
                   _RewardPointsPanel(
                     balance: _pointsBalance,
@@ -270,10 +315,11 @@ class _ScratchCardsScreenState extends State<ScratchCardsScreen> {
                     onRedeem: _openRedeemPointsSheet,
                   ),
                   const SizedBox(height: 14),
-                  const _MoreRewardsBanner(),
+                  const _TermsCard(),
                 ],
               ),
             ),
+      ),
     );
   }
 
@@ -282,6 +328,83 @@ class _ScratchCardsScreenState extends State<ScratchCardsScreen> {
       context: context,
       backgroundColor: Colors.transparent,
       builder: (context) => const _HowItWorksSheet(),
+    );
+  }
+
+  void _showAllRewards() {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) {
+        final ordered = [
+          ..._cards.where((c) => c.isRevealed && !c.isExpired),
+          ..._cards.where((c) => !c.isRevealed && !c.isExpired),
+          ..._cards.where((c) => c.isExpired),
+        ];
+        return SafeArea(
+          top: false,
+          child: Container(
+            constraints: BoxConstraints(
+              maxHeight: MediaQuery.of(sheetContext).size.height * 0.85,
+            ),
+            decoration: const BoxDecoration(
+              color: Color(0xFFF5F6FB),
+              borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const SizedBox(height: 10),
+                Container(
+                  width: 42,
+                  height: 5,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFDCE1EA),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(18, 14, 8, 8),
+                  child: Row(
+                    children: [
+                      const Expanded(
+                        child: Text(
+                          'All scratch cards',
+                          style: TextStyle(
+                            color: FoodFlowTheme.ink,
+                            fontSize: 18,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        onPressed: () => Navigator.pop(sheetContext),
+                        icon: const Icon(Icons.close_rounded),
+                        color: FoodFlowTheme.ink,
+                      ),
+                    ],
+                  ),
+                ),
+                Flexible(
+                  child: ListView.separated(
+                    padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
+                    itemCount: ordered.length,
+                    separatorBuilder: (_, __) => const SizedBox(height: 12),
+                    itemBuilder: (_, i) => _RewardTile(
+                      card: ordered[i],
+                      onTap: () {
+                        Navigator.pop(sheetContext);
+                        _openScratchCard(ordered[i]);
+                      },
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 
@@ -449,6 +572,59 @@ class _ScratchCountStrip extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+class _ScratchStat extends StatelessWidget {
+  const _ScratchStat({
+    required this.icon,
+    required this.value,
+    required this.label,
+    this.highlight = false,
+  });
+
+  final IconData icon;
+  final String value;
+  final String label;
+  final bool highlight;
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = profileAccentColor(context);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 14),
+      decoration: profileSurfaceDecoration(context, radius: 18).copyWith(
+        color: highlight ? profileSoftColor(context) : null,
+        border: Border.all(
+          color: highlight
+              ? accent.withOpacity(0.28)
+              : profileLineColor(context),
+        ),
+      ),
+      child: Column(
+        children: [
+          Icon(icon, size: 18, color: accent),
+          const SizedBox(height: 8),
+          Text(
+            value,
+            style: TextStyle(
+              color: profileTextColor(context),
+              fontSize: 20,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            label,
+            style: TextStyle(
+              color: profileMutedColor(context),
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -639,10 +815,15 @@ class _TermLine extends StatelessWidget {
 }
 
 class _RewardsSection extends StatelessWidget {
-  const _RewardsSection({required this.cards, required this.onTap});
+  const _RewardsSection({
+    required this.cards,
+    required this.onTap,
+    this.onViewAll,
+  });
 
   final List<ScratchCard> cards;
   final ValueChanged<ScratchCard> onTap;
+  final VoidCallback? onViewAll;
 
   @override
   Widget build(BuildContext context) {
@@ -664,13 +845,26 @@ class _RewardsSection extends StatelessWidget {
                 ),
               ),
             ),
-            if (cards.length > 2)
-              const Text(
-                'View all',
-                style: TextStyle(
-                  color: _scratchOrange,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w900,
+            if (onViewAll != null)
+              GestureDetector(
+                onTap: onViewAll,
+                child: const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 4, horizontal: 4),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        'View all',
+                        style: TextStyle(
+                          color: _scratchOrange,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                      Icon(Icons.chevron_right_rounded,
+                          color: _scratchOrange, size: 16),
+                    ],
+                  ),
                 ),
               ),
           ],

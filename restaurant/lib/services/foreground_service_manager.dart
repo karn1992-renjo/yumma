@@ -5,7 +5,7 @@ class ForegroundServiceManager {
   ForegroundServiceManager._();
 
   static const MethodChannel _channel =
-      MethodChannel('com.renjo.restro.android/order_alerts');
+      MethodChannel('com.adgraph.yumma_vendor/order_alerts');
   static bool _nativeChannelUnavailable = false;
 
   static Future<void> startForegroundService({

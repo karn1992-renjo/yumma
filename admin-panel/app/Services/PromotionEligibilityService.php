@@ -68,32 +68,46 @@ class PromotionEligibilityService
             return $this->invalid('Promotion is not available for this customer tier', 'customer_tier_not_matched');
         }
 
+        // "browse" = building a marketing offers/coupons list, not applying to
+        // a live cart. Account-specific gates (audience, per-account usage
+        // caps, fraud velocity) then become informational instead of hiding
+        // the offer entirely -- a "20% off your first order" promo should
+        // still be listed for a returning customer, just flagged.
+        $browse = (bool) ($context['browse'] ?? false);
+
         $conditions = $promotion->conditions ?? [];
         $audienceType = data_get($conditions, 'audience_type', data_get($targets, 'audience_type', 'all'));
         if (! $this->matchesAudience((string) $audienceType, $context)) {
-            return $this->invalid('Promotion is not eligible for this account', 'audience_not_matched');
+            $soft = $this->invalid('Promotion is not eligible for this account', 'audience_not_matched');
+            if (! $browse) {
+                return $soft;
+            }
         }
 
         if ($this->isReferralBonus($promotion) && ! $this->hasReferralAttribution($context)) {
-            return $this->invalid('Referral bonus is not available for this account', 'referral_not_matched');
+            if (! $browse) {
+                return $this->invalid('Referral bonus is not available for this account', 'referral_not_matched');
+            }
         }
 
         $perUserLimit = $promotion->per_user_usage_limit;
         $userId = $context['user_id'] ?? null;
         if ($perUserLimit !== null && $userId) {
             $usedByUser = $promotion->usages()->where('user_id', $userId)->count();
-            if ($usedByUser >= $perUserLimit) {
+            if ($usedByUser >= $perUserLimit && ! $browse) {
                 return $this->invalid('Promotion usage limit exceeded for this account', 'per_user_limit_exceeded');
             }
         }
 
-        if ($userId && ! $this->matchesRollingUsageLimits($promotion, (int) $userId)) {
+        if ($userId && ! $this->matchesRollingUsageLimits($promotion, (int) $userId) && ! $browse) {
             return $this->invalid('Promotion usage limit exceeded for this period', 'rolling_usage_limit_exceeded');
         }
 
-        $fraudCheck = $this->matchesFraudRules($promotion, $context);
-        if (! ($fraudCheck['eligible'] ?? true)) {
-            return $fraudCheck;
+        if (! $browse) {
+            $fraudCheck = $this->matchesFraudRules($promotion, $context);
+            if (! ($fraudCheck['eligible'] ?? true)) {
+                return $fraudCheck;
+            }
         }
 
         return ['eligible' => true, 'reason' => null, 'reason_code' => null];

@@ -62,6 +62,19 @@ class PromotionDisplayUtils {
     }
     if (combined.contains('custom_rule')) return 'Special Offer';
 
+    // Order-level fee promos never carry a per-item "₹X OFF" meaning -- their
+    // `value` is just a placeholder. Label them by what they do.
+    if (combined.contains('free_delivery')) return 'FREE DELIVERY';
+    if (combined.contains('delivery_discount')) return 'DELIVERY OFF';
+    if (combined.contains('free_packaging') ||
+        combined.contains('packaging_discount')) {
+      return 'PACKAGING OFF';
+    }
+    if (combined.contains('cashback') || combined.contains('wallet_credit')) {
+      return 'CASHBACK';
+    }
+    if (combined.contains('reward_point')) return 'REWARD POINTS';
+
     final discountType = _normalize(promo['discount_type'] ?? rewardType);
     final discountValue =
         _toDouble(promo['discount_value'] ?? promo['value'] ?? promo['amount']);
@@ -73,6 +86,55 @@ class PromotionDisplayUtils {
     }
 
     return title.isNotEmpty ? title : 'Promotion';
+  }
+
+  /// Reward types that act on the order / fees, not on a specific dish -- these
+  /// must never be shown as a per-menu-item tag.
+  /// True when this promotion payload carries at least one resolvable menu
+  /// item (or category) the customer can be shown as a product rail / grid.
+  /// When false the promotion is banner-only — tapping it should open the
+  /// promo detail, never an empty product screen.
+  static bool offerHasShoppableItems(Map promo) {
+    bool nonEmptyList(dynamic v) => v is List && v.whereType<Map>().isNotEmpty;
+    if (nonEmptyList(promo['menu_items'])) return true;
+    if (nonEmptyList(promo['reward_menu_items'])) return true;
+    if (nonEmptyList(promo['promotion_categories'])) return true;
+    if (nonEmptyList(promo['items'])) return true;
+    // fall back to any mapped id list anywhere in the payload
+    final ids = <int>{
+      ..._idsFrom(promo['menu_item_ids']),
+      ..._idsFrom(promo['item_ids']),
+      ..._idsFrom(promo['product_ids']),
+      ..._idsFrom(promo['category_ids']),
+      ..._idsFromNested(promo, const ['conditions', 'rewards', 'reward_config'],
+          const [
+            'menu_item_ids',
+            'item_ids',
+            'product_ids',
+            'free_item_ids',
+            'combo_item_ids',
+            'category_ids',
+          ]),
+    };
+    return ids.isNotEmpty;
+  }
+
+  static bool isOrderLevelReward(Map promo) {
+    final type = _normalize(
+      promo['reward_type'] ??
+          (promo['rewards'] is Map ? (promo['rewards'] as Map)['type'] : null) ??
+          promo['promotion_type'] ??
+          promo['type'],
+    );
+    return type.contains('free_delivery') ||
+        type.contains('delivery_discount') ||
+        type.contains('packaging') ||
+        type.contains('cashback') ||
+        type.contains('wallet_credit') ||
+        type.contains('reward_point') ||
+        type.contains('gift') ||
+        type.contains('scratch') ||
+        type.contains('referral');
   }
 
   static String tagForMenuItem(
@@ -89,6 +151,24 @@ class PromotionDisplayUtils {
   }
 
   static bool appliesToMenuItem(Map promo, MenuItem item) {
+    // Delivery / cashback / points / gift promos are order-level -- they must
+    // not paint a "₹X OFF" badge on individual dishes.
+    if (isOrderLevelReward(promo)) return false;
+
+    final type = _normalize(
+      promo['promotion_type'] ??
+          promo['promo_type'] ??
+          promo['reward_type'] ??
+          promo['type'],
+    );
+    final rewardType = _normalize(
+      promo['reward_type'] ??
+          (promo['rewards'] is Map ? (promo['rewards'] as Map)['type'] : null) ??
+          (promo['reward_config'] is Map
+              ? (promo['reward_config'] as Map)['type']
+              : null),
+    );
+
     final targetType = _normalize(
       promo['target_type'] ?? promo['promotion_for'] ?? promo['target'],
     );
@@ -183,12 +263,31 @@ class PromotionDisplayUtils {
       return true;
     }
 
+    // No explicit item/category scope. Only genuinely item-level offers
+    // (BOGO, combo, free item, fixed price, item/dish discount) get to badge
+    // every dish; a cart-wide "15% off the order" or "₹60 off" is NOT a
+    // per-item discount and must not paint "15% OFF" on each dish.
+    final rewardScope = '$type $rewardType';
+    final isItemLevel = rewardScope.contains('item') ||
+        rewardScope.contains('dish') ||
+        rewardScope.contains('product') ||
+        rewardScope.contains('bogo') ||
+        rewardScope.contains('buy_') ||
+        rewardScope.contains('combo') ||
+        rewardScope.contains('meal') ||
+        rewardScope.contains('free_item') ||
+        rewardScope.contains('fixed_price') ||
+        rewardScope.contains('fixed_selling_price');
+    if (!isItemLevel) return false;
+
     return targetType.isEmpty ||
         targetType == 'all' ||
         targetType == 'restaurant' ||
         targetType == 'entire_restaurant' ||
         targetType == 'order' ||
-        targetType == 'cart';
+        targetType == 'cart' ||
+        targetType.contains('item') ||
+        targetType.contains('product');
   }
 
   static String _normalize(dynamic value) {

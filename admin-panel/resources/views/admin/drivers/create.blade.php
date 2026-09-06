@@ -87,6 +87,25 @@
                             @error('license_number') <div class="invalid-feedback">{{ $message }}</div> @enderror
                         </div>
 
+                        <div class="col-md-4">
+                            <label class="form-label fw-semibold">Payout Mode</label>
+                            <select name="earning_mode" class="form-select @error('earning_mode') is-invalid @enderror">
+                                <option value="commission" @selected(old('earning_mode', 'commission') === 'commission')>Per-delivery commission</option>
+                                <option value="salary" @selected(old('earning_mode') === 'salary')>Fixed monthly salary</option>
+                            </select>
+                            @error('earning_mode') <div class="invalid-feedback">{{ $message }}</div> @enderror
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label fw-semibold">Monthly Salary</label>
+                            <input type="number" step="0.01" min="0" name="monthly_salary" class="form-control @error('monthly_salary') is-invalid @enderror" value="{{ old('monthly_salary') }}" placeholder="Only for salary mode">
+                            @error('monthly_salary') <div class="invalid-feedback">{{ $message }}</div> @enderror
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label fw-semibold">Salary Effective From</label>
+                            <input type="date" name="salary_effective_from" class="form-control @error('salary_effective_from') is-invalid @enderror" value="{{ old('salary_effective_from') }}">
+                            @error('salary_effective_from') <div class="invalid-feedback">{{ $message }}</div> @enderror
+                        </div>
+
                         <div class="col-12">
                             <label class="form-label fw-semibold">Driver Location</label>
                             <div class="input-group mb-2">

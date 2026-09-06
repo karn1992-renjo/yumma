@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart' show DateFormat;
@@ -8,6 +9,9 @@ import '../../config/api_constants.dart';
 import '../../models/order.dart';
 import '../../services/api_service.dart';
 import '../../theme/foodflow_theme.dart';
+import '../../theme/aurora_theme.dart';
+import '../../widgets/aurora/aurora.dart';
+import '../../widgets/aurora/swipe_to_confirm.dart';
 import '../../utils/currency_utils.dart';
 import '../../widgets/common/network_error_screen.dart';
 import '../../widgets/common/network_image_loader.dart';
@@ -85,9 +89,18 @@ class _RestaurantOrderDetailScreenState
 
   Future<void> _updateStatus(String status) async {
     if (_isUpdating) return;
+    String? rejectReason;
+    if (status == 'cancelled') {
+      rejectReason = await _askRejectReason();
+      if (!mounted || rejectReason == null) return;
+    }
+
     setState(() => _isUpdating = true);
     try {
-      final response = await _sendOrderAction(status);
+      final response = await _sendOrderAction(
+        status,
+        rejectReason: rejectReason,
+      );
       if (response['success'] == true) {
         await _loadOrder();
         if (mounted) {
@@ -139,7 +152,10 @@ class _RestaurantOrderDetailScreenState
     if (mounted) setState(() => _isUpdating = false);
   }
 
-  Future<dynamic> _sendOrderAction(String status) async {
+  Future<dynamic> _sendOrderAction(
+    String status, {
+    String? rejectReason,
+  }) async {
     if (status == 'verify_takeaway_otp') {
       final otp = await _askPickupOtp();
       if (otp == null) return {'success': false};
@@ -155,7 +171,7 @@ class _RestaurantOrderDetailScreenState
       return _api.post(ApiConstants.restaurantOrderReady(widget.orderId));
     }
     if (status == 'cancelled') {
-      final reason = await _askRejectReason();
+      final reason = rejectReason;
       if (reason == null) return {'success': false};
       return _api.post(
         ApiConstants.restaurantRejectOrder(widget.orderId),
@@ -210,13 +226,27 @@ class _RestaurantOrderDetailScreenState
   @override
   Widget build(BuildContext context) {
     if (_isLoading) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+      return Scaffold(
+        backgroundColor: foodflow.canvas,
+        body: Center(
+          child: CircularProgressIndicator(color: foodflow.orange),
+        ),
+      );
     }
 
     final order = _order;
     if (order == null) {
       return Scaffold(
-        appBar: AppBar(title: const Text('Order Details')),
+        backgroundColor: foodflow.canvas,
+        appBar: GlassAppBar(
+          leading: const BackButton(),
+          title: Text('Order details',
+              style: TextStyle(
+                color: foodflow.ink,
+                fontSize: 18,
+                fontWeight: FontWeight.w900,
+              )),
+        ),
         body: NetworkErrorView(
           title: 'Unable to load order',
           message: _loadError ?? 'Order not found',
@@ -228,9 +258,16 @@ class _RestaurantOrderDetailScreenState
     final payoutAmount = _restaurantPayout(order);
 
     return Scaffold(
-      backgroundColor: FoodFlowTheme.canvas,
-      appBar: AppBar(
-        title: Text('Order #${order.orderNumber}'),
+      backgroundColor: foodflow.canvas,
+      extendBodyBehindAppBar: true,
+      appBar: GlassAppBar(
+        leading: const BackButton(),
+        title: Text('Order #${order.orderNumber}',
+            style: TextStyle(
+              color: foodflow.ink,
+              fontSize: 18,
+              fontWeight: FontWeight.w900,
+            )),
         actions: [
           IconButton(
             onPressed: () => Navigator.pushNamed(
@@ -238,157 +275,79 @@ class _RestaurantOrderDetailScreenState
               '/restaurant/order/chat',
               arguments: order.id,
             ),
-            icon: const Icon(Icons.chat_bubble_outline_rounded),
+            icon: Icon(Icons.chat_bubble_outline_rounded, color: foodflow.ink),
             tooltip: 'Chat',
           ),
           IconButton(
             onPressed: _loadOrder,
-            icon: const Icon(Icons.refresh),
+            icon: Icon(Icons.refresh_rounded, color: foodflow.ink),
             tooltip: 'Refresh',
           ),
         ],
       ),
       bottomNavigationBar: _buildBottomAction(order),
-      body: RefreshIndicator(
-        onRefresh: _loadOrder,
-        child: ListView(
-          padding: const EdgeInsets.all(16),
-          children: [
-            Container(
-              padding: const EdgeInsets.all(18),
-              decoration: RestaurantPremium.glowPanel(radius: 20),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          formatCurrency(context, payoutAmount),
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 30,
-                            fontWeight: FontWeight.w900,
-                          ),
-                        ),
-                      ),
-                      _StatusPill(
-                        text: order.statusText,
-                        color: RestaurantPremium.gold,
-                        textColor: RestaurantPremium.navy,
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'Total payout for this order',
-                    style: TextStyle(
-                      color: Colors.white.withOpacity(0.92),
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    '${order.items.length} item${order.items.length == 1 ? '' : 's'} - ${order.paymentMethod}',
-                    style: TextStyle(
-                      color: Colors.white.withOpacity(0.76),
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ],
-              ),
+      body: Stack(
+        children: [
+          Positioned.fill(
+            child: DecoratedBox(
+              decoration: BoxDecoration(color: foodflow.canvas),
+              child: Stack(children: AuroraTheme.auroraBlobs()),
             ),
-            const SizedBox(height: 14),
-            if (order.hasActivePreparationTimer) ...[
-              _section(
-                title: 'Preparation',
+          ),
+          Positioned.fill(
+            child: RefreshIndicator(
+              onRefresh: _loadOrder,
+              color: foodflow.orange,
+              child: ListView(
+                padding: EdgeInsets.fromLTRB(
+                  14,
+                  MediaQuery.of(context).padding.top + 64,
+                  14,
+                  28,
+                ),
                 children: [
-                  _PreparationTimingPanel(
+                  _OrderFlowStepper(
                     order: order,
-                    canExtend: !_isUpdating,
-                    onExtend: _extendPrepTime,
+                    payout: formatCurrency(context, payoutAmount),
+                  ),
+                  const SizedBox(height: 14),
+                  _KotTicket(order: order),
+                  const SizedBox(height: 14),
+                  _OrderMetaStrip(
+                    order: order,
+                    payoutRows: _payoutRows(context, order, payoutAmount),
                   ),
                 ],
               ),
-              const SizedBox(height: 14),
-            ],
-            _section(
-              title: 'Customer',
-              children: [
-                _detailRow(Icons.person_outline, 'Name', order.customerName),
-                if (order.scheduledTime != null)
-                  _detailRow(
-                    Icons.schedule_outlined,
-                    'Scheduled',
-                    DateFormat('dd MMM yyyy, hh:mm a')
-                        .format(order.scheduledTime!),
-                  ),
-                _detailRow(
-                  Icons.location_on_outlined,
-                  'Address',
-                  order.deliveryAddress,
-                ),
-                if ((order.specialInstructions ?? '').trim().isNotEmpty)
-                  _detailRow(
-                    Icons.note_alt_outlined,
-                    'Customer Note',
-                    order.specialInstructions!.trim(),
-                  ),
-              ],
             ),
-            const SizedBox(height: 14),
-            _section(
-              title: 'Items',
-              children: order.items.isEmpty
-                  ? [
-                      const Text(
-                        'No item data available',
-                        style: TextStyle(color: FoodFlowTheme.muted),
-                      ),
-                    ]
-                  : order.items.map(_itemRow).toList(),
-            ),
-            const SizedBox(height: 14),
-            _section(
-              title: 'Payout Summary',
-              children: [
-                _billRow(context, 'Item subtotal', order.subtotal),
-                if (order.discount > 0)
-                  _billRow(context, 'Discount', order.discount),
-                _billRow(
-                  context,
-                  _commissionLabel(order),
-                  order.platformCommission,
-                  isDeduction: true,
-                ),
-                if (order.gstOnCommission > 0)
-                  _billRow(
-                    context,
-                    'GST on commission',
-                    order.gstOnCommission,
-                    isDeduction: true,
-                  ),
-                if (order.paymentGatewayFee > 0)
-                  _billRow(
-                    context,
-                    'Payment gateway fee',
-                    order.paymentGatewayFee,
-                    isDeduction: true,
-                  ),
-                const Divider(height: 22),
-                _billRow(
-                  context,
-                  'Total payout',
-                  payoutAmount,
-                  isTotal: true,
-                ),
-              ],
-            ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
+
+  List<Widget> _payoutRows(
+    BuildContext context,
+    Order order,
+    double payoutAmount,
+  ) {
+    return [
+      _billRow(context, 'Item subtotal', order.subtotal),
+      if (order.discount > 0) _billRow(context, 'Discount', order.discount),
+      _billRow(context, _commissionLabel(order), order.platformCommission,
+          isDeduction: true),
+      if (order.gstOnCommission > 0)
+        _billRow(context, 'GST on commission', order.gstOnCommission,
+            isDeduction: true),
+      if (order.paymentGatewayFee > 0)
+        _billRow(context, 'Payment gateway fee', order.paymentGatewayFee,
+            isDeduction: true),
+      Divider(height: 20, color: foodflow.line),
+      _billRow(context, 'Total payout', payoutAmount, isTotal: true),
+    ];
+  }
+
+
 
   double _restaurantPayout(Order order) {
     if (order.restaurantEarning > 0) return order.restaurantEarning;
@@ -412,56 +371,104 @@ class _RestaurantOrderDetailScreenState
     return 'Platform commission ($percentage%)';
   }
 
-  Widget _buildBottomAction(Order order) {
-    Widget? button;
+  ButtonStyle get _primaryStyle => ElevatedButton.styleFrom(
+        backgroundColor: foodflow.orange,
+        foregroundColor: Colors.white,
+        elevation: 0,
+        minimumSize: const Size.fromHeight(50),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        textStyle: const TextStyle(fontSize: 15, fontWeight: FontWeight.w900),
+      );
+
+  ({String label, String confirmedLabel, String status})? _nextAction(
+      Order order) {
     if (order.canRestaurantAccept) {
-      button = Row(
-        children: [
-          Expanded(
-            child: OutlinedButton(
-              onPressed: _isUpdating ? null : () => _updateStatus('cancelled'),
-              style: OutlinedButton.styleFrom(foregroundColor: Colors.red),
-              child: const Text('Reject'),
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: ElevatedButton(
-              onPressed: _isUpdating ? null : () => _updateStatus('confirmed'),
-              child: const Text('Accept'),
-            ),
-          ),
-        ],
-      );
-    } else if (order.canRestaurantStartPreparing) {
-      button = ElevatedButton(
-        onPressed: _isUpdating ? null : () => _updateStatus('preparing'),
-        child: const Text('Start Preparing'),
-      );
-    } else if (order.canRestaurantMarkReady) {
-      button = ElevatedButton(
-        onPressed: _isUpdating ? null : () => _updateStatus('ready_for_pickup'),
-        child: const Text('Mark Ready'),
-      );
-    } else if (order.canRestaurantVerifyTakeawayPickup) {
-      button = ElevatedButton.icon(
-        onPressed:
-            _isUpdating ? null : () => _updateStatus('verify_takeaway_otp'),
-        icon: const Icon(Icons.password),
-        label: const Text('Verify Pickup OTP'),
-      );
+      return (label: 'Swipe to accept order', confirmedLabel: 'Accepted', status: 'confirmed');
     }
+    if (order.canRestaurantStartPreparing) {
+      return (label: 'Swipe to start preparing', confirmedLabel: 'Preparing', status: 'preparing');
+    }
+    if (order.canRestaurantMarkReady) {
+      return (label: 'Swipe when food is ready', confirmedLabel: 'Ready', status: 'ready_for_pickup');
+    }
+    if (order.canRestaurantVerifyTakeawayPickup) {
+      return (label: 'Swipe to verify pickup OTP', confirmedLabel: 'Verified', status: 'verify_takeaway_otp');
+    }
+    return null;
+  }
 
-    if (button == null) return const SizedBox.shrink();
+  Widget _buildBottomAction(Order order) {
+    final action = _nextAction(order);
+    final canReject = order.canRestaurantAccept;
+    if (action == null && !canReject) return const SizedBox.shrink();
 
-    return SafeArea(
-      child: Container(
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
-        decoration: const BoxDecoration(
-          color: Colors.white,
-          border: Border(top: BorderSide(color: FoodFlowTheme.line)),
+    return ClipRect(
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+        child: Container(
+          decoration: BoxDecoration(
+            color: foodflow.canvas.withOpacity(0.82),
+            border: Border(top: BorderSide(color: foodflow.glassBorder)),
+          ),
+          child: SafeArea(
+            top: false,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+              child: Row(
+                children: [
+                  if (canReject) ...[
+                    SizedBox(
+                      width: 56,
+                      height: 56,
+                      child: OutlinedButton(
+                        onPressed:
+                            _isUpdating ? null : () => _updateStatus('cancelled'),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: foodflow.danger,
+                          side: BorderSide(
+                              color: foodflow.danger.withOpacity(0.5)),
+                          shape: const CircleBorder(),
+                          padding: EdgeInsets.zero,
+                        ),
+                        child: const Icon(Icons.close_rounded),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                  ],
+                  Expanded(
+                    child: action == null
+                        ? Container(
+                            height: 56,
+                            alignment: Alignment.center,
+                            decoration: BoxDecoration(
+                              color: foodflow.isDark
+                                  ? foodflow.elevatedSurface
+                                  : Colors.white,
+                              borderRadius: BorderRadius.circular(28),
+                              border: Border.all(color: foodflow.line),
+                            ),
+                            child: Text(
+                              'Waiting for delivery partner',
+                              style: TextStyle(
+                                color: foodflow.muted,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                          )
+                        : SwipeToConfirm(
+                            key: ValueKey(action.status),
+                            label: action.label,
+                            confirmedLabel: action.confirmedLabel,
+                            loading: _isUpdating,
+                            accent: foodflow.orange,
+                            onConfirmed: () => _updateStatus(action.status),
+                          ),
+                  ),
+                ],
+              ),
+            ),
+          ),
         ),
-        child: button,
       ),
     );
   }
@@ -475,7 +482,7 @@ class _RestaurantOrderDetailScreenState
         children: [
           Text(
             title,
-            style: const TextStyle(
+            style: TextStyle(
               color: FoodFlowTheme.ink,
               fontSize: 16,
               fontWeight: FontWeight.w900,
@@ -502,7 +509,7 @@ class _RestaurantOrderDetailScreenState
               children: [
                 Text(
                   label,
-                  style: const TextStyle(
+                  style: TextStyle(
                     color: FoodFlowTheme.faint,
                     fontSize: 11,
                     fontWeight: FontWeight.w700,
@@ -510,7 +517,7 @@ class _RestaurantOrderDetailScreenState
                 ),
                 Text(
                   value.isEmpty ? '-' : value,
-                  style: const TextStyle(
+                  style: TextStyle(
                     color: FoodFlowTheme.ink,
                     fontWeight: FontWeight.w800,
                   ),
@@ -537,7 +544,7 @@ class _RestaurantOrderDetailScreenState
               children: [
                 Text(
                   item.name,
-                  style: const TextStyle(
+                  style: TextStyle(
                     color: FoodFlowTheme.ink,
                     fontWeight: FontWeight.w800,
                   ),
@@ -572,7 +579,7 @@ class _RestaurantOrderDetailScreenState
                         ),
                         child: Text(
                           '${item.promotionFreeQuantity} FREE',
-                          style: const TextStyle(
+                          style: TextStyle(
                             color: FoodFlowTheme.success,
                             fontSize: 10,
                             fontWeight: FontWeight.w900,
@@ -582,7 +589,7 @@ class _RestaurantOrderDetailScreenState
                       if ((item.promotionTitle ?? '').trim().isNotEmpty)
                         Text(
                           item.promotionTitle!.trim(),
-                          style: const TextStyle(
+                          style: TextStyle(
                             color: FoodFlowTheme.muted,
                             fontSize: 11,
                             fontWeight: FontWeight.w700,
@@ -610,7 +617,7 @@ class _RestaurantOrderDetailScreenState
                             color: FoodFlowTheme.success.withOpacity(0.28),
                           ),
                         ),
-                        child: const Text(
+                        child: Text(
                           'PROMOTION REWARD',
                           style: TextStyle(
                             color: FoodFlowTheme.success,
@@ -622,7 +629,7 @@ class _RestaurantOrderDetailScreenState
                       if ((item.promotionTitle ?? '').trim().isNotEmpty)
                         Text(
                           item.promotionTitle!.trim(),
-                          style: const TextStyle(
+                          style: TextStyle(
                             color: FoodFlowTheme.muted,
                             fontSize: 11,
                             fontWeight: FontWeight.w700,
@@ -635,7 +642,7 @@ class _RestaurantOrderDetailScreenState
                   const SizedBox(height: 3),
                   Text(
                     item.customizationSummary,
-                    style: const TextStyle(
+                    style: TextStyle(
                       color: FoodFlowTheme.muted,
                       fontSize: 12,
                       fontWeight: FontWeight.w700,
@@ -814,7 +821,7 @@ class _PreparationTimingPanel extends StatelessWidget {
                     const SizedBox(height: 3),
                     Text(
                       subtitle,
-                      style: const TextStyle(
+                      style: TextStyle(
                         color: FoodFlowTheme.ink,
                         fontSize: 12,
                         fontWeight: FontWeight.w700,
@@ -875,6 +882,596 @@ class _StatusPill extends StatelessWidget {
           fontSize: 12,
           fontWeight: FontWeight.w900,
         ),
+      ),
+    );
+  }
+}
+
+
+/// Horizontal order-flow stepper — the primary visual of the detail screen.
+class _OrderFlowStepper extends StatelessWidget {
+  const _OrderFlowStepper({required this.order, required this.payout});
+
+  final Order order;
+  final String payout;
+
+  static const _deliverySteps = ['New', 'Accepted', 'Preparing', 'Ready', 'Picked up'];
+  static const _takeawaySteps = ['New', 'Accepted', 'Preparing', 'Ready', 'Collected'];
+
+  int get _current {
+    switch (order.status) {
+      case 'pending':
+        return 0;
+      case 'confirmed':
+      case 'accepted':
+        return 1;
+      case 'preparing':
+        return 2;
+      case 'ready_for_pickup':
+      case 'reached_pickup':
+        return 3;
+      default:
+        return 4;
+    }
+  }
+
+  ({String title, String hint}) get _headline {
+    switch (_current) {
+      case 0:
+        return (title: 'New order', hint: 'Accept it to start the clock.');
+      case 1:
+        return (title: 'Order accepted', hint: 'Start preparing when the kitchen picks it up.');
+      case 2:
+        return (title: 'Preparing', hint: order.hasActivePreparationTimer
+            ? 'Mark ready before the timer runs out.'
+            : 'Mark ready once the food is packed.');
+      case 3:
+        return (title: 'Ready for pickup', hint: order.isTakeaway
+            ? 'Verify the customer OTP at handover.'
+            : 'Waiting for the delivery partner.');
+      default:
+        return (title: order.isTakeaway ? 'Collected' : 'Picked up', hint: 'This order is on its way.');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final steps = order.isTakeaway ? _takeawaySteps : _deliverySteps;
+    final current = _current;
+    final head = _headline;
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 18, 16, 16),
+      decoration: BoxDecoration(
+        color: foodflow.isDark ? foodflow.elevatedSurface : Colors.white,
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: foodflow.line),
+        boxShadow: [
+          BoxShadow(
+            color: foodflow.isDark
+                ? Colors.black.withOpacity(0.35)
+                : Colors.black.withOpacity(0.05),
+            blurRadius: 20,
+            offset: const Offset(0, 10),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              for (var i = 0; i < steps.length; i++) ...[
+                _FlowNode(
+                  label: steps[i],
+                  done: i < current,
+                  active: i == current,
+                ),
+                if (i != steps.length - 1)
+                  Expanded(
+                    child: Container(
+                      height: 3,
+                      margin: const EdgeInsets.only(bottom: 18),
+                      decoration: BoxDecoration(
+                        color: i < current
+                            ? foodflow.orange
+                            : foodflow.line,
+                        borderRadius: BorderRadius.circular(99),
+                      ),
+                    ),
+                  ),
+              ],
+            ],
+          ),
+          const SizedBox(height: 6),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      head.title,
+                      style: TextStyle(
+                        color: foodflow.ink,
+                        fontSize: 20,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      head.hint,
+                      style: TextStyle(
+                        color: foodflow.muted,
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'You earn $payout',
+                      style: TextStyle(
+                        color: foodflow.orange,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (order.hasActivePreparationTimer) ...[
+                const SizedBox(width: 12),
+                _PrepRing(order: order),
+              ],
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _FlowNode extends StatelessWidget {
+  const _FlowNode({required this.label, required this.done, required this.active});
+
+  final String label;
+  final bool done;
+  final bool active;
+
+  @override
+  Widget build(BuildContext context) {
+    final filled = done || active;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 24,
+          height: 24,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: filled ? foodflow.orange : Colors.transparent,
+            shape: BoxShape.circle,
+            border: Border.all(
+              color: filled ? foodflow.orange : foodflow.line,
+              width: 2,
+            ),
+          ),
+          child: done
+              ? const Icon(Icons.check_rounded, size: 14, color: Colors.white)
+              : active
+                  ? Container(
+                      width: 8,
+                      height: 8,
+                      decoration: const BoxDecoration(
+                        color: Colors.white,
+                        shape: BoxShape.circle,
+                      ),
+                    )
+                  : null,
+        ),
+        const SizedBox(height: 5),
+        SizedBox(
+          width: 46,
+          child: Text(
+            label,
+            textAlign: TextAlign.center,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: filled ? foodflow.ink : foodflow.faint,
+              fontSize: 9.5,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _PrepRing extends StatelessWidget {
+  const _PrepRing({required this.order});
+  final Order order;
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<int>(
+      stream: Stream.periodic(const Duration(seconds: 1), (v) => v),
+      builder: (context, _) {
+        final delayed = order.isPreparationDelayed;
+        final tint = delayed ? foodflow.danger : foodflow.orange;
+        return Container(
+          width: 66,
+          height: 66,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: tint.withOpacity(0.10),
+            shape: BoxShape.circle,
+            border: Border.all(color: tint.withOpacity(0.35), width: 2),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                delayed ? Icons.warning_amber_rounded : Icons.timer_outlined,
+                size: 15,
+                color: tint,
+              ),
+              const SizedBox(height: 1),
+              Text(
+                order.readyTimeLabel,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: tint,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// Order contents rendered as a kitchen ticket, complete with a torn edge.
+class _KotTicket extends StatelessWidget {
+  const _KotTicket({required this.order});
+  final Order order;
+
+  String _time() {
+    final d = order.createdAt.toLocal();
+    final h = d.hour % 12 == 0 ? 12 : d.hour % 12;
+    final m = d.minute.toString().padLeft(2, '0');
+    return '$h:$m ${d.hour >= 12 ? 'PM' : 'AM'}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final note = (order.specialInstructions ?? '').trim();
+    return PhysicalShape(
+      clipper: _TicketClipper(),
+      color: foodflow.isDark ? foodflow.elevatedSurface : Colors.white,
+      elevation: foodflow.isDark ? 0 : 3,
+      shadowColor: Colors.black.withOpacity(0.12),
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(18, 20, 18, 22),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.receipt_long_rounded, size: 16, color: foodflow.muted),
+                const SizedBox(width: 6),
+                Text(
+                  'KITCHEN TICKET',
+                  style: TextStyle(
+                    color: foodflow.muted,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 1.5,
+                  ),
+                ),
+                const Spacer(),
+                Text(
+                  _time(),
+                  style: TextStyle(
+                    color: foodflow.muted,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Text(
+              '#${order.orderNumber}',
+              style: TextStyle(
+                color: foodflow.ink,
+                fontSize: 18,
+                fontWeight: FontWeight.w900,
+                fontFeatures: const [FontFeature.tabularFigures()],
+              ),
+            ),
+            const SizedBox(height: 12),
+            const _DashRule(),
+            const SizedBox(height: 12),
+            if (order.items.isEmpty)
+              Text('No item data available',
+                  style: TextStyle(color: foodflow.muted))
+            else
+              ...order.items.map((it) => Padding(
+                    padding: const EdgeInsets.only(bottom: 10),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Container(
+                              margin: const EdgeInsets.only(top: 1),
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 7, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: foodflow.orange,
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: Text(
+                                '${it.quantity}x',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 11.5,
+                                  fontWeight: FontWeight.w900,
+                                  fontFeatures: [FontFeature.tabularFigures()],
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Text(
+                                it.name,
+                                style: TextStyle(
+                                  color: foodflow.ink,
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              formatCurrency(context, it.totalPrice),
+                              style: TextStyle(
+                                color: foodflow.ink,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w800,
+                                fontFeatures:
+                                    const [FontFeature.tabularFigures()],
+                              ),
+                            ),
+                          ],
+                        ),
+                        if (it.hasPromotionFreeUnits)
+                          Padding(
+                            padding: const EdgeInsets.only(left: 34, top: 3),
+                            child: Text(
+                              'Includes promo free units',
+                              style: TextStyle(
+                                color: foodflow.success,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  )),
+            if (note.isNotEmpty) ...[
+              const SizedBox(height: 2),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(11),
+                decoration: BoxDecoration(
+                  color: foodflow.warmCanvas,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: foodflow.orange.withOpacity(0.3)),
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(Icons.push_pin_outlined,
+                        size: 15, color: foodflow.orange),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        note,
+                        style: TextStyle(
+                          color: foodflow.inkSoft,
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _DashRule extends StatelessWidget {
+  const _DashRule();
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(builder: (context, c) {
+      final count = (c.maxWidth / 8).floor();
+      return Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: List.generate(
+          count,
+          (_) => Container(
+            width: 4,
+            height: 2,
+            color: foodflow.line,
+          ),
+        ),
+      );
+    });
+  }
+}
+
+class _TicketClipper extends CustomClipper<Path> {
+  @override
+  Path getClip(Size size) {
+    final teeth = (size.width / 16).round().clamp(4, 60);
+    final w = size.width / teeth;
+    final r = Radius.circular(w / 2);
+    final path = Path()..moveTo(0, 0);
+    for (var i = 0; i < teeth; i++) {
+      path.arcToPoint(Offset(w * (i + 1), 0), radius: r, clockwise: false);
+    }
+    path.lineTo(size.width, size.height);
+    for (var i = teeth; i > 0; i--) {
+      path.arcToPoint(Offset(w * (i - 1), size.height),
+          radius: r, clockwise: false);
+    }
+    path.close();
+    return path;
+  }
+
+  @override
+  bool shouldReclip(covariant CustomClipper<Path> oldClipper) => false;
+}
+
+/// Collapsible strip carrying customer + payout detail (progressive disclosure).
+class _OrderMetaStrip extends StatefulWidget {
+  const _OrderMetaStrip({required this.order, required this.payoutRows});
+  final Order order;
+  final List<Widget> payoutRows;
+
+  @override
+  State<_OrderMetaStrip> createState() => _OrderMetaStripState();
+}
+
+class _OrderMetaStripState extends State<_OrderMetaStrip> {
+  bool _open = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final order = widget.order;
+    return Container(
+      decoration: BoxDecoration(
+        color: foodflow.isDark ? foodflow.elevatedSurface : Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: foodflow.line),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        children: [
+          InkWell(
+            onTap: () => setState(() => _open = !_open),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(14, 14, 12, 14),
+              child: Row(
+                children: [
+                  Icon(Icons.person_outline, size: 18, color: foodflow.orange),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      order.customerName,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: foodflow.ink,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ),
+                  Text(
+                    order.paymentMethod.toLowerCase().contains('cod') ||
+                            order.paymentMethod.toLowerCase().contains('cash')
+                        ? 'COD'
+                        : 'Prepaid',
+                    style: TextStyle(
+                      color: foodflow.muted,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  Icon(
+                    _open
+                        ? Icons.keyboard_arrow_up_rounded
+                        : Icons.keyboard_arrow_down_rounded,
+                    color: foodflow.muted,
+                  ),
+                ],
+              ),
+            ),
+          ),
+          if (_open)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(14, 0, 14, 16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  _metaLine(
+                    Icons.location_on_outlined,
+                    order.isTakeaway ? 'Pickup' : 'Deliver to',
+                    order.deliveryAddress,
+                  ),
+                  if (order.scheduledTime != null)
+                    _metaLine(
+                      Icons.schedule_outlined,
+                      'Scheduled',
+                      DateFormat('dd MMM, hh:mm a')
+                          .format(order.scheduledTime!),
+                    ),
+                  const SizedBox(height: 6),
+                  Divider(height: 18, color: foodflow.line),
+                  ...widget.payoutRows,
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _metaLine(IconData icon, String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, size: 16, color: foodflow.muted),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(label,
+                    style: TextStyle(
+                      color: foodflow.faint,
+                      fontSize: 10.5,
+                      fontWeight: FontWeight.w800,
+                    )),
+                Text(value.isEmpty ? '-' : value,
+                    style: TextStyle(
+                      color: foodflow.ink,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                    )),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }

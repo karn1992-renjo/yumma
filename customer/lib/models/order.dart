@@ -25,6 +25,8 @@ class Order {
   final double platformFee;
   final double tax;
   final double discount;
+  final double surgeFee;
+  final double nightSurcharge;
   final double total;
   final double? tip;
   final DateTime? tipPaidAt;
@@ -34,6 +36,10 @@ class Order {
   final String? paymentSource;
   final String? paymentGateway;
   final String? paymentLinkId;
+
+  /// Gateway payment reference recorded once an online payment is verified
+  /// (Razorpay payment id, Stripe intent, Cashfree order id, …).
+  final String? paymentId;
   final DateTime? paidAt;
   final PaymentAttempt? activePaymentAttempt;
   final String? deliveryPaymentMode;
@@ -42,6 +48,7 @@ class Order {
   final DateTime? onlinePaymentVerifiedAt;
   final DateTime? scheduledTime;
   final String? specialInstructions;
+  final String? deliveryInstructions;
   final String? cancellationReason;
   final String? refundStatus;
   final double? refundAmount;
@@ -97,6 +104,8 @@ class Order {
     required this.subtotal,
     required this.deliveryFee,
     required this.platformFee,
+    this.surgeFee = 0,
+    this.nightSurcharge = 0,
     required this.tax,
     required this.discount,
     required this.total,
@@ -108,6 +117,7 @@ class Order {
     this.paymentSource,
     this.paymentGateway,
     this.paymentLinkId,
+    this.paymentId,
     this.paidAt,
     this.activePaymentAttempt,
     this.deliveryPaymentMode,
@@ -116,6 +126,7 @@ class Order {
     this.onlinePaymentVerifiedAt,
     this.scheduledTime,
     this.specialInstructions,
+    this.deliveryInstructions,
     this.cancellationReason,
     this.refundStatus,
     this.refundAmount,
@@ -205,6 +216,8 @@ class Order {
       platformFee: parseDoubleValue(json['platform_fee']),
       tax: parseDoubleValue(json['tax']),
       discount: parseDoubleValue(json['discount']),
+      surgeFee: parseDoubleValue(json['surge_fee']),
+      nightSurcharge: parseDoubleValue(json['night_surcharge']),
       total: parseDoubleValue(json['total']),
       tip: parseNullableDouble(json['tip_amount']),
       tipPaidAt: json['tip_paid_at'] != null
@@ -221,6 +234,10 @@ class Order {
       paymentSource: json['payment_source']?.toString(),
       paymentGateway: json['payment_gateway']?.toString(),
       paymentLinkId: json['payment_link_id']?.toString(),
+      paymentId: (json['payment_id'] ??
+              json['gateway_payment_id'] ??
+              json['transaction_id'])
+          ?.toString(),
       paidAt: json['paid_at'] != null
           ? DateTime.tryParse(json['paid_at'].toString())
           : null,
@@ -242,6 +259,7 @@ class Order {
           ? DateTime.tryParse(json['scheduled_time'].toString())
           : null,
       specialInstructions: json['special_instructions']?.toString(),
+      deliveryInstructions: json['delivery_instructions']?.toString(),
       cancellationReason: json['cancellation_reason'],
       refundStatus: json['refund_status'],
       refundAmount: parseNullableDouble(json['refund_amount']),

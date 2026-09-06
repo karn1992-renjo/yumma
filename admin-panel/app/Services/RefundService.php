@@ -43,23 +43,42 @@ class RefundService
 
             $wasDelivered = $order->status === 'delivered';
             $policy = RefundPolicy::getActivePolicy();
-            $refundAmount = $customAmount ?? $policy->calculateRefundAmount($order, $reason);
-            
-            if ($refundAmount <= 0) {
-                throw new \Exception('Refund amount must be greater than 0');
-            }
-            
-            // Update order with refund details
-            $order->update([
+            $refundAmount = max(0, round((float) ($customAmount ?? $policy->calculateRefundAmount($order, $reason)), 2));
+
+            // Update order with refund details. A refund on an already-delivered
+            // order (e.g. an approved return) should not retroactively mark it
+            // cancelled -- only orders that hadn't completed yet get cancelled here.
+            $updateData = [
                 'refund_amount' => $refundAmount,
                 'refund_reason' => $reason,
                 'refund_status' => 'processing',
-                'status' => 'cancelled',
-                'cancelled_at' => now(),
-                'cancellation_reason' => $reason
-            ]);
-            
+            ];
+            if (! $wasDelivered) {
+                $updateData['status'] = 'cancelled';
+                $updateData['cancelled_at'] = now();
+                $updateData['cancellation_reason'] = $reason;
+            }
+            $order->update($updateData);
+
+            if ($refundAmount <= 0) {
+                // Nothing to actually refund (e.g. a late-stage cancellation the
+                // active policy assigns 0% to) -- still a valid, completed outcome.
+                $order->update([
+                    'refund_status' => 'completed',
+                    'refund_processed_at' => now(),
+                ]);
+
+                DB::commit();
+
+                return [
+                    'success' => true,
+                    'message' => 'Order cancelled. No refund was due.',
+                    'refund_amount' => 0,
+                ];
+            }
+
             // Process actual refund based on payment method
+            $refundedToWallet = false;
             try {
                 $refundSuccess = $this->processPaymentRefund($order, $refundAmount);
             } catch (\Throwable $gatewayError) {
@@ -69,10 +88,12 @@ class RefundService
                     'message' => $gatewayError->getMessage(),
                 ]);
                 $refundSuccess = $this->refundToWalletFallback($order, (float) $refundAmount, $reason);
+                $refundedToWallet = $refundedToWallet || $refundSuccess;
             }
 
             if (!$refundSuccess) {
                 $refundSuccess = $this->refundToWalletFallback($order, (float) $refundAmount, $reason);
+                $refundedToWallet = $refundedToWallet || $refundSuccess;
             }
             
             if ($refundSuccess) {
@@ -89,7 +110,16 @@ class RefundService
                 }
 
                 app(BranchManagementService::class)->reverseRefund($order->fresh(), (float) $refundAmount);
-                
+
+                try {
+                    $paidByWallet = in_array($order->payment_method, ['wallet', 'cod', 'cash'], true);
+                    $refundTo = ($refundedToWallet || $paidByWallet) ? 'wallet' : 'bank';
+                    $entry = app(\App\Services\Accounting\LedgerPostingService::class)->postRefund($order->fresh(), (float) $refundAmount, $refundTo);
+                    \App\Services\Integration\LedgerEventEmitter::journal($entry);
+                } catch (\Throwable $e) {
+                    Log::warning('Ledger postRefund failed', ['order_id' => $order->id, 'error' => $e->getMessage()]);
+                }
+
                 DB::commit();
                 
                 // Send refund notification

@@ -13,6 +13,9 @@ use Illuminate\Support\Facades\Http;
 
 class HomeController extends Controller
 {
+    use \App\Http\Controllers\Concerns\StampsSponsoredRestaurants;
+
+
     /**
      * Show the home page
      */
@@ -21,6 +24,7 @@ class HomeController extends Controller
         $homeSectionService ??= app(HomeSectionService::class);
 
         $banners = Banner::where('is_active', true)
+            ->visibleOnSurface('web')
             ->where(function($q) {
                 $q->whereNull('start_date')
                   ->orWhere('start_date', '<=', now());
@@ -31,7 +35,9 @@ class HomeController extends Controller
             })
             ->orderBy('display_order')
             ->get();
-        $homepageSections = $homeSectionService->publicSections();
+        $homepageSections = $homeSectionService->publicSections(displaySurface: 'web')
+            ->sortBy(fn (array $section) => in_array($section['type'] ?? '', ['banner_carousel', 'hero_banner'], true) ? 0 : 1)
+            ->values();
         $homepageCollectionsEnabled = false;
 
         return view('home', compact('banners', 'homepageSections', 'homepageCollectionsEnabled'));
@@ -220,13 +226,13 @@ class HomeController extends Controller
                 $query->orderBy('min_order_amount', 'asc');
                 break;
             default:
-                $query->orderBy('rating', 'desc')
-                      ->orderBy('is_featured', 'desc');
+                $query->orderBy('rating', 'desc');
         }
-        
+
         $perPage = 12;
         $restaurants = $query->paginate($perPage);
-        
+        $this->stampSponsoredRestaurants($restaurants->getCollection(), 'legacy_home');
+
         // Transform data for frontend
         $restaurantData = $restaurants->map(function($restaurant) {
             return [
@@ -241,11 +247,12 @@ class HomeController extends Controller
                 'min_order' => $restaurant->min_order_amount ?? 199,
                 'is_open' => $restaurant->is_open,
                 'is_pure_veg' => (bool) $restaurant->is_pure_veg,
-                'is_featured' => $restaurant->is_featured,
+                'is_sponsored' => (bool) ($restaurant->is_sponsored ?? false),
                 'city' => $restaurant->city,
             ];
         });
-        
+        $restaurantData = $this->pinSponsoredResultsToTop($restaurantData);
+
         return response()->json([
             'restaurants' => $restaurantData,
             'current_page' => $restaurants->currentPage(),
@@ -259,12 +266,22 @@ class HomeController extends Controller
      */
     public function getFeaturedRestaurants()
     {
-        $restaurants = Restaurant::where('is_verified', true)
-            ->where('is_featured', true)
-            ->limit(8)
+        $limit = 8;
+        $candidates = Restaurant::where('is_verified', true)
+            ->orderByDesc('rating')
+            ->limit(40)
             ->get();
-            
-        return response()->json($restaurants);
+
+        if ($candidates->isEmpty()) {
+            return response()->json($candidates);
+        }
+
+        $this->stampSponsoredRestaurants($candidates, 'legacy_featured', $limit);
+        $winners = $candidates->filter(fn (Restaurant $restaurant) => $restaurant->is_sponsored ?? false)->values();
+        $fallback = $candidates->reject(fn (Restaurant $restaurant) => $restaurant->is_sponsored ?? false)
+            ->take(max(0, $limit - $winners->count()));
+
+        return response()->json($winners->merge($fallback)->values());
     }
     
     /**

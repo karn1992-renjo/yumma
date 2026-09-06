@@ -62,7 +62,7 @@ class AppBranding {
     this.appLogoUrl = '',
     this.appIconUrl = '',
     this.appFaviconUrl = '',
-    this.primaryColorHex = '#8B5CF6',
+    this.primaryColorHex = '#5C0298',
     this.secondaryColorHex = '#2B2A33',
     this.supportEmail = '',
     this.supportPhone = '',
@@ -115,7 +115,7 @@ class AppBranding {
       appLogoUrl: (json['app_logo'] ?? '').toString().trim(),
       appIconUrl: (json['app_icon'] ?? '').toString().trim(),
       appFaviconUrl: (json['app_favicon'] ?? '').toString().trim(),
-      primaryColorHex: (json['primary_color'] ?? '#8B5CF6').toString().trim(),
+      primaryColorHex: (json['primary_color'] ?? '#5C0298').toString().trim(),
       secondaryColorHex:
           (json['secondary_color'] ?? '#2B2A33').toString().trim(),
       supportEmail: (json['support_email'] ?? '').toString().trim(),
@@ -176,7 +176,8 @@ class AppBranding {
       pusherAppCluster: 'mt1',
       customerDeeplinkScheme: 'foodflow',
       customerOrderDeeplinkTemplate: 'foodflow://orders/{order_id}',
-      customerRestaurantDeeplinkTemplate: 'foodflow://restaurants/{restaurant_id}',
+      customerRestaurantDeeplinkTemplate:
+          'foodflow://restaurants/{restaurant_id}',
       customerWalletDeeplinkTemplate: 'foodflow://wallet',
       onboardingIntroTitle: AppConfig.appName,
       onboardingIntroSubtitle:
@@ -273,8 +274,8 @@ class AppBranding {
   String restaurantDeepLink(int restaurantId) {
     return customerRestaurantDeeplinkTemplate.isEmpty
         ? '$customerDeeplinkScheme://restaurants/$restaurantId'
-        : customerRestaurantDeeplinkTemplate
-            .replaceAll('{restaurant_id}', '$restaurantId');
+        : customerRestaurantDeeplinkTemplate.replaceAll(
+            '{restaurant_id}', '$restaurantId');
   }
 
   String get walletDeepLink {

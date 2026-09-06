@@ -2,12 +2,18 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../providers/auth_provider.dart';
+import '../../providers/theme_provider.dart';
 import '../../services/api_service.dart';
 import '../../theme/foodflow_theme.dart';
+import '../../widgets/aurora/aurora.dart';
+import '../../utils/currency_utils.dart';
 import '../../utils/payout_gateway_utils.dart';
 
 class DriverProfileScreen extends StatefulWidget {
-  const DriverProfileScreen({Key? key}) : super(key: key);
+  const DriverProfileScreen({Key? key, this.showAppBar = false})
+      : super(key: key);
+
+  final bool showAppBar;
 
   @override
   State<DriverProfileScreen> createState() => _DriverProfileScreenState();
@@ -47,22 +53,29 @@ class _DriverProfileScreenState extends State<DriverProfileScreen> {
       return const Center(child: CircularProgressIndicator());
     }
 
-    return Scaffold(
-      backgroundColor: foodflow.canvas,
+    return AuroraScaffold(
+      appBar: widget.showAppBar
+          ? const GlassAppBar(title: Text('Profile'))
+          : null,
       body: RefreshIndicator(
         onRefresh: _loadDriverData,
         child: ListView(
-          padding: const EdgeInsets.fromLTRB(16, 20, 16, 24),
+          padding: EdgeInsets.fromLTRB(
+              16, widget.showAppBar ? 20 : 28, 16, 24),
           children: [
-            Container(
+            AuroraEntrance(
+              child: Container(
               padding: const EdgeInsets.all(20),
               decoration: BoxDecoration(
-                gradient: const LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: [Color(0xFF161B22), Color(0xFFE64A19)],
-                ),
+                gradient: foodflow.brandGradient,
                 borderRadius: BorderRadius.circular(20),
+                boxShadow: [
+                  BoxShadow(
+                    color: foodflow.orange.withOpacity(0.28),
+                    blurRadius: 22,
+                    offset: const Offset(0, 12),
+                  ),
+                ],
               ),
               child: Row(
                 children: [
@@ -97,6 +110,24 @@ class _DriverProfileScreenState extends State<DriverProfileScreen> {
                         ),
                         const SizedBox(height: 4),
                         Text(
+                          () {
+                            final code = _driverData['driver_code'] ??
+                                (_driverData['id'] != null
+                                    ? 'DRV${_driverData['id'].toString().padLeft(5, '0')}'
+                                    : (user?.id != null
+                                        ? 'DRV${user!.id.toString().padLeft(5, '0')}'
+                                        : ''));
+                            return 'Partner ID: $code';
+                          }(),
+                          style: TextStyle(
+                            color: Colors.white.withOpacity(0.92),
+                            fontSize: 12.5,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: 0.3,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
                           _driverData['phone'] ?? user?.phone ?? '',
                           style: TextStyle(
                             color: Colors.white.withOpacity(0.82),
@@ -118,7 +149,16 @@ class _DriverProfileScreenState extends State<DriverProfileScreen> {
                 ],
               ),
             ),
+            ),
             const SizedBox(height: 20),
+            AuroraEntrance(
+              delay: const Duration(milliseconds: 60),
+              child: _buildAppearanceCard(),
+            ),
+            AuroraEntrance(
+              delay: const Duration(milliseconds: 110),
+              child: _buildPayoutModeCard(),
+            ),
             _ProfileMenuItem(
               icon: Icons.person_outline,
               title: 'Personal Details',
@@ -183,6 +223,132 @@ class _DriverProfileScreenState extends State<DriverProfileScreen> {
     );
   }
 
+  Widget _buildAppearanceCard() {
+    final themeProvider = context.watch<ThemeProvider>();
+    final current = themeProvider.themeMode;
+
+    ButtonSegment<ThemeMode> seg(ThemeMode mode, IconData icon, String label) =>
+        ButtonSegment(
+          value: mode,
+          icon: Icon(icon, size: 16),
+          label: Text(label),
+        );
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: foodflow.surfaceColor,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: foodflow.line),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.dark_mode_outlined, size: 18, color: foodflow.orange),
+              const SizedBox(width: 8),
+              Text(
+                'Appearance',
+                style: TextStyle(
+                  color: foodflow.ink,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          SizedBox(
+            width: double.infinity,
+            child: SegmentedButton<ThemeMode>(
+              segments: [
+                seg(ThemeMode.system, Icons.brightness_auto_rounded, 'System'),
+                seg(ThemeMode.light, Icons.light_mode_rounded, 'Light'),
+                seg(ThemeMode.dark, Icons.dark_mode_rounded, 'Dark'),
+              ],
+              selected: {current},
+              showSelectedIcon: false,
+              onSelectionChanged: (value) =>
+                  context.read<ThemeProvider>().setThemeMode(value.first),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPayoutModeCard() {
+    final isSalary = '${_driverData['earning_mode'] ?? 'commission'}' == 'salary';
+    final salary = _driverData['monthly_salary'];
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: foodflow.surfaceColor,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: foodflow.line),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 40,
+            height: 40,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: foodflow.orange.withOpacity(0.12),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(
+              isSalary ? Icons.badge_outlined : Icons.route_outlined,
+              color: foodflow.orange,
+              size: 20,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                 Text(
+                  'Payout Mode',
+                  style: TextStyle(
+                    color: foodflow.muted,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  isSalary ? 'Fixed monthly salary' : 'Per-delivery commission',
+                  style:  TextStyle(
+                    color: foodflow.ink,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                if (isSalary && salary != null)
+                  Text(
+                    '${formatCurrencyValue(context, salary)} / month',
+                    style:  TextStyle(
+                      color: foodflow.muted,
+                      fontSize: 12,
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          Text(
+            'Set by admin',
+            style: TextStyle(
+              color: foodflow.muted.withOpacity(0.8),
+              fontSize: 11,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _confirmDeleteAccount() async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -243,7 +409,9 @@ class _DriverProfileScreenState extends State<DriverProfileScreen> {
     if (count >= 3 && rating != null && rating > 0) {
       return '${rating.toStringAsFixed(1)} rating';
     }
-    return count > 0 ? '$count reviews' : 'New driver';
+    return count > 0
+        ? '$count ${count == 1 ? 'review' : 'reviews'}'
+        : 'New driver';
   }
 }
 
@@ -372,7 +540,7 @@ class _DriverProfileEditorScreenState extends State<DriverProfileEditorScreen> {
             child: Text(
               'Save',
               style: TextStyle(
-                color: _isSaving ? Colors.grey : foodflow.crimson,
+                color: _isSaving ? Colors.grey : foodflow.orange,
                 fontWeight: FontWeight.w800,
               ),
             ),
@@ -402,13 +570,11 @@ class _DriverProfileEditorScreenState extends State<DriverProfileEditorScreen> {
 
   List<Widget> _fields(dynamic authUser) {
     final profile = resolvePayoutGatewayProfile(
-      provider:
-          widget.initialData['payout_gateway_provider']?.toString() ??
+      provider: widget.initialData['payout_gateway_provider']?.toString() ??
           widget.initialData['payment_gateway_provider']?.toString() ??
           authUser?.payoutGatewayProvider ??
           authUser?.paymentGatewayProvider,
-      countryCode:
-          widget.initialData['country_code']?.toString() ??
+      countryCode: widget.initialData['country_code']?.toString() ??
           authUser?.countryCode,
     );
 
@@ -470,7 +636,7 @@ class _DriverProfileEditorScreenState extends State<DriverProfileEditorScreen> {
           const SizedBox(height: 12),
           Text(
             profile.helperText,
-            style: const TextStyle(
+            style:  TextStyle(
               color: foodflow.muted,
               fontSize: 12,
               fontWeight: FontWeight.w400,
@@ -677,12 +843,16 @@ class _ProfileMenuItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = iconColor ?? foodflow.crimson;
+    final color = iconColor ?? foodflow.orange;
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: Material(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
+        color: foodflow.surfaceColor,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: BorderSide(color: foodflow.line),
+        ),
+        clipBehavior: Clip.antiAlias,
         child: InkWell(
           borderRadius: BorderRadius.circular(16),
           onTap: onTap,
@@ -706,7 +876,7 @@ class _ProfileMenuItem extends StatelessWidget {
                     children: [
                       Text(
                         title,
-                        style: const TextStyle(
+                        style:  TextStyle(
                           color: foodflow.ink,
                           fontSize: 15,
                           fontWeight: FontWeight.w800,
@@ -715,7 +885,7 @@ class _ProfileMenuItem extends StatelessWidget {
                       const SizedBox(height: 4),
                       Text(
                         subtitle,
-                        style: const TextStyle(
+                        style:  TextStyle(
                           color: foodflow.muted,
                           fontSize: 12,
                           fontWeight: FontWeight.w400,
@@ -724,7 +894,7 @@ class _ProfileMenuItem extends StatelessWidget {
                     ],
                   ),
                 ),
-                const Icon(Icons.chevron_right, color: foodflow.faint),
+                 Icon(Icons.chevron_right, color: foodflow.faint),
               ],
             ),
           ),

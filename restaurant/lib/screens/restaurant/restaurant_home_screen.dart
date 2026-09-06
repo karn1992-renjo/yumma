@@ -189,14 +189,14 @@ class _DashboardContentState extends State<DashboardContent> {
           children: [
             Text(
               'Hello, ${restaurantProvider.restaurant?['name'] ?? 'Restaurant'}!',
-              style: const TextStyle(
+              style: TextStyle(
                 color: FoodFlowTheme.ink,
                 fontSize: 20,
                 fontWeight: FontWeight.w800,
               ),
             ),
             const SizedBox(height: 4),
-            const Text(
+            Text(
               'Here\'s what\'s happening today',
               style: TextStyle(
                 color: FoodFlowTheme.muted,
@@ -250,7 +250,7 @@ class _DashboardContentState extends State<DashboardContent> {
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  const Text(
+                  Text(
                     'Restaurant Status',
                     style: TextStyle(
                       color: FoodFlowTheme.ink,
@@ -277,7 +277,7 @@ class _DashboardContentState extends State<DashboardContent> {
 
             if (restaurantProvider.pendingOrders.isNotEmpty) ...[
               const SizedBox(height: 24),
-              const Text(
+              Text(
                 'Pending Orders',
                 style: TextStyle(
                   color: FoodFlowTheme.ink,
@@ -317,7 +317,7 @@ class _DashboardContentState extends State<DashboardContent> {
           Text(
             title,
             textAlign: TextAlign.center,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 12,
               color: FoodFlowTheme.muted,
               fontWeight: FontWeight.w600,
@@ -341,7 +341,7 @@ class _DashboardContentState extends State<DashboardContent> {
             children: [
               Text(
                 '#${order['order_number']}',
-                style: const TextStyle(
+                style: TextStyle(
                   color: FoodFlowTheme.ink,
                   fontWeight: FontWeight.w800,
                 ),
@@ -351,7 +351,7 @@ class _DashboardContentState extends State<DashboardContent> {
                 decoration: BoxDecoration(
                     color: FoodFlowTheme.crimson.withOpacity(0.1),
                     borderRadius: BorderRadius.circular(12)),
-                child: const Text('Pending',
+                child: Text('Pending',
                     style: TextStyle(color: FoodFlowTheme.crimson, fontSize: 12)),
               ),
             ],

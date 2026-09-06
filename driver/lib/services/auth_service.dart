@@ -14,6 +14,11 @@ import 'package:http/http.dart' as http;
 import '../models/user.dart';
 
 class AuthService {
+  static const List<String> _storedUserKeys = [
+    'driver_user_data',
+    'user_data',
+    'user',
+  ];
   final ApiService _api = ApiService();
   _Msg91WidgetSession? _msg91WidgetSession;
 
@@ -589,28 +594,40 @@ class AuthService {
 
   Future<void> persistUser(User user) async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('user_data', jsonEncode(user.toJson()));
+    final encoded = jsonEncode(user.toJson());
+    for (final key in _storedUserKeys) {
+      await prefs.setString(key, encoded);
+    }
   }
 
   Future<User?> getStoredUser() async {
     final prefs = await SharedPreferences.getInstance();
-    final userData = prefs.getString('user_data');
-    if (userData == null) return null;
 
-    try {
-      final userJson = jsonDecode(userData);
-      if (userJson is Map<String, dynamic>) {
-        return User.fromJson(userJson);
+    for (final key in _storedUserKeys) {
+      final userData = prefs.getString(key);
+      if (userData == null || userData.isEmpty) continue;
+
+      try {
+        final userJson = jsonDecode(userData);
+        if (userJson is Map) {
+          final user = User.fromJson(Map<String, dynamic>.from(userJson));
+          if (!user.isDriver) continue;
+          await persistUser(user);
+          return user;
+        }
+      } catch (e) {
+        debugPrint('Stored user cache decode failed for $key: $e');
       }
-    } catch (_) {
-      return null;
     }
+
     return null;
   }
 
   Future<void> clearStoredUser() async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.remove('user_data');
+    for (final key in _storedUserKeys) {
+      await prefs.remove(key);
+    }
   }
 }
 

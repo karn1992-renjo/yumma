@@ -129,7 +129,7 @@ class _LocationRequiredScreenState extends State<LocationRequiredScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  const Text(
+                  Text(
                     'Restaurant location tools',
                     style: TextStyle(
                       color: FoodFlowTheme.ink,
@@ -138,7 +138,7 @@ class _LocationRequiredScreenState extends State<LocationRequiredScreen> {
                     ),
                   ),
                   const SizedBox(height: 16),
-                  const Text(
+                  Text(
                     'Your restaurant can continue without updating device location. Use this only when you want to refresh a saved map point.',
                     style: TextStyle(
                       fontSize: 17,
@@ -172,7 +172,7 @@ class _LocationRequiredScreenState extends State<LocationRequiredScreen> {
                     ),
                   if (_savedLocation == null) ...[
                     const SizedBox(height: 16),
-                    const Text(
+                    Text(
                       'No device location is saved yet. This is optional for existing restaurants.',
                       style: TextStyle(
                         fontSize: 15,
@@ -215,7 +215,7 @@ class _LocationRequiredScreenState extends State<LocationRequiredScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
+            Text(
               'Saved address',
               style: TextStyle(
                 color: FoodFlowTheme.ink,
@@ -226,7 +226,7 @@ class _LocationRequiredScreenState extends State<LocationRequiredScreen> {
             const SizedBox(height: 8),
             Text(
               address,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 16,
                 color: FoodFlowTheme.inkSoft,
                 fontWeight: FontWeight.w600,
@@ -235,7 +235,7 @@ class _LocationRequiredScreenState extends State<LocationRequiredScreen> {
             const SizedBox(height: 8),
             Text(
               'Latitude: $lat • Longitude: $lng',
-              style: const TextStyle(fontSize: 14, color: FoodFlowTheme.muted),
+              style: TextStyle(fontSize: 14, color: FoodFlowTheme.muted),
             ),
           ],
         ),

@@ -8,16 +8,16 @@ class AppConfig {
   );
   static const String appPackageName = String.fromEnvironment(
     'APP_PACKAGE_NAME',
-    defaultValue: 'com.renjo.app_vendor',
+    defaultValue: 'Yumma!',
   );
 
   static const String appName = appRole == 'driver'
       ? 'Yumma! Go'
       : appRole == 'restaurant'
-          ? 'Yumma! Resto'
+          ? 'Yumma! Partner'
           : 'Yumma!';
   static const String brandName = 'Yumma!';
-  static const String companyName = 'RENJO TECHNOLOGY Private Limited';
+  static const String companyName = 'Adgraph Media Private Limited';
   static const String privacyPolicyUrl = 'https://yumma.in/privacy-policy';
   static const String accountDeletionPolicyUrl =
       'https://yumma.in/delete-account-policy.html';
@@ -29,7 +29,7 @@ class AppConfig {
     'GOOGLE_MAPS_API_KEY',
     defaultValue: '',
   );
-  static const Color primaryColor = Color(0xFF0E9F6E);
+  static const Color primaryColor = Color(0xFF2563EB);
   static const Color secondaryColor = Color(0xFF282C3F);
   static const Color backgroundColor = Color(0xFFF7F7F7);
 
@@ -41,7 +41,7 @@ class AppConfig {
 
   static const String supportPhone = String.fromEnvironment(
     'SUPPORT_PHONE',
-    defaultValue: '+917038666066',
+    defaultValue: '+917030666066',
   );
   static const String supportEmail = String.fromEnvironment(
     'SUPPORT_EMAIL',

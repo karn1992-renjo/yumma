@@ -200,9 +200,14 @@
                         <label class="form-label fw-semibold">GST on Platform Commission (%)</label>
                         <input type="number" step="0.01" name="gst_on_commission_rate"
                                class="form-control @error('gst_on_commission_rate') is-invalid @enderror" min="0" max="100"
-                               value="{{ old('gst_on_commission_rate', $gstOnCommissionRate) }}">
+                               value="{{ old('gst_on_commission_rate', $gstOnCommissionRate) }}"
+                               @if((string) App\Models\AppSetting::getValue('business_gst_enabled', '0') === '1') readonly @endif>
                         @error('gst_on_commission_rate') <div class="invalid-feedback">{{ $message }}</div> @enderror
-                        <small class="text-muted">Leave blank or set 0 to disable GST on commission</small>
+                        @if((string) App\Models\AppSetting::getValue('business_gst_enabled', '0') === '1')
+                            <small class="text-muted">Managed by the GST engine while GST invoicing is on. Adjust the service GST rate under <a href="{{ route('admin.settings.tax-charges') }}">Settings &rarr; Tax &amp; Charges</a>.</small>
+                        @else
+                            <small class="text-muted">Leave blank or set 0 to disable GST on commission. Also shown on <a href="{{ route('admin.settings.tax-charges') }}">Settings &rarr; Tax &amp; Charges</a>.</small>
+                        @endif
                     </div>
                     <div class="mb-3">
                         <label class="form-label fw-semibold">Online Payment Gateway Fee (%)</label>
@@ -211,6 +216,30 @@
                                value="{{ old('gateway_fee_rate', $gatewayFeeRate) }}">
                         @error('gateway_fee_rate') <div class="invalid-feedback">{{ $message }}</div> @enderror
                         <small class="text-muted">Applied to the customer total for online payments; set 0 to disable</small>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Delivery Failure Wait Time (minutes)</label>
+                        <input type="number" step="1" name="delivery_failure_wait_minutes"
+                               class="form-control @error('delivery_failure_wait_minutes') is-invalid @enderror" min="1" max="60"
+                               value="{{ old('delivery_failure_wait_minutes', App\Models\AppSetting::getValue('delivery_failure_wait_minutes', 5)) }}">
+                        @error('delivery_failure_wait_minutes') <div class="invalid-feedback">{{ $message }}</div> @enderror
+                        <small class="text-muted">How long a driver must wait after arriving before reporting a failed delivery</small>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Flash Resale Discount (%)</label>
+                        <input type="number" step="1" name="resale_discount_percent"
+                               class="form-control @error('resale_discount_percent') is-invalid @enderror" min="0" max="90"
+                               value="{{ old('resale_discount_percent', App\Models\AppSetting::getValue('resale_discount_percent', 30)) }}">
+                        @error('resale_discount_percent') <div class="invalid-feedback">{{ $message }}</div> @enderror
+                        <small class="text-muted">Discount offered on undelivered food resold nearby; the platform absorbs this cost</small>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Flash Resale Window (minutes)</label>
+                        <input type="number" step="1" name="resale_window_minutes"
+                               class="form-control @error('resale_window_minutes') is-invalid @enderror" min="1" max="60"
+                               value="{{ old('resale_window_minutes', App\Models\AppSetting::getValue('resale_window_minutes', 8)) }}">
+                        @error('resale_window_minutes') <div class="invalid-feedback">{{ $message }}</div> @enderror
+                        <small class="text-muted">How long the resale offer stays open before falling back to returning the food to the restaurant</small>
                     </div>
                 </div>
                 <div class="modal-footer border-0 px-4 pb-4">

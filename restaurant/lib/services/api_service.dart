@@ -117,6 +117,37 @@ class ApiService {
     }
   }
 
+  /// Best-effort read of the last cached GET response for [endpoint] straight
+  /// from local storage (no network). Returns null on a miss. Mirrors the exact
+  /// URI (incl. restaurant scope) that [get] caches under.
+  Future<dynamic> peekCache(
+    String endpoint, {
+    Map<String, dynamic>? queryParams,
+  }) async {
+    try {
+      final scopedParams = await _withRestaurantScope(endpoint, queryParams);
+      final uri = Uri.parse('${AppConfig.apiBaseUrl}$endpoint').replace(
+        queryParameters: scopedParams?.map((k, v) => MapEntry(k, v.toString())),
+      );
+      return LocalCacheService.get(uri.toString());
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Cache-first GET: fires [onCache] immediately with any locally cached payload
+  /// (so a screen can paint instantly), then performs the live request and
+  /// returns the fresh result. [onCache] is not called on a cache miss.
+  Future<dynamic> getWithCache(
+    String endpoint, {
+    Map<String, dynamic>? queryParams,
+    required void Function(dynamic cached) onCache,
+  }) async {
+    final cached = await peekCache(endpoint, queryParams: queryParams);
+    if (cached != null) onCache(cached);
+    return get(endpoint, queryParams: queryParams);
+  }
+
   Future<dynamic> get(
     String endpoint, {
     Map<String, dynamic>? queryParams,
@@ -134,7 +165,7 @@ class ApiService {
         () => http.get(uri, headers: headers),
       );
 
-      final result = await _handleResponse(response);
+      final result = await _handleResponse(response, endpoint);
       await LocalCacheService.put(uri.toString(), result);
       return result;
     } catch (e) {
@@ -174,7 +205,7 @@ class ApiService {
         ),
       );
 
-      return _handleResponse(response);
+      return _handleResponse(response, endpoint);
     } catch (e) {
       if (e is ApiException) rethrow;
       throw Exception('Network error: $e');
@@ -197,7 +228,7 @@ class ApiService {
         () => http.put(uri, headers: headers, body: jsonEncode(data)),
       );
 
-      return _handleResponse(response);
+      return _handleResponse(response, endpoint);
     } catch (e) {
       if (e is ApiException) rethrow;
       throw Exception('Network error: $e');
@@ -219,14 +250,17 @@ class ApiService {
         () => http.delete(uri, headers: headers),
       );
 
-      return _handleResponse(response);
+      return _handleResponse(response, endpoint);
     } catch (e) {
       if (e is ApiException) rethrow;
       throw Exception('Network error: $e');
     }
   }
 
-  Future<dynamic> _handleResponse(http.Response response) async {
+  Future<dynamic> _handleResponse(http.Response response,
+      [String endpoint = '']) async {
+    final isIdentityCall =
+        endpoint == '/user' || endpoint.endsWith('/user');
     if (kDebugMode) print('Status: ${response.statusCode}');
 
     if (response.body.trim().isEmpty) {
@@ -242,8 +276,15 @@ class ApiService {
         trimmedBody.startsWith('<!DOCTYPE html>') ||
         trimmedBody.startsWith('<html')) {
       if (trimmedBody.toLowerCase().contains('<title>login')) {
-        await _handleSessionExpired();
-        throw ApiException('Session expired. Please login again.');
+        // Only bounce to login when the identity call itself fails. An HTML
+        // login page from any other route is a server-side route/auth quirk
+        // (e.g. an endpoint missing from the sanctum group) and must not kill
+        // an otherwise-valid session.
+        if (isIdentityCall) {
+          await _handleSessionExpired();
+          throw ApiException('Session expired. Please login again.');
+        }
+        throw ApiException('This section is temporarily unavailable.');
       }
       if (kDebugMode) print('HTML response body: ${response.body}');
       throw ApiException('Server returned HTML instead of JSON.');
@@ -285,8 +326,16 @@ class ApiService {
     final normalizedMessage = message.toLowerCase();
     if (response.statusCode == 401 ||
         normalizedMessage.contains('unauthenticated')) {
-      await _handleSessionExpired();
-      throw ApiException('Session expired. Please login again.');
+      // Only a 401 on the identity endpoint means the session itself is dead.
+      // A 401 on any other resource is a per-request authorization problem and
+      // must NOT log the user out (was auto-logging out on payout-detail taps).
+      if (isIdentityCall) {
+        await _handleSessionExpired();
+        throw ApiException('Session expired. Please login again.');
+      }
+      throw ApiException(
+        message.trim().isEmpty ? 'You are not allowed to view this.' : message,
+      );
     }
 
     throw ApiException(message);
@@ -335,7 +384,7 @@ class ApiService {
 
       final streamed = await request.send();
       final response = await http.Response.fromStream(streamed);
-      return _handleResponse(response);
+      return _handleResponse(response, endpoint);
     } catch (e) {
       if (e is ApiException) rethrow;
       throw Exception('Network error: $e');

@@ -15,11 +15,11 @@ class AppSpacing {
 }
 
 class AppTypography {
-  static const double display = 28;
+  static const double display = 32;
   static const double headline = 24;
-  static const double titleLarge = 18;
+  static const double titleLarge = 19;
   static const double titleMedium = 16;
-  static const double bodyLarge = 15;
+  static const double bodyLarge = 16;
   static const double bodyMedium = 14;
   static const double bodySmall = 12;
   static const double caption = 11;
@@ -34,66 +34,66 @@ class AppTypography {
         color: textColor,
         fontSize: display,
         fontWeight: FontWeight.w800,
-        height: 1.05,
+        height: 1.1,
       ),
       displayMedium: TextStyle(
         color: textColor,
         fontSize: 26,
         fontWeight: FontWeight.w800,
-        height: 1.06,
+        height: 1.1,
       ),
       headlineLarge: TextStyle(
         color: textColor,
         fontSize: headline,
         fontWeight: FontWeight.w800,
-        height: 1.08,
+        height: 1.15,
       ),
       headlineMedium: TextStyle(
         color: textColor,
         fontSize: 22,
         fontWeight: FontWeight.w800,
-        height: 1.12,
+        height: 1.15,
       ),
       titleLarge: TextStyle(
         color: textColor,
         fontSize: titleLarge,
         fontWeight: FontWeight.w800,
-        height: 1.18,
+        height: 1.25,
       ),
       titleMedium: TextStyle(
         color: textColor,
         fontSize: titleMedium,
-        fontWeight: FontWeight.w700,
-        height: 1.2,
+        fontWeight: FontWeight.w800,
+        height: 1.35,
       ),
       titleSmall: TextStyle(
         color: textColor,
         fontSize: bodyMedium,
-        fontWeight: FontWeight.w700,
-        height: 1.2,
+        fontWeight: FontWeight.w800,
+        height: 1.25,
       ),
       bodyLarge: TextStyle(
-        color: mutedColor,
+        color: textColor,
         fontSize: bodyLarge,
         fontWeight: FontWeight.w500,
-        height: 1.32,
+        height: 1.35,
       ),
       bodyMedium: TextStyle(
         color: mutedColor,
         fontSize: bodyMedium,
         fontWeight: FontWeight.w500,
-        height: 1.3,
+        height: 1.35,
       ),
       bodySmall: TextStyle(
         color: mutedColor,
         fontSize: bodySmall,
-        fontWeight: FontWeight.w400,
+        fontWeight: FontWeight.w500,
         height: 1.24,
       ),
       labelLarge: TextStyle(
         color: textColor,
         fontSize: bodyMedium,
-        fontWeight: FontWeight.w700,
+        fontWeight: FontWeight.w800,
         height: 1.14,
       ),
       labelMedium: TextStyle(
@@ -105,7 +105,7 @@ class AppTypography {
       labelSmall: TextStyle(
         color: mutedColor,
         fontSize: caption,
-        fontWeight: FontWeight.w500,
+        fontWeight: FontWeight.w600,
         height: 1.12,
       ),
     );

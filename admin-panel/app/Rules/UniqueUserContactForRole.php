@@ -154,6 +154,16 @@ class UniqueUserContactForRole implements ValidationRule
             });
         }
 
+        // A staff member whose spatie role was not (yet) synced is still a staff
+        // member if the restaurant_staff pivot exists — the login flow repairs
+        // the role afterwards (AuthController::repairRestaurantStaffRole).
+        if ($role === 'restaurant_staff') {
+            return User::query()->where(function (Builder $query) {
+                $query->whereHas('roles', fn (Builder $roleQuery) => $roleQuery->where('name', 'restaurant_staff'))
+                    ->orWhereHas('restaurantStaff');
+            });
+        }
+
         return User::query()
             ->whereHas('roles', fn (Builder $query) => $query->where('name', $role));
     }

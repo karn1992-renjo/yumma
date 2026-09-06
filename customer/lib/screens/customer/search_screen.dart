@@ -358,6 +358,27 @@ class _SearchRestaurantCard extends StatelessWidget {
                       ),
                     ),
                   ),
+                  if (restaurant.isSponsored)
+                    Positioned(
+                      left: 12,
+                      top: 12,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withOpacity(0.55),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: const Text(
+                          'Ad',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 10.5,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                    ),
                   Positioned(
                     left: 12,
                     right: 12,
@@ -1695,9 +1716,9 @@ class _SearchScreenState extends State<SearchScreen> {
       }
 
       debugPrint(
-          'ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â°ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â Searching restaurants with query: "$query"');
+          'Searching restaurants with query: "$query"');
       debugPrint(
-          'ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â°ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â Search params: $queryParams');
+          'Search params: $queryParams');
 
       // Try search endpoint
       dynamic response;
@@ -1716,10 +1737,10 @@ class _SearchScreenState extends State<SearchScreen> {
           },
         ).timeout(const Duration(seconds: 15));
         debugPrint(
-            'ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã¢â‚¬Å“ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¦ Search API response received');
+            'Search API response received');
       } catch (e) {
         debugPrint(
-            'ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ Search endpoint failed: $e');
+            'Search endpoint failed: $e');
         final fallback = await _fallbackNearbySearch(query, savedLocation);
         response = <String, dynamic>{
           'success': true,
@@ -1879,7 +1900,7 @@ class _SearchScreenState extends State<SearchScreen> {
           }
 
           debugPrint(
-              'ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â°ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â  Total found: ${dataList.length}, Filtered: ${filteredRestaurants.length}');
+              'Total found: ${dataList.length}, Filtered: ${filteredRestaurants.length}');
 
           setState(() {
             _restaurants = results;
@@ -2665,7 +2686,10 @@ class _SearchScreenState extends State<SearchScreen> {
             ..._restaurants.map(
               (restaurant) => _SearchRestaurantCard(
                 restaurant: restaurant,
-                onTap: () => _openRestaurant(restaurant.id),
+                onTap: () {
+                  _trackSponsoredClick(restaurant);
+                  _openRestaurant(restaurant.id);
+                },
               ),
             ),
           ],
@@ -2861,6 +2885,20 @@ class _SearchScreenState extends State<SearchScreen> {
         'restaurantId': restaurantId,
         if (menuItemId != null && menuItemId > 0) 'menuItemId': menuItemId,
       },
+    );
+  }
+
+  /// Fire-and-forget billable click ping for a sponsored search result.
+  /// Never awaited, never blocks navigation.
+  void _trackSponsoredClick(Restaurant restaurant) {
+    if (!restaurant.isSponsored || restaurant.adCampaignId == null) return;
+    unawaited(
+      _api.post(ApiConstants.adClicks, data: {
+        'campaign_id': restaurant.adCampaignId,
+        'surface': 'search',
+      }).catchError((Object error) {
+        debugPrint('Ad click tracking error: $error');
+      }),
     );
   }
 

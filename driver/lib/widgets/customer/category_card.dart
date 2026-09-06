@@ -83,7 +83,7 @@ class CategoryCard extends StatelessWidget {
             const SizedBox(height: 6),
             Text(
               name,
-              style: const TextStyle(
+              style:  TextStyle(
                 fontSize: 12,
                 fontWeight: FontWeight.w800,
                 color: FoodFlowTheme.ink,

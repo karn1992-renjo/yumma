@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\AppSetting;
 use App\Models\Banner;
 use App\Models\Cuisine;
+use App\Models\DeliveryArea;
 use App\Services\HomeSectionService;
 use App\Services\MediaStorage;
 use App\Services\PromotionEngineService;
@@ -18,19 +19,27 @@ class ContentController extends Controller
         return max(2, min(30, (int) AppSetting::getValue('banner_duration_seconds', 5)));
     }
 
+    private function requestDisplaySurface(Request $request): ?string
+    {
+        return Banner::normalizeDisplaySurface($request->input('platform', $request->input('surface')));
+    }
+
     public function homeSections(Request $request, HomeSectionService $homeSectionService)
     {
         try {
             $bannerDurationSeconds = $this->bannerDurationSeconds();
+            $surface = $this->requestDisplaySurface($request);
             $latitude = $request->filled('lat') ? (float) $request->input('lat') : null;
             $longitude = $request->filled('lng') ? (float) $request->input('lng') : null;
-            $radius = $request->filled('radius') ? (float) $request->input('radius') : 15.0;
+            $radius = $request->filled('radius')
+                ? (float) $request->input('radius')
+                : $this->discoveryRadiusForLocation($latitude, $longitude);
             // Restaurant and menu discovery is always scoped to what can
             // actually deliver to the customer's selected coordinates.
             $deliveryZoneOnly = true;
 
             $sections = $homeSectionService
-                ->publicSections($latitude, $longitude, $radius, $deliveryZoneOnly)
+                ->publicSections($latitude, $longitude, $radius, $deliveryZoneOnly, $surface)
                 ->map(function (array $section) use ($bannerDurationSeconds) {
                 return [
                     'token' => $section['token'],
@@ -55,6 +64,7 @@ class ContentController extends Controller
                                 'media_type' => $this->bannerMediaType($item->image),
                                 'link' => $item->link,
                                 'banner_type' => $item->banner_type ?? 'home',
+                                'display_surface' => $item->display_surface ?? 'both',
                                 'layout_mode' => $item->layout_mode ?? 'text_image',
                                 'image_ratio' => (int) ($item->image_ratio ?? 46),
                                 'duration_seconds' => $bannerDurationSeconds,
@@ -91,11 +101,31 @@ class ContentController extends Controller
         }
     }
 
-    public function banners()
+    private function discoveryRadiusForLocation(?float $latitude, ?float $longitude): float
+    {
+        $defaultRadius = (float) AppSetting::defaultDeliveryRadius();
+        if ($latitude === null || $longitude === null) {
+            return $defaultRadius;
+        }
+
+        $area = DeliveryArea::query()
+            ->active()
+            ->get()
+            ->first(fn (DeliveryArea $area) => $area->containsPoint($latitude, $longitude));
+
+        if ($area && $area->area_type === 'circle' && (float) $area->radius_km > 0) {
+            return (float) $area->radius_km;
+        }
+
+        return $defaultRadius;
+    }
+
+    public function banners(Request $request)
     {
         try {
             $bannerDurationSeconds = $this->bannerDurationSeconds();
             $banners = Banner::where('is_active', true)
+                ->visibleOnSurface($this->requestDisplaySurface($request))
                 ->where('banner_type', 'home')
                 ->where(function ($q) {
                     $q->whereNull('layout_mode')->orWhere('layout_mode', '!=', 'promo_card');
@@ -124,6 +154,7 @@ class ContentController extends Controller
                         'media_type' => $this->bannerMediaType($banner->image),
                         'link' => $banner->link,
                         'banner_type' => $banner->banner_type ?? 'home',
+                        'display_surface' => $banner->display_surface ?? 'both',
                         'layout_mode' => $banner->layout_mode ?? 'text_image',
                         'image_ratio' => (int) ($banner->image_ratio ?? 46),
                         'duration_seconds' => $bannerDurationSeconds,
@@ -151,11 +182,12 @@ class ContentController extends Controller
         }
     }
 
-    public function bannersByType($type)
+    public function bannersByType($type, Request $request)
     {
         try {
             $bannerDurationSeconds = $this->bannerDurationSeconds();
             $banners = Banner::where('banner_type', $type)
+                ->visibleOnSurface($this->requestDisplaySurface($request))
                 ->when($type === 'home', function ($q) {
                     $q->where(function ($builder) {
                         $builder->whereNull('layout_mode')->orWhere('layout_mode', '!=', 'promo_card');
@@ -186,6 +218,7 @@ class ContentController extends Controller
                         'media_type' => $this->bannerMediaType($banner->image),
                         'link' => $banner->link,
                         'banner_type' => $banner->banner_type,
+                        'display_surface' => $banner->display_surface ?? 'both',
                         'layout_mode' => $banner->layout_mode ?? 'text_image',
                         'image_ratio' => (int) ($banner->image_ratio ?? 46),
                         'duration_seconds' => $bannerDurationSeconds,
@@ -407,3 +440,4 @@ class ContentController extends Controller
         return str_ends_with(strtolower((string) $path), '.json') ? 'lottie' : 'image';
     }
 }
+

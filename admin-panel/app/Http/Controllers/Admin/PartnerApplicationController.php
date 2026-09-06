@@ -10,6 +10,7 @@ use App\Models\Restaurant;
 use App\Models\User;
 use App\Services\CashfreeVerificationService;
 use App\Services\DeliveryAreaResolver;
+use App\Services\RestaurantOnboardingService;
 use App\Support\PhoneNumber;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
@@ -25,7 +26,8 @@ class PartnerApplicationController extends Controller
 {
     public function __construct(
         private readonly DeliveryAreaResolver $deliveryAreaResolver,
-        private readonly CashfreeVerificationService $verification
+        private readonly CashfreeVerificationService $verification,
+        private readonly RestaurantOnboardingService $restaurantOnboardings
     ) {
     }
 
@@ -164,8 +166,9 @@ class PartnerApplicationController extends Controller
         DB::beginTransaction();
 
         try {
+            $restaurant = null;
             if ($application->partner_type === 'restaurant') {
-                $this->approveRestaurantApplication($application);
+                $restaurant = $this->approveRestaurantApplication($application);
             } else {
                 $this->approveDriverApplication($application);
             }
@@ -176,6 +179,10 @@ class PartnerApplicationController extends Controller
                 'reviewed_by' => auth()->id(),
                 'admin_notes' => $request->admin_notes,
             ]);
+
+            if ($restaurant) {
+                $this->restaurantOnboardings->markApproved($application->fresh(), $restaurant, $request->user());
+            }
 
             DB::commit();
 
@@ -259,7 +266,7 @@ class PartnerApplicationController extends Controller
         }
 
         $meta = is_array($application->onboarding_meta) ? $application->onboarding_meta : [];
-        foreach (['logo_image', 'banner_image', 'cover_image', 'interior_image', 'food_image', 'kitchen_image', 'bank_proof', 'shop_license'] as $field) {
+        foreach (['logo_image', 'banner_image', 'cover_image', 'interior_image', 'food_image', 'kitchen_image', 'menu_photo', 'bank_proof', 'shop_license'] as $field) {
             if (!empty($meta[$field])) {
                 Storage::disk('public')->delete($meta[$field]);
             }
@@ -330,6 +337,7 @@ class PartnerApplicationController extends Controller
             'interior_image' => ['nullable', 'file', 'mimes:jpg,jpeg,png,webp', 'max:5120'],
             'food_image' => ['nullable', 'file', 'mimes:jpg,jpeg,png,webp', 'max:5120'],
             'kitchen_image' => ['nullable', 'file', 'mimes:jpg,jpeg,png,webp', 'max:5120'],
+            'menu_photo' => ['nullable', 'file', 'mimes:jpg,jpeg,png,webp', 'max:5120'],
             'bank_proof' => ['nullable', 'file', 'mimes:pdf,jpg,jpeg,png', 'max:5120'],
             'shop_license' => ['nullable', 'file', 'mimes:pdf,jpg,jpeg,png', 'max:5120'],
             'admin_notes' => ['nullable', 'string', 'max:1000'],
@@ -469,6 +477,7 @@ class PartnerApplicationController extends Controller
             'interior_image' => 'partner_documents/restaurant/interior',
             'food_image' => 'partner_documents/restaurant/food',
             'kitchen_image' => 'partner_documents/restaurant/kitchen',
+            'menu_photo' => 'partner_documents/restaurant/menu',
             'bank_proof' => 'partner_documents/restaurant/bank-proof',
             'shop_license' => 'partner_documents/restaurant/shop-license',
         ] as $field => $directory) {
@@ -537,6 +546,7 @@ class PartnerApplicationController extends Controller
                 'interior_image' => $documents['interior_image'] ?? ($existingMeta['interior_image'] ?? null),
                 'food_image' => $documents['food_image'] ?? ($existingMeta['food_image'] ?? null),
                 'kitchen_image' => $documents['kitchen_image'] ?? ($existingMeta['kitchen_image'] ?? null),
+                'menu_photo' => $documents['menu_photo'] ?? ($existingMeta['menu_photo'] ?? null),
                 'bank_proof' => $documents['bank_proof'] ?? ($existingMeta['bank_proof'] ?? null),
                 'shop_license' => $documents['shop_license'] ?? ($existingMeta['shop_license'] ?? null),
             ], fn ($value) => $value !== null && $value !== '');
@@ -556,25 +566,50 @@ class PartnerApplicationController extends Controller
         return array_merge($existingMeta, $base, $driverMeta);
     }
 
-    protected function approveRestaurantApplication(PartnerApplication $application): void
+    protected function approveRestaurantApplication(PartnerApplication $application): Restaurant
     {
         $bankDetails = json_decode($application->bank_details ?? '[]', true);
         $bankDetails = is_array($bankDetails) ? $bankDetails : [];
         $meta = is_array($application->onboarding_meta) ? $application->onboarding_meta : [];
 
-        $owner = User::create([
-            'name' => $application->contact_name,
-            'email' => $application->contact_email,
-            'phone' => $application->contact_phone,
-            'password' => $application->password,
-            'is_active' => true,
-            'account_holder_name' => $bankDetails['holder_name'] ?? null,
-            'bank_name' => $bankDetails['bank_name'] ?? null,
-            'account_number' => $bankDetails['account_number'] ?? null,
-            'ifsc_code' => $bankDetails['ifsc'] ?? null,
-            'upi_id' => $bankDetails['upi_id'] ?? null,
-        ]);
-        $owner->assignRole('restaurant_owner');
+        // Reuse an existing login if this person already partners with us
+        // (adding a 2nd/3rd outlet) — matched on phone first, then email — so all
+        // their outlets hang off one account and the app's outlet switcher works.
+        $owner = User::query()
+            ->when($application->contact_phone, fn ($q) => $q->orWhere('phone', $application->contact_phone))
+            ->when($application->contact_email, fn ($q) => $q->orWhere('email', $application->contact_email))
+            ->first();
+
+        if ($owner) {
+            // Only backfill blanks — never stomp the owner's existing details.
+            $owner->fill(array_filter([
+                'name' => $owner->name ?: $application->contact_name,
+                'account_holder_name' => $owner->account_holder_name ?: ($bankDetails['holder_name'] ?? null),
+                'bank_name' => $owner->bank_name ?: ($bankDetails['bank_name'] ?? null),
+                'account_number' => $owner->account_number ?: ($bankDetails['account_number'] ?? null),
+                'ifsc_code' => $owner->ifsc_code ?: ($bankDetails['ifsc'] ?? null),
+                'upi_id' => $owner->upi_id ?: ($bankDetails['upi_id'] ?? null),
+                'is_active' => true,
+            ], fn ($v) => $v !== null && $v !== ''));
+            $owner->save();
+        } else {
+            $owner = User::create([
+                'name' => $application->contact_name,
+                'email' => $application->contact_email,
+                'phone' => $application->contact_phone,
+                'password' => $application->password,
+                'is_active' => true,
+                'account_holder_name' => $bankDetails['holder_name'] ?? null,
+                'bank_name' => $bankDetails['bank_name'] ?? null,
+                'account_number' => $bankDetails['account_number'] ?? null,
+                'ifsc_code' => $bankDetails['ifsc'] ?? null,
+                'upi_id' => $bankDetails['upi_id'] ?? null,
+            ]);
+        }
+
+        if (! $owner->hasRole('restaurant_owner')) {
+            $owner->assignRole('restaurant_owner');
+        }
 
         $restaurant = Restaurant::create([
             'owner_id' => $owner->id,
@@ -617,6 +652,8 @@ class PartnerApplicationController extends Controller
             $mail->to($application->contact_email)
                 ->subject('Congratulations! Your Restaurant Application is Approved - FoodFlow');
         });
+
+        return $restaurant;
     }
 
     protected function approveDriverApplication(PartnerApplication $application): void

@@ -64,3 +64,11 @@ Broadcast::channel('support.{conversationId}', function ($user, int $conversatio
 Broadcast::channel('support-queue', function ($user) {
     return $user->hasAnyRole(['super_admin', 'admin']);
 });
+
+Broadcast::channel('admin.ai-activity', function ($user) {
+    return $user->hasAnyRole(['super_admin', 'admin']);
+});
+
+Broadcast::channel('admin.gig-operations', function ($user) {
+    return $user->hasAnyRole(['super_admin', 'admin']);
+});

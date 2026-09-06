@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -6,6 +8,8 @@ import '../../providers/auth_provider.dart';
 import '../../providers/restaurant_provider.dart';
 import '../../services/api_service.dart';
 import '../../theme/foodflow_theme.dart';
+import '../../theme/aurora_theme.dart';
+import '../../widgets/aurora/aurora.dart';
 import '../../utils/currency_utils.dart';
 import '../../utils/json_utils.dart';
 
@@ -20,9 +24,11 @@ class RestaurantAnalyticsScreen extends StatefulWidget {
 class _RestaurantAnalyticsScreenState extends State<RestaurantAnalyticsScreen> {
   final ApiService _api = ApiService();
   Map<String, dynamic> _performance = {};
+  Map<String, dynamic> _adPerformance = {};
   Map<String, dynamic> _compare = {};
   bool _loadingPerformance = true;
   bool _loadingCompare = false;
+  bool _hasPerformance = false;
   String? _error;
   String _tab = 'performance';
   String _period = 'week';
@@ -36,25 +42,44 @@ class _RestaurantAnalyticsScreenState extends State<RestaurantAnalyticsScreen> {
       final provider = context.read<RestaurantProvider>();
       if (provider.restaurants.isEmpty) await provider.loadRestaurants();
       await _loadPerformance();
+      unawaited(_loadAdPerformance());
     });
+  }
+
+  void _applyPerformance(dynamic response) {
+    if (response is! Map ||
+        response['success'] != true ||
+        response['data'] is! Map) {
+      return;
+    }
+    _performance = Map<String, dynamic>.from(response['data']);
+    final sections = _performanceSections;
+    if (!sections.any((s) => s.title == _section)) {
+      _section = sections.isEmpty ? 'Sales' : sections.first.title;
+    }
+    _hasPerformance = true;
   }
 
   Future<void> _loadPerformance() async {
     setState(() {
-      _loadingPerformance = true;
+      if (!_hasPerformance) _loadingPerformance = true;
       _error = null;
     });
     try {
+      final params = _queryParams();
+      final cached = await _api.peekCache(ApiConstants.restaurantAnalytics,
+          queryParams: params);
+      if (mounted && cached != null) {
+        setState(() {
+          _applyPerformance(cached);
+          _loadingPerformance = false;
+        });
+      }
       final response = await _api.get(ApiConstants.restaurantAnalytics,
-          queryParams: _queryParams());
+          queryParams: params);
       if (!mounted) return;
       if (response['success'] == true && response['data'] is Map) {
-        setState(() {
-          _performance = Map<String, dynamic>.from(response['data']);
-          final sections = _performanceSections;
-          if (!sections.any((s) => s.title == _section))
-            _section = sections.isEmpty ? 'Sales' : sections.first.title;
-        });
+        setState(() => _applyPerformance(response));
       } else {
         setState(() => _error = response['message']?.toString() ??
             'Unable to load restaurant reports.');
@@ -63,6 +88,20 @@ class _RestaurantAnalyticsScreenState extends State<RestaurantAnalyticsScreen> {
       if (mounted) setState(() => _error = e.toString());
     } finally {
       if (mounted) setState(() => _loadingPerformance = false);
+    }
+  }
+
+  Future<void> _loadAdPerformance() async {
+    try {
+      final response = await _api.get(ApiConstants.restaurantAdPerformance);
+      if (!mounted) return;
+      if (response['success'] == true && response['data'] is Map) {
+        setState(() {
+          _adPerformance = Map<String, dynamic>.from(response['data']);
+        });
+      }
+    } catch (e) {
+      debugPrint('Load ad performance error: $e');
     }
   }
 
@@ -105,41 +144,74 @@ class _RestaurantAnalyticsScreenState extends State<RestaurantAnalyticsScreen> {
     if (!(user?.canViewReports ?? true)) return const _ReportsAccessDenied();
     final provider = context.watch<RestaurantProvider>();
     return Scaffold(
-      backgroundColor: const Color(0xFFF2F2F6),
-      body: SafeArea(
-        bottom: false,
-        child: RefreshIndicator(
-          color: _orange,
-          onRefresh: _tab == 'compare' ? _loadCompare : _loadPerformance,
-          child: ListView(
-            physics: const AlwaysScrollableScrollPhysics(),
-            padding: EdgeInsets.zero,
-            children: [
-              _ReportsHeader(
-                  selectedTab: _tab,
-                  onTab: (value) async {
-                    setState(() => _tab = value);
-                    if (value == 'compare' && _compare.isEmpty)
-                      await _loadCompare();
-                  }),
-              _ReportsFilterBar(
-                  outletLabel: provider.selectedRestaurantLabel,
-                  periodLabel: _periodLabel,
-                  onFilter: _showFilters),
-              if (_error != null)
-                _ReportsMessage(
-                    icon: Icons.error_outline_rounded,
-                    text: _error!,
-                    actionLabel: 'Retry',
-                    onAction:
-                        _tab == 'compare' ? _loadCompare : _loadPerformance)
-              else if (_tab == 'compare')
-                _buildCompare()
-              else
-                _buildPerformance(),
-            ],
+      backgroundColor: foodflow.canvas,
+      extendBodyBehindAppBar: true,
+      appBar: GlassAppBar(
+        title: Text(
+          'Business reports',
+          style: TextStyle(
+            color: foodflow.ink,
+            fontSize: 18,
+            fontWeight: FontWeight.w900,
           ),
         ),
+      ),
+      body: Stack(
+        children: [
+          Positioned.fill(
+            child: DecoratedBox(
+              decoration: BoxDecoration(color: foodflow.canvas),
+              child: Stack(children: AuroraTheme.auroraBlobs()),
+            ),
+          ),
+          Positioned.fill(
+            child: RefreshIndicator(
+              color: _orange,
+              onRefresh:
+                  _tab == 'compare' ? _loadCompare : _loadPerformance,
+              child: ListView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                padding: EdgeInsets.fromLTRB(
+                  0,
+                  MediaQuery.of(context).padding.top + 64,
+                  0,
+                  24,
+                ),
+                children: [
+                  _ReportsHeader(
+                      selectedTab: _tab,
+                      onTab: (value) async {
+                        setState(() => _tab = value);
+                        if (value == 'compare' && _compare.isEmpty)
+                          await _loadCompare();
+                      }),
+                  _PeriodStrip(
+                    period: _period,
+                    outlet: provider.selectedRestaurantLabel,
+                    onPick: (v) {
+                      setState(() => _period = v);
+                      _reloadCurrentTab();
+                    },
+                    onOutlet: _showFilters,
+                  ),
+                  const SizedBox(height: 6),
+                  if (_error != null)
+                    _ReportsMessage(
+                        icon: Icons.error_outline_rounded,
+                        text: _error!,
+                        actionLabel: 'Retry',
+                        onAction: _tab == 'compare'
+                            ? _loadCompare
+                            : _loadPerformance)
+                  else if (_tab == 'compare')
+                    _buildCompare()
+                  else
+                    _buildPerformance(),
+                ],
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -153,30 +225,59 @@ class _RestaurantAnalyticsScreenState extends State<RestaurantAnalyticsScreen> {
           text: 'Reports will appear after real orders are available.');
     final selected = sections.firstWhere((s) => s.title == _section,
         orElse: () => sections.first);
-    return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      _ReportsRail(
-          sections: sections.map((s) => s.title).toList(),
-          selected: selected.title,
-          onSelected: (v) => setState(() => _section = v)),
-      Expanded(
-          child: Padding(
-              padding: const EdgeInsets.fromLTRB(8, 8, 10, 24),
-              child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    _ReportsNotice(
-                        text: 'Showing real data for $_periodLabel.',
-                        onRefresh: _loadPerformance),
-                    const SizedBox(height: 8),
-                    _ReportsCard(
-                        title: selected.title, metrics: selected.metrics),
-                    if (selected.rows.isNotEmpty) ...[
-                      const SizedBox(height: 8),
-                      _ReportsRowsCard(
-                          title: selected.rowTitle, rows: selected.rows)
-                    ],
-                  ]))),
-    ]);
+    final rest = selected.metrics.length > 1
+        ? selected.metrics.sublist(1)
+        : const <_ReportMetric>[];
+
+    final hourly = _list(_performance['hourly_data'])
+        .map(_map)
+        .map((m) => (
+              hour: (parseNullableDouble(m['hour']) ?? 0).toInt(),
+              orders: (parseNullableDouble(m['orders']) ?? 0),
+            ))
+        .toList();
+    final delivered = _num('delivered_orders');
+    final cancelled = _num('cancelled_orders');
+    final totalOrders = _num('total_orders');
+    final showCharts = selected.title == 'Sales';
+
+    return Padding(
+        padding: const EdgeInsets.fromLTRB(14, 6, 14, 24),
+        child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              _SectionChips(
+                  sections: sections.map((s) => s.title).toList(),
+                  selected: selected.title,
+                  onSelected: (v) => setState(() => _section = v)),
+              const SizedBox(height: 10),
+              if (selected.metrics.isNotEmpty)
+                _ReportHero(
+                    label: selected.metrics.first.title,
+                    value: selected.metrics.first.value,
+                    caption: 'for $_periodLabel'),
+              if (showCharts && totalOrders > 0) ...[
+                const SizedBox(height: 10),
+                _OrderOutcomeCard(
+                  delivered: delivered,
+                  cancelled: cancelled,
+                  total: totalOrders,
+                ),
+              ],
+              if (showCharts && hourly.any((h) => h.orders > 0)) ...[
+                const SizedBox(height: 10),
+                _HourlyOrdersCard(data: hourly),
+              ],
+              if (rest.isNotEmpty) ...[
+                const SizedBox(height: 10),
+                _MetricBoard(metrics: rest),
+              ],
+              if (selected.rows.isNotEmpty) ...[
+                const SizedBox(height: 10),
+                _LeaderboardCard(
+                    title: selected.rowTitle, rows: selected.rows)
+              ],
+            ]));
   }
 
   Widget _buildCompare() {
@@ -210,25 +311,25 @@ class _RestaurantAnalyticsScreenState extends State<RestaurantAnalyticsScreen> {
                     const SizedBox(height: 6),
                     Text(
                         '${restaurant['name'] ?? 'Selected outlet'} vs ${zone['name'] ?? restaurant['city'] ?? 'delivery zone'} average',
-                        style: const TextStyle(
+                        style: TextStyle(
                             color: FoodFlowTheme.muted,
                             fontWeight: FontWeight.w700)),
                     const SizedBox(height: 4),
                     Text(
                         '$peerCount peer restaurants compared. Your own restaurants are excluded.',
-                        style: const TextStyle(
+                        style: TextStyle(
                             color: FoodFlowTheme.muted,
                             fontSize: 12,
                             fontWeight: FontWeight.w600)),
                   ])),
           if (needs.isNotEmpty) ...[
-            const SizedBox(height: 10),
-            _CompareSection(
-                title: 'Needs Improvement', good: false, metrics: needs)
+            const SizedBox(height: 12),
+            _CompareBoard(
+                title: 'Needs improvement', good: false, metrics: needs),
           ],
           if (good.isNotEmpty) ...[
-            const SizedBox(height: 10),
-            _CompareSection(title: 'Doing Great', good: true, metrics: good)
+            const SizedBox(height: 12),
+            _CompareBoard(title: 'Doing great', good: true, metrics: good),
           ],
         ]));
   }
@@ -259,6 +360,21 @@ class _RestaurantAnalyticsScreenState extends State<RestaurantAnalyticsScreen> {
           ],
           rows: _promoRows(promo),
           rowTitle: 'Top promotions'));
+    }
+    if (_adPerformance.isNotEmpty) {
+      sections.add(_PerformanceSection(
+          'Ads',
+          [
+            _metricFrom(
+                _adPerformance, 'Active Campaigns', 'active_campaigns', 'number'),
+            _metricFrom(_adPerformance, 'Impressions', 'impressions', 'number'),
+            _metricFrom(_adPerformance, 'Clicks', 'clicks', 'number'),
+            _metricFrom(_adPerformance, 'CTR', 'ctr', 'percent'),
+            _metricFrom(_adPerformance, 'Ad Spend', 'spend', 'currency'),
+            _metricFrom(_adPerformance, 'Avg. CPC', 'avg_cpc', 'currency'),
+          ],
+          rows: _adCampaignRows(_adPerformance),
+          rowTitle: 'Top campaigns'));
     }
     final topItems = _list(_performance['top_items']);
     if (topItems.isNotEmpty) {
@@ -319,6 +435,15 @@ class _RestaurantAnalyticsScreenState extends State<RestaurantAnalyticsScreen> {
                 parseNullableDouble(row['discount_given']) ?? 0, 'currency'));
       }).toList();
 
+  List<_ReportRow> _adCampaignRows(Map<String, dynamic> adPerformance) =>
+      _list(adPerformance['top_campaigns']).take(6).map((item) {
+        final row = _map(item);
+        return _ReportRow(
+            row['name']?.toString() ?? 'Campaign',
+            '${parseIntValue(row['clicks'])} clicks',
+            _formatValue(parseNullableDouble(row['spend']) ?? 0, 'currency'));
+      }).toList();
+
   String _formatValue(num value, String unit) {
     switch (unit) {
       case 'currency':
@@ -363,172 +488,218 @@ class _RestaurantAnalyticsScreenState extends State<RestaurantAnalyticsScreen> {
         .toSet()
         .toList()
       ..sort();
-    var activeTab = 'Date';
     showModalBottomSheet<void>(
-        context: context,
-        isScrollControlled: true,
-        backgroundColor: Colors.transparent,
-        builder: (context) =>
-            StatefulBuilder(builder: (context, setSheetState) {
-              final filteredRestaurants = sheetCity == null
-                  ? restaurants
-                  : restaurants
-                      .where((r) => r['city']?.toString() == sheetCity)
-                      .toList();
-              return FractionallySizedBox(
-                  heightFactor: 0.72,
-                  child: Container(
-                      decoration: const BoxDecoration(
-                          color: Colors.white,
-                          borderRadius:
-                              BorderRadius.vertical(top: Radius.circular(20))),
-                      child: Column(children: [
-                        Padding(
-                            padding: const EdgeInsets.fromLTRB(18, 14, 10, 12),
-                            child: Row(children: [
-                              const Expanded(
-                                  child: Text('Filters',
-                                      style: TextStyle(
-                                          fontSize: 24,
-                                          fontWeight: FontWeight.w900))),
-                              IconButton(
-                                  onPressed: () => Navigator.pop(context),
-                                  icon: const Icon(Icons.close_rounded)),
-                            ])),
-                        const Divider(height: 1, color: FoodFlowTheme.line),
-                        Expanded(
-                            child: Row(children: [
-                          SizedBox(
-                              width: 94,
-                              child: Column(
-                                  children: ['Date', 'City', 'Outlet']
-                                      .map((tab) => _FilterTab(
-                                          label: tab,
-                                          selected: activeTab == tab,
-                                          onTap: () => setSheetState(
-                                              () => activeTab = tab)))
-                                      .toList())),
-                          const VerticalDivider(
-                              width: 1, color: FoodFlowTheme.line),
-                          Expanded(
-                              child: ListView(
-                                  padding:
-                                      const EdgeInsets.fromLTRB(18, 16, 18, 20),
-                                  children: [
-                                if (activeTab == 'Date')
-                                  ..._periodOptions.entries.map((e) =>
-                                      RadioListTile<String>(
-                                          dense: true,
-                                          value: e.key,
-                                          groupValue: sheetPeriod,
-                                          activeColor: _orange,
-                                          title: Text(e.value),
-                                          onChanged: (v) => setSheetState(() =>
-                                              sheetPeriod = v ?? 'week'))),
-                                if (activeTab == 'City') ...[
-                                  CheckboxListTile(
-                                      dense: true,
-                                      value: sheetCity == null,
-                                      activeColor: _orange,
-                                      title: const Text('All Cities'),
-                                      onChanged: (_) => setSheetState(
-                                          () => sheetCity = null)),
-                                  ...cities.map((city) => CheckboxListTile(
-                                      dense: true,
-                                      value: sheetCity == city,
-                                      activeColor: _orange,
-                                      title: Text(city),
-                                      onChanged: (_) => setSheetState(() {
-                                            sheetCity =
-                                                sheetCity == city ? null : city;
-                                            if (sheetCity != null &&
-                                                !filteredRestaurants.any((r) =>
-                                                    _id(r['id']) ==
-                                                    sheetRestaurantId))
-                                              sheetRestaurantId = null;
-                                          }))),
-                                ],
-                                if (activeTab == 'Outlet') ...[
-                                  RadioListTile<int?>(
-                                      dense: true,
-                                      value: null,
-                                      groupValue: sheetRestaurantId,
-                                      activeColor: _orange,
-                                      title:
-                                          const Text('All accessible outlets'),
-                                      onChanged: (v) => setSheetState(
-                                          () => sheetRestaurantId = v)),
-                                  ...filteredRestaurants.map((restaurant) {
-                                    final id = _id(restaurant['id']);
-                                    final subtitle = [
-                                      restaurant['city']?.toString(),
-                                      restaurant['area']?.toString()
-                                    ]
-                                        .whereType<String>()
-                                        .where((v) => v.isNotEmpty)
-                                        .join(', ');
-                                    return RadioListTile<int?>(
-                                        dense: true,
-                                        value: id,
-                                        groupValue: sheetRestaurantId,
-                                        activeColor: _orange,
-                                        title: Text(
-                                            restaurant['name']?.toString() ??
-                                                'Outlet'),
-                                        subtitle: subtitle.isEmpty
-                                            ? null
-                                            : Text(subtitle),
-                                        onChanged: (v) => setSheetState(
-                                            () => sheetRestaurantId = v));
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setSheetState) {
+          final filteredRestaurants = sheetCity == null
+              ? restaurants
+              : restaurants
+                  .where((r) => r['city']?.toString() == sheetCity)
+                  .toList();
+
+          Widget chip(String label, bool sel, VoidCallback onTap) =>
+              GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: onTap,
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 150),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+                  decoration: BoxDecoration(
+                    color: sel
+                        ? foodflow.orange
+                        : (foodflow.isDark
+                            ? foodflow.elevatedSurface
+                            : Colors.white),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                        color: sel ? foodflow.orange : foodflow.line),
+                  ),
+                  child: Text(label,
+                      style: TextStyle(
+                        color: sel ? Colors.white : foodflow.ink,
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w800,
+                      )),
+                ),
+              );
+
+          Widget label(String t) => Padding(
+                padding: const EdgeInsets.fromLTRB(2, 18, 2, 8),
+                child: Text(t.toUpperCase(),
+                    style: TextStyle(
+                      color: foodflow.muted,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: 1.2,
+                    )),
+              );
+
+          return Padding(
+            padding: EdgeInsets.only(
+                bottom: MediaQuery.of(context).viewInsets.bottom),
+            child: Container(
+              constraints: BoxConstraints(
+                  maxHeight: MediaQuery.of(context).size.height * 0.82),
+              decoration: BoxDecoration(
+                color: foodflow.surfaceColor,
+                borderRadius:
+                    const BorderRadius.vertical(top: Radius.circular(24)),
+                border: Border.all(color: foodflow.glassBorder),
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const SizedBox(height: 10),
+                  Container(
+                    width: 40,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: foodflow.faint,
+                      borderRadius: BorderRadius.circular(99),
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(18, 14, 8, 6),
+                    child: Row(children: [
+                      Expanded(
+                        child: Text('Filters',
+                            style: TextStyle(
+                              color: foodflow.ink,
+                              fontSize: 20,
+                              fontWeight: FontWeight.w900,
+                            )),
+                      ),
+                      IconButton(
+                        onPressed: () => Navigator.pop(context),
+                        icon: Icon(Icons.close_rounded, color: foodflow.muted),
+                      ),
+                    ]),
+                  ),
+                  Flexible(
+                    child: SingleChildScrollView(
+                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          label('Period'),
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: [
+                              for (final e in _periodOptions.entries)
+                                chip(e.value, sheetPeriod == e.key,
+                                    () => setSheetState(
+                                        () => sheetPeriod = e.key)),
+                            ],
+                          ),
+                          if (cities.isNotEmpty) ...[
+                            label('City'),
+                            Wrap(
+                              spacing: 8,
+                              runSpacing: 8,
+                              children: [
+                                chip('All cities', sheetCity == null,
+                                    () => setSheetState(() => sheetCity = null)),
+                                for (final c in cities)
+                                  chip(c, sheetCity == c, () {
+                                    setSheetState(() {
+                                      sheetCity = sheetCity == c ? null : c;
+                                      if (sheetCity != null &&
+                                          !filteredRestaurants.any((r) =>
+                                              _id(r['id']) ==
+                                              sheetRestaurantId)) {
+                                        sheetRestaurantId = null;
+                                      }
+                                    });
                                   }),
-                                ],
-                              ])),
-                        ])),
-                        SafeArea(
-                            top: false,
-                            minimum: const EdgeInsets.fromLTRB(16, 12, 16, 18),
-                            child: Row(children: [
-                              Expanded(
-                                  child: TextButton(
-                                      onPressed: () async {
-                                        setState(() {
-                                          _period = 'week';
-                                          _selectedCity = null;
-                                        });
-                                        await provider.selectRestaurant(null);
-                                        if (!mounted) return;
-                                        Navigator.pop(context);
-                                        await _reloadCurrentTab();
-                                      },
-                                      child: const Text('Clear Filter'))),
-                              const SizedBox(width: 12),
-                              Expanded(
-                                  flex: 2,
-                                  child: FilledButton(
-                                      style: FilledButton.styleFrom(
-                                          backgroundColor: _orange,
-                                          minimumSize:
-                                              const Size.fromHeight(52),
-                                          shape: RoundedRectangleBorder(
-                                              borderRadius:
-                                                  BorderRadius.circular(12))),
-                                      onPressed: () async {
-                                        setState(() {
-                                          _period = sheetPeriod;
-                                          _selectedCity = sheetCity;
-                                        });
-                                        await provider.selectRestaurant(
-                                            sheetRestaurantId);
-                                        if (!mounted) return;
-                                        Navigator.pop(context);
-                                        await _reloadCurrentTab();
-                                      },
-                                      child: const Text('Apply',
-                                          style: TextStyle(
-                                              fontWeight: FontWeight.w900)))),
-                            ])),
-                      ])));
-            }));
+                              ],
+                            ),
+                          ],
+                          label('Outlet'),
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: [
+                              chip('All outlets', sheetRestaurantId == null,
+                                  () => setSheetState(
+                                      () => sheetRestaurantId = null)),
+                              for (final r in filteredRestaurants)
+                                chip(
+                                  r['name']?.toString() ?? 'Outlet',
+                                  sheetRestaurantId == _id(r['id']),
+                                  () => setSheetState(() =>
+                                      sheetRestaurantId = _id(r['id'])),
+                                ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  SafeArea(
+                    top: false,
+                    minimum: const EdgeInsets.fromLTRB(16, 10, 16, 16),
+                    child: Row(children: [
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: () async {
+                            setState(() {
+                              _period = 'week';
+                              _selectedCity = null;
+                            });
+                            await provider.selectRestaurant(null);
+                            if (!mounted) return;
+                            Navigator.pop(context);
+                            await _reloadCurrentTab();
+                          },
+                          style: OutlinedButton.styleFrom(
+                            minimumSize: const Size.fromHeight(50),
+                            side: BorderSide(color: foodflow.line),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                          ),
+                          child: const Text('Reset'),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        flex: 2,
+                        child: FilledButton(
+                          style: FilledButton.styleFrom(
+                            backgroundColor: foodflow.orange,
+                            minimumSize: const Size.fromHeight(50),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                          ),
+                          onPressed: () async {
+                            setState(() {
+                              _period = sheetPeriod;
+                              _selectedCity = sheetCity;
+                            });
+                            await provider.selectRestaurant(sheetRestaurantId);
+                            if (!mounted) return;
+                            Navigator.pop(context);
+                            await _reloadCurrentTab();
+                          },
+                          child: const Text('Apply',
+                              style: TextStyle(fontWeight: FontWeight.w900)),
+                        ),
+                      ),
+                    ]),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
   }
 
   Future<void> _reloadCurrentTab() =>
@@ -596,31 +767,27 @@ class _CompareMetric {
   final bool isBetter;
 }
 
-const _orange = Color(0xFFFF5200);
+Color get _orange => foodflow.orange;
 BoxDecoration _cardDecoration() => BoxDecoration(
-    color: Colors.white,
-    borderRadius: BorderRadius.circular(10),
-    border: Border.all(color: FoodFlowTheme.line));
+    color: foodflow.isDark ? foodflow.elevatedSurface : Colors.white,
+    borderRadius: BorderRadius.circular(16),
+    border: Border.all(color: foodflow.line));
 
 class _ReportsHeader extends StatelessWidget {
   const _ReportsHeader({required this.selectedTab, required this.onTab});
   final String selectedTab;
   final ValueChanged<String> onTab;
   @override
-  Widget build(BuildContext context) => Container(
-      color: Colors.white,
-      child: Column(children: [
-        Padding(
-            padding: const EdgeInsets.fromLTRB(14, 14, 14, 4),
-            child: Row(children: const [
-              Expanded(
-                  child: Text('Business Reports',
-                      style: TextStyle(
-                          fontSize: 20,
-                          fontWeight: FontWeight.w900,
-                          color: FoodFlowTheme.ink)))
-            ])),
-        Row(children: [
+  Widget build(BuildContext context) => Padding(
+      padding: const EdgeInsets.fromLTRB(14, 6, 14, 10),
+      child: Container(
+        padding: const EdgeInsets.all(4),
+        decoration: BoxDecoration(
+          color: foodflow.isDark ? foodflow.elevatedSurface : Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: foodflow.line),
+        ),
+        child: Row(children: [
           _TopTab(
               label: 'Your Performance',
               selected: selectedTab == 'performance',
@@ -628,9 +795,9 @@ class _ReportsHeader extends StatelessWidget {
           _TopTab(
               label: 'Compare',
               selected: selectedTab == 'compare',
-              onTap: () => onTab('compare'))
+              onTap: () => onTab('compare')),
         ]),
-      ]));
+      ));
 }
 
 class _TopTab extends StatelessWidget {
@@ -641,24 +808,24 @@ class _TopTab extends StatelessWidget {
   final VoidCallback onTap;
   @override
   Widget build(BuildContext context) => Expanded(
-      child: InkWell(
-          onTap: onTap,
-          child: Column(children: [
-            Padding(
-                padding: const EdgeInsets.symmetric(vertical: 13),
-                child: Text(label,
-                    style: TextStyle(
-                        color:
-                            selected ? FoodFlowTheme.ink : FoodFlowTheme.muted,
-                        fontWeight: FontWeight.w900))),
-            AnimatedContainer(
-                duration: const Duration(milliseconds: 180),
-                height: 3,
-                margin: const EdgeInsets.symmetric(horizontal: 20),
-                decoration: BoxDecoration(
-                    color: selected ? _orange : Colors.transparent,
-                    borderRadius: BorderRadius.circular(4))),
-          ])));
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          padding: const EdgeInsets.symmetric(vertical: 11),
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: selected ? foodflow.orange : Colors.transparent,
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Text(label,
+              style: TextStyle(
+                  color: selected ? Colors.white : foodflow.muted,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w900)),
+        ),
+      ));
 }
 
 class _ReportsFilterBar extends StatelessWidget {
@@ -670,21 +837,27 @@ class _ReportsFilterBar extends StatelessWidget {
   final String periodLabel;
   final VoidCallback onFilter;
   @override
-  Widget build(BuildContext context) => Container(
-      padding: const EdgeInsets.fromLTRB(12, 11, 12, 11),
-      decoration: const BoxDecoration(
-          color: Colors.white,
-          border: Border(top: BorderSide(color: FoodFlowTheme.line))),
-      child: Row(children: [
-        const Icon(Icons.tune_rounded, size: 20),
-        const SizedBox(width: 8),
-        Expanded(
-            child: Text('$outletLabel - $periodLabel',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontWeight: FontWeight.w900))),
-        TextButton(onPressed: onFilter, child: const Text('Filter')),
-      ]));
+  Widget build(BuildContext context) => Padding(
+      padding: const EdgeInsets.fromLTRB(14, 0, 14, 0),
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
+        decoration: BoxDecoration(
+          color: foodflow.isDark ? foodflow.elevatedSurface : Colors.white,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: foodflow.line),
+        ),
+        child: Row(children: [
+          Icon(Icons.tune_rounded, size: 18, color: foodflow.muted),
+          const SizedBox(width: 8),
+          Expanded(
+              child: Text('$outletLabel - $periodLabel',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                      color: foodflow.ink, fontWeight: FontWeight.w900))),
+          TextButton(onPressed: onFilter, child: const Text('Filter')),
+        ]),
+      ));
 }
 
 class _ReportsRail extends StatelessWidget {
@@ -697,8 +870,7 @@ class _ReportsRail extends StatelessWidget {
   final ValueChanged<String> onSelected;
   @override
   Widget build(BuildContext context) => Container(
-      width: 86,
-      color: Colors.white,
+      width: 92,
       child: Column(
           children: sections
               .map((section) => InkWell(
@@ -717,8 +889,8 @@ class _ReportsRail extends StatelessWidget {
                       child: Text(section,
                           style: TextStyle(
                               color: section == selected
-                                  ? _orange
-                                  : FoodFlowTheme.ink,
+                                  ? foodflow.orange
+                                  : foodflow.ink,
                               fontSize: 12,
                               fontWeight: FontWeight.w800)))))
               .toList()));
@@ -735,7 +907,7 @@ class _ReportsNotice extends StatelessWidget {
       child: Row(children: [
         Expanded(
             child: Text(text,
-                style: const TextStyle(
+                style: TextStyle(
                     color: FoodFlowTheme.muted,
                     fontSize: 12,
                     fontWeight: FontWeight.w700))),
@@ -758,7 +930,7 @@ class _ReportsCard extends StatelessWidget {
         Text(title,
             style: const TextStyle(fontSize: 19, fontWeight: FontWeight.w900)),
         const SizedBox(height: 10),
-        const Divider(height: 1, color: FoodFlowTheme.line),
+        Divider(height: 1, color: FoodFlowTheme.line),
         const SizedBox(height: 12),
         GridView.builder(
             shrinkWrap: true,
@@ -771,23 +943,36 @@ class _ReportsCard extends StatelessWidget {
                 mainAxisSpacing: 12),
             itemBuilder: (context, index) {
               final metric = metrics[index];
-              return Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(metric.title,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                            color: FoodFlowTheme.muted,
-                            fontWeight: FontWeight.w700,
-                            fontSize: 13)),
-                    const SizedBox(height: 5),
-                    Text(metric.value,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                            fontSize: 19, fontWeight: FontWeight.w900))
-                  ]);
+              return Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: foodflow.isDark
+                      ? foodflow.surfaceColor
+                      : foodflow.canvas,
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: foodflow.line),
+                ),
+                child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Text(metric.title,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                              color: foodflow.muted,
+                              fontWeight: FontWeight.w700,
+                              fontSize: 12)),
+                      const SizedBox(height: 5),
+                      Text(metric.value,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                              color: foodflow.ink,
+                              fontSize: 19,
+                              fontWeight: FontWeight.w900))
+                    ]),
+              );
             }),
       ]));
 }
@@ -814,7 +999,7 @@ class _ReportsRowsCard extends StatelessWidget {
                         style: const TextStyle(fontWeight: FontWeight.w800)),
                     const SizedBox(height: 2),
                     Text(row.subtitle,
-                        style: const TextStyle(
+                        style: TextStyle(
                             color: FoodFlowTheme.muted, fontSize: 12))
                   ])),
               Text(row.trailing,
@@ -859,7 +1044,7 @@ class _CompareSection extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(metric.group.toUpperCase(),
-                        style: const TextStyle(
+                        style: TextStyle(
                             color: FoodFlowTheme.muted,
                             fontSize: 10,
                             fontWeight: FontWeight.w900)),
@@ -892,7 +1077,7 @@ class _CompareValue extends StatelessWidget {
   Widget build(BuildContext context) =>
       Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Text(label,
-            style: const TextStyle(
+            style: TextStyle(
                 color: FoodFlowTheme.muted,
                 fontSize: 10,
                 fontWeight: FontWeight.w900)),
@@ -951,7 +1136,7 @@ class _ReportsMessage extends StatelessWidget {
         const SizedBox(height: 14),
         Text(text,
             textAlign: TextAlign.center,
-            style: const TextStyle(
+            style: TextStyle(
                 color: FoodFlowTheme.muted, fontWeight: FontWeight.w800)),
         if (actionLabel != null && onAction != null) ...[
           const SizedBox(height: 12),
@@ -963,8 +1148,8 @@ class _ReportsMessage extends StatelessWidget {
 class _ReportsAccessDenied extends StatelessWidget {
   const _ReportsAccessDenied();
   @override
-  Widget build(BuildContext context) => const Scaffold(
-      backgroundColor: Color(0xFFF2F2F6),
+  Widget build(BuildContext context) => Scaffold(
+      backgroundColor: foodflow.canvas,
       body: Center(
           child: Padding(
               padding: EdgeInsets.all(24),
@@ -974,4 +1159,763 @@ class _ReportsAccessDenied extends StatelessWidget {
                   style: TextStyle(
                       color: FoodFlowTheme.muted,
                       fontWeight: FontWeight.w800)))));
+}
+
+
+double _firstNum(String s) {
+  final m = RegExp(r'-?[\d.]+').firstMatch(s.replaceAll(',', ''));
+  return m == null ? 0 : double.tryParse(m.group(0)!) ?? 0;
+}
+
+/// Period selector + outlet label as a horizontal strip.
+class _PeriodStrip extends StatelessWidget {
+  const _PeriodStrip({
+    required this.period,
+    required this.outlet,
+    required this.onPick,
+    required this.onOutlet,
+  });
+  final String period;
+  final String outlet;
+  final ValueChanged<String> onPick;
+  final VoidCallback onOutlet;
+
+  static const _opts = {
+    'today': 'Today',
+    'yesterday': 'Yesterday',
+    'week': 'This week',
+    'last_week': 'Last week',
+    'month': 'This month',
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 2, 14, 6),
+          child: GestureDetector(
+            onTap: onOutlet,
+            child: Row(
+              children: [
+                Icon(Icons.storefront_outlined, size: 15, color: foodflow.muted),
+                const SizedBox(width: 6),
+                Flexible(
+                  child: Text(outlet,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: foodflow.muted,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w800,
+                      )),
+                ),
+                Icon(Icons.expand_more_rounded, size: 16, color: foodflow.muted),
+              ],
+            ),
+          ),
+        ),
+        SizedBox(
+          height: 38,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: 14),
+            itemCount: _opts.length,
+            separatorBuilder: (_, __) => const SizedBox(width: 8),
+            itemBuilder: (context, i) {
+              final e = _opts.entries.elementAt(i);
+              final sel = e.key == period;
+              return GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () => onPick(e.key),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 160),
+                  alignment: Alignment.center,
+                  padding: const EdgeInsets.symmetric(horizontal: 14),
+                  decoration: BoxDecoration(
+                    color: sel
+                        ? foodflow.orange
+                        : (foodflow.isDark
+                            ? foodflow.elevatedSurface
+                            : Colors.white),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                        color: sel ? foodflow.orange : foodflow.line),
+                  ),
+                  child: Text(e.value,
+                      style: TextStyle(
+                        color: sel ? Colors.white : foodflow.ink,
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w800,
+                      )),
+                ),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _SectionChips extends StatelessWidget {
+  const _SectionChips({
+    required this.sections,
+    required this.selected,
+    required this.onSelected,
+  });
+  final List<String> sections;
+  final String selected;
+  final ValueChanged<String> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 34,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        itemCount: sections.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 8),
+        itemBuilder: (context, i) {
+          final s = sections[i];
+          final sel = s == selected;
+          return GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: () => onSelected(s),
+            child: Container(
+              alignment: Alignment.center,
+              padding: const EdgeInsets.symmetric(horizontal: 14),
+              decoration: BoxDecoration(
+                color: sel
+                    ? foodflow.orange.withOpacity(0.14)
+                    : Colors.transparent,
+                borderRadius: BorderRadius.circular(11),
+                border: Border.all(
+                    color: sel ? foodflow.orange : foodflow.line),
+              ),
+              child: Text(s,
+                  style: TextStyle(
+                    color: sel ? foodflow.orange : foodflow.muted,
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w900,
+                  )),
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+/// The one number that matters, oversized.
+class _ReportHero extends StatelessWidget {
+  const _ReportHero({
+    required this.label,
+    required this.value,
+    required this.caption,
+  });
+  final String label;
+  final String value;
+  final String caption;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(20, 20, 20, 22),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [foodflow.orange, foodflow.orangeDark],
+        ),
+        borderRadius: BorderRadius.circular(24),
+        boxShadow: [
+          BoxShadow(
+            color: foodflow.orange.withOpacity(0.3),
+            blurRadius: 24,
+            offset: const Offset(0, 12),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(label.toUpperCase(),
+              style: TextStyle(
+                color: Colors.white.withOpacity(0.85),
+                fontSize: 11.5,
+                fontWeight: FontWeight.w900,
+                letterSpacing: 1,
+              )),
+          const SizedBox(height: 8),
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: Alignment.centerLeft,
+            child: Text(value,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 40,
+                  fontWeight: FontWeight.w900,
+                  height: 1,
+                )),
+          ),
+          const SizedBox(height: 6),
+          Text(caption,
+              style: TextStyle(
+                color: Colors.white.withOpacity(0.8),
+                fontSize: 12.5,
+                fontWeight: FontWeight.w700,
+              )),
+        ],
+      ),
+    );
+  }
+}
+
+class _MetricBoard extends StatelessWidget {
+  const _MetricBoard({required this.metrics});
+  final List<_ReportMetric> metrics;
+
+  @override
+  Widget build(BuildContext context) {
+    final rows = <Widget>[];
+    for (var i = 0; i < metrics.length; i += 2) {
+      if (i > 0) rows.add(const SizedBox(height: 10));
+      rows.add(IntrinsicHeight(
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Expanded(child: _tile(metrics[i])),
+            const SizedBox(width: 10),
+            Expanded(
+              child: i + 1 < metrics.length
+                  ? _tile(metrics[i + 1])
+                  : const SizedBox.shrink(),
+            ),
+          ],
+        ),
+      ));
+    }
+    return Column(children: rows);
+  }
+
+  Widget _tile(_ReportMetric m) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 11),
+      decoration: BoxDecoration(
+        color: foodflow.isDark ? foodflow.elevatedSurface : Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: foodflow.line),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(m.title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: foodflow.muted,
+                fontSize: 11.5,
+                fontWeight: FontWeight.w700,
+              )),
+          const SizedBox(height: 4),
+          Text(m.value,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: foodflow.ink,
+                fontSize: 18,
+                fontWeight: FontWeight.w900,
+              )),
+        ],
+      ),
+    );
+  }
+}
+
+/// Ranked leaderboard with proportional bars.
+class _LeaderboardCard extends StatelessWidget {
+  const _LeaderboardCard({required this.title, required this.rows});
+  final String title;
+  final List<_ReportRow> rows;
+
+  @override
+  Widget build(BuildContext context) {
+    final maxV = rows
+        .map((r) => _firstNum(r.trailing))
+        .fold<double>(0, (a, b) => b > a ? b : a);
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: foodflow.isDark ? foodflow.elevatedSurface : Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: foodflow.line),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(title,
+              style: TextStyle(
+                color: foodflow.ink,
+                fontSize: 15,
+                fontWeight: FontWeight.w900,
+              )),
+          const SizedBox(height: 12),
+          for (var i = 0; i < rows.length; i++) ...[
+            if (i > 0) const SizedBox(height: 12),
+            Row(
+              children: [
+                SizedBox(
+                  width: 20,
+                  child: Text('${i + 1}',
+                      style: TextStyle(
+                        color: foodflow.faint,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w900,
+                      )),
+                ),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(rows[i].title,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: foodflow.ink,
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w800,
+                                )),
+                          ),
+                          Text(rows[i].trailing,
+                              style: TextStyle(
+                                color: foodflow.orange,
+                                fontSize: 12.5,
+                                fontWeight: FontWeight.w900,
+                              )),
+                        ],
+                      ),
+                      const SizedBox(height: 5),
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(99),
+                        child: LinearProgressIndicator(
+                          value: maxV <= 0
+                              ? 0
+                              : (_firstNum(rows[i].trailing) / maxV)
+                                  .clamp(0.02, 1.0),
+                          minHeight: 6,
+                          backgroundColor: foodflow.line,
+                          valueColor:
+                              AlwaysStoppedAnimation(foodflow.orange),
+                        ),
+                      ),
+                      const SizedBox(height: 3),
+                      Text(rows[i].subtitle,
+                          style: TextStyle(
+                            color: foodflow.muted,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                          )),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+/// Diverging you-vs-zone bars.
+class _CompareBoard extends StatelessWidget {
+  const _CompareBoard({
+    required this.title,
+    required this.good,
+    required this.metrics,
+  });
+  final String title;
+  final bool good;
+  final List<_CompareMetric> metrics;
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = good ? foodflow.success : foodflow.danger;
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: foodflow.isDark ? foodflow.elevatedSurface : Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: foodflow.line),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                  good
+                      ? Icons.trending_up_rounded
+                      : Icons.trending_down_rounded,
+                  color: accent,
+                  size: 18),
+              const SizedBox(width: 8),
+              Text(title,
+                  style: TextStyle(
+                    color: accent,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w900,
+                  )),
+            ],
+          ),
+          const SizedBox(height: 14),
+          for (var i = 0; i < metrics.length; i++) ...[
+            if (i > 0) const SizedBox(height: 16),
+            _divergingRow(metrics[i], accent),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _divergingRow(_CompareMetric m, Color accent) {
+    final you = _firstNum(m.you);
+    final avg = _firstNum(m.average);
+    final maxV = [you, avg, 1.0].reduce((a, b) => a > b ? a : b);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(m.label,
+            style: TextStyle(
+              color: foodflow.ink,
+              fontSize: 13,
+              fontWeight: FontWeight.w900,
+            )),
+        const SizedBox(height: 8),
+        _bar('You', m.you, you / maxV, accent),
+        const SizedBox(height: 6),
+        _bar('Zone avg', m.average, avg / maxV, foodflow.faint),
+      ],
+    );
+  }
+
+  Widget _bar(String label, String value, double frac, Color color) {
+    return Row(
+      children: [
+        SizedBox(
+          width: 62,
+          child: Text(label,
+              style: TextStyle(
+                color: foodflow.muted,
+                fontSize: 10.5,
+                fontWeight: FontWeight.w800,
+              )),
+        ),
+        Expanded(
+          child: Stack(
+            children: [
+              Container(
+                height: 16,
+                decoration: BoxDecoration(
+                  color: foodflow.line,
+                  borderRadius: BorderRadius.circular(99),
+                ),
+              ),
+              FractionallySizedBox(
+                widthFactor: frac.clamp(0.02, 1.0),
+                child: Container(
+                  height: 16,
+                  decoration: BoxDecoration(
+                    color: color,
+                    borderRadius: BorderRadius.circular(99),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(width: 8),
+        SizedBox(
+          width: 62,
+          child: Text(value,
+              textAlign: TextAlign.right,
+              style: TextStyle(
+                color: foodflow.ink,
+                fontSize: 11.5,
+                fontWeight: FontWeight.w900,
+              )),
+        ),
+      ],
+    );
+  }
+}
+
+/// Delivered vs cancelled donut.
+class _OrderOutcomeCard extends StatelessWidget {
+  const _OrderOutcomeCard({
+    required this.delivered,
+    required this.cancelled,
+    required this.total,
+  });
+  final double delivered;
+  final double cancelled;
+  final double total;
+
+  @override
+  Widget build(BuildContext context) {
+    final other = (total - delivered - cancelled).clamp(0, total).toDouble();
+    final denom = delivered + cancelled + other;
+    final segs = <(double, Color, String)>[
+      (delivered, foodflow.success, 'Delivered'),
+      (cancelled, foodflow.danger, 'Cancelled'),
+      if (other > 0) (other, foodflow.faint, 'In progress'),
+    ];
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: foodflow.isDark ? foodflow.elevatedSurface : Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: foodflow.line),
+      ),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 96,
+            height: 96,
+            child: CustomPaint(
+              painter: _DonutPainter(
+                segments: segs.map((s) => (s.$1, s.$2)).toList(),
+                track: foodflow.line,
+              ),
+              child: Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      denom <= 0
+                          ? '0%'
+                          : '${(delivered * 100 / denom).round()}%',
+                      style: TextStyle(
+                        color: foodflow.ink,
+                        fontSize: 18,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    Text('delivered',
+                        style: TextStyle(
+                          color: foodflow.muted,
+                          fontSize: 9.5,
+                          fontWeight: FontWeight.w700,
+                        )),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 18),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Order outcomes',
+                    style: TextStyle(
+                      color: foodflow.ink,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w900,
+                    )),
+                const SizedBox(height: 10),
+                for (final seg in segs)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 6),
+                    child: Row(
+                      children: [
+                        Container(
+                          width: 10,
+                          height: 10,
+                          decoration: BoxDecoration(
+                            color: seg.$2,
+                            borderRadius: BorderRadius.circular(3),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(seg.$3,
+                              style: TextStyle(
+                                color: foodflow.muted,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w700,
+                              )),
+                        ),
+                        Text('${seg.$1.toInt()}',
+                            style: TextStyle(
+                              color: foodflow.ink,
+                              fontSize: 12.5,
+                              fontWeight: FontWeight.w900,
+                            )),
+                      ],
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _DonutPainter extends CustomPainter {
+  _DonutPainter({required this.segments, required this.track});
+  final List<(double, Color)> segments;
+  final Color track;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final rect = Offset.zero & size;
+    final center = rect.center;
+    final radius = size.shortestSide / 2 - 7;
+    const stroke = 12.0;
+    final total = segments.fold<double>(0, (a, b) => a + b.$1);
+    final bg = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = stroke
+      ..color = track;
+    canvas.drawCircle(center, radius, bg);
+    if (total <= 0) return;
+    var start = -1.5708;
+    for (final seg in segments) {
+      if (seg.$1 <= 0) continue;
+      final sweep = seg.$1 / total * 6.2832;
+      final paint = Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = stroke
+        ..strokeCap = StrokeCap.butt
+        ..color = seg.$2;
+      canvas.drawArc(
+        Rect.fromCircle(center: center, radius: radius),
+        start,
+        sweep - 0.04,
+        false,
+        paint,
+      );
+      start += sweep;
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _DonutPainter old) => old.segments != segments;
+}
+
+/// Orders-by-hour bar chart.
+class _HourlyOrdersCard extends StatelessWidget {
+  const _HourlyOrdersCard({required this.data});
+  final List<({int hour, double orders})> data;
+
+  @override
+  Widget build(BuildContext context) {
+    final peak = data.reduce((a, b) => b.orders > a.orders ? b : a);
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 12),
+      decoration: BoxDecoration(
+        color: foodflow.isDark ? foodflow.elevatedSurface : Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: foodflow.line),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Text('Orders by hour',
+                  style: TextStyle(
+                    color: foodflow.ink,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w900,
+                  )),
+              const Spacer(),
+              Text(
+                'Peak ${peak.hour.toString().padLeft(2, '0')}:00',
+                style: TextStyle(
+                  color: foodflow.orange,
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          SizedBox(
+            height: 92,
+            child: CustomPaint(
+              size: Size.infinite,
+              painter: _BarsPainter(
+                data: data,
+                bar: foodflow.orange,
+                dim: foodflow.line,
+                label: foodflow.faint,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _BarsPainter extends CustomPainter {
+  _BarsPainter({
+    required this.data,
+    required this.bar,
+    required this.dim,
+    required this.label,
+  });
+  final List<({int hour, double orders})> data;
+  final Color bar;
+  final Color dim;
+  final Color label;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (data.isEmpty) return;
+    const axis = 16.0;
+    final chartH = size.height - axis;
+    final maxV = data.fold<double>(1, (a, b) => b.orders > a ? b.orders : a);
+    const gap = 3.0;
+    final bw = (size.width - gap * (data.length - 1)) / data.length;
+    final tp = TextPainter(textDirection: TextDirection.ltr);
+
+    for (var i = 0; i < data.length; i++) {
+      final d = data[i];
+      final x = i * (bw + gap);
+      final h = (d.orders / maxV) * (chartH - 4);
+      final r = RRect.fromRectAndCorners(
+        Rect.fromLTWH(x, chartH - h, bw, h < 2 ? 2 : h),
+        topLeft: const Radius.circular(3),
+        topRight: const Radius.circular(3),
+      );
+      canvas.drawRRect(r, Paint()..color = d.orders > 0 ? bar : dim);
+      if (data.length <= 12 || i % 3 == 0) {
+        tp.text = TextSpan(
+          text: d.hour.toString().padLeft(2, '0'),
+          style: TextStyle(
+            color: label,
+            fontSize: 8,
+            fontWeight: FontWeight.w700,
+          ),
+        );
+        tp.layout();
+        tp.paint(canvas, Offset(x + bw / 2 - tp.width / 2, chartH + 3));
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _BarsPainter old) => old.data != data;
 }

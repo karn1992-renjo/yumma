@@ -66,6 +66,9 @@ class GigOperationsService
         $snapshot['payout_approvals'] = Schema::hasTable('gig_payout_approvals')
             ? GigPayoutApproval::with(['driver', 'gig.area', 'booking'])->where('status', 'pending')->latest()->limit(50)->get()
             : [];
+        $snapshot['disputes'] = Schema::hasTable('gig_disputes')
+            ? GigDispute::with(['driver', 'gig.area'])->where('status', 'open')->latest()->limit(50)->get()
+            : [];
 
         return $snapshot;
     }

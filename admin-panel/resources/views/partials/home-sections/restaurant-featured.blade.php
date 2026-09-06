@@ -26,7 +26,7 @@
                             <a href="/restaurants/{{ $restaurant['id'] }}" class="text-decoration-none">
                                 <div>
                                     <div class="rounded-5 overflow-hidden shadow-sm position-relative" style="height: 180px;">
-                                        <img src="{{ $restaurant['image'] ?: 'https://placehold.co/600x400/E8E8E8/9C9C9C?text=No+Image' }}" alt="{{ $restaurant['name'] }}" class="w-100 h-100" style="object-fit: cover;">
+                                        <img src="{{ $restaurant['image'] ?: 'https://placehold.co/600x400/E8E8E8/9C9C9C?text=No+Image' }}" alt="{{ $restaurant['name'] }}" width="600" height="400" loading="lazy" class="w-100 h-100" style="object-fit: cover;">
                                     </div>
                                     <div class="pt-3">
                                         <div class="d-flex justify-content-between align-items-start gap-2">

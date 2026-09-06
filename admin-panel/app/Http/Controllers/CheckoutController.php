@@ -3,13 +3,11 @@
 namespace App\Http\Controllers;
 
 use App\Events\NewOrderEvent;
-use App\Helpers\FirebaseHelper;
 use App\Models\AppSetting;
 use App\Models\Order;
 use App\Models\OrderItem;
 use App\Models\Restaurant;
 use App\Models\Promotion;
-use App\Models\RestaurantStaff;
 use App\Models\Address;
 use App\Models\DeliveryChargeSetting;
 use App\Models\MenuItem;
@@ -22,7 +20,6 @@ use App\Services\OrderReleaseService;
 use App\Services\PrinterService;
 use App\Services\PromotionEngineService;
 use App\Services\PromotionRewardOrderItemService;
-use App\Notifications\AppDatabaseNotification;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Auth;
@@ -316,6 +313,19 @@ class CheckoutController extends Controller
                 'delivery_fee' => $deliveryFee,
                 'platform_fee' => $platformFee,
                 'tax' => $tax,
+                'tax_breakdown' => $pricing['gst_breakdown'] ?? null,
+                'cgst_amount' => data_get($pricing, 'gst_breakdown.restaurant.cgst'),
+                'sgst_amount' => data_get($pricing, 'gst_breakdown.restaurant.sgst'),
+                'igst_amount' => data_get($pricing, 'gst_breakdown.igst_total'),
+                'eco_gst_food_cgst' => data_get($pricing, 'gst_breakdown.eco_food.cgst'),
+                'eco_gst_food_sgst' => data_get($pricing, 'gst_breakdown.eco_food.sgst'),
+                'eco_gst_food' => isset($pricing['gst_breakdown']) ? round((float) data_get($pricing, 'gst_breakdown.eco_food.cgst') + (float) data_get($pricing, 'gst_breakdown.eco_food.sgst'), 2) : null,
+                'service_gst_cgst' => data_get($pricing, 'gst_breakdown.service.cgst'),
+                'service_gst_sgst' => data_get($pricing, 'gst_breakdown.service.sgst'),
+                'service_gst' => isset($pricing['gst_breakdown']) ? round((float) data_get($pricing, 'gst_breakdown.service.cgst') + (float) data_get($pricing, 'gst_breakdown.service.sgst'), 2) : null,
+                'place_of_supply' => data_get($pricing, 'gst_breakdown.place_of_supply'),
+                'supplier_gstin' => data_get($pricing, 'gst_breakdown.supplier_gstin'),
+                'invoice_type' => isset($pricing['gst_breakdown']) ? 'tax_invoice' : null,
                 'discount' => $discount,
                 'total' => $total,
                 'status' => 'pending',
@@ -770,6 +780,31 @@ class CheckoutController extends Controller
         $discount = round((float) ($promotionResult['discount'] ?? 0), AppSetting::currencyDecimals());
         $promo = $promotionResult['promo'] ?? null;
 
+        // GST mode override (Settings -> Business) -- see GstTaxService.
+        $gstService = app(\App\Services\Gst\GstTaxService::class);
+        $gstBreakdown = null;
+        if ($gstService->appliesTo($restaurant)) {
+            $rawLines = $gstService->linesFromRequestItems($items);
+            $grossItems = array_sum(array_column($rawLines, 'line_total'));
+            $netItems = max(0.0, $subtotal - $discount);
+            $scale = $grossItems > 0 ? $netItems / $grossItems : 1.0;
+            foreach ($rawLines as &$rl) {
+                $rl['line_total'] = round($rl['line_total'] * $scale, AppSetting::currencyDecimals());
+            }
+            unset($rl);
+
+            $gstBreakdown = $gstService->computeForOrder($restaurant, $rawLines, [
+                'delivery_fee' => $deliveryFee,
+                'platform_fee' => $platformFee,
+            ]);
+            if ($gstBreakdown) {
+                $tax = $gstBreakdown->taxAdded;
+                $taxBreakdown = $gstBreakdown->rateSummary;
+                $taxLabel = 'GST';
+                $taxRate = (float) collect($gstBreakdown->rateSummary)->max('rate');
+            }
+        }
+
         return [            'delivery_fee' => round($deliveryFee, 2),
             'order_type' => $orderType,
             'platform_fee' => $platformFee,
@@ -777,6 +812,7 @@ class CheckoutController extends Controller
             'tax_rate' => $taxRate,
             'tax_label' => $taxLabel,
             'tax_breakdown' => $taxBreakdown,
+            'gst_breakdown' => $gstBreakdown?->toArray(),
             'discount' => $discount,
             'reward_lines' => $promotionResult['reward_lines'] ?? [],
             'total' => max(0, round($subtotal + $deliveryFee + $platformFee + $tax - $discount, 2)),
@@ -1367,71 +1403,6 @@ class CheckoutController extends Controller
     private function broadcastOrder(Order $order): void
     {
         app(OrderReleaseService::class)->releaseToRestaurant($order);
-    }
-
-    private function notifyRestaurantAboutNewOrder(Order $order): void
-    {
-        $order->loadMissing(['restaurant.owner', 'customer']);
-        $restaurant = $order->restaurant;
-        if (! $restaurant) {
-            return;
-        }
-
-        $title = 'New order received';
-        $body = "Order #{$order->order_number} has been placed for your restaurant.";
-        $items = is_array($order->items) ? $order->items : json_decode((string) $order->items, true);
-        $acceptanceTimeout = DeliveryChargeSetting::getOrderAcceptanceTimeoutSeconds();
-        $payload = [
-            'type' => 'NEW_ORDER',
-            'role' => 'restaurant',
-            'timer_duration' => (string) $acceptanceTimeout,
-            'order_id' => (string) $order->id,
-            'order_number' => (string) $order->order_number,
-            'restaurant_id' => (string) $order->restaurant_id,
-            'restaurant_name' => (string) $restaurant->name,
-            'pickup' => (string) $restaurant->address,
-            'customer_name' => (string) ($order->customer_name ?? $order->customer?->name ?? 'Guest'),
-            'customer_phone' => (string) ($order->customer_phone ?? ''),
-            'delivery_address' => (string) ($order->delivery_address ?? ''),
-            'amount' => (string) $order->total,
-            'total' => (string) $order->total,
-            'items' => json_encode($items ?? []),
-            'metadata' => json_encode([
-                'pickup' => $restaurant->address,
-                'items' => $items ?? [],
-                'amount' => (float) $order->total,
-            ]),
-        ];
-
-        $recipients = collect([$restaurant->owner])
-            ->filter()
-            ->merge(
-                    RestaurantStaff::query()
-                        ->where('restaurant_id', $restaurant->id)
-                        ->where('is_active', true)
-                        ->with('user:id,fcm_token,restaurant_fcm_token')
-                        ->get()
-                    ->pluck('user')
-                    ->filter()
-            )
-            ->unique('id')
-            ->values();
-
-        foreach ($recipients as $recipient) {
-            $recipient->notify(new AppDatabaseNotification($title, $body, $payload));
-        }
-
-        (new FirebaseHelper())->sendToDevices(
-            $recipients
-                ->map(fn ($user) => $user->fcmTokenForApp('restaurant'))
-                ->filter(fn ($token) => filled($token))
-                ->unique()
-                ->values()
-                ->all(),
-            $title,
-            $body,
-            $payload
-        );
     }
 
     private function cashfreeBaseUrl(): string

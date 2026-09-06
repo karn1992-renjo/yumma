@@ -61,6 +61,19 @@ class GigIncentiveService
             : 1.0;
         $subtotalBeforeSurge = $basePay + $orderIncentive + $activeTimeIncentive;
         $surgeAmount = $eligible ? max(0, ($subtotalBeforeSurge * $surgeMultiplier) - $subtotalBeforeSurge) : 0.0;
+        // Self-funding zone surge bonus: pays the driver exactly what
+        // customers were charged in flat zone surge fees (Order::surge_fee)
+        // for the orders this driver personally delivered during the gig --
+        // see App\Services\ZoneSurgeService for the customer-side activation.
+        $zoneSurgeBonus = $eligible && Schema::hasColumn('orders', 'surge_fee')
+            ? (float) $orders->sum('surge_fee')
+            : 0.0;
+        // Self-funding late-night bonus: pays the driver exactly what
+        // customers were charged in flat night surcharges (Order::night_surcharge)
+        // for the orders this driver delivered -- see App\Services\NightSurchargeService.
+        $nightSurchargeBonus = $eligible && Schema::hasColumn('orders', 'night_surcharge')
+            ? (float) $orders->sum('night_surcharge')
+            : 0.0;
         $penaltyAmount = 0.0;
         $penaltyReason = null;
 
@@ -72,7 +85,7 @@ class GigIncentiveService
             $penaltyReason = 'Gig cancellation limit exceeded';
         }
 
-        $totalEarned = max(0, $subtotalBeforeSurge + $surgeAmount - $penaltyAmount);
+        $totalEarned = max(0, $subtotalBeforeSurge + $surgeAmount + $zoneSurgeBonus + $nightSurchargeBonus - $penaltyAmount);
 
         $values = [
             'base_pay' => round($basePay, 2),
@@ -80,6 +93,8 @@ class GigIncentiveService
             'active_time_incentive' => round($activeTimeIncentive, 2),
             'surge_multiplier' => round($surgeMultiplier, 2),
             'surge_amount' => round($surgeAmount, 2),
+            'zone_surge_bonus' => round($zoneSurgeBonus, 2),
+            'night_surcharge_bonus' => round($nightSurchargeBonus, 2),
             'total_earned' => round($totalEarned, 2),
             'orders_completed' => $orders->pluck('id')->values()->all(),
             'active_minutes' => $activeMinutes,
@@ -96,7 +111,7 @@ class GigIncentiveService
         ];
 
         foreach (array_keys($values) as $column) {
-            if (! in_array($column, ['base_pay', 'order_incentive', 'active_time_incentive', 'surge_multiplier', 'surge_amount', 'total_earned', 'orders_completed', 'active_minutes', 'is_penalty_applied', 'penalty_amount', 'penalty_reason'], true)
+            if (! in_array($column, ['base_pay', 'order_incentive', 'active_time_incentive', 'surge_multiplier', 'surge_amount', 'zone_surge_bonus', 'total_earned', 'orders_completed', 'active_minutes', 'is_penalty_applied', 'penalty_amount', 'penalty_reason'], true)
                 && ! Schema::hasColumn('gig_incentives', $column)) {
                 unset($values[$column]);
             }

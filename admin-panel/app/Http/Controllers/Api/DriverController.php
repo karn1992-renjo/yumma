@@ -5,18 +5,22 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Events\OrderStatusUpdatedEvent;
 use App\Models\Order;
+use App\Models\RestaurantOnboardingIncentive;
 use App\Models\DriverGig;
 use App\Models\DriverGigBooking;
 use App\Models\GigDispute;
 use App\Models\AppSetting;
 use App\Rules\UniqueUserContactForRole;
 use App\Services\AutoAssignDriverService;
+use App\Services\CallMaskingService;
 use App\Services\GoogleMapsEtaService;
+use App\Services\FlashResaleService;
+use App\Services\OrderPaymentService;
+use App\Services\OrderStatusPushService;
+use App\Services\PayoutCalculationService;
 use App\Services\GigLifecycleService;
 use App\Services\DriverLocationTrustService;
 use App\Services\GigOperationsBroadcastService;
-use App\Services\OrderPaymentService;
-use App\Services\OrderStatusPushService;
 use App\Support\GatewayRegistry;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
@@ -104,7 +108,27 @@ class DriverController extends Controller
             'data' => $this->formatOrderForApi($order),
         ]);
     }
-    
+
+    public function callParticipant(Request $request, $orderId)
+    {
+        $validated = $request->validate([
+            'target' => ['required', 'in:customer,restaurant'],
+        ]);
+
+        $order = Order::where('driver_id', auth()->id())
+            ->with(['customer', 'restaurant', 'driver'])
+            ->findOrFail($orderId);
+
+        $result = app(CallMaskingService::class)->initiateClickToCall(
+            $order,
+            'driver',
+            $validated['target'],
+            auth()->id()
+        );
+
+        return response()->json($result, $result['success'] ? 200 : 422);
+    }
+
     public function updateOrderStatus(Request $request, $orderId)
     {
         $request->validate([
@@ -134,15 +158,129 @@ class DriverController extends Controller
             'on_the_way' => "Your order #{$order->order_number} is on the way.",
             default => "Your order #{$order->order_number} status changed to {$order->status}.",
         };
-        app(OrderStatusPushService::class)->notifyParticipants($order, $statusMessage);
-        
+        // The driver just performed this action — only the customer/restaurant
+        // need the customer-worded status push.
+        app(OrderStatusPushService::class)->notifyParticipants($order, $statusMessage, ['customer', 'restaurant']);
+
         return response()->json([
             'success' => true,
             'message' => 'Order status updated',
             'data' => $order
         ]);
     }
-    
+
+    public function markArrivedAtCustomer($orderId)
+    {
+        $order = Order::where('driver_id', auth()->id())
+            ->where('status', 'on_the_way')
+            ->findOrFail($orderId);
+
+        if (! $order->arrived_at_customer) {
+            $order->arrived_at_customer = now();
+            $order->save();
+
+            app(OrderStatusPushService::class)->notifyParticipants(
+                $order,
+                "Your order #{$order->order_number} driver has arrived at your location.",
+                ['customer', 'restaurant']
+            );
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Arrival recorded',
+            'data' => $order,
+        ]);
+    }
+
+    public function reportDeliveryFailed(Request $request, $orderId)
+    {
+        $request->validate([
+            'reason' => 'required|string|max:500',
+        ]);
+
+        $order = Order::where('driver_id', auth()->id())
+            ->where('status', 'on_the_way')
+            ->findOrFail($orderId);
+
+        $waitMinutes = (int) AppSetting::getValue('delivery_failure_wait_minutes', 5);
+
+        if (! $order->arrived_at_customer) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Mark yourself as arrived at the customer\'s location before reporting a failed delivery.',
+            ], 422);
+        }
+
+        if ($order->arrived_at_customer->addMinutes($waitMinutes)->isAfter(now())) {
+            return response()->json([
+                'success' => false,
+                'message' => "Please wait {$waitMinutes} minutes after arriving before reporting a failed delivery.",
+            ], 422);
+        }
+
+        $resalePrice = round(
+            (float) $order->subtotal * (1 - FlashResaleService::discountPercent() / 100),
+            2
+        );
+
+        DB::transaction(function () use ($order, $request, $resalePrice) {
+            $order->status = 'delivery_failed';
+            $order->delivery_failed_at = now();
+            $order->delivery_failure_reason = $request->reason;
+            $order->resale_status = 'offered';
+            $order->resale_price = $resalePrice;
+            $order->resale_offer_expires_at = now()->addMinutes(FlashResaleService::windowMinutes());
+            $order->save();
+
+            app(PayoutCalculationService::class)->creditDriverEarningOnly($order->fresh());
+        });
+
+        app(OrderStatusPushService::class)->notifyParticipants(
+            $order->fresh(['customer', 'restaurant']),
+            "Delivery for order #{$order->order_number} could not be completed: {$request->reason}",
+            ['customer', 'restaurant']
+        );
+
+        app(FlashResaleService::class)->broadcastOffer($order->fresh());
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Delivery marked as failed. You have been paid for this delivery. Trying to resell the food nearby.',
+            'data' => $order->fresh(),
+        ]);
+    }
+
+    public function confirmFoodReturned($orderId)
+    {
+        $order = Order::where('driver_id', auth()->id())
+            ->where('status', 'delivery_failed')
+            ->where('resale_status', 'expired')
+            ->findOrFail($orderId);
+
+        if (! $order->food_returned_at) {
+            $order->food_returned_at = now();
+            $order->resale_status = 'returned';
+            $order->save();
+
+            app(PayoutCalculationService::class)->finalizeRestaurantEarningForFailedDelivery(
+                $order->fresh(),
+                'returned'
+            );
+
+            app(OrderStatusPushService::class)->notifyRestaurant(
+                $order->fresh(['restaurant.owner']),
+                "Order #{$order->order_number} could not be resold and has been returned by the driver."
+            );
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Food return confirmed.',
+            'data' => $order->fresh(),
+        ]);
+    }
+
     public function getMyGigs(Request $request)
     {
         $driverId = auth()->id();
@@ -354,60 +492,126 @@ class DriverController extends Controller
         $query = Order::where('driver_id', $driverId)
             ->where('status', 'delivered');
 
+        $incentiveQuery = RestaurantOnboardingIncentive::with('onboarding')
+            ->where('driver_id', $driverId)
+            ->whereIn('status', [
+                RestaurantOnboardingIncentive::STATUS_EARNED,
+                RestaurantOnboardingIncentive::STATUS_INCLUDED_IN_PAYOUT,
+                RestaurantOnboardingIncentive::STATUS_PAID,
+            ]);
+
         if ($request->month) {
             $query->whereMonth('delivered_at', $request->month);
+            $incentiveQuery->whereMonth('earned_at', $request->month);
         } elseif ($period) {
             $query->where('delivered_at', '>=', $startDate);
+            $incentiveQuery->where('earned_at', '>=', $startDate);
         }
 
         if ($request->year) {
             $query->whereYear('delivered_at', $request->year);
+            $incentiveQuery->whereYear('earned_at', $request->year);
         }
 
-        $totalEarnings = (float) (clone $query)->sum(DB::raw('COALESCE(driver_earning, delivery_fee)'));
+        $deliveryEarnings = (float) (clone $query)->sum(DB::raw('COALESCE(driver_earning, delivery_fee)'));
+        $onboardingEarnings = (float) (clone $incentiveQuery)->sum('amount');
+        $totalEarnings = round($deliveryEarnings + $onboardingEarnings, 2);
         $tipEarnings = (float) (clone $query)->sum('tip_amount');
+        $cashCollected = (float) (clone $query)->whereNotNull('cash_collected_amount')->sum('cash_collected_amount');
         $totalOrders = (clone $query)->count();
+
+        // Per-driver payout mode (admin controlled).
+        $driver = auth()->user();
+        $earningMode = in_array($driver->earning_mode, ['salary', 'commission'], true)
+            ? $driver->earning_mode
+            : 'commission';
+        $monthlySalary = (float) ($driver->monthly_salary ?? 0);
+        $salaryAccrued = 0.0;
+        if ($earningMode === 'salary' && $monthlySalary > 0) {
+            $daysElapsed = max(1, $startDate->copy()->startOfDay()->diffInDays(now()) + 1);
+            $salaryAccrued = round($monthlySalary / max(1, now()->daysInMonth) * $daysElapsed, 2);
+        }
         $orders = $query->latest()->limit(20)->get();
+        $incentives = (clone $incentiveQuery)->latest('earned_at')->limit(20)->get();
+
+        $orderTransactions = $orders->flatMap(function ($order) {
+            $rows = [[
+                'type' => 'credit',
+                'description' => 'Delivery earning',
+                'order_number' => $order->order_number,
+                'amount' => (float) ($order->driver_earning ?? $order->delivery_fee ?? 0),
+                'created_at' => $order->delivered_at?->toIso8601String() ?? $order->created_at->toIso8601String(),
+            ]];
+
+            if ((float) ($order->tip_amount ?? 0) > 0) {
+                $rows[] = [
+                    'type' => 'credit',
+                    'description' => 'Customer tip',
+                    'order_number' => $order->order_number,
+                    'amount' => (float) $order->tip_amount,
+                    'created_at' => $order->tip_paid_at?->toIso8601String()
+                        ?? $order->delivered_at?->toIso8601String()
+                        ?? $order->created_at->toIso8601String(),
+                ];
+            }
+
+            return $rows;
+        });
+
+        $onboardingTransactions = $incentives->map(fn ($incentive) => [
+            'type' => 'credit',
+            'description' => 'Restaurant onboarding incentive',
+            'application_number' => $incentive->onboarding?->application_number,
+            'restaurant_name' => $incentive->onboarding?->restaurant?->name
+                ?? $incentive->onboarding?->partnerApplication?->business_name,
+            'status' => $incentive->status,
+            'amount' => (float) $incentive->amount,
+            'created_at' => $incentive->earned_at?->toIso8601String() ?? $incentive->created_at->toIso8601String(),
+        ]);
+
+        // Tax withheld on this driver's settlements for the same window.
+        $payoutTax = \App\Models\Payout::where('driver_id', $driverId)
+            ->where('created_at', '>=', $startDate)
+            ->selectRaw('sum(pre_tax_amount) as pre_tax, sum(tds_amount) as tds, sum(net_amount) as net')
+            ->first();
+
+        $gigCess = 0.0;
+        if (app(\App\Services\Tax\TaxConfig::class)->gigCessBorneBy() === 'driver') {
+            $gigCess = (float) \App\Models\TaxLedgerEntry::where('kind', \App\Models\TaxLedgerEntry::KIND_GIG_CESS)
+                ->whereHas('order', fn ($q) => $q->where('driver_id', $driverId)->where('delivered_at', '>=', $startDate))
+                ->sum('amount');
+        }
 
         return response()->json([
             'success' => true,
             'data' => [
                 'summary' => [
                     'total_earnings' => $totalEarnings,
+                    'delivery_earnings' => $deliveryEarnings,
+                    'onboarding_incentives' => $onboardingEarnings,
                     'tip_earnings' => $tipEarnings,
+                    'cash_collected_total' => round($cashCollected, 2),
+                    'earning_mode' => $earningMode,
+                    'monthly_salary' => $monthlySalary,
+                    'salary_accrued' => $salaryAccrued,
                     'total_deliveries' => $totalOrders,
-                    'avg_per_delivery' => $totalOrders > 0 ? round($totalEarnings / $totalOrders, 2) : 0,
+                    'avg_per_delivery' => $totalOrders > 0 ? round($deliveryEarnings / $totalOrders, 2) : 0,
                     'pending_amount' => $totalEarnings,
                     'withdrawn_amount' => 0,
+                    'pre_tax' => round((float) ($payoutTax->pre_tax ?? 0), 2),
+                    'tds_194c' => round((float) ($payoutTax->tds ?? 0), 2),
+                    'gig_cess' => round($gigCess, 2),
+                    'net' => round((float) ($payoutTax->net ?? 0), 2),
                     'daily_earnings' => $this->dailyEarnings($driverId, $startDate),
                 ],
-                'transactions' => $orders->flatMap(function ($order) {
-                    $rows = [[
-                        'type' => 'credit',
-                        'description' => 'Delivery earning',
-                        'order_number' => $order->order_number,
-                        'amount' => (float) ($order->driver_earning ?? $order->delivery_fee ?? 0),
-                        'created_at' => $order->delivered_at?->toIso8601String() ?? $order->created_at->toIso8601String(),
-                    ]];
-
-                    if ((float) ($order->tip_amount ?? 0) > 0) {
-                        $rows[] = [
-                            'type' => 'credit',
-                            'description' => 'Customer tip',
-                            'order_number' => $order->order_number,
-                            'amount' => (float) $order->tip_amount,
-                            'created_at' => $order->tip_paid_at?->toIso8601String()
-                                ?? $order->delivered_at?->toIso8601String()
-                                ?? $order->created_at->toIso8601String(),
-                        ];
-                    }
-
-                    return $rows;
-                })->values(),
+                'transactions' => $orderTransactions
+                    ->concat($onboardingTransactions)
+                    ->sortByDesc('created_at')
+                    ->take(20)
+                    ->values(),
             ]
         ]);
     }
-
     public function acceptOrder(AutoAssignDriverService $autoAssignService, $orderId)
     {
         $order = Order::where('driver_id', auth()->id())
@@ -430,6 +634,25 @@ class DriverController extends Controller
                 'message' => 'Recharge your wallet to accept COD orders. Minimum required balance is Rs ' . number_format($minimumBalance, AppSetting::currencyDecimals()) . '.',
                 'data' => [
                     'minimum_wallet_balance' => $minimumBalance,
+                ],
+            ], 422);
+        }
+
+        if (!$autoAssignService->driverWithinCodCashLimit($driver)) {
+            $limit = \App\Services\AutoAssignDriverService::codCashLimit();
+            $inHand = $autoAssignService->driverCodCashInHand($driver);
+            $sym = AppSetting::sanitizedCurrencySymbol();
+
+            return response()->json([
+                'success' => false,
+                'message' => "You're holding {$sym}" . number_format($inHand, AppSetting::currencyDecimals())
+                    . " in undeposited cash (limit {$sym}" . number_format($limit, AppSetting::currencyDecimals())
+                    . '). Deposit it online or raise a ticket to keep receiving orders.',
+                'data' => [
+                    'reason' => 'cod_cash_limit',
+                    'cod_cash_in_hand' => round($inHand, 2),
+                    'cod_cash_limit' => round($limit, 2),
+                    'amount_due' => round(max(0, $inHand), 2),
                 ],
             ], 422);
         }
@@ -513,6 +736,11 @@ class DriverController extends Controller
                 'vehicle_type' => $user->vehicle_type,
                 'vehicle_number' => $user->vehicle_number,
                 'license_number' => $user->license_number,
+                'earning_mode' => in_array($user->earning_mode, ['salary', 'commission'], true)
+                    ? $user->earning_mode
+                    : 'commission',
+                'monthly_salary' => $user->monthly_salary !== null ? (float) $user->monthly_salary : null,
+                'salary_effective_from' => optional($user->salary_effective_from)->toDateString(),
                 'account_holder_name' => $user->account_holder_name ?? null,
                 'bank_name' => $user->bank_name ?? null,
                 'account_number' => $user->account_number ?? null,
@@ -532,8 +760,36 @@ class DriverController extends Controller
                 'rating' => $ratingSummary['visible_rating'],
                 'total_ratings' => $ratingSummary['total_ratings'],
                 'minimum_ratings_required' => 3,
+                'cod_cash' => $this->codCashStatus($user),
             ],
         ]);
+    }
+
+    /**
+     * Undeposited COD cash the driver is holding, the admin ceiling, and whether
+     * new orders are currently blocked because of it. Per-order-incentive
+     * (commission) drivers only.
+     */
+    private function codCashStatus(\App\Models\User $user): array
+    {
+        $svc = app(\App\Services\AutoAssignDriverService::class);
+        $limit = \App\Services\AutoAssignDriverService::codCashLimit();
+        $inHand = round($svc->driverCodCashInHand($user), 2);
+        $isCommission = ($user->earning_mode ?? 'commission') !== 'salary';
+        $applies = $limit > 0 && $isCommission;
+
+        return [
+            'in_hand' => $inHand,
+            'limit' => round($limit, 2),
+            // `enabled` = the limit is enforced (blocks new orders).
+            'enabled' => $applies,
+            // `tracked` = surface the running COD balance to the driver even
+            // when no limit is configured, so they always know what they hold.
+            'tracked' => $isCommission,
+            'blocked' => $applies && $inHand >= $limit,
+            'currency_symbol' => AppSetting::sanitizedCurrencySymbol(),
+            'gateway_provider' => AppSetting::getValue('payment_gateway_provider', 'razorpay'),
+        ];
     }
 
     public function updateProfile(Request $request)
@@ -584,8 +840,9 @@ class DriverController extends Controller
         $driverId = auth()->id();
         $status = Cache::get("driver_status_{$driverId}", ['is_online' => false]);
         $activeGig = $this->activeBookedGig($driverId);
+        $requiresGig = $this->requiresGigToGoOnline(auth()->user());
 
-        if (($status['is_online'] ?? false) && ! $activeGig) {
+        if ($requiresGig && ($status['is_online'] ?? false) && ! $activeGig) {
             $status = [
                 'is_online' => false,
                 'online_started_at' => null,
@@ -599,7 +856,8 @@ class DriverController extends Controller
             'data' => [
                 'is_online' => (bool)($status['is_online'] ?? false),
                 'online_started_at' => $status['online_started_at'] ?? null,
-                'can_go_online' => (bool) $activeGig,
+                'can_go_online' => ! $requiresGig || (bool) $activeGig,
+                'requires_gig' => $requiresGig,
                 'active_gig' => $activeGig,
             ]
         ]);
@@ -613,14 +871,16 @@ class DriverController extends Controller
 
         $driverId = auth()->id();
         $activeGig = $this->activeBookedGig($driverId);
+        $requiresGig = $this->requiresGigToGoOnline(auth()->user());
 
-        if ($request->boolean('is_online') && !$activeGig) {
+        if ($request->boolean('is_online') && $requiresGig && !$activeGig) {
             return response()->json([
                 'success' => false,
                 'message' => 'Book an active gig before going online.',
                 'data' => [
                     'is_online' => false,
                     'can_go_online' => false,
+                    'requires_gig' => true,
                 ],
             ], 422);
         }
@@ -644,7 +904,8 @@ class DriverController extends Controller
         return response()->json([
             'success' => true,
             'data' => array_merge($status, [
-                'can_go_online' => (bool) $activeGig,
+                'can_go_online' => ! $requiresGig || (bool) $activeGig,
+                'requires_gig' => $requiresGig,
                 'active_gig' => $activeGig,
             ]),
             'message' => 'Driver status updated successfully.'
@@ -696,8 +957,13 @@ class DriverController extends Controller
                 'total_ratings' => $ratingSummary['total_ratings'],
                 'minimum_ratings_required' => 3,
                 'active_gig' => $this->activeBookedGig($driverId),
+                'requires_gig' => $this->requiresGigToGoOnline(auth()->user()),
+                'earning_mode' => (auth()->user()->earning_mode ?? 'commission') === 'salary'
+                    ? 'salary'
+                    : 'commission',
                 'running_orders' => $runningOrders,
                 'recent_deliveries' => $recentDeliveries,
+                'cod_cash' => $this->codCashStatus(auth()->user()),
             ],
         ]);
     }
@@ -725,6 +991,24 @@ class DriverController extends Controller
         );
     }
 
+    /**
+     * Salary (fixed-pay) delivery partners are rostered by the operator, not
+     * by the gig marketplace -- they go online directly without booking a
+     * gig slot. Per-order (commission) partners still need an active booking.
+     */
+    private function requiresGigToGoOnline(?\App\Models\User $user): bool
+    {
+        if (! $user) {
+            return true;
+        }
+
+        if (($user->earning_mode ?? 'commission') === 'salary') {
+            return false;
+        }
+
+        return (bool) \App\Models\AppSetting::getValue('gig_required_for_online', true);
+    }
+
     private function activeBookedGig(int $driverId): ?DriverGig
     {
         $now = now();
@@ -745,19 +1029,41 @@ class DriverController extends Controller
 
     private function dailyEarnings(int $driverId, Carbon $startDate)
     {
-        return Order::where('driver_id', $driverId)
+        $orderRows = Order::where('driver_id', $driverId)
             ->where('status', 'delivered')
             ->where('delivered_at', '>=', $startDate)
             ->selectRaw('DATE(delivered_at) as date, SUM(COALESCE(driver_earning, delivery_fee)) as amount')
             ->groupBy('date')
-            ->orderBy('date')
             ->get()
+            ->keyBy('date');
+
+        RestaurantOnboardingIncentive::where('driver_id', $driverId)
+            ->whereIn('status', [
+                RestaurantOnboardingIncentive::STATUS_EARNED,
+                RestaurantOnboardingIncentive::STATUS_INCLUDED_IN_PAYOUT,
+                RestaurantOnboardingIncentive::STATUS_PAID,
+            ])
+            ->where('earned_at', '>=', $startDate)
+            ->selectRaw('DATE(earned_at) as date, SUM(amount) as amount')
+            ->groupBy('date')
+            ->get()
+            ->each(function ($row) use ($orderRows) {
+                $existing = $orderRows->get($row->date);
+                if ($existing) {
+                    $existing->amount = (float) $existing->amount + (float) $row->amount;
+                } else {
+                    $orderRows->put($row->date, $row);
+                }
+            });
+
+        return $orderRows
+            ->sortKeys()
+            ->values()
             ->map(fn ($row) => [
                 'date' => $row->date,
                 'amount' => (float) $row->amount,
             ]);
     }
-
     private function driverRatingSummary(int $driverId): array
     {
         $query = Order::where('driver_id', $driverId)
@@ -793,6 +1099,8 @@ class DriverController extends Controller
             $driverLocation['lng'] ?? ($order->driver?->longitude !== null ? (float) $order->driver->longitude : null),
         );
 
+        $callMasking = app(CallMaskingService::class);
+
         return array_merge([
             'id' => $order->id,
             'order_number' => $order->order_number,
@@ -810,7 +1118,7 @@ class DriverController extends Controller
                 'status' => $order->branch->status,
             ] : null,
             'customer_name' => $order->customer_name ?? $order->customer?->name ?? 'Guest',
-            'customer_phone' => $order->customer_phone ?? $order->customer?->phone ?? '',
+            'customer_phone' => $callMasking->redactPhone($order->customer_phone ?? $order->customer?->phone ?? '') ?? '',
             'delivery_address' => $order->delivery_address ?? '',
             'delivery_lat' => $order->delivery_lat !== null ? (float) $order->delivery_lat : null,
             'delivery_lng' => $order->delivery_lng !== null ? (float) $order->delivery_lng : null,
@@ -820,6 +1128,10 @@ class DriverController extends Controller
             'tax' => (float) ($order->tax ?? 0),
             'discount' => (float) ($order->discount ?? 0),
             'total' => (float) ($order->total ?? 0),
+            'driver_earning' => $order->driver_earning !== null ? (float) $order->driver_earning : null,
+            'driver_incentive' => (float) ($order->batch_bonus ?? 0),
+            'tip_amount' => (float) ($order->tip_amount ?? 0),
+            'tip_paid_at' => $order->tip_paid_at ? $order->tip_paid_at->toIso8601String() : null,
             'status' => $order->status ?? 'pending',
             'driver_assignment_attempts' => (int) ($order->driver_assignment_attempts ?? 0),
             'driver_assigned_at' => $order->driver_assigned_at ? $order->driver_assigned_at->toIso8601String() : null,
@@ -827,6 +1139,15 @@ class DriverController extends Controller
             'route_batch_id' => $order->route_batch_id,
             'route_batch' => $routeBatch,
             'reached_at' => $order->reached_at ? $order->reached_at->toIso8601String() : null,
+            'arrived_at_customer' => $order->arrived_at_customer ? $order->arrived_at_customer->toIso8601String() : null,
+            'delivery_failed_at' => $order->delivery_failed_at ? $order->delivery_failed_at->toIso8601String() : null,
+            'delivery_failure_reason' => $order->delivery_failure_reason,
+            'delivery_failure_wait_minutes' => (int) AppSetting::getValue('delivery_failure_wait_minutes', 5),
+            'resale_status' => $order->resale_status,
+            'resale_price' => $order->resale_price !== null ? (float) $order->resale_price : null,
+            'resale_offer_expires_at' => $order->resale_offer_expires_at ? $order->resale_offer_expires_at->toIso8601String() : null,
+            'food_returned_at' => $order->food_returned_at ? $order->food_returned_at->toIso8601String() : null,
+            'original_order_id' => $order->original_order_id,
             'payment_method' => $order->payment_method ?? 'cod',
             'payment_status' => $order->payment_status ?? 'pending',
             'delivery_payment_mode' => $order->delivery_payment_mode,
@@ -850,7 +1171,7 @@ class DriverController extends Controller
                 'name' => $order->restaurant->name,
                 'slug' => $order->restaurant->slug,
                 'email' => $order->restaurant->email,
-                'phone' => $order->restaurant->phone,
+                'phone' => $callMasking->redactPhone($order->restaurant->phone),
                 'address' => $order->restaurant->address,
                 'city' => $order->restaurant->city,
                 'state' => $order->restaurant->state,
@@ -871,7 +1192,6 @@ class DriverController extends Controller
                 'total_ratings' => (int) ($order->restaurant->total_ratings ?? $order->restaurant->review_count ?? 0),
                 'is_open' => (bool) $order->restaurant->is_open,
                 'is_verified' => (bool) ($order->restaurant->is_verified ?? false),
-                'is_featured' => (bool) ($order->restaurant->is_featured ?? false),
                 'restaurant_type' => $order->restaurant->restaurant_type,
                 'dining_charge' => $order->restaurant->dining_charge !== null ? (float) $order->restaurant->dining_charge : null,
                 'weekly_timings' => $order->restaurant->weekly_timings,

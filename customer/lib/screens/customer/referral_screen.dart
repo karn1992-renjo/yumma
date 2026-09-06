@@ -11,6 +11,7 @@ import '../../config/app_config.dart';
 import '../../services/api_service.dart';
 import '../../theme/foodflow_theme.dart';
 import '../../widgets/common/app_skeleton.dart';
+import '../../widgets/customer/profile_screen_chrome.dart';
 
 class ReferralScreen extends StatefulWidget {
   const ReferralScreen({super.key});
@@ -55,7 +56,7 @@ class _ReferralScreenState extends State<ReferralScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final primary = FoodFlowTheme.brandPrimary(context);
+    final accent = profileAccentColor(context);
     final code = _data['referral_code']?.toString() ?? '';
     final stats = _data['stats'] is Map
         ? Map<String, dynamic>.from(_data['stats'] as Map)
@@ -65,78 +66,93 @@ class _ReferralScreenState extends State<ReferralScreen> {
         : const <Map>[];
 
     return Scaffold(
-      backgroundColor: FoodFlowTheme.warmCanvas,
-      appBar: AppBar(
-        title: const Text('Refer & Earn'),
-        centerTitle: true,
-        backgroundColor: Colors.transparent,
-        foregroundColor: FoodFlowTheme.ink,
-        elevation: 0,
-      ),
-      body: _loading
-          ? const AppSkeletonListView(itemCount: 4, itemHeight: 118)
-          : RefreshIndicator(
-              onRefresh: () => _load(forceRefresh: true),
-              color: primary,
-              child: ListView(
-                padding: const EdgeInsets.fromLTRB(18, 10, 18, 28),
+      backgroundColor: profileCanvasColor(context),
+      body: SafeArea(
+        child: RefreshIndicator(
+          onRefresh: () => _load(forceRefresh: true),
+          color: accent,
+          child: Stack(
+            children: [
+              ListView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                padding: const EdgeInsets.fromLTRB(18, 14, 18, 32),
                 children: [
-                  Container(
-                    padding: const EdgeInsets.all(22),
-                    decoration: _panel(context, radius: 30),
+                  const ProfilePageTopBar(
+                    title: 'Refer & Earn',
+                    subtitle: 'Invite friends, earn rewards',
+                  ),
+                  const SizedBox(height: 22),
+
+                  // Hero + code + share
+                  ProfileSurfaceCard(
+                    padding: const EdgeInsets.fromLTRB(18, 18, 18, 16),
                     child: Column(
                       children: [
-                        Icon(LucideIcons.gift, color: primary, size: 42),
-                        const SizedBox(height: 12),
-                        const Text(
+                        ProfileAccentIcon(
+                          icon: LucideIcons.gift,
+                          size: 62,
+                          iconSize: 28,
+                          radius: 20,
+                        ),
+                        const SizedBox(height: 14),
+                        Text(
                           'Invite friends, earn rewards',
                           textAlign: TextAlign.center,
                           style: TextStyle(
-                            color: FoodFlowTheme.ink,
-                            fontSize: 22,
-                            fontWeight: FontWeight.w900,
+                            color: profileTextColor(context),
+                            fontSize: 18,
+                            fontWeight: FontWeight.w800,
+                            height: 1.15,
                           ),
                         ),
                         const SizedBox(height: 8),
-                        const Text(
-                          'Your friend signs up with this code. Referral bonus is credited after their eligible order.',
+                        Text(
+                          'Your friend signs up with this code. The referral bonus is credited after their first eligible order.',
                           textAlign: TextAlign.center,
                           style: TextStyle(
-                            color: FoodFlowTheme.muted,
-                            fontWeight: FontWeight.w700,
+                            color: profileMutedColor(context),
+                            fontSize: 12,
+                            fontWeight: FontWeight.w500,
+                            height: 1.4,
                           ),
                         ),
-                        const SizedBox(height: 18),
+                        const SizedBox(height: 16),
                         Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 18,
-                            vertical: 14,
-                          ),
+                          padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
                           decoration: BoxDecoration(
-                            color: Colors.white,
-                            borderRadius: BorderRadius.circular(18),
-                            border: Border.all(color: FoodFlowTheme.line),
+                            color: profileSoftColor(context),
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(
+                              color: accent.withOpacity(0.20),
+                            ),
                           ),
                           child: Row(
                             children: [
                               Expanded(
                                 child: Text(
                                   code.isEmpty ? 'No code yet' : code,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
                                   style: TextStyle(
-                                    color: primary,
-                                    fontSize: 24,
+                                    color: accent,
+                                    fontSize: 22,
                                     fontWeight: FontWeight.w900,
                                     letterSpacing: 1.1,
                                   ),
                                 ),
                               ),
                               IconButton(
+                                style: FoodFlowTheme.softIconButton(
+                                  backgroundColor:
+                                      profileButtonSoftColor(context),
+                                  foregroundColor: profileButtonColor(context),
+                                ),
                                 onPressed: code.isEmpty
                                     ? null
                                     : () => Clipboard.setData(
                                           ClipboardData(text: code),
                                         ).then((_) => _toast('Code copied')),
-                                icon: const Icon(LucideIcons.copy),
+                                icon: const Icon(LucideIcons.copy, size: 18),
                               ),
                             ],
                           ),
@@ -144,10 +160,16 @@ class _ReferralScreenState extends State<ReferralScreen> {
                         const SizedBox(height: 14),
                         SizedBox(
                           width: double.infinity,
+                          height: 50,
                           child: ElevatedButton.icon(
                             onPressed:
                                 code.isEmpty ? null : () => _shareInvite(code),
-                            icon: const Icon(LucideIcons.share_2),
+                            style: FoodFlowTheme.zomatoPrimaryButton(
+                              color: profileButtonColor(context),
+                              foregroundColor: profileOnButtonColor(context),
+                              radius: 16,
+                            ),
+                            icon: const Icon(LucideIcons.share_2, size: 18),
                             label: const Text('Share Invite'),
                           ),
                         ),
@@ -155,105 +177,68 @@ class _ReferralScreenState extends State<ReferralScreen> {
                     ),
                   ),
                   const SizedBox(height: 18),
+
+                  const ProfileSectionLabel(title: 'Your progress'),
+                  const SizedBox(height: 10),
                   Row(
                     children: [
                       Expanded(
                         child: _MetricCard(
+                          icon: LucideIcons.user_plus,
                           label: 'Registered',
                           value: '${stats['registered'] ?? 0}',
-                          color: primary,
                         ),
                       ),
                       const SizedBox(width: 10),
                       Expanded(
                         child: _MetricCard(
+                          icon: LucideIcons.badge_check,
                           label: 'Credited',
                           value: '${stats['credited'] ?? 0}',
-                          color: FoodFlowTheme.success,
                         ),
                       ),
                       const SizedBox(width: 10),
                       Expanded(
                         child: _MetricCard(
+                          icon: LucideIcons.sparkles,
                           label: 'Points',
                           value: '${stats['points_earned'] ?? 0}',
-                          color: FoodFlowTheme.tagOrange,
                         ),
                       ),
                     ],
                   ),
                   const SizedBox(height: 18),
-                  const Text(
-                    'Referral History',
-                    style: TextStyle(
-                      color: FoodFlowTheme.ink,
-                      fontSize: 18,
-                      fontWeight: FontWeight.w900,
-                    ),
-                  ),
+
+                  const ProfileSectionLabel(title: 'Referral history'),
                   const SizedBox(height: 10),
-                  if (referrals.isEmpty)
-                    Container(
-                      padding: const EdgeInsets.all(18),
-                      decoration: _panel(context),
-                      child: const Text(
-                        'No referrals yet. Share your invite to start earning.',
-                        style: TextStyle(
-                          color: FoodFlowTheme.muted,
-                          fontWeight: FontWeight.w700,
+                  if (_loading && referrals.isEmpty)
+                    const AppSkeletonColumn(itemCount: 4, itemHeight: 74)
+                  else if (referrals.isEmpty)
+                    _EmptyReferrals()
+                  else
+                    ...referrals.map(
+                      (row) => Padding(
+                        padding: const EdgeInsets.only(bottom: 12),
+                        child: _ReferralRow(
+                          name: row['name']?.toString() ?? 'Customer',
+                          status: _statusText(row),
+                          pill: row['status']?.toString(),
                         ),
                       ),
-                    )
-                  else
-                    ...referrals.map((row) => Container(
-                          margin: const EdgeInsets.only(bottom: 10),
-                          padding: const EdgeInsets.all(14),
-                          decoration: _panel(context, radius: 18),
-                          child: Row(
-                            children: [
-                              CircleAvatar(
-                                backgroundColor: primary.withOpacity(0.12),
-                                child: Text(
-                                  (row['name']?.toString().trim().isNotEmpty ==
-                                          true)
-                                      ? row['name'].toString()[0].toUpperCase()
-                                      : 'C',
-                                  style: TextStyle(
-                                    color: primary,
-                                    fontWeight: FontWeight.w900,
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(width: 12),
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      row['name']?.toString() ?? 'Customer',
-                                      style: const TextStyle(
-                                        color: FoodFlowTheme.ink,
-                                        fontWeight: FontWeight.w900,
-                                      ),
-                                    ),
-                                    Text(
-                                      _statusText(row),
-                                      style: const TextStyle(
-                                        color: FoodFlowTheme.muted,
-                                        fontSize: 12,
-                                        fontWeight: FontWeight.w700,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                              _StatusPill(status: row['status']?.toString()),
-                            ],
-                          ),
-                        )),
+                    ),
                 ],
               ),
-            ),
+              if (_loading && referrals.isNotEmpty)
+                const Positioned(
+                  left: 0,
+                  right: 0,
+                  top: 0,
+                  child: LinearProgressIndicator(minHeight: 2),
+                ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 
@@ -301,7 +286,7 @@ class _ReferralScreenState extends State<ReferralScreen> {
     try {
       final bytes = await rootBundle.load(assetPath);
       final tempDir = await getTemporaryDirectory();
-      final file = File('${tempDir.path}/Yumma-referral-logo.png');
+      final file = File('${tempDir.path}/Swado-referral-logo.png');
       await file.writeAsBytes(
         bytes.buffer.asUint8List(bytes.offsetInBytes, bytes.lengthInBytes),
         flush: true,
@@ -339,7 +324,7 @@ class _ReferralScreenState extends State<ReferralScreen> {
     }
 
     final webLink =
-        Uri.https('yumma.online', '/referral', {'code': trimmedCode})
+        Uri.https('yumma.in', '/referral', {'code': trimmedCode})
             .toString();
 
     final params = <String, String>{
@@ -372,63 +357,117 @@ class _ReferralScreenState extends State<ReferralScreen> {
     if (points > 0) return '$points reward points credited';
     return 'Waiting for eligible order';
   }
-
-  BoxDecoration _panel(BuildContext context, {double radius = 22}) {
-    final primary = FoodFlowTheme.brandPrimary(context);
-    return BoxDecoration(
-      color: Colors.white,
-      borderRadius: BorderRadius.circular(radius),
-      border: Border.all(color: FoodFlowTheme.line),
-      boxShadow: [
-        BoxShadow(
-          color: primary.withOpacity(0.10),
-          blurRadius: 22,
-          offset: const Offset(0, 12),
-        ),
-      ],
-    );
-  }
 }
 
 class _MetricCard extends StatelessWidget {
   const _MetricCard({
+    required this.icon,
     required this.label,
     required this.value,
-    required this.color,
   });
 
+  final IconData icon;
   final String label;
   final String value;
-  final Color color;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: FoodFlowTheme.line),
-      ),
+    return ProfileSurfaceCard(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+      radius: 18,
       child: Column(
         children: [
+          Icon(icon, size: 18, color: profileAccentColor(context)),
+          const SizedBox(height: 8),
           Text(
             value,
             style: TextStyle(
-              color: color,
+              color: profileTextColor(context),
               fontSize: 20,
               fontWeight: FontWeight.w900,
             ),
           ),
-          const SizedBox(height: 3),
+          const SizedBox(height: 2),
           Text(
             label,
-            style: const TextStyle(
-              color: FoodFlowTheme.muted,
+            style: TextStyle(
+              color: profileMutedColor(context),
               fontSize: 11,
-              fontWeight: FontWeight.w800,
+              fontWeight: FontWeight.w700,
             ),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ReferralRow extends StatelessWidget {
+  const _ReferralRow({
+    required this.name,
+    required this.status,
+    required this.pill,
+  });
+
+  final String name;
+  final String status;
+  final String? pill;
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = profileAccentColor(context);
+    return ProfileSurfaceCard(
+      padding: const EdgeInsets.all(14),
+      radius: 18,
+      child: Row(
+        children: [
+          Container(
+            width: 42,
+            height: 42,
+            decoration: BoxDecoration(
+              color: profileSoftColor(context),
+              borderRadius: BorderRadius.circular(14),
+            ),
+            alignment: Alignment.center,
+            child: Text(
+              name.trim().isNotEmpty ? name.trim()[0].toUpperCase() : 'C',
+              style: TextStyle(
+                color: accent,
+                fontWeight: FontWeight.w900,
+                fontSize: 16,
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: profileTextColor(context),
+                    fontWeight: FontWeight.w800,
+                    fontSize: 14,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  status,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: profileMutedColor(context),
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          _StatusPill(status: pill),
         ],
       ),
     );
@@ -447,7 +486,7 @@ class _StatusPill extends StatelessWidget {
         ? FoodFlowTheme.success
         : normalized == 'qualified'
             ? FoodFlowTheme.tagOrange
-            : FoodFlowTheme.muted;
+            : profileMutedColor(context);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
@@ -461,6 +500,46 @@ class _StatusPill extends StatelessWidget {
           fontSize: 10,
           fontWeight: FontWeight.w900,
         ),
+      ),
+    );
+  }
+}
+
+class _EmptyReferrals extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return ProfileSurfaceCard(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        children: [
+          ProfileAccentIcon(
+            icon: LucideIcons.users,
+            size: 62,
+            iconSize: 28,
+            radius: 20,
+          ),
+          const SizedBox(height: 14),
+          Text(
+            'No referrals yet',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: profileTextColor(context),
+              fontSize: 16,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Share your invite to start earning rewards.',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: profileMutedColor(context),
+              fontSize: 12,
+              fontWeight: FontWeight.w500,
+              height: 1.35,
+            ),
+          ),
+        ],
       ),
     );
   }

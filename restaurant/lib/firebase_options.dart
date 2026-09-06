@@ -17,34 +17,33 @@ class DefaultFirebaseOptions {
   }
 
   static const FirebaseOptions web = FirebaseOptions(
-    apiKey: 'AIzaSyAmLGAn7rBEB02d-k3TFz71i7UQzmIPhwU',
-    authDomain: 'renjo-technology-d0684.firebaseapp.com',
-    databaseURL: 'https://renjo-technology-d0684-default-rtdb.firebaseio.com',
-    projectId: 'renjo-technology-d0684',
-    storageBucket: 'renjo-technology-d0684.firebasestorage.app',
-    messagingSenderId: '435753341002',
-    appId: '1:435753341002:web:6aa19e2487d7c6910816b3',
-    measurementId: 'G-W9CNN2GE92',
+    apiKey: 'AIzaSyB6Ixat1fY3Knl7mNiGl4zuNASMxHv23Qg',
+    authDomain: 'yumma-458b0.firebaseapp.com',
+    databaseURL: 'https://yumma-458b0-default-rtdb.firebaseio.com',
+    projectId: 'yumma-458b0',
+    storageBucket: 'yumma-458b0.firebasestorage.app',
+    messagingSenderId: '596992936599',
+    appId: '1:596992936599:web:8d6fa739975dfcf6f6b7d2',
+    measurementId: 'G-0ZTK9YVV43',
   );
 
   static const FirebaseOptions android = FirebaseOptions(
-    apiKey: 'AIzaSyAmLGAn7rBEB02d-k3TFz71i7UQzmIPhwU',
-    authDomain: 'renjo-technology-d0684.firebaseapp.com',
-    databaseURL: 'https://renjo-technology-d0684-default-rtdb.firebaseio.com',
-    projectId: 'renjo-technology-d0684',
-    storageBucket: 'renjo-technology-d0684.firebasestorage.app',
-    messagingSenderId: '435753341002',
-    appId: '1:435753341002:android:fb3ea58b7ac3e73b0816b3',
+    apiKey: 'AIzaSyDs06Xh5QCDpQiy37L-RR0hrNqGPvx2paE',
+    authDomain: 'yumma-458b0.firebaseapp.com',
+    databaseURL: 'https://yumma-458b0-default-rtdb.firebaseio.com',
+    projectId: 'yumma-458b0',
+    storageBucket: 'yumma-458b0.firebasestorage.app',
+    messagingSenderId: '596992936599',
+    appId: '1:596992936599:android:a09027bd6bf77d3cf6b7d2',
   );
 
   static const FirebaseOptions ios = FirebaseOptions(
-    apiKey: 'AIzaSyAmLGAn7rBEB02d-k3TFz71i7UQzmIPhwU',
-    appId: '1:435753341002:ios:1f04a9fb55e902ec0816b3',
-    messagingSenderId: '435753341002',
-    projectId: 'renjo-technology-d0684',
-    storageBucket: 'renjo-technology-d0684.firebasestorage.app',
-    iosBundleId: 'com.renjo.restro.android',
-    databaseURL: 'https://renjo-technology-d0684-default-rtdb.firebaseio.com',
+    apiKey: 'AIzaSyDhZCVKvFQmun_wXebEFKgaP6zzjQn-c4I',
+    appId: '1:596992936599:ios:5d0980fcbcf58842f6b7d2',
+    messagingSenderId: '596992936599',
+    projectId: 'yumma-458b0',
+    storageBucket: 'yumma-458b0.firebasestorage.app',
+    iosBundleId: 'com.adgraph.yumma',
+    databaseURL: 'https://yumma-458b0-default-rtdb.firebaseio.com',
   );
 }
- 

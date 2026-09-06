@@ -64,13 +64,20 @@
             
             @if($canOrders)
             <li class="sidebar-nav-item">
-                <a href="{{ route('restaurant.orders.index') }}" 
-                   class="sidebar-nav-link {{ request()->routeIs('restaurant.orders.*') ? 'active' : '' }}">
-                    <i class="fas fa-shopping-bag"></i>
-                    <span>Orders</span>
+                <a href="{{ route('restaurant.orders.index', ['status' => 'pending']) }}" 
+                   class="sidebar-nav-link {{ request()->routeIs('restaurant.orders.index') && request('status') === 'pending' ? 'active' : '' }}">
+                    <i class="fas fa-clock"></i>
+                    <span>Order Queue</span>
                     @if($pendingCount > 0)
                         <span class="sidebar-badge">{{ $pendingCount > 99 ? '99+' : $pendingCount }}</span>
                     @endif
+                </a>
+            </li>
+            <li class="sidebar-nav-item">
+                <a href="{{ route('restaurant.orders.index') }}" 
+                   class="sidebar-nav-link {{ request()->routeIs('restaurant.orders.*') && !(request()->routeIs('restaurant.orders.index') && request('status') === 'pending') ? 'active' : '' }}">
+                    <i class="fas fa-shopping-bag"></i>
+                    <span>Order List</span>
                 </a>
             </li>
             <li class="sidebar-nav-item">
@@ -148,6 +155,15 @@
                     <span>Wallet</span>
                 </a>
             </li>
+            @if((string) \App\Models\AppSetting::getValue('business_gst_enabled', '0') === '1')
+            <li class="sidebar-nav-item">
+                <a href="{{ route('restaurant.statements.index') }}"
+                   class="sidebar-nav-link {{ request()->routeIs('restaurant.statements.*') ? 'active' : '' }}">
+                    <i class="fas fa-file-invoice-dollar"></i>
+                    <span>Statements</span>
+                </a>
+            </li>
+            @endif
             <li class="sidebar-nav-item">
                 <a href="{{ route('restaurant.settings.index') }}" 
                    class="sidebar-nav-link {{ request()->routeIs('restaurant.settings.index') ? 'active' : '' }}">

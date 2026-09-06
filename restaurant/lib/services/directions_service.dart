@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'native_config_service.dart';
@@ -21,13 +22,20 @@ class DirectionsService {
       '&key=$googleMapsApiKey',
     );
 
-    final response = await http.get(url);
+    final response = await http.get(url).timeout(const Duration(seconds: 8));
     if (response.statusCode != 200) {
+      debugPrint(
+        'Directions API HTTP ${response.statusCode}: ${response.body}',
+      );
       return [];
     }
 
     final data = jsonDecode(response.body);
     if (data == null || data['status'] != 'OK') {
+      debugPrint(
+        'Directions API status=${data?['status']} '
+        'error=${data?['error_message']}',
+      );
       return [];
     }
 

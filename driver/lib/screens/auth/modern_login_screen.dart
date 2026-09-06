@@ -8,6 +8,7 @@ import '../../providers/auth_provider.dart';
 import '../../theme/foodflow_theme.dart';
 import '../../widgets/common/loading_button.dart';
 import 'register_screen.dart';
+import '../driver/background_location_disclosure_screen.dart';
 
 class ModernLoginScreen extends StatefulWidget {
   const ModernLoginScreen({Key? key}) : super(key: key);
@@ -56,8 +57,8 @@ class _ModernLoginScreenState extends State<ModernLoginScreen>
     _fadeAnimation = Tween<double>(begin: 0, end: 1).animate(
       CurvedAnimation(parent: _fadeController, curve: Curves.easeIn),
     );
-    _slideAnimation = Tween<Offset>(begin: const Offset(0, 0.3), end: Offset.zero)
-        .animate(
+    _slideAnimation =
+        Tween<Offset>(begin: const Offset(0, 0.3), end: Offset.zero).animate(
       CurvedAnimation(parent: _slideController, curve: Curves.easeOut),
     );
 
@@ -148,6 +149,10 @@ class _ModernLoginScreenState extends State<ModernLoginScreen>
     setState(() => _isLoading = false);
 
     if (success) {
+      if (_selectedRole == 'driver' &&
+          !await _ensureDriverLocationDisclosureAccepted(authProvider)) {
+        return;
+      }
       _showSuccess('Login successful!');
       if (mounted) {
         Navigator.of(context).pushReplacementNamed('/home');
@@ -155,6 +160,22 @@ class _ModernLoginScreenState extends State<ModernLoginScreen>
     } else {
       _showError(authProvider.error ?? 'Login failed');
     }
+  }
+
+  Future<bool> _ensureDriverLocationDisclosureAccepted(
+    AuthProvider authProvider,
+  ) async {
+    final accepted = await BackgroundLocationDisclosureScreen.ensureAccepted(
+      context,
+      forceDisclosure: true,
+    );
+    if (accepted) return true;
+
+    await authProvider.logout();
+    if (!mounted) return false;
+    _showError(
+        'Background location consent is required for driver deliveries.');
+    return false;
   }
 
   void _goToRegister() {
@@ -239,7 +260,7 @@ class _ModernLoginScreenState extends State<ModernLoginScreen>
                           const SizedBox(height: 24),
                           Text(
                             'Welcome Back',
-                            style: GoogleFonts.nunitoSans(
+                            style: GoogleFonts.plusJakartaSans(
                               fontSize: 32,
                               fontWeight: FontWeight.w800,
                               color: Colors.white,
@@ -248,7 +269,7 @@ class _ModernLoginScreenState extends State<ModernLoginScreen>
                           const SizedBox(height: 8),
                           Text(
                             _getSubtitle(),
-                            style: GoogleFonts.nunitoSans(
+                            style: GoogleFonts.plusJakartaSans(
                               fontSize: 16,
                               color: Colors.white.withOpacity(0.8),
                               fontWeight: FontWeight.w400,
@@ -299,7 +320,7 @@ class _ModernLoginScreenState extends State<ModernLoginScreen>
                                     child: Text(
                                       'OTP',
                                       textAlign: TextAlign.center,
-                                      style: GoogleFonts.nunitoSans(
+                                      style: GoogleFonts.plusJakartaSans(
                                         fontWeight: FontWeight.w400,
                                         color: _useOtp
                                             ? Color(0xFF667EEA)
@@ -327,7 +348,7 @@ class _ModernLoginScreenState extends State<ModernLoginScreen>
                                     child: Text(
                                       'Password',
                                       textAlign: TextAlign.center,
-                                      style: GoogleFonts.nunitoSans(
+                                      style: GoogleFonts.plusJakartaSans(
                                         fontWeight: FontWeight.w400,
                                         color: !_useOtp
                                             ? Color(0xFF667EEA)
@@ -392,7 +413,7 @@ class _ModernLoginScreenState extends State<ModernLoginScreen>
                                 },
                                 child: Text(
                                   'Change number?',
-                                  style: GoogleFonts.nunitoSans(
+                                  style: GoogleFonts.plusJakartaSans(
                                     color: Colors.white,
                                     fontWeight: FontWeight.w400,
                                   ),
@@ -476,14 +497,14 @@ class _ModernLoginScreenState extends State<ModernLoginScreen>
                                   children: [
                                     TextSpan(
                                       text: 'I agree to the ',
-                                      style: GoogleFonts.nunitoSans(
+                                      style: GoogleFonts.plusJakartaSans(
                                         color: Colors.white.withOpacity(0.8),
                                         fontSize: 13,
                                       ),
                                     ),
                                     TextSpan(
                                       text: 'Terms & Conditions',
-                                      style: GoogleFonts.nunitoSans(
+                                      style: GoogleFonts.plusJakartaSans(
                                         color: Colors.white,
                                         fontSize: 13,
                                         fontWeight: FontWeight.w400,
@@ -504,7 +525,7 @@ class _ModernLoginScreenState extends State<ModernLoginScreen>
                           child: ElevatedButton(
                             onPressed: _isLoading ? null : _handleLogin,
                             style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.white,
+                              backgroundColor: foodflow.surfaceColor,
                               shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(14),
                               ),
@@ -527,7 +548,7 @@ class _ModernLoginScreenState extends State<ModernLoginScreen>
                                         : _useOtp
                                             ? 'Send OTP'
                                             : 'Continue',
-                                    style: GoogleFonts.nunitoSans(
+                                    style: GoogleFonts.plusJakartaSans(
                                       fontSize: 16,
                                       fontWeight: FontWeight.w400,
                                       color: Color(0xFF667EEA),
@@ -544,14 +565,14 @@ class _ModernLoginScreenState extends State<ModernLoginScreen>
                               children: [
                                 TextSpan(
                                   text: "Don't have an account? ",
-                                  style: GoogleFonts.nunitoSans(
+                                  style: GoogleFonts.plusJakartaSans(
                                     color: Colors.white.withOpacity(0.8),
                                     fontSize: 14,
                                   ),
                                 ),
                                 TextSpan(
                                   text: 'Sign Up',
-                                  style: GoogleFonts.nunitoSans(
+                                  style: GoogleFonts.plusJakartaSans(
                                     color: Colors.white,
                                     fontSize: 14,
                                     fontWeight: FontWeight.w800,
@@ -604,7 +625,7 @@ class _ModernLoginScreenState extends State<ModernLoginScreen>
       children: [
         Text(
           label,
-          style: GoogleFonts.nunitoSans(
+          style: GoogleFonts.plusJakartaSans(
             fontSize: 14,
             fontWeight: FontWeight.w400,
             color: Colors.white,
@@ -617,13 +638,13 @@ class _ModernLoginScreenState extends State<ModernLoginScreen>
           obscureText: obscureText,
           maxLength: maxLength,
           validator: validator,
-          style: GoogleFonts.nunitoSans(
+          style: GoogleFonts.plusJakartaSans(
             color: Colors.white,
             fontSize: 16,
           ),
           decoration: InputDecoration(
             hintText: hint,
-            hintStyle: GoogleFonts.nunitoSans(
+            hintStyle: GoogleFonts.plusJakartaSans(
               color: Colors.white.withOpacity(0.5),
               fontSize: 14,
             ),

@@ -7,6 +7,7 @@ use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Str;
+use Intervention\Image\ImageManager;
 
 class MediaStorage
 {
@@ -80,7 +81,33 @@ class MediaStorage
             throw new \RuntimeException('Unable to store uploaded media.');
         }
 
-        return $storedPath;
+        return self::storeModernFormats($file, $path, $storedPath);
+    }
+
+    private static function storeModernFormats(UploadedFile $file, string $path, string $originalPath): string
+    {
+        if (! str_starts_with((string) $file->getMimeType(), 'image/') || in_array(strtolower($file->extension()), ['gif', 'svg'], true)) {
+            return $originalPath;
+        }
+
+        try {
+            $image = ImageManager::gd()->read($file->getRealPath());
+            $directory = pathinfo($path, PATHINFO_DIRNAME);
+            $basename = pathinfo($path, PATHINFO_FILENAME);
+            $disk = Storage::disk('public');
+            $options = ['visibility' => 'public', 'CacheControl' => 'public, max-age=31536000, immutable'];
+            $webpPath = $directory.'/'.$basename.'.webp';
+
+            $disk->put($webpPath, $image->toWebp(82)->toString(), $options);
+
+            if (method_exists($image, 'toAvif')) {
+                $disk->put($directory.'/'.$basename.'.avif', $image->toAvif(65)->toString(), $options);
+            }
+
+            return $webpPath;
+        } catch (\Throwable) {
+            return $originalPath;
+        }
     }
 
     public static function delete(?string $path): void

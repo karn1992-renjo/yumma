@@ -3,14 +3,17 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../config/app_config.dart';
+import '../models/app_branding.dart';
 
 class AppSplashScreen extends StatefulWidget {
   const AppSplashScreen({
     super.key,
+    this.branding,
     required this.startupFuture,
     required this.builder,
   });
 
+  final AppBranding? branding;
   final Future<void> startupFuture;
   final WidgetBuilder builder;
 
@@ -39,21 +42,27 @@ class _AppSplashScreenState extends State<AppSplashScreen> {
           return widget.builder(context);
         }
 
-        return const _SplashView();
+        return _SplashView(branding: widget.branding);
       },
     );
   }
 }
 
 class _SplashView extends StatelessWidget {
-  const _SplashView();
+  const _SplashView({this.branding});
 
-  static const Color _splashPurple = Color(0xFF5F008C);
+  final AppBranding? branding;
+
+  static const Color _fallbackSplashBackground = Color(0xFF2563EB);
 
   @override
   Widget build(BuildContext context) {
+    final splashBackground =
+        _colorFromHex(branding?.restaurantPrimaryColorHex) ??
+            _fallbackSplashBackground;
+
     return Scaffold(
-      backgroundColor: _splashPurple,
+      backgroundColor: splashBackground,
       body: SafeArea(
         child: Center(
           child: Column(
@@ -95,5 +104,12 @@ class _SplashView extends StatelessWidget {
     if (AppConfig.isDriverApp) return 'Delivering orders faster';
     if (AppConfig.isRestaurantApp) return 'Managing orders smoothly';
     return 'Fresh food, fast delivery';
+  }
+
+  static Color? _colorFromHex(String? value) {
+    final normalized = value?.trim().replaceFirst('#', '') ?? '';
+    if (normalized.length != 6) return null;
+    final parsed = int.tryParse(normalized, radix: 16);
+    return parsed == null ? null : Color(0xFF000000 | parsed);
   }
 }

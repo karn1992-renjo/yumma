@@ -4,7 +4,7 @@ class OrderAlertPermissionManager {
   OrderAlertPermissionManager._();
 
   static const MethodChannel _channel = MethodChannel(
-    'com.renjo.restro.android/order_alerts',
+    'com.adgraph.yumma_vendor/order_alerts',
   );
 
   static Future<bool> checkOverlayPermission() async {

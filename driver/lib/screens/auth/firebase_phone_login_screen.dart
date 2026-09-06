@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../../providers/auth_provider.dart';
 import '../../services/firebase_phone_auth_service.dart';
+import '../driver/background_location_disclosure_screen.dart';
 
 class FirebasePhoneLoginScreen extends StatefulWidget {
   const FirebasePhoneLoginScreen({
@@ -19,7 +20,8 @@ class FirebasePhoneLoginScreen extends StatefulWidget {
   final String role;
 
   @override
-  State<FirebasePhoneLoginScreen> createState() => _FirebasePhoneLoginScreenState();
+  State<FirebasePhoneLoginScreen> createState() =>
+      _FirebasePhoneLoginScreenState();
 }
 
 class _FirebasePhoneLoginScreenState extends State<FirebasePhoneLoginScreen> {
@@ -140,6 +142,8 @@ class _FirebasePhoneLoginScreenState extends State<FirebasePhoneLoginScreen> {
         return;
       }
 
+      if (!await _ensureDriverLocationDisclosureAccepted(authProvider)) return;
+
       Navigator.pushReplacementNamed(context, '/driver/dashboard');
     } catch (e) {
       _setError(e);
@@ -150,6 +154,26 @@ class _FirebasePhoneLoginScreenState extends State<FirebasePhoneLoginScreen> {
         });
       }
     }
+  }
+
+  Future<bool> _ensureDriverLocationDisclosureAccepted(
+    AuthProvider authProvider,
+  ) async {
+    if (widget.role != 'driver') return true;
+
+    final accepted = await BackgroundLocationDisclosureScreen.ensureAccepted(
+      context,
+      forceDisclosure: true,
+    );
+    if (accepted) return true;
+
+    await authProvider.logout();
+    if (!mounted) return false;
+    _showMessage(
+      'Background location consent is required for driver deliveries.',
+      isError: true,
+    );
+    return false;
   }
 
   void _startResendCountdown() {
@@ -242,7 +266,8 @@ class _FirebasePhoneLoginScreenState extends State<FirebasePhoneLoginScreen> {
                   ),
                   const SizedBox(height: 8),
                   TextButton(
-                    onPressed: isLoading || _resendCountdown > 0 ? null : _sendOtp,
+                    onPressed:
+                        isLoading || _resendCountdown > 0 ? null : _sendOtp,
                     child: Text(
                       _resendCountdown > 0
                           ? 'Resend OTP in ${_resendCountdown}s'
@@ -259,7 +284,8 @@ class _FirebasePhoneLoginScreenState extends State<FirebasePhoneLoginScreen> {
                 ],
                 const SizedBox(height: 24),
                 ElevatedButton(
-                  onPressed: isLoading ? null : (_otpSent ? _verifyOtp : _sendOtp),
+                  onPressed:
+                      isLoading ? null : (_otpSent ? _verifyOtp : _sendOtp),
                   child: Padding(
                     padding: const EdgeInsets.symmetric(vertical: 14),
                     child: Text(_otpSent ? 'Verify OTP' : 'Send OTP'),

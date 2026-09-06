@@ -1,18 +1,22 @@
 // lib/screens/driver/driver_order_detail_screen.dart
 import 'dart:async';
 import 'dart:convert';
-import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../services/api_service.dart';
+import '../../services/websocket_service.dart';
 import '../../services/directions_service.dart';
 import '../../services/location_service.dart';
 import '../../config/api_constants.dart';
 import '../../models/order.dart';
 import '../../theme/foodflow_theme.dart';
+import '../../theme/aurora_theme.dart';
+import '../../widgets/aurora/aurora.dart';
+import '../../widgets/aurora/swipe_to_confirm.dart';
 import '../../utils/currency_utils.dart';
 import '../../widgets/common/network_error_screen.dart';
 
@@ -39,7 +43,6 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
   List<LatLng> _routePoints = [];
   Set<Polyline> _polylines = {};
   final TextEditingController _otpController = TextEditingController();
-  double _swipeProgress = 0;
   String _selectedPaymentMode = 'cash';
   bool _cashCollected = false;
   bool _isGeneratingQr = false;
@@ -92,9 +95,8 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
         setState(() {
           _order = order;
           _loadError = null;
-          _selectedPaymentMode = order.isPaymentPaid
-              ? 'online'
-              : _paymentModeFor(order);
+          _selectedPaymentMode =
+              order.isPaymentPaid ? 'online' : _paymentModeFor(order);
           _cashCollected = false;
           _restaurantLocation = restaurantLocation;
           _deliveryLocation = deliveryLocation;
@@ -112,6 +114,16 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
     setState(() => _isLoading = false);
   }
 
+  /// Reload this order AND tell the rest of the app (dashboard stats, orders
+  /// list) to refresh — the server doesn't echo the driver's own changes back.
+  Future<void> _reloadAndBroadcast() async {
+    await _loadOrder();
+    WebSocketService().notifyLocalOrderChange(
+      orderId: widget.orderId,
+      status: _order?.status,
+    );
+  }
+
   Future<void> _updateOrderStatus(String status, {String? reason}) async {
     setState(() => _isUpdating = true);
 
@@ -125,7 +137,7 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
       );
 
       if (response['success'] == true) {
-        await _loadOrder();
+        await _reloadAndBroadcast();
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
@@ -146,13 +158,150 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
     setState(() => _isUpdating = false);
   }
 
+  Future<void> _markArrivedAtCustomer() async {
+    setState(() => _isUpdating = true);
+
+    try {
+      final response =
+          await _api.post(ApiConstants.driverArrived(widget.orderId));
+
+      if (response['success'] == true) {
+        await _reloadAndBroadcast();
+      }
+    } catch (e) {
+      debugPrint('Mark arrived error: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to record arrival: $e')),
+        );
+      }
+    }
+
+    setState(() => _isUpdating = false);
+  }
+
+  Future<void> _showReportDeliveryFailedDialog() async {
+    final reasonController = TextEditingController();
+
+    final reason = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Report Delivery Issue'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              "Tell us what happened. This will mark the delivery as failed and you'll still be paid for this trip.",
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: reasonController,
+              maxLines: 3,
+              autofocus: true,
+              decoration: const InputDecoration(
+                labelText: 'Reason',
+                hintText: 'e.g. Customer not responding, refused delivery...',
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              final text = reasonController.text.trim();
+              if (text.isEmpty) {
+                ScaffoldMessenger.of(dialogContext).showSnackBar(
+                  const SnackBar(content: Text('Please enter a reason')),
+                );
+                return;
+              }
+              Navigator.pop(dialogContext, text);
+            },
+            child: const Text('Submit'),
+          ),
+        ],
+      ),
+    );
+
+    if (reason != null && reason.isNotEmpty) {
+      await _reportDeliveryFailed(reason);
+    }
+  }
+
+  Future<void> _reportDeliveryFailed(String reason) async {
+    setState(() => _isUpdating = true);
+
+    try {
+      final response = await _api.post(
+        ApiConstants.driverReportDeliveryFailed(widget.orderId),
+        data: {'reason': reason},
+      );
+
+      if (response['success'] == true) {
+        await _reloadAndBroadcast();
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Delivery marked as failed. You have been paid for this delivery.',
+              ),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      debugPrint('Report delivery failed error: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to report delivery issue: $e')),
+        );
+      }
+    }
+
+    setState(() => _isUpdating = false);
+  }
+
+  Future<void> _confirmFoodReturned() async {
+    setState(() => _isUpdating = true);
+
+    try {
+      final response = await _api.post(
+        ApiConstants.driverConfirmFoodReturned(widget.orderId),
+      );
+
+      if (response['success'] == true) {
+        await _reloadAndBroadcast();
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Food return confirmed.')),
+          );
+        }
+      }
+    } catch (e) {
+      debugPrint('Confirm food returned error: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to confirm return: $e')),
+        );
+      }
+    }
+
+    setState(() => _isUpdating = false);
+  }
+
   Future<void> _acceptAssignment() async {
     setState(() => _isUpdating = true);
     try {
       final response =
           await _api.post(ApiConstants.driverAcceptOrder(widget.orderId));
       if (response['success'] == true) {
-        await _loadOrder();
+        await _reloadAndBroadcast();
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('Delivery accepted')),
@@ -220,7 +369,9 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
       return;
     }
 
-    if (!_isPaymentAlreadyPaid && _selectedPaymentMode == 'cash' && !_cashCollected) {
+    if (!_isPaymentAlreadyPaid &&
+        _selectedPaymentMode == 'cash' &&
+        !_cashCollected) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Confirm cash collection first')),
       );
@@ -237,17 +388,22 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
     setState(() => _isUpdating = true);
 
     try {
+      // Report the mode the driver actually used to settle, not the transient
+      // selector value (which `_loadOrder` flips to 'online' once paid).
+      final settledMode = _cashCollected
+          ? 'cash'
+          : (_order?.cashCollectedAmount != null ? 'cash' : _selectedPaymentMode);
       final response = await _api.post(
         '${ApiConstants.verifyDeliveryOtp}/${widget.orderId}',
         data: {
           'otp': _otpController.text,
-          'payment_mode': _selectedPaymentMode,
-          'cash_collected': _cashCollected,
+          'payment_mode': settledMode,
+          'cash_collected': _cashCollected || _order?.cashCollectedAmount != null,
         },
       );
 
       if (response['success'] == true) {
-        await _loadOrder();
+        await _reloadAndBroadcast();
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('Delivery completed successfully!')),
@@ -296,53 +452,33 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
         (order.isPickedUp || order.isOnTheWay || order.isDelivered);
   }
 
-  _DriverActionTarget get _activeContactTarget {
-    if (_isCustomerLegActive) {
-      return _DriverActionTarget(
+  _DriverActionTarget get _customerContactTarget => _DriverActionTarget(
         title: 'Customer',
+        role: 'customer',
         name: _order?.customerName ?? 'Customer',
-        phone: _order?.customerPhone ?? '',
         address: _order?.deliveryAddress ?? '',
         location: _deliveryLocation,
         icon: Icons.person_rounded,
         color: foodflow.success,
+        callable: _order != null,
       );
-    }
 
-    return _DriverActionTarget(
-      title: 'Store',
-      name: _order?.restaurant?.name ?? 'Store',
-      phone: _order?.restaurant?.phone ?? '',
-      address: _order?.restaurant?.address ?? '',
-      location: _restaurantLocation,
-      icon: Icons.restaurant_rounded,
-      color: foodflow.primaryColor,
-    );
-  }
-
-  _DriverActionTarget get _alternateContactTarget {
-    if (_isCustomerLegActive) {
-      return _DriverActionTarget(
+  _DriverActionTarget get _storeContactTarget => _DriverActionTarget(
         title: 'Store',
+        role: 'restaurant',
         name: _order?.restaurant?.name ?? 'Store',
-        phone: _order?.restaurant?.phone ?? '',
         address: _order?.restaurant?.address ?? '',
         location: _restaurantLocation,
         icon: Icons.restaurant_rounded,
         color: foodflow.primaryColor,
+        callable: _order?.restaurant != null,
       );
-    }
 
-    return _DriverActionTarget(
-      title: 'Customer',
-      name: _order?.customerName ?? 'Customer',
-      phone: _order?.customerPhone ?? '',
-      address: _order?.deliveryAddress ?? '',
-      location: _deliveryLocation,
-      icon: Icons.person_rounded,
-      color: foodflow.success,
-    );
-  }
+  _DriverActionTarget get _activeContactTarget =>
+      _isCustomerLegActive ? _customerContactTarget : _storeContactTarget;
+
+  _DriverActionTarget get _alternateContactTarget =>
+      _isCustomerLegActive ? _storeContactTarget : _customerContactTarget;
 
   void _showCallDialog() {
     final primary = _activeContactTarget;
@@ -359,24 +495,23 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
         primaryAction: _DriverSheetAction(
           target: primary,
           label: 'Call ${primary.title}',
-          value: primary.phone.isNotEmpty ? primary.phone : 'Phone unavailable',
+          value: primary.callable ? 'Tap to call' : 'Not available',
           icon: Icons.call_rounded,
-          enabled: primary.phone.trim().isNotEmpty,
+          enabled: primary.callable,
           onTap: () {
             Navigator.pop(context);
-            _callPhone(primary.phone);
+            _callParticipant(primary.role);
           },
         ),
         secondaryAction: _DriverSheetAction(
           target: secondary,
           label: 'Call ${secondary.title}',
-          value:
-              secondary.phone.isNotEmpty ? secondary.phone : 'Phone unavailable',
+          value: secondary.callable ? 'Tap to call' : 'Not available',
           icon: Icons.call_outlined,
-          enabled: secondary.phone.trim().isNotEmpty,
+          enabled: secondary.callable,
           onTap: () {
             Navigator.pop(context);
-            _callPhone(secondary.phone);
+            _callParticipant(secondary.role);
           },
         ),
       ),
@@ -425,20 +560,21 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
     );
   }
 
-  Future<void> _callPhone(String phone) async {
-    final digits = phone.replaceAll(RegExp(r'[^\d+]'), '');
-    if (digits.isEmpty) {
-      _showSnack('Phone number not available');
-      return;
-    }
-
-    final launched = await launchUrl(
-      Uri(scheme: 'tel', path: digits),
-      mode: LaunchMode.externalApplication,
-    );
-
-    if (!launched) {
-      _showSnack('Could not open phone dialer');
+  Future<void> _callParticipant(String target) async {
+    try {
+      final response = await _api.post(
+        ApiConstants.driverCallParticipant(widget.orderId),
+        data: {'target': target},
+      );
+      final success = response is Map && response['success'] == true;
+      final message = response is Map ? response['message']?.toString() : null;
+      _showSnack(
+        success
+            ? 'Connecting your call…'
+            : (message ?? 'Could not place the call.'),
+      );
+    } catch (e) {
+      _showSnack('Could not place the call.');
     }
   }
 
@@ -540,6 +676,14 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
   double _min(double a, double b) => a < b ? a : b;
   double _max(double a, double b) => a > b ? a : b;
 
+  String _formatTime(DateTime value) {
+    final local = value.toLocal();
+    final hour = local.hour % 12 == 0 ? 12 : local.hour % 12;
+    final minute = local.minute.toString().padLeft(2, '0');
+    final period = local.hour >= 12 ? 'PM' : 'AM';
+    return '$hour:$minute $period';
+  }
+
   String _paymentModeFor(Order order) {
     final method = order.paymentMethod.toLowerCase();
     if (method == 'cod' || method == 'cash') return 'cash';
@@ -592,7 +736,7 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
         },
       );
       if (response['success'] == true) {
-        await _loadOrder();
+        await _reloadAndBroadcast();
         if (mounted) {
           setState(() => _cashCollected = true);
           ScaffoldMessenger.of(context).showSnackBar(
@@ -621,7 +765,8 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
       final response = await _api.post(endpoint);
       final data = Map<String, dynamic>.from(response['data'] ?? const {});
       debugPrint('Driver QR API response: ${_qrResponseDebugSummary(data)}');
-      debugPrint('Driver QR image_url received by Flutter: ${data['image_url'] ?? data['qr_image_url'] ?? ''}');
+      debugPrint(
+          'Driver QR image_url received by Flutter: ${data['image_url'] ?? data['qr_image_url'] ?? ''}');
       await _showQrPaymentSheet(data);
     } catch (e) {
       if (mounted) {
@@ -635,10 +780,11 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
   }
 
   Future<void> _showQrPaymentSheet(Map<String, dynamic> data) async {
-    final qrData = (data['image_content'] ?? data['qr_payload'] ?? data['qr_code'])
-            ?.toString()
-            .trim() ??
-        '';
+    final qrData =
+        (data['image_content'] ?? data['qr_payload'] ?? data['qr_code'])
+                ?.toString()
+                .trim() ??
+            '';
     final qrImageBytes = _decodeQrImageBytes(data['image_bytes']);
     final expiresAt = DateTime.tryParse(data['expires_at']?.toString() ?? '') ??
         DateTime.now().add(const Duration(minutes: 10));
@@ -657,7 +803,7 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
-      backgroundColor: Colors.white,
+      backgroundColor: foodflow.surfaceColor,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(26)),
       ),
@@ -670,7 +816,8 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
             poller ??= Timer.periodic(const Duration(seconds: 3), (_) async {
               final order = _order;
               if (order == null || !context.mounted) return;
-              final response = await _api.get(ApiConstants.orderPaymentStatus(order.id));
+              final response =
+                  await _api.get(ApiConstants.orderPaymentStatus(order.id));
               final status = response['data'] is Map
                   ? (response['data']['payment_status']?.toString() ?? '')
                   : '';
@@ -678,7 +825,7 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
                 ticker?.cancel();
                 poller?.cancel();
                 if (context.mounted) Navigator.pop(context);
-                await _loadOrder();
+                await _reloadAndBroadcast();
                 if (mounted) {
                   ScaffoldMessenger.of(this.context).showSnackBar(
                     const SnackBar(content: Text('Payment received')),
@@ -689,8 +836,10 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
 
             final remaining = expiresAt.difference(DateTime.now());
             final expired = remaining.inSeconds <= 0;
-            final minutes = remaining.inMinutes.remainder(60).toString().padLeft(2, '0');
-            final seconds = remaining.inSeconds.remainder(60).toString().padLeft(2, '0');
+            final minutes =
+                remaining.inMinutes.remainder(60).toString().padLeft(2, '0');
+            final seconds =
+                remaining.inSeconds.remainder(60).toString().padLeft(2, '0');
             final qrSize = (MediaQuery.of(context).size.width * 0.86)
                 .clamp(300.0, 430.0)
                 .toDouble();
@@ -706,7 +855,8 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
                         const Expanded(
                           child: Text(
                             'UPI QR',
-                            style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800),
+                            style: TextStyle(
+                                fontSize: 20, fontWeight: FontWeight.w800),
                           ),
                         ),
                         IconButton(
@@ -715,7 +865,7 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
                             poller?.cancel();
                             Navigator.pop(context);
                           },
-                          icon: const Icon(Icons.close),
+                          icon: Icon(Icons.close),
                         ),
                       ],
                     ),
@@ -725,14 +875,18 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
                     Text(
                       expired ? 'QR expired' : 'Expires in $minutes:$seconds',
                       style: TextStyle(
-                        color: expired ? foodflow.crimson : foodflow.success,
+                        color: expired ? foodflow.orange : foodflow.success,
                         fontWeight: FontWeight.w800,
                       ),
                     ),
                     const SizedBox(height: 10),
                     Text(
-                      formatCurrency(context, (data['amount'] as num?)?.toDouble() ?? (_order?.total ?? 0)),
-                      style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
+                      formatCurrency(
+                          context,
+                          (data['amount'] as num?)?.toDouble() ??
+                              (_order?.total ?? 0)),
+                      style:
+                          TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
                     ),
                     const SizedBox(height: 14),
                     Row(
@@ -810,7 +964,7 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
     return QrImageView(
       data: qrData,
       size: size,
-      backgroundColor: Colors.white,
+      backgroundColor: foodflow.surfaceColor,
     );
   }
 
@@ -818,12 +972,12 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
     return SizedBox(
       width: size,
       height: size,
-      child: const Center(
+      child: Center(
         child: Text(
           'Unable to load payment QR',
           textAlign: TextAlign.center,
           style: TextStyle(
-            color: foodflow.crimson,
+            color: foodflow.orange,
             fontSize: 16,
             fontWeight: FontWeight.w800,
           ),
@@ -833,8 +987,9 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
   }
 
   String _qrResponseDebugSummary(Map<String, dynamic> data) {
-    final imageContent = (data['image_content'] ?? data['qr_payload'] ?? data['qr_code'] ?? '')
-        .toString();
+    final imageContent =
+        (data['image_content'] ?? data['qr_payload'] ?? data['qr_code'] ?? '')
+            .toString();
     final imageBytes = (data['image_bytes'] ?? '').toString();
     return {
       'payment_attempt_id': data['payment_attempt_id'],
@@ -910,7 +1065,7 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
         : Icons.storefront_outlined;
     final color = _order!.isPickedUp || _order!.isOnTheWay
         ? foodflow.success
-        : foodflow.crimson;
+        : foodflow.orange;
 
     return Row(
       children: [
@@ -932,7 +1087,7 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
                 heading,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
+                style: TextStyle(
                   color: foodflow.ink,
                   fontWeight: FontWeight.w800,
                   fontSize: 15,
@@ -943,7 +1098,7 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
                 address,
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
+                style: TextStyle(
                   color: foodflow.muted,
                   fontSize: 12,
                   fontWeight: FontWeight.w400,
@@ -954,7 +1109,7 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
         ),
         IconButton(
           onPressed: _showNavigateDialog,
-          icon: const Icon(Icons.navigation, color: foodflow.success),
+          icon: Icon(Icons.navigation, color: foodflow.success),
         ),
       ],
     );
@@ -1002,7 +1157,6 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
 
   Future<void> _runBottomAction() async {
     if (_order == null || _isUpdating) return;
-    setState(() => _swipeProgress = 0);
 
     if (_order!.isDriverAssignmentPending) {
       await _acceptAssignment();
@@ -1017,18 +1171,117 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
     }
   }
 
+  /// Horizontal stage tracker for the delivery flow:
+  /// accept → reach store → pick up → on the way → delivered.
+  Widget _orderFlowTracker() {
+    final o = _order!;
+    int done;
+    if (o.isDelivered) {
+      done = 5;
+    } else if (o.isOnTheWay) {
+      done = 4;
+    } else if (o.isPickedUp) {
+      done = 3;
+    } else if (o.isReachedPickup) {
+      done = 2;
+    } else if (o.isReadyForPickup) {
+      done = 1;
+    } else {
+      done = 0;
+    }
+
+    const labels = ['Accept', 'At store', 'Picked', 'On way', 'Done'];
+    const icons = [
+      Icons.assignment_turned_in_rounded,
+      Icons.storefront_rounded,
+      Icons.shopping_bag_rounded,
+      Icons.two_wheeler_rounded,
+      Icons.flag_rounded,
+    ];
+
+    Widget node(int i) {
+      final complete = i < done;
+      final active = i == done && !o.isDelivered;
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          AnimatedContainer(
+            duration: const Duration(milliseconds: 260),
+            width: 30,
+            height: 30,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: complete
+                  ? foodflow.success
+                  : active
+                      ? foodflow.success.withOpacity(0.14)
+                      : foodflow.canvas,
+              shape: BoxShape.circle,
+              border: Border.all(
+                color: active
+                    ? foodflow.success
+                    : complete
+                        ? foodflow.success
+                        : foodflow.line,
+                width: active ? 2 : 1,
+              ),
+            ),
+            child: Icon(
+              complete ? Icons.check_rounded : icons[i],
+              size: 15,
+              color: complete
+                  ? Colors.white
+                  : active
+                      ? foodflow.success
+                      : foodflow.muted,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            labels[i],
+            style: TextStyle(
+              fontSize: 9.5,
+              fontWeight: active ? FontWeight.w800 : FontWeight.w600,
+              color: complete || active ? foodflow.ink : foodflow.muted,
+            ),
+          ),
+        ],
+      );
+    }
+
+    Widget connector(int i) {
+      return Expanded(
+        child: Container(
+          margin: const EdgeInsets.only(top: 14),
+          height: 2,
+          color: i < done ? foodflow.success : foodflow.line,
+        ),
+      );
+    }
+
+    final row = <Widget>[];
+    for (var i = 0; i < 5; i++) {
+      row.add(node(i));
+      if (i < 4) row.add(connector(i));
+    }
+
+    return Row(crossAxisAlignment: CrossAxisAlignment.start, children: row);
+  }
+
   Widget _buildBottomStatusPanel() {
-    if (_order == null || (!_hasPrimaryBottomAction && !_order!.isDelivered)) {
+    if (_order == null ||
+        (!_hasPrimaryBottomAction && !_order!.isDeliveryFailed) ||
+        _order!.isDelivered) {
       return const SizedBox.shrink();
     }
 
     return SafeArea(
       top: false,
       child: Container(
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 14),
+        padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
         decoration: BoxDecoration(
-          color: Colors.white,
-          border: const Border(top: BorderSide(color: foodflow.line)),
+          color: foodflow.surfaceColor,
+          border: Border(top: BorderSide(color: foodflow.line)),
           boxShadow: [
             BoxShadow(
               color: Colors.black.withOpacity(0.10),
@@ -1042,106 +1295,232 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
           children: [
             Row(
               children: [
-                Container(
-                  width: 42,
-                  height: 42,
-                  decoration: BoxDecoration(
-                    color: _order!.isDelivered
-                        ? foodflow.success.withOpacity(0.12)
-                        : foodflow.crimson.withOpacity(0.10),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Icon(
-                    _order!.isDelivered ? Icons.check_circle : _getStatusIcon(),
-                    color: _order!.isDelivered
-                        ? foodflow.success
-                        : foodflow.crimson,
-                  ),
-                ),
-                const SizedBox(width: 12),
+                Icon(_getStatusIcon(), size: 16, color: foodflow.orange),
+                const SizedBox(width: 8),
                 Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        _bottomStatusTitle,
-                        style: const TextStyle(
-                          color: foodflow.ink,
-                          fontSize: 15,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      Row(
-                        children: [
-                          if (!_order!.isDelivered) ...[
-                            Container(
-                              width: 7,
-                              height: 7,
-                              decoration: BoxDecoration(
-                                color: foodflow.success,
-                                borderRadius: BorderRadius.circular(4),
-                              ),
-                            ),
-                            const SizedBox(width: 6),
-                          ],
-                          Expanded(
-                            child: Text(
-                              _order!.isDelivered
-                                  ? 'Earnings added to today'
-                                  : _bottomActionHint,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                color: foodflow.muted,
-                                fontSize: 12,
-                                fontWeight: FontWeight.w400,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
+                  child: Text(
+                    _bottomActionHint.isEmpty
+                        ? _bottomStatusTitle
+                        : _bottomActionHint,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: foodflow.muted,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                 ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            if (_order!.isDriverAssignmentPending)
+              Row(
+                children: [
+                  Expanded(child: _buildRejectButton()),
+                  const SizedBox(width: 10),
+                  Expanded(flex: 2, child: _buildSwipeAction()),
+                ],
+              )
+            else if (_order!.isDeliveryFailed)
+              _buildResaleStatusPanel()
+            else if (_hasPrimaryBottomAction)
+              _buildSwipeAction(),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildResaleStatusPanel() {
+    final order = _order!;
+
+    if (order.isAwaitingFoodReturn) {
+      return GestureDetector(
+        onTap: _isUpdating ? null : _confirmFoodReturned,
+        child: Container(
+          width: double.infinity,
+          height: 52,
+          decoration: BoxDecoration(
+            color: foodflow.surfaceColor,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: foodflow.orange.withOpacity(0.4)),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.store_rounded, color: foodflow.orange, size: 20),
+              SizedBox(width: 6),
+              Text(
+                'Confirm Food Returned to Restaurant',
+                style: TextStyle(
+                  color: foodflow.orange,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    if (order.isResaleClaimed) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(vertical: 14),
+        decoration: BoxDecoration(
+          color: foodflow.success.withOpacity(0.08),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: foodflow.success.withOpacity(0.28)),
+        ),
+        child:  Text(
+          'Resold! Check your orders for the new delivery.',
+          textAlign: TextAlign.center,
+          style:
+              TextStyle(color: foodflow.success, fontWeight: FontWeight.w700),
+        ),
+      );
+    }
+
+    if (order.isFoodReturned) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(vertical: 14),
+        decoration: BoxDecoration(
+          color: foodflow.canvas,
+          borderRadius: BorderRadius.circular(14),
+        ),
+        child:  Text(
+          'Food returned to restaurant.',
+          textAlign: TextAlign.center,
+          style: TextStyle(color: foodflow.muted, fontWeight: FontWeight.w700),
+        ),
+      );
+    }
+
+    // isResaleOffered (or resale status not yet known) -- show a countdown.
+    final expiresAt = order.resaleOfferExpiresAt;
+    if (expiresAt == null) {
+      return const SizedBox.shrink();
+    }
+
+    return StreamBuilder<int>(
+      stream: Stream.periodic(const Duration(seconds: 1), (value) => value),
+      builder: (context, _) {
+        final remaining = expiresAt.difference(DateTime.now());
+        final minutes = remaining.isNegative ? 0 : remaining.inMinutes;
+        final seconds = remaining.isNegative ? 0 : remaining.inSeconds % 60;
+
+        return Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(vertical: 14),
+          decoration: BoxDecoration(
+            color: foodflow.orange.withOpacity(0.08),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: foodflow.orange.withOpacity(0.28)),
+          ),
+          child: Text(
+            'Trying to resell nearby... ${minutes}m ${seconds}s left',
+            textAlign: TextAlign.center,
+            style:
+                TextStyle(color: foodflow.orange, fontWeight: FontWeight.w700),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildArrivalPanel() {
+    final order = _order!;
+
+    if (order.arrivedAtCustomer == null) {
+      return GestureDetector(
+        onTap: _isUpdating ? null : _markArrivedAtCustomer,
+        child: Container(
+          width: double.infinity,
+          height: 52,
+          decoration: BoxDecoration(
+            color: foodflow.surfaceColor,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: foodflow.success.withOpacity(0.4)),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.location_on_rounded,
+                  color: foodflow.success, size: 20),
+              SizedBox(width: 6),
+              Text(
+                "I've Arrived",
+                style: TextStyle(
+                  color: foodflow.success,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    final unlockAt = order.arrivedAtCustomer!
+        .add(Duration(minutes: order.deliveryFailureWaitMinutes));
+
+    return StreamBuilder<int>(
+      stream: Stream.periodic(const Duration(seconds: 1), (value) => value),
+      builder: (context, _) {
+        final remaining = unlockAt.difference(DateTime.now());
+
+        if (remaining > Duration.zero) {
+          final minutes = remaining.inMinutes;
+          final seconds = remaining.inSeconds % 60;
+          return Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(vertical: 14),
+            decoration: BoxDecoration(
+              color: foodflow.orange.withOpacity(0.08),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: foodflow.orange.withOpacity(0.28)),
+            ),
+            child: Text(
+              'You can report an issue in ${minutes}m ${seconds}s',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: foodflow.orange,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          );
+        }
+
+        return GestureDetector(
+          onTap: _isUpdating ? null : _showReportDeliveryFailedDialog,
+          child: Container(
+            width: double.infinity,
+            height: 52,
+            decoration: BoxDecoration(
+              color: foodflow.surfaceColor,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: foodflow.orange.withOpacity(0.28)),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.report_problem_outlined,
+                    color: foodflow.orange, size: 20),
+                SizedBox(width: 6),
                 Text(
-                  _driverEarningText(_order!),
-                  style: const TextStyle(
-                    color: foodflow.success,
-                    fontSize: 17,
+                  'Report Delivery Issue',
+                  style: TextStyle(
+                    color: foodflow.orange,
                     fontWeight: FontWeight.w800,
                   ),
                 ),
               ],
             ),
-            if (_order!.isDriverAssignmentPending) ...[
-              const SizedBox(height: 12),
-              Row(
-                children: [
-                  Expanded(
-                    child: _buildRejectButton(),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    flex: 2,
-                    child: _buildSwipeAction(),
-                  ),
-                ],
-              ),
-            ] else if (_order!.isOnTheWay) ...[
-              const SizedBox(height: 12),
-              _buildPaymentCollectionCard(),
-              const SizedBox(height: 12),
-              _buildOtpEntry(),
-              const SizedBox(height: 12),
-              _buildSwipeAction(),
-            ] else if (_hasPrimaryBottomAction) ...[
-              const SizedBox(height: 12),
-              _buildSwipeAction(),
-            ],
-          ],
-        ),
-      ),
+          ),
+        );
+      },
     );
   }
 
@@ -1152,19 +1531,19 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
         duration: const Duration(milliseconds: 160),
         height: 58,
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: foodflow.surfaceColor,
           borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: foodflow.crimson.withOpacity(0.28)),
+          border: Border.all(color: foodflow.orange.withOpacity(0.28)),
         ),
-        child: const Row(
+        child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.close_rounded, color: foodflow.crimson, size: 20),
+            Icon(Icons.close_rounded, color: foodflow.orange, size: 20),
             SizedBox(width: 6),
             Text(
               'Reject',
               style: TextStyle(
-                color: foodflow.crimson,
+                color: foodflow.orange,
                 fontWeight: FontWeight.w800,
               ),
             ),
@@ -1181,7 +1560,7 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
         final delayed = order.isPreparationDelayed ||
             (order.readyByAt?.isBefore(DateTime.now()) == true &&
                 (order.isConfirmed || order.isPreparing));
-        final color = delayed ? foodflow.crimson : foodflow.orange;
+        final color = delayed ? foodflow.orange : foodflow.orange;
 
         return Container(
           width: double.infinity,
@@ -1212,7 +1591,7 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
                     const SizedBox(height: 3),
                     Text(
                       order.pickupTimingLabel,
-                      style: const TextStyle(
+                      style: TextStyle(
                         color: foodflow.ink,
                         fontSize: 12,
                         fontWeight: FontWeight.w600,
@@ -1235,7 +1614,7 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: foodflow.surfaceColor,
         borderRadius: BorderRadius.circular(14),
         border: Border.all(color: foodflow.line),
       ),
@@ -1250,7 +1629,7 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
                   color: foodflow.success.withOpacity(0.12),
                   borderRadius: BorderRadius.circular(12),
                 ),
-                child: const Icon(
+                child: Icon(
                   Icons.payments_rounded,
                   color: foodflow.success,
                 ),
@@ -1264,7 +1643,7 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
                       _isPaymentAlreadyPaid
                           ? 'Payment completed'
                           : 'Collect payment',
-                      style: const TextStyle(
+                      style: TextStyle(
                         color: foodflow.ink,
                         fontSize: 14,
                         fontWeight: FontWeight.w800,
@@ -1277,7 +1656,7 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
                           : order.isCodPayment
                               ? 'Amount to collect: $amountText'
                               : 'No cash collection required',
-                      style: const TextStyle(
+                      style: TextStyle(
                         color: foodflow.muted,
                         fontSize: 12,
                         fontWeight: FontWeight.w400,
@@ -1289,7 +1668,7 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
               if (order.isCodPayment && !_isPaymentAlreadyPaid)
                 Text(
                   amountText,
-                  style: const TextStyle(
+                  style: TextStyle(
                     color: foodflow.ink,
                     fontSize: 16,
                     fontWeight: FontWeight.w800,
@@ -1297,6 +1676,36 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
                 ),
             ],
           ),
+          if (order.cashCollectedAmount != null) ...[
+            const SizedBox(height: 10),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: foodflow.success.withOpacity(0.10),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: foodflow.success.withOpacity(0.30)),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.check_circle_rounded,
+                      color: foodflow.success, size: 18),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Collected ${formatCurrency(context, order.cashCollectedAmount!)}'
+                      '${order.cashCollectedAt != null ? ' • ${_formatTime(order.cashCollectedAt!)}' : ''}',
+                      style: TextStyle(
+                        color: foodflow.success,
+                        fontWeight: FontWeight.w700,
+                        fontSize: 12.5,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
           if (!_isPaymentAlreadyPaid && order.isCodPayment) ...[
             const SizedBox(height: 12),
             Row(
@@ -1343,9 +1752,8 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
                         _cashCollected
                             ? Icons.check_circle_rounded
                             : Icons.radio_button_unchecked_rounded,
-                        color: _cashCollected
-                            ? foodflow.success
-                            : foodflow.faint,
+                        color:
+                            _cashCollected ? foodflow.success : foodflow.faint,
                       ),
                       const SizedBox(width: 8),
                       Expanded(
@@ -1375,8 +1783,9 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
                           height: 16,
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
-                      : const Icon(Icons.qr_code_2_rounded),
-                  label: Text(_isGeneratingQr ? 'Generating...' : 'Generate QR'),
+                      : Icon(Icons.qr_code_2_rounded),
+                  label:
+                      Text(_isGeneratingQr ? 'Generating...' : 'Generate QR'),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: foodflow.ink,
                     foregroundColor: Colors.white,
@@ -1387,7 +1796,7 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
                 ),
               ),
               const SizedBox(height: 8),
-              const Text(
+               Text(
                 'Ask the customer to scan and complete the payment.',
                 style: TextStyle(
                   color: foodflow.muted,
@@ -1453,7 +1862,7 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
     return Container(
       padding: const EdgeInsets.fromLTRB(12, 10, 10, 10),
       decoration: BoxDecoration(
-        color: const Color(0xFFFFFAF5),
+        color: foodflow.orange.withOpacity(0.06),
         borderRadius: BorderRadius.circular(14),
         border: Border.all(color: foodflow.orange.withOpacity(0.22)),
       ),
@@ -1480,13 +1889,13 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
               keyboardType: TextInputType.number,
               maxLength: 4,
               textAlign: TextAlign.center,
-              style: const TextStyle(
+              style: TextStyle(
                 color: foodflow.ink,
                 fontSize: 18,
                 fontWeight: FontWeight.w800,
                 letterSpacing: 4,
               ),
-              decoration: const InputDecoration(
+              decoration:  InputDecoration(
                 counterText: '',
                 hintText: 'OTP',
                 hintStyle: TextStyle(
@@ -1509,11 +1918,11 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
                 width: 38,
                 height: 38,
                 decoration: BoxDecoration(
-                  color: Colors.white,
+                  color: foodflow.surfaceColor,
                   borderRadius: BorderRadius.circular(11),
                   border: Border.all(color: foodflow.line),
                 ),
-                child: const Icon(
+                child: Icon(
                   Icons.refresh_rounded,
                   color: foodflow.ink,
                   size: 20,
@@ -1526,135 +1935,64 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
     );
   }
 
-  Widget _buildSwipeAction() {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        const knobWidth = 64.0;
-        final trackWidth = constraints.maxWidth;
-        final maxOffset = (trackWidth - knobWidth).clamp(0.0, double.infinity);
-        final offset = maxOffset * _swipeProgress;
-        final progressWidth = (knobWidth + offset).clamp(knobWidth, trackWidth);
-        final readyToConfirm = _swipeProgress > 0.85;
-
-        return GestureDetector(
-          onHorizontalDragUpdate: _isUpdating
-              ? null
-              : (details) {
-                  if (maxOffset <= 0) return;
-                  final delta = details.primaryDelta ?? 0;
-                  setState(() {
-                    _swipeProgress = (_swipeProgress + delta / maxOffset)
-                        .clamp(0.0, 1.0)
-                        .toDouble();
-                  });
-                },
-          onHorizontalDragEnd: _isUpdating
-              ? null
-              : (_) {
-                  if (readyToConfirm) {
-                    _runBottomAction();
-                  } else {
-                    setState(() => _swipeProgress = 0);
-                  }
-                },
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 180),
-            height: 58,
-            decoration: BoxDecoration(
-              color: _isUpdating ? foodflow.line : const Color(0xFFECFFF4),
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(
-                color: _isUpdating
-                    ? foodflow.line
-                    : foodflow.success.withOpacity(0.30),
-              ),
-              boxShadow: [
-                BoxShadow(
-                  color: foodflow.success.withOpacity(0.18),
-                  blurRadius: 18,
-                  offset: const Offset(0, 8),
-                ),
-              ],
-            ),
-            child: Stack(
-              alignment: Alignment.centerLeft,
-              children: [
-                Positioned.fill(
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(16),
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: AnimatedContainer(
-                        duration: const Duration(milliseconds: 120),
-                        width: progressWidth,
-                        decoration: const BoxDecoration(
-                          gradient: LinearGradient(
-                            colors: [foodflow.success, Color(0xFF24A866)],
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-                Positioned.fill(
-                  child: Center(
-                    child: AnimatedDefaultTextStyle(
-                      duration: const Duration(milliseconds: 120),
-                      style: TextStyle(
-                        color:
-                            readyToConfirm ? Colors.white : foodflow.ink,
-                        fontWeight: FontWeight.w800,
-                        fontSize: 14,
-                      ),
-                      child: Text(
-                        _isUpdating
-                            ? 'Updating...'
-                            : readyToConfirm
-                                ? 'Release to confirm'
-                                : _bottomActionText,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                  ),
-                ),
-                Positioned(
-                  left: offset,
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 90),
-                    width: knobWidth,
-                    height: 58,
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(18),
-                      border: Border.all(
-                        color: readyToConfirm
-                            ? Colors.white
-                            : foodflow.success.withOpacity(0.20),
-                      ),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.18),
-                          blurRadius: 16,
-                          offset: const Offset(0, 8),
-                        ),
-                      ],
-                    ),
-                    child: Icon(
-                      _isUpdating ? Icons.hourglass_top : Icons.arrow_forward,
-                      color: _isUpdating
-                          ? foodflow.muted
-                          : readyToConfirm
-                              ? foodflow.success
-                              : foodflow.success,
-                    ),
-                  ),
-                ),
-              ],
-            ),
+  Widget _odContact({
+    required IconData icon,
+    required Color tint,
+    required String title,
+    required String subtitle,
+    Widget? trailing,
+  }) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          width: 30,
+          height: 30,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: tint.withOpacity(0.14),
+            borderRadius: BorderRadius.circular(9),
           ),
-        );
-      },
+          child: Icon(icon, size: 16, color: tint),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontWeight: FontWeight.w800,
+                  color: foodflow.ink,
+                  fontSize: 13.5,
+                ),
+              ),
+              if (subtitle.trim().isNotEmpty)
+                Text(
+                  subtitle,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 12, color: foodflow.muted),
+                ),
+            ],
+          ),
+        ),
+        if (trailing != null) trailing,
+      ],
+    );
+  }
+
+  Widget _buildSwipeAction() {
+    final pending = _order?.isDriverAssignmentPending ?? false;
+    return SwipeToConfirm(
+      label: _bottomActionText.isEmpty ? 'Swipe to continue' : _bottomActionText,
+      confirmedLabel: 'Done',
+      loading: _isUpdating,
+      accent: pending ? foodflow.orange : foodflow.success,
+      onConfirmed: _runBottomAction,
     );
   }
 
@@ -1680,27 +2018,32 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
 
     return Scaffold(
       backgroundColor: foodflow.canvas,
-      appBar: AppBar(
-        title: Text('Order ID: ${_order!.orderNumber}'),
-        backgroundColor: Colors.white,
-        foregroundColor: foodflow.ink,
-        elevation: 0,
+      extendBodyBehindAppBar: true,
+      appBar: GlassAppBar(
+        title: Text(
+          'Order #${_order!.orderNumber}',
+          style: TextStyle(
+            color: foodflow.ink,
+            fontSize: 16,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
         actions: [
           Container(
-            margin: const EdgeInsets.only(right: 12),
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            margin: const EdgeInsets.only(right: 14),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
             decoration: BoxDecoration(
               color: _order!.paymentStatus == 'paid'
-                  ? foodflow.success.withOpacity(0.12)
-                  : foodflow.crimson.withOpacity(0.12),
-              borderRadius: BorderRadius.circular(5),
+                  ? foodflow.success.withOpacity(0.14)
+                  : foodflow.orange.withOpacity(0.14),
+              borderRadius: BorderRadius.circular(999),
             ),
             child: Text(
               _order!.paymentStatus.toUpperCase(),
               style: TextStyle(
                 color: _order!.paymentStatus == 'paid'
                     ? foodflow.success
-                    : foodflow.crimson,
+                    : foodflow.orange,
                 fontSize: 11,
                 fontWeight: FontWeight.w800,
               ),
@@ -1709,23 +2052,36 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
         ],
       ),
       bottomNavigationBar: _buildBottomStatusPanel(),
-      body: SingleChildScrollView(
-        padding: EdgeInsets.only(bottom: _hasPrimaryBottomAction ? 18 : 0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            SizedBox(
-              height: 430,
-              child: Stack(
-                children: [
-                  Positioned.fill(
-                    child: GoogleMap(
+      body: Stack(
+        children: [
+          Positioned.fill(child: Stack(children: AuroraTheme.auroraBlobs())),
+          ListView(
+            padding: EdgeInsets.only(
+              top: MediaQuery.paddingOf(context).top + 68,
+              bottom: _hasPrimaryBottomAction ? 20 : 10,
+            ),
+            children: [
+              if (!_order!.isDelivered && !_order!.isDeliveryFailed)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(22),
+                    child: SizedBox(
+                      height: 220,
+                      child: Stack(
+                        children: [
+                          Positioned.fill(
+                            child: GoogleMap(
                       onMapCreated: _onMapCreated,
                       initialCameraPosition: CameraPosition(
                         target: _restaurantLocation ??
                             const LatLng(28.6139, 77.2090),
                         zoom: 13,
                       ),
+                      myLocationEnabled: true,
+                      myLocationButtonEnabled: false,
+                      zoomControlsEnabled: false,
+                      compassEnabled: false,
                       markers: {
                         if (_restaurantLocation != null)
                           Marker(
@@ -1749,360 +2105,579 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
                       polylines: _polylines,
                     ),
                   ),
-                  Positioned(
-                    top: 14,
-                    left: 16,
-                    right: 16,
-                    child: Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: _order!.isOnTheWay
-                            ? const Color(0xFF0F7A45)
-                            : foodflow.crimson,
-                        borderRadius: BorderRadius.circular(8),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withOpacity(0.12),
-                            blurRadius: 16,
-                            offset: const Offset(0, 8),
+                          Positioned(
+                            right: 12,
+                            bottom: 12,
+                            child: _mapNavPill(),
                           ),
-                        ],
-                      ),
-                      child: Row(
-                        children: [
-                          Icon(
-                            _order!.isOnTheWay
-                                ? Icons.turn_left
-                                : _getStatusIcon(),
-                            color: Colors.white,
-                          ),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  _order!.isOnTheWay
-                                      ? 'Head straight'
-                                      : _order!.isReadyForPickup ||
-                                              _order!.isReachedPickup
-                                          ? 'Go to store'
-                                          : _order!.statusText,
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.w800,
-                                    fontSize: 15,
-                                  ),
-                                ),
-                                Text(
-                                  _order!.isPickedUp || _order!.isOnTheWay
-                                      ? '200 m - 23rd Cross Road'
-                                      : '4.6 km - pickup route',
-                                  style: TextStyle(
-                                    color: Colors.white.withOpacity(0.85),
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w400,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                          const Icon(Icons.keyboard_arrow_down,
-                              color: Colors.white),
                         ],
                       ),
                     ),
                   ),
-                  Positioned(
-                    left: 16,
-                    right: 16,
-                    bottom: 16,
-                    child: Container(
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(12),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withOpacity(0.12),
-                            blurRadius: 20,
-                            offset: const Offset(0, 10),
-                          ),
-                        ],
-                      ),
-                      child: _buildRouteCard(),
-                    ),
-                  ),
-                ],
+                ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
+                child: _trackingStatusCard(),
               ),
-            ),
-            if (_order!.isDelivered)
-              Container(
-                margin: const EdgeInsets.fromLTRB(16, 16, 16, 0),
-                padding: const EdgeInsets.all(22),
-                decoration: foodflow.surface(radius: 12),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  children: [
-                    Container(
-                      width: 72,
-                      height: 72,
-                      alignment: Alignment.center,
-                      decoration: BoxDecoration(
-                        color: foodflow.success.withOpacity(0.12),
-                        shape: BoxShape.circle,
-                      ),
-                      child: const Icon(
-                        Icons.check_circle,
-                        color: foodflow.success,
-                        size: 44,
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    const Text(
-                      'Order Delivered!',
-                      style: TextStyle(
-                        color: foodflow.ink,
-                        fontSize: 18,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      _driverEarningText(_order!),
-                      style: const TextStyle(
-                        color: foodflow.success,
-                        fontSize: 24,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                    const Text(
-                      'Delivery Earnings',
-                      style: TextStyle(color: foodflow.muted),
-                    ),
-                  ],
+              if (_order!.isOnTheWay) ...[
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
+                  child: _finishDeliveryCard(),
+                ),
+              ],
+              if (_order!.isPartOfRouteBatch)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
+                  child: _batchInfoCard(),
+                ),
+              if (_order!.hasActivePreparationTimer ||
+                  _order!.isPreparationDelayed)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
+                  child: GlassCard(child: _buildPickupTimingPanel(_order!)),
+                ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
+                child: (_order!.isDelivered || _order!.isDeliveryFailed)
+                    ? _deliverySummaryCard()
+                    : _pickupDropCard(),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
+                child: _itemsCard(),
+              ),
+              const SizedBox(height: 28),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _mapNavPill() {
+    return Material(
+      color: foodflow.surfaceColor,
+      elevation: 4,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      child: InkWell(
+        onTap: _showNavigateDialog,
+        borderRadius: BorderRadius.circular(14),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.navigation_rounded, size: 16, color: foodflow.orange),
+              const SizedBox(width: 6),
+              Text(
+                'Navigate',
+                style: TextStyle(
+                  color: foodflow.ink,
+                  fontWeight: FontWeight.w800,
+                  fontSize: 12.5,
                 ),
               ),
-            Card(
-              margin: const EdgeInsets.all(16),
-              elevation: 0,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-                side: const BorderSide(color: foodflow.line),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Prominent status card: current stage + hint + earning, with the
+  /// order-flow stepper underneath. Doubles as the "delivered" success card.
+  Widget _trackingStatusCard() {
+    final o = _order!;
+    final delivered = o.isDelivered;
+    final accent = delivered ? foodflow.success : foodflow.orange;
+    return GlassCard(
+      padding: const EdgeInsets.all(18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 46,
+                height: 46,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: accent.withOpacity(0.14),
+                  borderRadius: BorderRadius.circular(13),
+                ),
+                child: Icon(
+                  delivered ? Icons.check_circle_rounded : _getStatusIcon(),
+                  color: accent,
+                ),
               ),
-              child: Padding(
-                padding: const EdgeInsets.all(16),
+              const SizedBox(width: 12),
+              Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    if (_order!.isPartOfRouteBatch) ...[
-                      Container(
-                        width: double.infinity,
-                        margin: const EdgeInsets.only(bottom: 16),
-                        padding: const EdgeInsets.all(14),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFEEF6FF),
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: const Color(0xFFBFDBFE)),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Row(
-                              children: [
-                                Icon(
-                                  Icons.route,
-                                  color: Color(0xFF2563EB),
-                                  size: 18,
-                                ),
-                                SizedBox(width: 8),
-                                Text(
-                                  'Grouped Delivery Route',
-                                  style: TextStyle(
-                                    color: Color(0xFF1D4ED8),
-                                    fontWeight: FontWeight.w800,
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 8),
-                            Text(
-                              'Batch ${_order!.routeBatch!.id} contains ${_order!.routeBatch!.ordersCount} matched orders.',
-                              style: const TextStyle(
-                                color: Color(0xFF334155),
-                                fontSize: 12,
-                                fontWeight: FontWeight.w800,
-                              ),
-                            ),
-                            const SizedBox(height: 6),
-                            Text(
-                              'Orders: ${_order!.routeBatch!.orderNumbers.join(', ')}',
-                              style: const TextStyle(
-                                color: Color(0xFF475569),
-                                fontSize: 12,
-                                fontWeight: FontWeight.w400,
-                              ),
-                            ),
-                            if (_order!.routeBatch!.restaurants.isNotEmpty) ...[
-                              const SizedBox(height: 6),
-                              Text(
-                                'Pickups: ${_order!.routeBatch!.restaurants.join(', ')}',
-                                style: const TextStyle(
-                                  color: Color(0xFF475569),
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w400,
-                                ),
-                              ),
-                            ],
-                          ],
-                        ),
-                      ),
-                    ],
-                    if (_order!.hasActivePreparationTimer ||
-                        _order!.isPreparationDelayed) ...[
-                      _buildPickupTimingPanel(_order!),
-                      const SizedBox(height: 16),
-                    ],
-                    const Text(
-                      'Order Details',
+                    Text(
+                      _bottomStatusTitle,
                       style: TextStyle(
+                        color: foodflow.ink,
                         fontSize: 16,
                         fontWeight: FontWeight.w800,
                       ),
                     ),
-                    const SizedBox(height: 12),
-
-                    // Restaurant Info
-                    Row(
-                      children: [
-                        const Icon(Icons.restaurant,
-                            size: 16, color: Colors.grey),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            _order!.restaurant?.name ?? '',
-                            style: const TextStyle(fontSize: 14),
-                          ),
-                        ),
-                      ],
+                    const SizedBox(height: 2),
+                    Text(
+                      delivered
+                          ? 'Earnings added to today'
+                          : (_bottomActionHint.isEmpty
+                              ? o.statusText
+                              : _bottomActionHint),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(color: foodflow.muted, fontSize: 12),
                     ),
-                    const SizedBox(height: 8),
-
-                    // Customer Info with Call Button
-                    Row(
-                      children: [
-                        const Icon(Icons.person, size: 16, color: Colors.grey),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            '${_order!.customerName} • ${_order!.customerPhone}',
-                            style: const TextStyle(fontSize: 14),
-                          ),
-                        ),
-                        IconButton(
-                          icon: const Icon(Icons.call,
-                              size: 18, color: Colors.green),
-                          onPressed: _showCallDialog,
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-
-                    // Delivery Address with Navigate Button
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Icon(Icons.location_on,
-                            size: 16, color: Colors.grey),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            _order!.deliveryAddress,
-                            style: const TextStyle(fontSize: 14),
-                          ),
-                        ),
-                        IconButton(
-                          icon: const Icon(Icons.navigation,
-                              size: 18, color: Colors.blue),
-                          onPressed: _showNavigateDialog,
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                    const Divider(),
-
-                    // Items List
-                    const Text(
-                      'Items',
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w400,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    ..._order!.items.map((item) => Padding(
-                          padding: const EdgeInsets.only(bottom: 8),
-                          child: Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      '${item.quantity}x ${item.name}',
-                                      style: const TextStyle(fontSize: 14),
-                                    ),
-                                    if (item.hasCustomizations) ...[
-                                      const SizedBox(height: 2),
-                                      Text(
-                                        item.customizationSummary,
-                                        style: const TextStyle(
-                                          fontSize: 12,
-                                          color: Colors.grey,
-                                        ),
-                                      ),
-                                    ],
-                                  ],
-                                ),
-                              ),
-                            ],
-                          ),
-                        )),
-                    if (_order!.isCodPayment) ...[
-                      const Divider(),
-                      Padding(
-                        padding: const EdgeInsets.only(top: 8),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            const Text(
-                              'Amount to collect',
-                              style: TextStyle(fontWeight: FontWeight.w800),
-                            ),
-                            Text(
-                              _order!.isPaymentPaid
-                                  ? 'Paid'
-                                  : formatCurrency(context, _order!.total),
-                              style: const TextStyle(
-                                fontWeight: FontWeight.w800,
-                                fontSize: 16,
-                                color: Color(0xFF0E9F6E),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
                   ],
                 ),
               ),
+              const SizedBox(width: 10),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text(
+                    _driverEarningText(o),
+                    style: TextStyle(
+                      color: foodflow.success,
+                      fontSize: 18,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  Text(
+                    'earning',
+                    style: TextStyle(color: foodflow.faint, fontSize: 10),
+                  ),
+                ],
+              ),
+            ],
+          ),
+          if (o.tipAmount > 0) ...[
+            const SizedBox(height: 12),
+            Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: foodflow.success.withOpacity(0.10),
+                borderRadius: BorderRadius.circular(999),
+              ),
+              child: Text(
+                '🎉 + ${formatCurrency(context, o.tipAmount)} customer tip',
+                style: TextStyle(
+                  color: foodflow.success,
+                  fontWeight: FontWeight.w700,
+                  fontSize: 12.5,
+                ),
+              ),
             ),
-            const SizedBox(height: 32),
           ],
-        ),
+          const SizedBox(height: 18),
+          _orderFlowTracker(),
+        ],
+      ),
+    );
+  }
+
+  /// Full "finish this delivery" flow — arrival, payment collection and OTP,
+  /// laid out as clear numbered steps (was crammed into the bottom bar).
+  Widget _finishDeliveryCard() {
+    Widget step(int n, String title, Widget child) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 22,
+                height: 22,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: foodflow.orange.withOpacity(0.14),
+                  shape: BoxShape.circle,
+                ),
+                child: Text(
+                  '$n',
+                  style: TextStyle(
+                    color: foodflow.orange,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 9),
+              Text(
+                title,
+                style: TextStyle(
+                  color: foodflow.ink,
+                  fontSize: 13.5,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          child,
+        ],
+      );
+    }
+
+    return GlassCard(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Finish this delivery',
+            style: TextStyle(
+              color: foodflow.ink,
+              fontSize: 15,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 14),
+          step(1, 'Reach the customer', _buildArrivalPanel()),
+          const SizedBox(height: 16),
+          step(2, 'Collect payment', _buildPaymentCollectionCard()),
+          const SizedBox(height: 16),
+          step(3, 'Verify delivery OTP', _buildOtpEntry()),
+        ],
+      ),
+    );
+  }
+
+  Widget _batchInfoCard() {
+    final b = _order!.routeBatch!;
+    return GlassCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.alt_route_rounded, color: foodflow.orange, size: 18),
+              const SizedBox(width: 8),
+              Text(
+                'Grouped delivery route',
+                style: TextStyle(
+                  color: foodflow.ink,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Batch ${b.id} · ${b.ordersCount} matched orders',
+            style: TextStyle(
+              color: foodflow.inkSoft,
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Orders: ${b.orderNumbers.join(', ')}',
+            style: TextStyle(color: foodflow.muted, fontSize: 12),
+          ),
+          if (b.restaurants.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(
+                'Pickups: ${b.restaurants.join(', ')}',
+                style: TextStyle(color: foodflow.muted, fontSize: 12),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _pickupDropCard() {
+    final o = _order!;
+    // Contact + navigation only make sense for the leg you're currently on.
+    final storeActive = o.isReadyForPickup || o.isReachedPickup;
+    final customerActive = o.isPickedUp || o.isOnTheWay;
+
+    return GlassCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Pickup & drop',
+            style: TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w800,
+              color: foodflow.ink,
+            ),
+          ),
+          const SizedBox(height: 14),
+          _odContact(
+            icon: Icons.storefront_rounded,
+            tint: foodflow.orange,
+            title: o.restaurant?.name ?? 'Restaurant',
+            subtitle: o.restaurant?.address ?? '',
+            trailing: storeActive
+                ? Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        icon: Icon(Icons.call_rounded,
+                            size: 20, color: foodflow.orange),
+                        onPressed: _showCallDialog,
+                        tooltip: 'Call store',
+                      ),
+                      IconButton(
+                        icon: Icon(Icons.navigation_rounded,
+                            size: 20, color: foodflow.orange),
+                        onPressed: _showNavigateDialog,
+                        tooltip: 'Navigate to store',
+                      ),
+                    ],
+                  )
+                : null,
+          ),
+          Padding(
+            padding: const EdgeInsets.only(left: 15),
+            child: SizedBox(
+              height: 14,
+              child: VerticalDivider(
+                  color: foodflow.line, thickness: 2, width: 2),
+            ),
+          ),
+          _odContact(
+            icon: Icons.person_pin_circle_rounded,
+            tint: foodflow.success,
+            title: o.customerName,
+            subtitle: o.deliveryAddress,
+            trailing: customerActive
+                ? Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        icon: Icon(Icons.call_rounded,
+                            size: 20, color: foodflow.success),
+                        onPressed: _showCallDialog,
+                        tooltip: 'Call customer',
+                      ),
+                      IconButton(
+                        icon: Icon(Icons.navigation_rounded,
+                            size: 20, color: foodflow.success),
+                        onPressed: _showNavigateDialog,
+                        tooltip: 'Navigate to customer',
+                      ),
+                    ],
+                  )
+                : null,
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _shortDateTime(DateTime v) {
+    final l = v.toLocal();
+    const m = [
+      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+    ];
+    return '${m[l.month - 1]} ${l.day}, ${_formatTime(v)}';
+  }
+
+  Widget _sumRow(String label, String value, {bool strong = false}) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 5),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: TextStyle(
+              color: foodflow.muted,
+              fontSize: 12.5,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Text(
+              value,
+              textAlign: TextAlign.right,
+              style: TextStyle(
+                color: strong ? foodflow.success : foodflow.ink,
+                fontSize: strong ? 15 : 12.5,
+                fontWeight: strong ? FontWeight.w800 : FontWeight.w700,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Read-only recap shown once the order is delivered / failed — no call or
+  /// navigation actions, just what happened and what was earned.
+  Widget _deliverySummaryCard() {
+    final o = _order!;
+    final failed = o.isDeliveryFailed;
+    final grandTotal = o.totalDriverEarning + o.tipAmount;
+
+    return GlassCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            failed ? 'Delivery not completed' : 'Delivery summary',
+            style: TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w800,
+              color: foodflow.ink,
+            ),
+          ),
+          const SizedBox(height: 10),
+          _sumRow(
+            failed ? 'Reported' : 'Delivered',
+            o.deliveredAt != null ? _shortDateTime(o.deliveredAt!) : '—',
+          ),
+          _sumRow('From', o.restaurant?.name ?? '—'),
+          _sumRow('To', o.customerName),
+          if (o.deliveryAddress.trim().isNotEmpty)
+            _sumRow('Drop address', o.deliveryAddress),
+          Divider(color: foodflow.line, height: 22),
+          _sumRow('Payment', _paymentMethodLabel),
+          if (o.isCodPayment)
+            _sumRow(
+              'Cash collected',
+              o.cashCollectedAmount != null
+                  ? '${formatCurrency(context, o.cashCollectedAmount!)}'
+                      '${o.cashCollectedAt != null ? ' · ${_formatTime(o.cashCollectedAt!)}' : ''}'
+                  : (o.isPaymentPaid ? 'Paid' : 'Not recorded'),
+            ),
+          if (!failed) ...[
+            Divider(color: foodflow.line, height: 22),
+            _sumRow('Delivery fee',
+                formatCurrency(context, o.driverEarningAmount)),
+            if (o.driverIncentiveAmount > 0)
+              _sumRow('Incentive',
+                  '+ ${formatCurrency(context, o.driverIncentiveAmount)}'),
+            if (o.tipAmount > 0)
+              _sumRow('Customer tip',
+                  '+ ${formatCurrency(context, o.tipAmount)}'),
+            const SizedBox(height: 4),
+            _sumRow('You earned', formatCurrency(context, grandTotal),
+                strong: true),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _itemsCard() {
+    return GlassCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                'Items',
+                style: TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w800,
+                  color: foodflow.ink,
+                ),
+              ),
+              Text(
+                '${_order!.items.length} item${_order!.items.length == 1 ? '' : 's'}',
+                style: TextStyle(color: foodflow.muted, fontSize: 12),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          ..._order!.items.map((item) => Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 7, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: foodflow.orange.withOpacity(0.12),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Text(
+                        '${item.quantity}x',
+                        style: TextStyle(
+                          color: foodflow.orange,
+                          fontWeight: FontWeight.w800,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            item.name,
+                            style: TextStyle(
+                              fontSize: 13.5,
+                              color: foodflow.ink,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          if (item.hasCustomizations)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 2),
+                              child: Text(
+                                item.customizationSummary,
+                                style: TextStyle(
+                                  fontSize: 11.5,
+                                  color: foodflow.muted,
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              )),
+          // Once delivered/failed the recap card already reports the cash line.
+          if (_order!.isCodPayment &&
+              !_order!.isDelivered &&
+              !_order!.isDeliveryFailed) ...[
+            Divider(color: foodflow.line, height: 24),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  'Amount to collect',
+                  style: TextStyle(
+                    fontWeight: FontWeight.w800,
+                    color: foodflow.ink,
+                  ),
+                ),
+                Text(
+                  _order!.isPaymentPaid
+                      ? 'Paid'
+                      : formatCurrency(context, _order!.total),
+                  style: TextStyle(
+                    fontWeight: FontWeight.w800,
+                    fontSize: 16,
+                    color: foodflow.success,
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ],
       ),
     );
   }
@@ -2110,21 +2685,23 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
 
 class _DriverActionTarget {
   final String title;
+  final String role;
   final String name;
-  final String phone;
   final String address;
   final LatLng? location;
   final IconData icon;
   final Color color;
+  final bool callable;
 
   const _DriverActionTarget({
     required this.title,
+    required this.role,
     required this.name,
-    required this.phone,
     required this.address,
     required this.location,
     required this.icon,
     required this.color,
+    required this.callable,
   });
 
   bool get canNavigate => location != null || address.trim().isNotEmpty;
@@ -2169,7 +2746,7 @@ class _DriverActionSheet extends StatelessWidget {
         margin: const EdgeInsets.all(12),
         padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: foodflow.surfaceColor,
           borderRadius: BorderRadius.circular(24),
           boxShadow: [
             BoxShadow(
@@ -2215,7 +2792,7 @@ class _DriverActionSheet extends StatelessWidget {
                     children: [
                       Text(
                         title,
-                        style: const TextStyle(
+                        style: TextStyle(
                           color: foodflow.ink,
                           fontSize: 18,
                           fontWeight: FontWeight.w800,
@@ -2224,7 +2801,7 @@ class _DriverActionSheet extends StatelessWidget {
                       const SizedBox(height: 3),
                       Text(
                         subtitle,
-                        style: const TextStyle(
+                        style: TextStyle(
                           color: foodflow.muted,
                           fontSize: 12,
                           fontWeight: FontWeight.w800,
@@ -2235,7 +2812,7 @@ class _DriverActionSheet extends StatelessWidget {
                 ),
                 IconButton(
                   onPressed: () => Navigator.pop(context),
-                  icon: const Icon(Icons.close_rounded),
+                  icon: Icon(Icons.close_rounded),
                 ),
               ],
             ),
@@ -2266,7 +2843,7 @@ class _DriverActionTile extends StatelessWidget {
     return Material(
       color: prominent
           ? action.target.color.withOpacity(0.08)
-          : const Color(0xFFF8F9FB),
+          : foodflow.canvas,
       borderRadius: BorderRadius.circular(16),
       child: InkWell(
         onTap: action.enabled ? action.onTap : null,
@@ -2288,7 +2865,7 @@ class _DriverActionTile extends StatelessWidget {
                 width: 42,
                 height: 42,
                 decoration: BoxDecoration(
-                  color: Colors.white,
+                  color: foodflow.surfaceColor,
                   borderRadius: BorderRadius.circular(13),
                   border: Border.all(color: foodflow.line),
                 ),
@@ -2302,9 +2879,7 @@ class _DriverActionTile extends StatelessWidget {
                     Text(
                       action.label,
                       style: TextStyle(
-                        color: action.enabled
-                            ? foodflow.ink
-                            : foodflow.faint,
+                        color: action.enabled ? foodflow.ink : foodflow.faint,
                         fontSize: 14,
                         fontWeight: FontWeight.w800,
                       ),
@@ -2314,7 +2889,7 @@ class _DriverActionTile extends StatelessWidget {
                       action.target.name,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
+                      style: TextStyle(
                         color: foodflow.inkSoft,
                         fontSize: 12,
                         fontWeight: FontWeight.w800,
@@ -2326,9 +2901,7 @@ class _DriverActionTile extends StatelessWidget {
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
-                        color: action.enabled
-                            ? foodflow.muted
-                            : foodflow.faint,
+                        color: action.enabled ? foodflow.muted : foodflow.faint,
                         fontSize: 12,
                         fontWeight: FontWeight.w400,
                       ),

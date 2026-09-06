@@ -359,12 +359,13 @@ class RestaurantDiningController extends Controller
     private function notifyCustomer(DiningBooking $booking, string $title, string $body, string $type): void
     {
         try {
-            if (!$booking->user?->fcm_token) {
+            $token = $booking->user?->fcmTokenForApp('customer');
+            if (! $token) {
                 return;
             }
 
             (new FirebaseHelper())->sendToDevice(
-                $booking->user->fcm_token,
+                $token,
                 $title,
                 $body,
                 [

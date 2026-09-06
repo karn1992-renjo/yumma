@@ -25,6 +25,8 @@ import 'providers/auth_provider.dart';
 import 'providers/cart_provider.dart';
 import 'providers/order_provider.dart';
 import 'providers/restaurant_provider.dart';
+import 'providers/theme_provider.dart';
+import 'theme/aurora_theme.dart';
 import 'models/order.dart';
 import 'screens/auth/login_screen.dart';
 import 'screens/auth/register_screen.dart';
@@ -69,6 +71,7 @@ Future<void> _startApp() async {
         ChangeNotifierProvider.value(value: cartProvider),
         ChangeNotifierProvider(create: (_) => OrderProvider()),
         ChangeNotifierProvider(create: (_) => RestaurantProvider()),
+        ChangeNotifierProvider(create: (_) => ThemeProvider()),
       ],
       child: FoodDeliveryApp(
         startupFuture: startupFuture,
@@ -246,13 +249,27 @@ class FoodDeliveryApp extends StatefulWidget {
   State<FoodDeliveryApp> createState() => _FoodDeliveryAppState();
 }
 
-class _FoodDeliveryAppState extends State<FoodDeliveryApp> {
+class _FoodDeliveryAppState extends State<FoodDeliveryApp>
+    with WidgetsBindingObserver {
   AppBranding? _branding;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _loadBranding();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangePlatformBrightness() {
+    super.didChangePlatformBrightness();
+    if (mounted) setState(() {});
   }
 
   Future<void> _loadBranding() async {
@@ -288,270 +305,24 @@ class _FoodDeliveryAppState extends State<FoodDeliveryApp> {
       _branding?.restaurantSecondaryColorHex,
       AppConfig.secondaryColor,
     );
+    final themeProvider = context.watch<ThemeProvider>();
+    final platformBrightness =
+        View.of(context).platformDispatcher.platformBrightness;
+    final brightness = themeProvider.resolveBrightness(platformBrightness);
     FoodFlowTheme.applyBrandColors(primary: primary, secondary: secondary);
-    const homeCanvas = Color(0xFFFAFAFA);
-    const homeText = Color(0xFF111827);
-    const homeMuted = Color(0xFF6B7280);
-    const homeBorder = Color(0xFFE5E7EB);
+    foodflow.applyBrightness(brightness);
 
     return MaterialApp(
       navigatorKey: appNavigatorKey,
       title: _branding?.displayName ?? AppConfig.appName,
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: primary,
-          primary: primary,
-          secondary: secondary,
-          surface: Colors.white,
-          error: FoodFlowTheme.danger,
-        ),
-        primaryColor: primary,
-        scaffoldBackgroundColor: homeCanvas,
-        visualDensity: const VisualDensity(horizontal: -3, vertical: -3),
-        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-        fontFamily: GoogleFonts.plusJakartaSans().fontFamily,
-        useMaterial3: true,
-        textTheme: AppTypography.material3(
-          base: GoogleFonts.plusJakartaSansTextTheme(),
-          textColor: homeText,
-          mutedColor: homeMuted,
-        ),
-        appBarTheme: const AppBarTheme(
-          elevation: 0,
-          centerTitle: false,
-          backgroundColor: homeCanvas,
-          foregroundColor: homeText,
-          iconTheme: IconThemeData(color: homeText),
-          titleTextStyle: TextStyle(
-            color: homeText,
-            fontSize: 18,
-            fontWeight: FontWeight.w800,
-          ),
-          toolbarHeight: 52,
-          scrolledUnderElevation: 0,
-          surfaceTintColor: Colors.transparent,
-        ),
-        dialogTheme: DialogThemeData(
-          backgroundColor: Colors.white,
-          surfaceTintColor: Colors.transparent,
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-          titleTextStyle: const TextStyle(
-              color: homeText, fontSize: 18, fontWeight: FontWeight.w800),
-          contentTextStyle: const TextStyle(
-              color: homeMuted, fontSize: 14, fontWeight: FontWeight.w500),
-        ),
-        bottomSheetTheme: const BottomSheetThemeData(
-          backgroundColor: Colors.white,
-          modalBackgroundColor: Colors.white,
-          surfaceTintColor: Colors.transparent,
-          showDragHandle: true,
-          shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
-        ),
-        tabBarTheme: TabBarThemeData(
-          labelColor: primary,
-          unselectedLabelColor: FoodFlowTheme.muted,
-          indicatorColor: primary,
-          labelStyle: TextStyle(fontWeight: FontWeight.w800, fontSize: 15),
-          unselectedLabelStyle: TextStyle(
-            fontWeight: FontWeight.w700,
-            fontSize: 15,
-          ),
-          dividerColor: Colors.transparent,
-        ),
-        dividerTheme: const DividerThemeData(
-          color: FoodFlowTheme.line,
-          thickness: 1,
-          space: 1,
-        ),
-        listTileTheme: ListTileThemeData(
-          iconColor: primary,
-          textColor: homeText,
-          dense: true,
-          contentPadding: const EdgeInsets.symmetric(
-            horizontal: 16,
-            vertical: 6,
-          ),
-          minLeadingWidth: 18,
-          titleTextStyle: const TextStyle(
-            color: homeText,
-            fontSize: 16,
-            fontWeight: FontWeight.w800,
-          ),
-          subtitleTextStyle: const TextStyle(
-            color: homeMuted,
-            fontSize: 14,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-        chipTheme: ChipThemeData(
-          backgroundColor: const Color(0xFFEFFAF4),
-          selectedColor: const Color(0xFFFFF3E8),
-          checkmarkColor: primary,
-          labelStyle: const TextStyle(
-            color: FoodFlowTheme.ink,
-            fontWeight: FontWeight.w700,
-            fontSize: 13,
-          ),
-          side: const BorderSide(color: Color(0xFFE5E7EB)),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(7)),
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 1),
-        ),
-        bottomNavigationBarTheme: BottomNavigationBarThemeData(
-          backgroundColor: Colors.white,
-          selectedItemColor: primary,
-          unselectedItemColor: FoodFlowTheme.muted,
-          selectedLabelStyle: const TextStyle(
-            fontWeight: FontWeight.w800,
-            fontSize: 13,
-          ),
-          unselectedLabelStyle: const TextStyle(
-            fontWeight: FontWeight.w600,
-            fontSize: 13,
-          ),
-          selectedIconTheme: const IconThemeData(size: 23),
-          unselectedIconTheme: const IconThemeData(size: 21),
-          type: BottomNavigationBarType.fixed,
-          showUnselectedLabels: true,
-          elevation: 3,
-        ),
-        inputDecorationTheme: InputDecorationTheme(
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide: BorderSide.none,
-          ),
-          enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide: const BorderSide(color: homeBorder),
-          ),
-          focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide: BorderSide(color: primary, width: 1.2),
-          ),
-          errorBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide: const BorderSide(color: FoodFlowTheme.danger),
-          ),
-          focusedErrorBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide: const BorderSide(
-              color: FoodFlowTheme.danger,
-              width: 1.2,
-            ),
-          ),
-          filled: true,
-          fillColor: Colors.white,
-          contentPadding: AppSpacing.input,
-          prefixIconColor: primary,
-          suffixIconColor: homeMuted,
-          labelStyle: const TextStyle(
-            color: homeMuted,
-            fontWeight: FontWeight.w700,
-            fontSize: 16,
-          ),
-          hintStyle: const TextStyle(
-            color: homeMuted,
-            fontWeight: FontWeight.w600,
-            fontSize: 16,
-          ),
-          floatingLabelStyle: TextStyle(
-            color: primary,
-            fontWeight: FontWeight.w700,
-            fontSize: 16,
-          ),
-          isDense: true,
-        ),
-        elevatedButtonTheme: ElevatedButtonThemeData(
-          style: ElevatedButton.styleFrom(
-            backgroundColor: primary,
-            foregroundColor: Colors.white,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(12),
-            ),
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-            minimumSize: const Size(0, 46),
-            elevation: 0,
-            shadowColor: Colors.transparent,
-            textStyle: const TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.w800,
-              letterSpacing: 0.2,
-            ),
-          ),
-        ),
-        outlinedButtonTheme: OutlinedButtonThemeData(
-          style: OutlinedButton.styleFrom(
-            side: BorderSide(color: primary.withOpacity(0.24)),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(12),
-            ),
-            foregroundColor: homeText,
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
-            minimumSize: const Size(0, 46),
-            textStyle: const TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.w700,
-              letterSpacing: 0.2,
-            ),
-          ),
-        ),
-        filledButtonTheme: FilledButtonThemeData(
-          style: FilledButton.styleFrom(
-            backgroundColor: primary,
-            foregroundColor: Colors.white,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(12),
-            ),
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-            minimumSize: const Size(0, 46),
-            textStyle: const TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.w800,
-              letterSpacing: 0.2,
-            ),
-          ),
-        ),
-        cardTheme: CardThemeData(
-          elevation: 0,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(22),
-            side: const BorderSide(color: homeBorder),
-          ),
-          margin: EdgeInsets.zero,
-          color: Colors.white,
-        ),
-        snackBarTheme: SnackBarThemeData(
-          backgroundColor: primary,
-          contentTextStyle: const TextStyle(color: Colors.white),
-          behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-          ),
-        ),
-        floatingActionButtonTheme: FloatingActionButtonThemeData(
-          backgroundColor: primary,
-          foregroundColor: Colors.white,
-          elevation: 3,
-          extendedTextStyle: const TextStyle(
-            fontWeight: FontWeight.w800,
-            fontSize: 15,
-          ),
-        ),
-        textButtonTheme: TextButtonThemeData(
-          style: TextButton.styleFrom(
-            foregroundColor: primary,
-            textStyle: const TextStyle(
-              fontWeight: FontWeight.w700,
-              fontSize: 15,
-            ),
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-            minimumSize: const Size(0, 32),
-          ),
-        ),
+      theme: AuroraTheme.build(
+        brightness: brightness,
+        primary: primary,
+        secondary: secondary,
       ),
       home: AppSplashScreen(
+        branding: _branding,
         startupFuture: widget.startupFuture,
         builder: (_) => !widget.onboardingComplete()
             ? const OnboardingScreen()
@@ -562,9 +333,17 @@ class _FoodDeliveryAppState extends State<FoodDeliveryApp> {
       navigatorObservers: [routeObserver],
       onGenerateRoute: _generateRoute,
       builder: (context, child) {
+        // Legacy screens read `foodflow.*` statics at build time, so a
+        // brightness change must rebuild the whole navigator subtree.
         return ResponsiveMedia.withClampedTextScale(
           context: context,
-          child: EasyLoading.init()(context, child),
+          child: EasyLoading.init()(
+            context,
+            KeyedSubtree(
+              key: ValueKey<Brightness>(brightness),
+              child: child ?? const SizedBox.shrink(),
+            ),
+          ),
         );
       },
     );

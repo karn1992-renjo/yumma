@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Admin;
 use App\Http\Controllers\Controller;
 use App\Models\Category;
 use App\Models\Cuisine;
+use App\Models\CustomerScratchCard;
 use App\Models\DeliveryArea;
 use App\Models\GlobalMenuCategory;
 use App\Models\MenuItem;
@@ -15,6 +16,7 @@ use App\Models\PromotionFraudAttempt;
 use App\Models\PromotionLog;
 use App\Models\PromotionUsage;
 use App\Models\Restaurant;
+use App\Models\UserReferral;
 use App\Services\MediaStorage;
 use App\Services\PromotionAnalyticsService;
 use App\Services\PromotionFinanceReportService;
@@ -373,6 +375,64 @@ class PromotionEngineController extends Controller
 
         return view('admin.promotion-engine.coupons', [
             'coupons' => $coupons,
+            'promotions' => Promotion::query()->orderBy('title')->get(['id', 'title']),
+            'filters' => $filters,
+        ]);
+    }
+
+    public function scratchCards(Request $request)
+    {
+        $filters = $request->validate([
+            'promotion_id' => ['nullable', 'integer', 'exists:promotions,id'],
+            'status' => ['nullable', 'in:issued,viewed,scratched,reward_generated,reward_credited,redeemed,expired'],
+            'search' => ['nullable', 'string', 'max:80'],
+        ]);
+
+        $cards = CustomerScratchCard::query()
+            ->with(['promotion:id,title', 'user:id,name,phone,email', 'order:id'])
+            ->when($filters['promotion_id'] ?? null, fn ($query, $id) => $query->where('promotion_id', $id))
+            ->when($filters['status'] ?? null, fn ($query, $status) => $query->where('status', $status))
+            ->when($filters['search'] ?? null, fn ($query, $search) => $query->whereHas('user', function ($userQuery) use ($search) {
+                $userQuery->where('name', 'like', '%' . $search . '%')->orWhere('phone', 'like', '%' . $search . '%');
+            }))
+            ->latest('issued_at')
+            ->paginate(40)
+            ->withQueryString();
+
+        return view('admin.promotion-engine.scratch-cards', [
+            'cards' => $cards,
+            'promotions' => Promotion::query()->orderBy('title')->get(['id', 'title']),
+            'filters' => $filters,
+        ]);
+    }
+
+    public function referrals(Request $request)
+    {
+        $filters = $request->validate([
+            'promotion_id' => ['nullable', 'integer', 'exists:promotions,id'],
+            'status' => ['nullable', 'in:registered,qualified,credited'],
+            'search' => ['nullable', 'string', 'max:80'],
+        ]);
+
+        $referrals = UserReferral::query()
+            ->with(['referrer:id,name,phone,email', 'referredUser:id,name,phone,email', 'promotion:id,title', 'qualifiedOrder:id'])
+            ->when($filters['promotion_id'] ?? null, fn ($query, $id) => $query->where('promotion_id', $id))
+            ->when($filters['status'] ?? null, fn ($query, $status) => $query->where('status', $status))
+            ->when($filters['search'] ?? null, function ($query, $search) {
+                $query->where(function ($outer) use ($search) {
+                    $outer->whereHas('referrer', function ($referrerQuery) use ($search) {
+                        $referrerQuery->where('name', 'like', '%' . $search . '%')->orWhere('phone', 'like', '%' . $search . '%');
+                    })->orWhereHas('referredUser', function ($referredQuery) use ($search) {
+                        $referredQuery->where('name', 'like', '%' . $search . '%')->orWhere('phone', 'like', '%' . $search . '%');
+                    });
+                });
+            })
+            ->latest()
+            ->paginate(40)
+            ->withQueryString();
+
+        return view('admin.promotion-engine.referrals', [
+            'referrals' => $referrals,
             'promotions' => Promotion::query()->orderBy('title')->get(['id', 'title']),
             'filters' => $filters,
         ]);

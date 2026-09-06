@@ -323,7 +323,7 @@ class _OrderCancelledSheetState extends State<_OrderCancelledSheet> {
                       color: foodflow.crimson.withOpacity(0.12),
                       shape: BoxShape.circle,
                     ),
-                    child: const Icon(
+                    child:  Icon(
                       Icons.cancel_rounded,
                       color: foodflow.crimson,
                       size: 34,
@@ -334,7 +334,7 @@ class _OrderCancelledSheetState extends State<_OrderCancelledSheet> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text(
+                         Text(
                           'Order cancelled',
                           style: TextStyle(
                             color: foodflow.ink,
@@ -345,7 +345,7 @@ class _OrderCancelledSheetState extends State<_OrderCancelledSheet> {
                         const SizedBox(height: 4),
                         Text(
                           'Order #$orderNumber needs attention',
-                          style: const TextStyle(
+                          style:  TextStyle(
                             color: foodflow.muted,
                             fontSize: 13,
                             fontWeight: FontWeight.w800,
@@ -363,7 +363,7 @@ class _OrderCancelledSheetState extends State<_OrderCancelledSheet> {
                     ),
                     child: Text(
                       '${_remaining}s',
-                      style: const TextStyle(
+                      style:  TextStyle(
                         color: foodflow.crimson,
                         fontWeight: FontWeight.w900,
                       ),
@@ -458,7 +458,7 @@ class _CancelInfoRow extends StatelessWidget {
           const SizedBox(width: 9),
           Text(
             '$label: ',
-            style: const TextStyle(
+            style:  TextStyle(
               color: foodflow.muted,
               fontSize: 13,
               fontWeight: FontWeight.w800,
@@ -469,7 +469,7 @@ class _CancelInfoRow extends StatelessWidget {
               value,
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
+              style:  TextStyle(
                 color: foodflow.ink,
                 fontSize: 13,
                 fontWeight: FontWeight.w900,
@@ -614,7 +614,7 @@ class _RestaurantIncomingOrderSheetState
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Text(
+                           Text(
                             'Incoming order',
                             style: TextStyle(
                               fontSize: 21,
@@ -624,7 +624,7 @@ class _RestaurantIncomingOrderSheetState
                           ),
                           Text(
                             '#$orderNumber - $total',
-                            style: const TextStyle(
+                            style:  TextStyle(
                               color: foodflow.muted,
                               fontWeight: FontWeight.w800,
                             ),
@@ -677,7 +677,7 @@ class _RestaurantIncomingOrderSheetState
                               customerName,
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
+                              style:  TextStyle(
                                 color: foodflow.ink,
                                 fontSize: 14,
                                 fontWeight: FontWeight.w900,
@@ -697,7 +697,7 @@ class _RestaurantIncomingOrderSheetState
                         ),
                         child: Text(
                           '${items.length} item${items.length == 1 ? '' : 's'}',
-                          style: const TextStyle(
+                          style:  TextStyle(
                             color: foodflow.success,
                             fontSize: 11,
                             fontWeight: FontWeight.w900,
@@ -740,7 +740,7 @@ class _RestaurantIncomingOrderSheetState
                                           'Item',
                                       maxLines: 1,
                                       overflow: TextOverflow.ellipsis,
-                                      style: const TextStyle(
+                                      style:  TextStyle(
                                         color: foodflow.ink,
                                         fontWeight: FontWeight.w800,
                                       ),
@@ -773,7 +773,7 @@ class _RestaurantIncomingOrderSheetState
                             size: 18,
                           ),
                           const SizedBox(width: 7),
-                          const Text(
+                           Text(
                             'Preparation time',
                             style: TextStyle(
                               color: FoodFlowTheme.ink,
@@ -795,7 +795,7 @@ class _RestaurantIncomingOrderSheetState
                               children: [
                                 Text(
                                   '$_minutes',
-                                  style: const TextStyle(
+                                  style:  TextStyle(
                                     color: foodflow.ink,
                                     fontSize: 36,
                                     height: 1,
@@ -803,7 +803,7 @@ class _RestaurantIncomingOrderSheetState
                                   ),
                                 ),
                                 const SizedBox(height: 2),
-                                const Text(
+                                 Text(
                                   'minutes',
                                   style: TextStyle(
                                     color: foodflow.muted,
@@ -822,7 +822,7 @@ class _RestaurantIncomingOrderSheetState
                         ],
                       ),
                       const SizedBox(height: 8),
-                      const Text(
+                       Text(
                         'This estimate is shared with the customer and assigned driver.',
                         style: TextStyle(
                           color: foodflow.muted,
@@ -1067,7 +1067,7 @@ class _DriverIncomingOrderSheetState extends State<_DriverIncomingOrderSheet> {
               Container(
                 padding: const EdgeInsets.fromLTRB(14, 16, 14, 14),
                 decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.96),
+                  color: foodflow.surfaceColor.withOpacity(0.97),
                   borderRadius: BorderRadius.circular(28),
                   border: Border.all(color: foodflow.orange.withOpacity(0.22)),
                   boxShadow: [
@@ -1102,7 +1102,7 @@ class _DriverIncomingOrderSheetState extends State<_DriverIncomingOrderSheet> {
                                   color: foodflow.orange,
                                 ),
                                 const SizedBox(height: 10),
-                                const Text(
+                                 Text(
                                   'Incoming order',
                                   style: TextStyle(
                                     color: foodflow.ink,
@@ -1112,7 +1112,7 @@ class _DriverIncomingOrderSheetState extends State<_DriverIncomingOrderSheet> {
                                   ),
                                 ),
                                 const SizedBox(height: 6),
-                                const Text(
+                                 Text(
                                   'New delivery request',
                                   style: TextStyle(
                                     color: foodflow.muted,
@@ -1316,7 +1316,7 @@ class _IncomingMapBackdrop extends StatelessWidget {
           Positioned.fill(
             child: Container(
               decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.74),
+                color: foodflow.canvas.withOpacity(0.72),
                 borderRadius: BorderRadius.circular(30),
               ),
             ),
@@ -1335,7 +1335,7 @@ class _SoftMapPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final roadPaint = Paint()
-      ..color = const Color(0xFFE7EAF2)
+      ..color = foodflow.line
       ..style = PaintingStyle.stroke
       ..strokeWidth = 7
       ..strokeCap = StrokeCap.round;
@@ -1558,7 +1558,7 @@ class _OrderSummary3d extends StatelessWidget {
                   'Order $orderNumber',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
+                  style:  TextStyle(
                     color: foodflow.ink,
                     fontSize: 15,
                     fontWeight: FontWeight.w900,
@@ -1569,7 +1569,7 @@ class _OrderSummary3d extends StatelessWidget {
                   title,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
+                  style:  TextStyle(
                     color: foodflow.inkSoft,
                     fontSize: 13,
                     fontWeight: FontWeight.w800,
@@ -1578,7 +1578,7 @@ class _OrderSummary3d extends StatelessWidget {
                 const SizedBox(height: 3),
                 Text(
                   subtitle,
-                  style: const TextStyle(
+                  style:  TextStyle(
                     color: foodflow.muted,
                     fontSize: 12,
                     fontWeight: FontWeight.w700,
@@ -1690,7 +1690,7 @@ class _AddressPreview3d extends StatelessWidget {
                   value,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
+                  style:  TextStyle(
                     color: foodflow.ink,
                     fontSize: 14,
                     height: 1.25,

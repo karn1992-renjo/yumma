@@ -20,6 +20,7 @@ use App\Models\TaxSetting;
 use App\Models\Transaction;
 use App\Models\Wallet;
 use App\Models\WalletTransaction;
+use App\Services\CallMaskingService;
 use App\Services\DeliveryAreaResolver;
 use App\Services\GoogleMapsEtaService;
 use App\Services\MediaStorage;
@@ -70,6 +71,7 @@ class OrderController extends Controller
             'coupon_code' => 'nullable|string',
             'special_instructions' => 'nullable|string|max:1000',
             'scheduled_time' => 'nullable|date|after:now',
+            'tip' => 'nullable|numeric|min:0|max:1000',
             'payment_id' => 'nullable|string',
             'razorpay_order_id' => 'nullable|string',
             'razorpay_signature' => 'nullable|string',
@@ -224,13 +226,19 @@ class OrderController extends Controller
             }
 
             $deliveryFee = $pricing['payable_delivery_fee'] ?? $pricing['delivery_fee'];
+            $surgeFee = $pricing['surge_fee'] ?? 0;
+            $nightSurcharge = $pricing['night_surcharge'] ?? 0;
+            $longDistanceCharge = $pricing['restaurant_long_distance_charge'] ?? 0;
+            $deliveryDistanceKm = $pricing['delivery_distance_km'] ?? null;
             $originalDeliveryFee = $pricing['original_delivery_fee'] ?? $pricing['delivery_fee'];
             $deliveryDiscount = $pricing['delivery_discount'] ?? max(0, $originalDeliveryFee - $deliveryFee);
             $tax = $pricing['tax'];
             $platformFee = $pricing['platform_fee'];
             $subtotal = $pricing['subtotal'] ?? $subtotal;
             $discount = $pricing['order_discount'] ?? $pricing['discount'];
-            $total = $pricing['total'];
+            $tipAmount = round((float) $request->input('tip', 0), 2);
+            $tipAmount = max(0, min(1000, $tipAmount));
+            $total = $pricing['total'] + $tipAmount;
             $promo = $pricing['promo'];
             $orderItems = $this->rewardOrderItemService->applyRewardLines(
                 $orderItems,
@@ -307,6 +315,10 @@ class OrderController extends Controller
                 'items' => $orderItems,
                 'subtotal' => $subtotal,
                 'delivery_fee' => $deliveryFee,
+                'surge_fee' => $surgeFee,
+                'night_surcharge' => $nightSurcharge,
+                'long_distance_charge' => $longDistanceCharge,
+                'delivery_distance_km' => $deliveryDistanceKm,
                 'original_delivery_fee' => $originalDeliveryFee,
                 'delivery_discount' => $deliveryDiscount,
                 'delivery_subsidy_source' => $pricing['delivery_subsidy_source'] ?? null,
@@ -314,7 +326,21 @@ class OrderController extends Controller
                 'restaurant_delivery_subsidy' => $pricing['restaurant_delivery_subsidy'] ?? 0,
                 'platform_fee' => $platformFee,
                 'tax' => $tax,
+                'tax_breakdown' => $pricing['gst_breakdown'] ?? null,
+                'cgst_amount' => data_get($pricing, 'gst_breakdown.restaurant.cgst'),
+                'sgst_amount' => data_get($pricing, 'gst_breakdown.restaurant.sgst'),
+                'igst_amount' => data_get($pricing, 'gst_breakdown.igst_total'),
+                'eco_gst_food_cgst' => data_get($pricing, 'gst_breakdown.eco_food.cgst'),
+                'eco_gst_food_sgst' => data_get($pricing, 'gst_breakdown.eco_food.sgst'),
+                'eco_gst_food' => isset($pricing['gst_breakdown']) ? round((float) data_get($pricing, 'gst_breakdown.eco_food.cgst') + (float) data_get($pricing, 'gst_breakdown.eco_food.sgst'), 2) : null,
+                'service_gst_cgst' => data_get($pricing, 'gst_breakdown.service.cgst'),
+                'service_gst_sgst' => data_get($pricing, 'gst_breakdown.service.sgst'),
+                'service_gst' => isset($pricing['gst_breakdown']) ? round((float) data_get($pricing, 'gst_breakdown.service.cgst') + (float) data_get($pricing, 'gst_breakdown.service.sgst'), 2) : null,
+                'place_of_supply' => data_get($pricing, 'gst_breakdown.place_of_supply'),
+                'supplier_gstin' => data_get($pricing, 'gst_breakdown.supplier_gstin'),
+                'invoice_type' => isset($pricing['gst_breakdown']) ? 'tax_invoice' : null,
                 'discount' => $discount,
+                'tip_amount' => $tipAmount > 0 ? $tipAmount : null,
                 'total' => $total,
                 'payment_method' => $resolvedPaymentMethod ?: $request->payment_method,
                 'payment_gateway' => $verifiedOnlinePaymentId ? $resolvedPaymentMethod : null,
@@ -341,25 +367,26 @@ class OrderController extends Controller
                 'special_instructions' => $request->input('special_instructions'),
             ]);
 
+            // The order just placed supersedes any tracked in-progress cart
+            // for this restaurant (App\Models\Cart, synced by the customer
+            // app's CartProvider) -- clear it so it never gets flagged as
+            // abandoned by App\Services\CartRecoveryService.
+            \App\Models\Cart::where('customer_id', auth()->id())
+                ->where('restaurant_id', $request->restaurant_id)
+                ->delete();
+
             if ($request->payment_method === 'wallet') {
-                $wallet = Wallet::where('user_id', auth()->id())->lockForUpdate()->first();
-                if (! $wallet || $wallet->balance < $total) {
+                $debited = app(\App\Services\WalletService::class)->debitInstant(
+                    $request->user(),
+                    (float) $total,
+                    'order',
+                    $order->id,
+                    "Order #{$order->order_number}"
+                );
+
+                if (! $debited) {
                     throw new \Exception('Insufficient wallet balance.');
                 }
-
-                $wallet->decrement('balance', $total);
-                $wallet->refresh();
-
-                WalletTransaction::create([
-                    'wallet_id' => $wallet->id,
-                    'user_id' => auth()->id(),
-                    'type' => 'debit',
-                    'amount' => $total,
-                    'balance_after' => $wallet->balance,
-                    'reference_type' => 'order',
-                    'reference_id' => $order->id,
-                    'description' => "Order #{$order->order_number}",
-                ]);
 
                 $order->update(['payment_status' => 'success']);
             } elseif ($verifiedOnlinePaymentId) {
@@ -525,6 +552,22 @@ class OrderController extends Controller
             'data' => $order
                 ? $this->appendEtaToOrderPayload($order)
                 : null,
+        ]);
+    }
+
+    public function callNumber(Request $request, $id)
+    {
+        $validated = $request->validate([
+            'target' => ['required', 'in:restaurant,driver'],
+        ]);
+
+        $order = Order::where('customer_id', auth()->id())->findOrFail($id);
+
+        $result = app(CallMaskingService::class)->numberForDialIn($order, $validated['target']);
+
+        return response()->json([
+            'success' => true,
+            'data' => $result,
         ]);
     }
 
@@ -727,6 +770,14 @@ class OrderController extends Controller
         }
 
         unset($pricing['promo'], $pricing['promotion_result'], $pricing['promotion_context']);
+
+        // Driver tip is added on top of the priced bill (checkout-time tip).
+        $tipAmount = max(0, min(1000, round((float) $request->input('tip', 0), 2)));
+        if ($tipAmount > 0) {
+            $pricing['tip'] = $tipAmount;
+            $pricing['total'] = round((float) ($pricing['total'] ?? 0) + $tipAmount, 2);
+        }
+
         $freeDeliveryThreshold = $orderType === 'delivery'
             ? DeliveryChargeSetting::getFreeDeliveryThreshold(
                 $restaurant->id,
@@ -907,6 +958,48 @@ class OrderController extends Controller
      * Tip the delivery partner for a delivered order. The full amount is
      * credited to the driver's wallet with no commission deducted.
      */
+    /**
+     * Customer adds / updates cooking requests and delivery instructions from
+     * the order-tracking screen. Allowed while the order is still in flight.
+     */
+    public function updateNotes(Request $request, $id)
+    {
+        $order = Order::where('customer_id', auth()->id())->findOrFail($id);
+
+        if (in_array($order->status, ['delivered', 'cancelled'], true)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'This order can no longer be updated.',
+            ], 422);
+        }
+
+        $validated = $request->validate([
+            'cooking_request' => 'nullable|string|max:1000',
+            'delivery_instructions' => 'nullable|string|max:500',
+        ]);
+
+        $changes = [];
+        if ($request->has('cooking_request')) {
+            $changes['special_instructions'] = trim((string) $validated['cooking_request']) ?: null;
+        }
+        if ($request->has('delivery_instructions') && \Illuminate\Support\Facades\Schema::hasColumn('orders', 'delivery_instructions')) {
+            $changes['delivery_instructions'] = trim((string) $validated['delivery_instructions']) ?: null;
+        }
+
+        if ($changes !== []) {
+            $order->forceFill($changes)->save();
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Order notes updated.',
+            'data' => [
+                'special_instructions' => $order->special_instructions,
+                'delivery_instructions' => $order->delivery_instructions ?? null,
+            ],
+        ]);
+    }
+
     public function tip(Request $request, $id)
     {
         $order = Order::where('customer_id', auth()->id())->findOrFail($id);
@@ -1011,6 +1104,28 @@ class OrderController extends Controller
 
             DB::commit();
 
+            // Let the delivery partner know a tip landed.
+            try {
+                $driver = \App\Models\User::find($order->driver_id);
+                if ($driver) {
+                    $symbol = \App\Models\AppSetting::sanitizedCurrencySymbol();
+                    app(\App\Services\PushNotificationService::class)->sendToUser(
+                        $driver,
+                        'You received a tip! 🎉',
+                        "{$symbol}".number_format($amount, \App\Models\AppSetting::currencyDecimals())
+                            ." tip from your customer for order #{$order->order_number}",
+                        [
+                            'type' => 'driver_tip_received',
+                            'order_id' => (string) $order->id,
+                            'amount' => (string) $amount,
+                        ],
+                        'driver',
+                    );
+                }
+            } catch (\Throwable $e) {
+                Log::warning('Tip push notification failed: '.$e->getMessage());
+            }
+
             return response()->json([
                 'success' => true,
                 'message' => 'Thanks! Your tip has been sent to your delivery partner.',
@@ -1037,7 +1152,7 @@ class OrderController extends Controller
         ]);
 
         $canInstantCancel = $order->isCancellable();
-        $canForceCancel = in_array($order->status, ['confirmed', 'preparing', 'ready_for_pickup'], true);
+        $canForceCancel = in_array($order->status, ['pending', 'confirmed', 'preparing', 'ready_for_pickup'], true);
 
         if (! OrderCancellationLimit::isWithinWindow($order, 'customer', 15)) {
             $minutes = OrderCancellationLimit::windowMinutesFor('customer', 15);
@@ -1378,6 +1493,30 @@ class OrderController extends Controller
             $deliveryLng !== null ? (float) $deliveryLng : null
         );
 
+        // Flat, self-funding zone surge fee (App\Services\ZoneSurgeService) --
+        // applies only for real deliveries into a zone the AI/admin has
+        // flagged as short on drivers; the identical amount funds a matching
+        // driver bonus in GigIncentiveService::calculateGigEarnings().
+        $surgeFee = ($orderType !== 'takeaway' && $deliveryArea?->surge_fee_active)
+            ? round((float) $deliveryArea->surge_fee_amount, 2)
+            : 0.0;
+
+        // Flat, self-funding late-night delivery surcharge -- applies to
+        // delivery orders placed inside the platform night window; the same
+        // amount funds a driver night bonus in
+        // GigIncentiveService::calculateGigEarnings().
+        $nightSurcharge = $orderType !== 'takeaway'
+            ? round((float) app(\App\Services\NightSurchargeService::class)->amountFor(), 2)
+            : 0.0;
+
+        // Long-distance charge -- borne by the RESTAURANT (deducted from its
+        // earning in PayoutCalculationService), not added to the customer total.
+        $longDistanceCharge = $orderType !== 'takeaway'
+            ? round((float) app(\App\Services\LongDistanceChargeService::class)->chargeFor(
+                $deliveryDistanceKm !== null ? (float) $deliveryDistanceKm : null
+            ), 2)
+            : 0.0;
+
         $promotionContext = [
             'user_id' => auth()->id(),
             'restaurant_id' => $restaurant->id,
@@ -1447,11 +1586,46 @@ class OrderController extends Controller
                 $taxBreakdown = $baseTaxBreakdown;
             }
         }
+        // GST mode (Settings -> Business): per-line CGST/SGST replaces the
+        // TaxSetting `gst`/charge rows when the supplier restaurant is
+        // GST-registered. Returns null otherwise -> keep the path above.
+        $gstService = app(\App\Services\Gst\GstTaxService::class);
+        $gstBreakdown = null;
+        if ($gstService->appliesTo($restaurant)) {
+            $rawLines = $gstService->linesFromRequestItems($items);
+            $grossItems = array_sum(array_column($rawLines, 'line_total'));
+            $netItems = max(0.0, $billableSubtotal - $orderDiscount);
+            $scale = $grossItems > 0 ? $netItems / $grossItems : 1.0;
+            foreach ($rawLines as &$rl) {
+                $rl['line_total'] = round($rl['line_total'] * $scale, AppSetting::currencyDecimals());
+            }
+            unset($rl);
+
+            $gstBreakdown = $gstService->computeForOrder($restaurant, $rawLines, [
+                'delivery_fee' => $payableDeliveryFee,
+                'platform_fee' => $platformFee,
+                'packaging_charge' => $packagingFee,
+            ]);
+
+            if ($gstBreakdown) {
+                $tax = $gstBreakdown->taxAdded;
+                $taxBreakdown = $gstBreakdown->rateSummary;
+                $taxLabel = 'GST';
+                $taxRate = (float) collect($gstBreakdown->rateSummary)->max('rate');
+            }
+        }
+
         $promo = $promotionResult['promo'] ?? null;
-        $total = max(0, round($billableSubtotal + $payableDeliveryFee + $platformFee + $tax - $orderDiscount, 2));
+        $total = max(0, round($billableSubtotal + $payableDeliveryFee + $platformFee + $tax + $surgeFee + $nightSurcharge - $orderDiscount, 2));
         $orderEarnedPoints = (int) floor($total);
 
         return [
+            'surge_fee' => round($surgeFee, 2),
+            'surge_active' => $surgeFee > 0,
+            'night_surcharge' => round($nightSurcharge, 2),
+            'night_surcharge_active' => $nightSurcharge > 0,
+            'restaurant_long_distance_charge' => round($longDistanceCharge, 2),
+            'delivery_distance_km' => $deliveryDistanceKm !== null ? round((float) $deliveryDistanceKm, 3) : null,
             'delivery_fee' => round($originalDeliveryFee, 2),
             'payable_delivery_fee' => round($payableDeliveryFee, 2),
             'customer_delivery_fee' => round($payableDeliveryFee, 2),
@@ -1469,6 +1643,10 @@ class OrderController extends Controller
             'tax_rate' => $taxRate,
             'tax_label' => $taxLabel,
             'tax_breakdown' => $taxBreakdown,
+            'gst_breakdown' => $gstBreakdown?->toArray(),
+            'sec_9_5_note' => ($gstBreakdown && ($gstBreakdown->ecoFoodCgst + $gstBreakdown->ecoFoodSgst) > 0)
+                ? 'GST on restaurant food is collected and paid by the platform as the e-commerce operator under Section 9(5) of the CGST Act. The restaurant neither collects nor remits this GST.'
+                : null,
             'discount' => $displayDiscount,
             'bill_discount' => $billDiscount,
             'total_discount' => $billDiscount,
@@ -1852,6 +2030,21 @@ class OrderController extends Controller
             $payload['restaurant']['travel_distance_km'] = $eta['travel_distance_km'];
             $payload['restaurant']['preparation_minutes'] = $eta['preparation_minutes'];
         }
+
+        if (isset($payload['restaurant']['phone'])) {
+            $payload['restaurant']['phone'] = app(\App\Services\CallMaskingService::class)->redactPhone($payload['restaurant']['phone']);
+        }
+        if (isset($payload['driver']['phone'])) {
+            $payload['driver']['phone'] = app(\App\Services\CallMaskingService::class)->redactPhone($payload['driver']['phone']);
+        }
+
+        // GST split for the bill screen. tax_breakdown is the stored GstBreakdown array.
+        $gst = is_array($order->tax_breakdown) ? $order->tax_breakdown : null;
+        $payload['gst_breakdown'] = $gst;
+        $ecoFood = (float) ($order->eco_gst_food ?? 0);
+        $payload['sec_9_5_note'] = $ecoFood > 0
+            ? 'GST on restaurant food is collected and paid by the platform as the e-commerce operator under Section 9(5) of the CGST Act. The restaurant neither collects nor remits this GST.'
+            : null;
 
         return $payload;
     }

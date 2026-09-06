@@ -33,7 +33,7 @@ class GigDemandForecastService
 
     public function forecastAreaHour(?int $areaId, Carbon $date, int $hour): array
     {
-        $lookbackDays = 28;
+        $lookbackDays = max(7, (int) \App\Models\AppSetting::getValue('gig_forecast_lookback_days', 28));
         $windowStart = $date->copy()->subDays($lookbackDays)->startOfDay();
         $windowEnd = $date->copy()->subDay()->endOfDay();
 
@@ -131,6 +131,97 @@ class GigDemandForecastService
             });
 
         return $updated;
+    }
+
+    /**
+     * Upcoming area/hour slots where the demand forecast recommends more
+     * driver capacity than the gig slots currently published for that hour
+     * provide. Shared by App\Services\Ai\Managers\AiGigProvisioningManager
+     * (which fills the gap) and App\Services\Ai\AiOrchestrator (which surfaces
+     * it to the management cycle).
+     *
+     * @return array<int, array{area_id:int, area_name:?string, date:string, hour:int,
+     *     forecasted_orders:int, recommended_capacity:int, existing_capacity:int,
+     *     gap:int, surge_multiplier:float, demand_score:float}>
+     */
+    public function upcomingShortages(int $horizonHours = 24, int $minForecastOrders = 4): array
+    {
+        $now = now();
+        $horizonEnd = $now->copy()->addHours(max(1, $horizonHours));
+
+        $forecasts = GigDemandForecast::query()
+            ->whereNotNull('area_id')
+            ->whereDate('date', '>=', $now->toDateString())
+            ->whereDate('date', '<=', $horizonEnd->toDateString())
+            ->where('forecasted_orders', '>=', $minForecastOrders)
+            ->where('recommended_capacity', '>=', 1)
+            ->get();
+
+        if ($forecasts->isEmpty()) {
+            return [];
+        }
+
+        $areaNames = DeliveryArea::whereIn('id', $forecasts->pluck('area_id')->unique())
+            ->pluck('name', 'id');
+
+        $shortages = [];
+
+        foreach ($forecasts as $forecast) {
+            $slotStart = Carbon::parse($forecast->date->toDateString())->setTime((int) $forecast->hour, 0);
+            if ($slotStart->lt($now) || $slotStart->gt($horizonEnd)) {
+                continue;
+            }
+
+            $existingCapacity = $this->publishedCapacityForHour((int) $forecast->area_id, $slotStart);
+            $gap = (int) $forecast->recommended_capacity - $existingCapacity;
+            if ($gap < 1) {
+                continue;
+            }
+
+            $shortages[] = [
+                'area_id' => (int) $forecast->area_id,
+                'area_name' => $areaNames[$forecast->area_id] ?? null,
+                'date' => $forecast->date->toDateString(),
+                'hour' => (int) $forecast->hour,
+                'forecasted_orders' => (int) $forecast->forecasted_orders,
+                'recommended_capacity' => (int) $forecast->recommended_capacity,
+                'existing_capacity' => $existingCapacity,
+                'gap' => $gap,
+                'surge_multiplier' => (float) ($forecast->surge_multiplier ?? 1),
+                'demand_score' => (float) ($forecast->demand_score ?? 0),
+            ];
+        }
+
+        usort($shortages, fn ($a, $b) => [$b['gap'], $b['forecasted_orders']] <=> [$a['gap'], $a['forecasted_orders']]);
+
+        return $shortages;
+    }
+
+    /**
+     * Total published seat capacity (available + booked gig slots) that
+     * already covers a given area at a given hour.
+     */
+    public function publishedCapacityForHour(int $areaId, Carbon $slotStart): int
+    {
+        $hour = (int) $slotStart->format('G');
+
+        return (int) DriverGig::where('area_id', $areaId)
+            ->whereDate('date', $slotStart->toDateString())
+            ->whereIn('status', ['available', 'booked'])
+            ->get(['start_time', 'end_time', 'capacity'])
+            ->filter(function (DriverGig $gig) use ($hour) {
+                if (! $gig->start_time || ! $gig->end_time) {
+                    return false;
+                }
+                $startHour = (int) $gig->start_time->format('G');
+                $endHour = (int) $gig->end_time->format('G');
+                if ($endHour <= $startHour) {
+                    $endHour = 24;
+                }
+
+                return $hour >= $startHour && $hour < $endHour;
+            })
+            ->sum('capacity');
     }
 
     private function surgeForDemand(int $forecastedOrders, int $recommendedCapacity): float

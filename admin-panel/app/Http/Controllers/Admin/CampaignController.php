@@ -145,11 +145,12 @@ class CampaignController extends Controller
         }
 
         $users = $this->campaignAudienceQuery($campaign)
-            ->whereNotNull('fcm_token')
-            ->where('fcm_token', '!=', '')
-            ->get(['id', 'fcm_token']);
+            ->where('notify_offers_promotions', true)
+            ->whereNotNull('customer_fcm_token')
+            ->where('customer_fcm_token', '!=', '')
+            ->get(['id', 'customer_fcm_token']);
 
-        $tokens = $users->pluck('fcm_token')->filter()->unique()->values()->all();
+        $tokens = $users->pluck('customer_fcm_token')->filter()->unique()->values()->all();
         if (empty($tokens)) {
             return;
         }

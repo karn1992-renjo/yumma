@@ -200,7 +200,10 @@
                 </div>
                 <select name="banner_ids[]" class="form-select mt-2" multiple size="8">
                     @foreach($banners as $banner)
-                        <option value="{{ $banner->id }}" @selected(in_array($banner->id, $selectedBannerIds))>{{ $banner->title ?: 'Banner #'.$banner->id }}</option>
+                        @php
+                            $bannerSurfaceLabel = \App\Models\Banner::DISPLAY_SURFACE_LABELS[$banner->display_surface ?? 'both'] ?? 'Web + Customer App';
+                        @endphp
+                        <option value="{{ $banner->id }}" @selected(in_array($banner->id, $selectedBannerIds))>{{ ($banner->title ?: 'Banner #'.$banner->id) . ' - ' . $bannerSurfaceLabel }}</option>
                     @endforeach
                 </select>
                 <div class="form-text">Used only when the data source is manual. Promo widgets appear wherever this Banner Carousel section is placed in Home Section Management. Multiple selected banners auto-rotate as a carousel.</div>

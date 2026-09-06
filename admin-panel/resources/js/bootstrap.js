@@ -2,10 +2,6 @@ import axios from 'axios';
 window.axios = axios;
 window.axios.defaults.headers.common['X-Requested-With'] = 'XMLHttpRequest';
 
-import Alpine from 'alpinejs';
-window.Alpine = Alpine;
-Alpine.start();
-
 import Echo from 'laravel-echo';
 import Pusher from 'pusher-js';
 
@@ -19,6 +15,8 @@ const pusherHost = runtimeBroadcastConfig.host ?? import.meta.env.VITE_PUSHER_HO
 const pusherKey = runtimeBroadcastConfig.key ?? import.meta.env.VITE_PUSHER_APP_KEY ?? import.meta.env.VITE_REVERB_APP_KEY;
 
 if (pusherKey) {
+    const csrfToken = document.querySelector('meta[name="csrf-token"]')?.content ?? '';
+
     window.Echo = new Echo({
         broadcaster: 'pusher',
         key: pusherKey,
@@ -29,6 +27,15 @@ if (pusherKey) {
         wssPort: pusherPort,
         forceTLS: pusherScheme === 'https',
         enabledTransports: pusherScheme === 'https' ? ['wss'] : ['ws'],
+        // /broadcasting/auth now runs behind the standard session ('web')
+        // guard (see AppServiceProvider::boot()), so private-channel
+        // subscriptions need the CSRF token, same as any other POST from
+        // this admin session.
+        auth: {
+            headers: {
+                'X-CSRF-TOKEN': csrfToken,
+            },
+        },
     });
 } else {
     console.warn('Pusher app key is missing. Realtime broadcasting was not initialized.');

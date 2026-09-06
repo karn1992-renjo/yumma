@@ -8,6 +8,10 @@
         $appName = App\Models\AppSetting::getValue('app_name', 'FoodFlow');
         $appLogo = App\Models\AppSetting::getValue('app_logo', null);
         $appFavicon = App\Models\AppSetting::getValue('app_favicon', null);
+        $frontendBackgroundImage = App\Models\AppSetting::getValue('frontend_background_image', null);
+        $frontendBackgroundImageUrl = $frontendBackgroundImage
+            ? \Illuminate\Support\Facades\Storage::disk('public')->url($frontendBackgroundImage)
+            : null;
         $headerBrandingType = App\Models\AppSetting::getValue('header_branding_type', 'text');
         $headerBrandingType = in_array($headerBrandingType, ['text', 'logo', 'logo_text']) ? $headerBrandingType : 'text';
         $primaryColor = App\Models\AppSetting::getValue('primary_color', '#EF4F5F');
@@ -58,22 +62,28 @@
     <title>{{ $appName }} - Order food from best restaurants near you</title>
     <link rel="icon" href="{{ $appFavicon ? \Illuminate\Support\Facades\Storage::disk('public')->url($appFavicon) : asset('favicon.ico') }}">
     
-    <!-- Bootstrap 5 CSS -->
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="preload" as="style" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" onload="this.onload=null;this.rel='stylesheet'">
+    <noscript><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css"></noscript>
     
     <!-- Font Awesome -->
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="preload" as="style" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" onload="this.onload=null;this.rel='stylesheet'">
+    <noscript><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"></noscript>
     
     <!-- Google Fonts -->
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" onload="this.onload=null;this.rel='stylesheet'">
+    <noscript><link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet"></noscript>
     
     <!-- Google Places API -->
-    <script src="https://maps.googleapis.com/maps/api/js?key={{ $googleMapsKey }}&libraries=places&callback=initAutocomplete&v=weekly&loading=async" async defer></script>
+    <script src="https://maps.googleapis.com/maps/api/js?key={{ $googleMapsKey }}&libraries=places&callback=initAutocomplete&v=weekly&loading=async" async defer fetchpriority="low"></script>
     
     <style>
         :root {
             --primary: {{ $primaryColor }};
             --secondary: {{ $secondaryColor }};
+            --frontend-bg-image: @if($frontendBackgroundImageUrl) url('{{ $frontendBackgroundImageUrl }}') @else none @endif;
         }
 
         * {
@@ -153,7 +163,12 @@
         /* Hero Section - Zomato Style */
         .hero {
             min-height: 85vh;
-            background: linear-gradient(135deg, #111 0%, rgba(0,0,0,0.72) 45%, rgba(0,0,0,0.9) 100%);
+            background:
+                linear-gradient(135deg, #111 0%, rgba(0,0,0,0.72) 45%, rgba(0,0,0,0.9) 100%),
+                var(--frontend-bg-image);
+            background-size: cover;
+            background-position: center;
+            background-repeat: no-repeat;
             position: relative;
             display: flex;
             align-items: center;
@@ -663,6 +678,7 @@
 @include('partials.public-blade-polish')
 </head>
 <body>
+@include('partials.google-tag-manager')
 
 <!-- Navbar -->
 <nav class="navbar" id="navbar">
@@ -959,7 +975,7 @@
     </div>
 </footer>
 
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js" defer></script>
 <script>
     // Global Variables
     let autocomplete;
@@ -1137,7 +1153,7 @@
                         <a href="/restaurants/${r.id}" class="restaurant-card">
                             <div class="restaurant-img">
                                 <img src="${r.image || 'https://placehold.co/400x300/E8E8E8/9C9C9C?text=No+Image'}" alt="${escapeHtml(r.name)}">
-                                ${r.is_featured ? '<span class="promoted-badge">Featured</span>' : ''}
+                                ${r.is_sponsored ? '<span class="promoted-badge">Ad</span>' : ''}
                                 ${r.is_pure_veg ? '<span class="restaurant-badge" style="top:46px;background:#267C3A;">Pure Veg</span>' : ''}
                                 <span class="restaurant-badge">${r.is_open ? 'Open Now' : 'Closed'}</span>
                             </div>

@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Helpers\FirebaseHelper;
 use App\Models\AppSetting;
 use App\Models\DeliveryArea;
 use App\Models\DriverGig;
@@ -292,12 +293,20 @@ class GigLifecycleService
             return;
         }
 
-        $driver->notify(new AppDatabaseNotification($title, $body, [
+        $payload = [
             'type' => 'gig_reminder',
-            'driver_gig_id' => $booking->driver_gig_id,
-            'driver_gig_booking_id' => $booking->id,
-            'deeplink' => '/driver/gigs',
-        ]));
+            'role' => 'driver',
+            'driver_gig_id' => (string) $booking->driver_gig_id,
+            'driver_gig_booking_id' => (string) $booking->id,
+            'deep_link' => '/driver/gigs',
+        ];
+
+        $driver->notify(new AppDatabaseNotification($title, $body, $payload));
+
+        $token = $driver->fcmTokenForApp('driver');
+        if (filled($token)) {
+            (new FirebaseHelper())->sendToDevice($token, $title, $body, $payload);
+        }
     }
 
     private function slotDateTime(DriverGig $gig, string $attribute): ?Carbon

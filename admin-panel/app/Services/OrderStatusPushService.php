@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Events\CustomerOrderStatusUpdatedEvent;
 use App\Helpers\FirebaseHelper;
+use App\Models\NotificationTemplate;
 use App\Models\Order;
 use App\Models\RestaurantStaff;
 use App\Notifications\OrderStatusNotification;
@@ -39,6 +40,10 @@ class OrderStatusPushService
                 'order_id' => $order->id,
                 'message' => $exception->getMessage(),
             ]);
+        }
+
+        if (! $customer->notify_order_updates) {
+            return false;
         }
 
         $token = $customer->fcmTokenForApp('customer');
@@ -96,8 +101,14 @@ class OrderStatusPushService
         $tokens = $this->restaurantTokens($order);
         $orderNumber = (string) ($order->order_number ?: $order->id);
         $statusLabel = ucwords(str_replace('_', ' ', (string) $order->status));
-        $title = "Order #{$orderNumber} {$statusLabel}";
-        $message ??= "Order #{$orderNumber} status changed to {$statusLabel}.";
+        $rendered = NotificationTemplate::renderFor(
+            'order.restaurant.status_changed',
+            ['order_number' => $orderNumber, 'status' => $statusLabel, 'restaurant_name' => (string) optional($order->restaurant)->name],
+            "Order #{$orderNumber} status changed to {$statusLabel}.",
+            "Order #{$orderNumber} {$statusLabel}"
+        );
+        $title = $rendered['title'];
+        $message ??= $rendered['body'];
         $this->restaurantUsers($order)
             ->each(fn ($user) => $user->notifyNow(new OrderStatusNotification($order, $message, 'restaurant')));
 
@@ -120,8 +131,14 @@ class OrderStatusPushService
 
         $orderNumber = (string) ($order->order_number ?: $order->id);
         $statusLabel = ucwords(str_replace('_', ' ', (string) $order->status));
-        $title = "Order #{$orderNumber} {$statusLabel}";
-        $message ??= "Order #{$orderNumber} status changed to {$statusLabel}.";
+        $rendered = NotificationTemplate::renderFor(
+            'order.driver.status_changed',
+            ['order_number' => $orderNumber, 'status' => $statusLabel, 'restaurant_name' => (string) optional($order->restaurant)->name],
+            "Order #{$orderNumber} status changed to {$statusLabel}.",
+            "Order #{$orderNumber} {$statusLabel}"
+        );
+        $title = $rendered['title'];
+        $message ??= $rendered['body'];
         $driver->notifyNow(new OrderStatusNotification($order, $message, 'driver'));
 
         $token = $driver->fcmTokenForApp('driver');
@@ -145,8 +162,9 @@ class OrderStatusPushService
         $orderNumber = (string) ($order->order_number ?: $order->id);
         $restaurantName = (string) optional($order->restaurant)->name;
         $restaurantSuffix = $restaurantName !== '' ? " by {$restaurantName}" : '';
+        $status = (string) $order->status;
 
-        return match ((string) $order->status) {
+        $fallback = match ($status) {
             'pending' => "Your order #{$orderNumber} has been placed.",
             'confirmed' => "Your order #{$orderNumber} has been confirmed{$restaurantSuffix}.",
             'preparing' => "Your order #{$orderNumber} is now being prepared.",
@@ -158,8 +176,18 @@ class OrderStatusPushService
             'on_the_way' => "Your order #{$orderNumber} is on the way.",
             'delivered' => "Your order #{$orderNumber} has been delivered.",
             'cancelled' => "Your order #{$orderNumber} has been cancelled.",
-            default => "Your order #{$orderNumber} status changed to {$order->status}.",
+            default => "Your order #{$orderNumber} status changed to {$status}.",
         };
+
+        return NotificationTemplate::renderFor(
+            "order.customer.{$status}",
+            [
+                'order_number' => $orderNumber,
+                'restaurant_name' => $restaurantName,
+                'status' => ucwords(str_replace('_', ' ', $status)),
+            ],
+            $fallback
+        )['body'];
     }
 
     private function statusPayload(Order $order, string $role, string $title, string $message, string $deepLink, ?string $cancellationSource = null): array

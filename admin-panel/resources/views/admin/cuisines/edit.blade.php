@@ -77,7 +77,7 @@
                             <label class="form-label fw-semibold">Current Image</label>
                             @if($cuisine->image)
                                 <div class="mb-2">
-                                    <img src="{{ Storage::url($cuisine->image) }}" class="rounded" height="80" alt="Cuisine Image">
+                                    <img src="{{ \App\Services\MediaStorage::url($cuisine->image) }}" class="rounded" height="80" alt="Cuisine Image">
                                 </div>
                             @else
                                 <p class="text-muted">No image uploaded</p>

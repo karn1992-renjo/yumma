@@ -16,6 +16,7 @@ import 'services/sound_service.dart';
 import 'services/local_cache_service.dart';
 import 'services/app_branding_service.dart';
 import 'services/appsflyer_deep_link_service.dart';
+import 'services/tracking_authorization_service.dart';
 import 'services/app_update_service.dart';
 import 'services/app_image_cache.dart';
 import 'config/app_config.dart';
@@ -51,11 +52,15 @@ import 'screens/customer/order_confirmation_screen.dart';
 import 'screens/customer/order_chat_screen.dart';
 import 'screens/customer/order_tracking_screen.dart';
 import 'screens/customer/orders_screen.dart';
+import 'screens/customer/notification_preferences_screen.dart';
 import 'screens/customer/notifications_screen.dart';
 import 'screens/customer/profile_screen.dart';
+import 'screens/customer/home_experience.dart';
+import 'screens/customer/home_v2/theme/v2_theme.dart';
 import 'screens/customer/address_screen.dart';
 import 'screens/customer/add_address_screen.dart';
 import 'screens/customer/search_screen.dart';
+import 'screens/customer/ai_voice_assistant_screen.dart';
 import 'screens/customer/customer_support_screen.dart';
 import 'screens/customer/dining_bookings_list_screen.dart';
 import 'screens/customer/wallet_screen.dart';
@@ -67,6 +72,8 @@ import 'utils/route_observer.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   AppImageCache.configureMemoryCache();
+  unawaited(loadHomeExperiencePref());
+  unawaited(loadV2Mode());
 
   configLoading();
   final authProvider = AuthProvider();
@@ -120,6 +127,14 @@ Future<void> _initializeAfterFirstFrame() async {
     () async {
       await SharedPreferences.getInstance();
     },
+  );
+
+  // Ask for App Tracking Transparency before anything that could track the
+  // user (push permission prompt, AppsFlyer). Must be its own step so iOS is
+  // not presenting another system alert at the same time.
+  await _runStartupStep(
+    'app tracking transparency',
+    TrackingAuthorizationService.instance.ensureRequested,
   );
 
   if (defaultTargetPlatform == TargetPlatform.iOS) {
@@ -327,6 +342,18 @@ class _FoodDeliveryAppState extends State<FoodDeliveryApp> {
         materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
         fontFamily: GoogleFonts.plusJakartaSans().fontFamily,
         useMaterial3: true,
+        // Smoother, consistent route transitions across the whole app
+        // (both the classic screens and V2) — the M3 zoom/fade instead of the
+        // plain platform slide.
+        pageTransitionsTheme: const PageTransitionsTheme(
+          builders: {
+            TargetPlatform.android: ZoomPageTransitionsBuilder(
+              allowEnterRouteSnapshotting: false,
+            ),
+            TargetPlatform.iOS: CupertinoPageTransitionsBuilder(),
+          },
+        ),
+        splashFactory: InkSparkle.splashFactory,
         textTheme: AppTypography.material3(
           base: GoogleFonts.plusJakartaSansTextTheme(),
           textColor: homeText,
@@ -820,8 +847,15 @@ class _FoodDeliveryAppState extends State<FoodDeliveryApp> {
         );
       case '/search':
         return MaterialPageRoute(builder: (_) => const SearchScreen());
+      case '/ai-voice':
+        return _accountRoute(context, (_) => const AiVoiceAssistantScreen());
       case '/notifications':
         return _accountRoute(context, (_) => const NotificationsScreen());
+      case '/notification-preferences':
+        return _accountRoute(
+          context,
+          (_) => const NotificationPreferencesScreen(),
+        );
       case '/support':
         if (!_canUseAccountFeatures(context)) {
           return MaterialPageRoute(builder: (_) => const LoginScreen());

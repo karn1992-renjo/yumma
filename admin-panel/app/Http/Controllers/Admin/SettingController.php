@@ -50,6 +50,199 @@ class SettingController extends Controller
         return view('admin.settings.communication', compact('settings'));
     }
 
+    public function business()
+    {
+        $settings = AppSetting::all()->pluck('value', 'key')->toArray();
+
+        return view('admin.settings.business', compact('settings'));
+    }
+
+    /**
+     * One consolidated hub for every tax & charge surface:
+     * delivery charges, the GST-off fallback tax rules, and the
+     * GST / TDS / TCS / cess registration status.
+     */
+    public function taxCharges()
+    {
+        $settings = AppSetting::all()->pluck('value', 'key')->toArray();
+        $config = app(\App\Services\Tax\TaxConfig::class);
+
+        return view('admin.settings.tax-charges', [
+            'settings' => $settings,
+            'config' => $config,
+            'deliveryChargeSetting' => \App\Models\DeliveryChargeSetting::query()->oldest('id')->first(),
+            'taxes' => \App\Models\TaxSetting::orderBy('type')->orderBy('name')->get(),
+            'currencySymbol' => AppSetting::sanitizedCurrencySymbol(),
+        ]);
+    }
+
+    /**
+     * Guided taxation registration flow. Nothing activates unless the required
+     * identifier is present and valid; skipping a step leaves that service off
+     * and orders keep billing with no tax.
+     */
+    public function taxationSetup()
+    {
+        $settings = AppSetting::all()->pluck('value', 'key')->toArray();
+
+        return view('admin.settings.taxation-setup', [
+            'settings' => $settings,
+            'config' => app(\App\Services\Tax\TaxConfig::class),
+        ]);
+    }
+
+    public function saveTaxationSetup(Request $request)
+    {
+        $tc = \App\Services\Tax\TaxConfig::class;
+
+        $validated = $request->validate([
+            'business_entity_type' => 'required|in:pvt_ltd,opc,llp,partnership,proprietorship',
+            'business_has_employees' => 'nullable|in:0,1',
+            'business_turnover_band' => 'nullable|in:below_1cr,1cr_5cr,5cr_10cr,above_10cr',
+
+            'business_gst_enabled' => 'nullable|in:0,1',
+            'business_gstin' => 'nullable|string|max:20',
+            'gst_9_5_mode' => 'nullable|in:0,1',
+            'gst_eco_food_rate' => 'nullable|numeric|min:0|max:28',
+            'gst_service_rate' => 'nullable|numeric|min:0|max:28',
+
+            'gst_tcs_enabled' => 'nullable|in:0,1',
+            'gst_tcs_registered' => 'nullable|in:0,1',
+            'gst_tcs_rate' => 'nullable|numeric|min:0|max:5',
+            'einvoice_gstin' => 'nullable|string|max:20',
+
+            'business_tan' => 'nullable|string|max:15',
+            'tds_194o_enabled' => 'nullable|in:0,1',
+            'tds_194c_enabled' => 'nullable|in:0,1',
+
+            'gig_welfare_cess_enabled' => 'nullable|in:0,1',
+            'gig_welfare_cess_rate' => 'nullable|numeric|min:0|max:10',
+            'gig_welfare_cess_base' => 'nullable|in:order_value,driver_payout',
+            'gig_cess_borne_by' => 'nullable|in:platform,driver',
+            'gig_welfare_cess_state' => 'nullable|string|max:120',
+
+            'accounting_enabled' => 'nullable|in:0,1',
+        ]);
+
+        $gstin = strtoupper(trim((string) $request->input('business_gstin')));
+        $tan = strtoupper(trim((string) $request->input('business_tan')));
+        $tcsGstin = strtoupper(trim((string) $request->input('einvoice_gstin'))) ?: $gstin;
+
+        // Format gates -- reject bad IDs rather than silently activating.
+        if ($gstin !== '' && ! $tc::validGstin($gstin)) {
+            return back()->withInput()->withErrors(['business_gstin' => 'That GSTIN is not a valid 15-character GSTIN.']);
+        }
+        if ($tan !== '' && ! $tc::validTan($tan)) {
+            return back()->withInput()->withErrors(['business_tan' => 'That TAN is not a valid 10-character TAN (AAAA99999A).']);
+        }
+        if ($tcsGstin !== '' && ! $tc::validGstin($tcsGstin)) {
+            return back()->withInput()->withErrors(['einvoice_gstin' => 'That TCS GSTIN is not a valid GSTIN.']);
+        }
+
+        $gstValid = $tc::validGstin($gstin);
+        $tanValid = $tc::validTan($tan);
+
+        $put = [
+            'business_entity_type' => $validated['business_entity_type'],
+            'business_has_employees' => $request->input('business_has_employees', '0'),
+            'business_turnover_band' => $validated['business_turnover_band'] ?? 'below_1cr',
+
+            'business_gstin' => $gstin,
+            // GST invoicing can only be on when a valid GSTIN backs it.
+            'business_gst_enabled' => ($gstValid && $request->input('business_gst_enabled') === '1') ? '1' : '0',
+            'gst_9_5_mode' => $request->input('gst_9_5_mode', '1') === '1' ? '1' : '0',
+            'gst_eco_food_rate' => $validated['gst_eco_food_rate'] ?? 5,
+            'gst_service_rate' => $validated['gst_service_rate'] ?? 18,
+
+            'gst_tcs_registered' => ($gstValid && $request->input('gst_tcs_registered') === '1') ? '1' : '0',
+            'gst_tcs_enabled' => ($gstValid && $request->input('gst_tcs_registered') === '1' && $request->input('gst_tcs_enabled') === '1') ? '1' : '0',
+            'gst_tcs_rate' => $validated['gst_tcs_rate'] ?? 0.5,
+            'einvoice_gstin' => $tcsGstin,
+
+            'business_tan' => $tan,
+            'tds_194o_enabled' => ($tanValid && $request->input('tds_194o_enabled') === '1') ? '1' : '0',
+            'tds_194c_enabled' => ($tanValid && $request->input('tds_194c_enabled') === '1') ? '1' : '0',
+
+            'gig_welfare_cess_enabled' => $request->input('gig_welfare_cess_enabled', '0') === '1' ? '1' : '0',
+            'gig_welfare_cess_rate' => $validated['gig_welfare_cess_rate'] ?? 0,
+            'gig_welfare_cess_base' => $validated['gig_welfare_cess_base'] ?? 'order_value',
+            'gig_cess_borne_by' => $validated['gig_cess_borne_by'] ?? 'platform',
+            'gig_welfare_cess_state' => $request->input('gig_welfare_cess_state', ''),
+
+            'accounting_enabled' => $request->input('accounting_enabled', '0') === '1' ? '1' : '0',
+        ];
+
+        // Auto-derive from the GSTIN.
+        if ($gstValid) {
+            $put['business_state_code'] = $tc::stateCodeFromGstin($gstin);
+            if (! AppSetting::getValue('business_pan')) {
+                $put['business_pan'] = $tc::panFromGstin($gstin);
+            }
+        }
+
+        foreach ($put as $key => $value) {
+            AppSetting::updateOrCreate(['key' => $key], ['value' => $value, 'type' => $this->detectType($value)]);
+        }
+        Cache::forget('app_settings');
+
+        return redirect()->route('admin.settings.tax-charges')
+            ->with('success', 'Taxation setup saved. Services activate only where a valid ID is on file.');
+    }
+
+    /**
+     * Wiring to the standalone Accounts/ and HRMS/ apps — endpoint URLs, shared
+     * secrets, and the outbound delivery log.
+     */
+    public function integrations()
+    {
+        $settings = AppSetting::all()->pluck('value', 'key')->toArray();
+
+        return view('admin.settings.integrations', [
+            'settings' => $settings,
+            'deliveries' => \App\Models\WebhookDelivery::latest()->limit(50)->get(),
+            'stats' => \App\Models\WebhookDelivery::selectRaw('target, status, count(*) c')->groupBy('target', 'status')->get()
+                ->groupBy('target')->map(fn ($g) => $g->pluck('c', 'status')),
+        ]);
+    }
+
+    public function integrationsPing(string $target)
+    {
+        abort_unless(in_array($target, ['accounts', 'hrms'], true), 404);
+        \App\Services\Integration\WebhookDispatcher::emit($target, 'ping', ['at' => now()->toIso8601String(), 'from' => 'admin']);
+
+        return back()->with('success', ucfirst($target) . ' ping queued.');
+    }
+
+    public function integrationsRetry(\App\Models\WebhookDelivery $delivery)
+    {
+        $delivery->update(['status' => 'pending', 'last_error' => null]);
+        \App\Jobs\DeliverWebhookJob::dispatch($delivery->id);
+
+        return back()->with('success', 'Delivery re-queued.');
+    }
+
+    /**
+     * Replay everything already in the books to a standalone app. Only Accounts/
+     * consumes historical money events (HRMS is the source of its own payroll
+     * data). Safe to run repeatedly — the receiver dedupes.
+     */
+    public function integrationsSync(Request $request, string $target)
+    {
+        abort_unless($target === 'accounts', 404);
+
+        if (! \App\Services\Integration\WebhookDispatcher::enabled('accounts')) {
+            return back()->with('error', 'Enable the Accounts integration (URL + secret + toggle on) before syncing.');
+        }
+
+        $since = $request->filled('since') ? $request->date('since')?->toDateString() : null;
+        $journals = \App\Models\JournalEntry::when($since, fn ($q) => $q->whereDate('date', '>=', $since))->count();
+        $taxRows = \App\Models\TaxLedgerEntry::when($since, fn ($q) => $q->whereDate('created_at', '>=', $since))->count();
+
+        \App\Jobs\BackfillAccountsJob::dispatch($since, $request->user()?->id);
+
+        return back()->with('success', "Backfill queued — {$journals} journal entr" . ($journals === 1 ? 'y' : 'ies') . " and {$taxRows} tax row" . ($taxRows === 1 ? '' : 's') . " will be pushed to Accounts. Keep a queue worker running.");
+    }
+
     public function notifications()
     {
         $settings = AppSetting::all()->pluck('value', 'key')->toArray();
@@ -61,8 +254,9 @@ class SettingController extends Controller
     public function branding()
     {
         $settings = AppSetting::all()->pluck('value', 'key')->toArray();
+        $aiFeatureEnabled = app(\App\Services\Ai\AiSettingsService::class)->bool('ai_enabled');
 
-        return view('admin.settings.branding', compact('settings'));
+        return view('admin.settings.branding', compact('settings', 'aiFeatureEnabled'));
     }
 
     public function payment()
@@ -143,6 +337,31 @@ class SettingController extends Controller
         return back()->with('success', 'Cron task status updated successfully.');
     }
 
+
+    public function updateBusinessReportSettings(Request $request)
+    {
+        $validated = $request->validate([
+            'restaurant_business_report_enabled' => 'nullable|in:0,1',
+            'restaurant_business_report_frequency' => 'required|in:daily,weekly,monthly',
+            'restaurant_business_report_time' => ['required', 'regex:/^([01]\d|2[0-3]):[0-5]\d$/'],
+        ]);
+
+        foreach ([
+            'restaurant_business_report_enabled' => $request->boolean('restaurant_business_report_enabled') ? '1' : '0',
+            'restaurant_business_report_frequency' => $validated['restaurant_business_report_frequency'],
+            'restaurant_business_report_time' => $validated['restaurant_business_report_time'],
+        ] as $key => $value) {
+            AppSetting::updateOrCreate(
+                ['key' => $key],
+                ['value' => $value, 'type' => $key === 'restaurant_business_report_enabled' ? 'boolean' : 'string']
+            );
+        }
+
+        Cache::forget('app_settings');
+
+        return redirect()->route('admin.settings.cron')
+            ->with('success', 'Restaurant business report schedule updated successfully.');
+    }
     private function installWindowsScheduler(): string
     {
         $process = new Process([
@@ -219,6 +438,88 @@ class SettingController extends Controller
             'site_description' => 'nullable|string|max:2000',
             'contact_email' => 'nullable|email|max:255',
             'contact_phone' => 'nullable|string|max:50',
+            'invoice_company_name' => 'nullable|string|max:255',
+            'invoice_company_address' => 'nullable|string|max:500',
+            'invoice_company_email' => 'nullable|email|max:255',
+            'invoice_company_phone' => 'nullable|string|max:50',
+            'invoice_company_tax_id' => 'nullable|string|max:60',
+            'invoice_company_website' => 'nullable|string|max:255',
+            'invoice_footer_note' => 'nullable|string|max:255',
+            // Business / GST settings (Admin -> Settings -> Business)
+            'business_legal_name' => 'nullable|string|max:255',
+            'business_trade_name' => 'nullable|string|max:255',
+            'business_gstin' => 'nullable|string|max:20',
+            'business_pan' => 'nullable|string|max:15',
+            'business_cin' => 'nullable|string|max:30',
+            'business_reg_address' => 'nullable|string|max:500',
+            'business_city' => 'nullable|string|max:120',
+            'business_state' => 'nullable|string|max:120',
+            'business_state_code' => 'nullable|string|max:2',
+            'business_pincode' => 'nullable|string|max:12',
+            'business_country' => 'nullable|string|max:80',
+            'business_email' => 'nullable|email|max:255',
+            'business_phone' => 'nullable|string|max:50',
+            'support_email' => 'nullable|email|max:255',
+            'business_website' => 'nullable|string|max:255',
+            'invoice_number_prefix' => 'nullable|string|max:16',
+            'invoice_terms' => 'nullable|string|max:2000',
+            'invoice_declaration' => 'nullable|string|max:500',
+            'invoice_authorised_signatory' => 'nullable|string|max:120',
+            'invoice_signature_image' => 'nullable|image|mimes:png,jpg,jpeg|max:1024',
+            'invoice_bank_name' => 'nullable|string|max:120',
+            'invoice_bank_account' => 'nullable|string|max:40',
+            'invoice_bank_ifsc' => 'nullable|string|max:20',
+            'business_gst_enabled' => 'nullable|in:0,1',
+            'business_default_gst_rate' => 'nullable|numeric|min:0|max:28',
+            'business_default_hsn' => 'nullable|string|max:20',
+            'business_gst_supply_type' => 'nullable|in:intra,inter',
+            'business_gst_rounding' => 'nullable|in:line,invoice',
+            'einvoice_enabled' => 'nullable|in:0,1',
+            'einvoice_provider' => 'nullable|string|max:40',
+            'einvoice_api_base' => 'nullable|string|max:255',
+            'einvoice_username' => 'nullable|string|max:120',
+            'einvoice_password' => 'nullable|string|max:255',
+            'einvoice_gstin' => 'nullable|string|max:20',
+            // Marketplace GST + TCS
+            'gst_9_5_mode' => 'nullable|in:0,1',
+            'gst_eco_food_rate' => 'nullable|numeric|min:0|max:28',
+            'gst_service_rate' => 'nullable|numeric|min:0|max:28',
+            'gst_tcs_enabled' => 'nullable|in:0,1',
+            'gst_tcs_rate' => 'nullable|numeric|min:0|max:5',
+            // Income-tax TDS + TAN. Either TDS section requires a TAN.
+            'business_tan' => 'nullable|string|max:15|required_if:tds_194o_enabled,1|required_if:tds_194c_enabled,1',
+            'tax_financial_year_start_month' => 'nullable|in:1,4,7,10',
+            'tds_194o_enabled' => 'nullable|in:0,1',
+            'tds_194o_rate' => 'nullable|numeric|min:0|max:5',
+            'tds_194o_nopan_rate' => 'nullable|numeric|min:0|max:20',
+            'tds_194o_threshold' => 'nullable|numeric|min:0',
+            'tds_194o_after_threshold_only' => 'nullable|in:0,1',
+            'tds_194c_enabled' => 'nullable|in:0,1',
+            'tds_194c_rate_individual' => 'nullable|numeric|min:0|max:10',
+            'tds_194c_rate_other' => 'nullable|numeric|min:0|max:10',
+            'tds_194c_nopan_rate' => 'nullable|numeric|min:0|max:20',
+            'tds_194c_threshold_single' => 'nullable|numeric|min:0',
+            'tds_194c_threshold_annual' => 'nullable|numeric|min:0',
+            // Business entity / compliance profile
+            'business_entity_type' => 'nullable|in:pvt_ltd,opc,llp,partnership,proprietorship',
+            'business_has_employees' => 'nullable|in:0,1',
+            'business_turnover_band' => 'nullable|in:below_1cr,1cr_5cr,5cr_10cr,above_10cr',
+            'gst_tcs_registered' => 'nullable|in:0,1',
+            // Double-entry general ledger
+            'accounting_enabled' => 'nullable|in:0,1',
+            // Standalone-app integrations (Settings -> Integrations)
+            'integration_accounts_enabled' => 'nullable|in:0,1',
+            'integration_accounts_url' => 'nullable|url|max:255',
+            'integration_accounts_secret' => 'nullable|string|max:120',
+            'integration_hrms_enabled' => 'nullable|in:0,1',
+            'integration_hrms_url' => 'nullable|url|max:255',
+            'integration_hrms_secret' => 'nullable|string|max:120',
+            // Gig-worker welfare cess
+            'gig_welfare_cess_enabled' => 'nullable|in:0,1',
+            'gig_welfare_cess_rate' => 'nullable|numeric|min:0|max:10',
+            'gig_welfare_cess_base' => 'nullable|in:order_value,driver_payout',
+            'gig_welfare_cess_state' => 'nullable|string|max:120',
+            'gig_cess_borne_by' => 'nullable|in:platform,driver',
             'media_storage_driver' => 'nullable|in:local,s3',
             'media_s3_key' => 'nullable|string|max:255',
             'media_s3_secret' => 'nullable|string|max:255',
@@ -232,6 +533,17 @@ class SettingController extends Controller
             'max_active_orders_per_driver' => 'nullable|integer|min:1|max:50',
             'driver_route_match_radius_km' => 'nullable|numeric|min:0.5|max:25',
             'driver_minimum_wallet_balance' => 'nullable|numeric|min:0|max:1000000',
+            'driver_cod_cash_limit' => 'nullable|numeric|min:0|max:1000000',
+            'weather_surge_enabled' => 'nullable|in:0,1',
+            'weather_surge_amount' => 'nullable|numeric|min:0|max:1000',
+            'night_surcharge_enabled' => 'nullable|in:0,1',
+            'night_surcharge_amount' => 'nullable|numeric|min:0|max:1000',
+            'night_surcharge_start' => 'nullable|date_format:H:i',
+            'night_surcharge_end' => 'nullable|date_format:H:i',
+            'long_distance_charge_enabled' => 'nullable|in:0,1',
+            'long_distance_free_km' => 'nullable|numeric|min:0|max:500',
+            'long_distance_charge_mode' => 'nullable|in:per_km,fixed',
+            'long_distance_charge_rate' => 'nullable|numeric|min:0|max:100000',
             'google_maps_api_key' => 'nullable|string|max:512',
             'google_maps_distance_matrix_enabled' => 'nullable|in:0,1',
             'google_maps_distance_matrix_cache_minutes' => 'nullable|integer|min:1|max:43200',
@@ -240,8 +552,9 @@ class SettingController extends Controller
             'estimated_delivery_traffic_multiplier' => 'nullable|numeric|min:1|max:3',
             'estimated_delivery_min_minutes' => 'nullable|integer|min:1|max:60',
             'default_delivery_radius' => 'nullable|numeric|min:0|max:500',
-            'message_service' => 'nullable|in:twilio,firebase,msg91',
-            'otp_service_provider' => 'required_if:redirect_to,admin.settings.communication|in:twilio,firebase,msg91',
+            'message_service' => 'nullable|in:twilio,firebase,msg91,exotel',
+            'otp_service_provider' => 'required_if:redirect_to,admin.settings.communication|in:twilio,firebase,msg91,exotel',
+            'phone_masking_mode' => 'nullable|in:raw,exotel',
             'default_mobile_country_code' => 'nullable|string|max:8',
             'mail_driver' => 'nullable|in:smtp,log,array',
             'mail_from_address' => 'nullable|email|max:255',
@@ -265,6 +578,17 @@ class SettingController extends Controller
             'msg91_otp_template_id' => 'nullable|string|max:255',
             'msg91_order_confirmation_template_id' => 'nullable|string|max:255',
             'msg91_delivery_update_template_id' => 'nullable|string|max:255',
+            'exotel_sid' => 'nullable|string|max:255',
+            'exotel_api_key' => 'nullable|string|max:255',
+            'exotel_api_token' => 'nullable|string|max:255',
+            'exotel_subdomain' => 'nullable|string|max:255',
+            'exotel_sender_id' => 'nullable|string|max:255',
+            'exotel_webhook_secret' => 'nullable|string|max:255',
+            'exotel_order_alert_calls_enabled' => 'nullable|in:0,1',
+            'exotel_order_alert_delay_seconds' => 'nullable|integer|min:5|max:120',
+            'exotel_order_alert_caller_id' => 'nullable|string|max:32',
+            'exotel_order_alert_flow_url' => 'nullable|string|max:1000',
+            'exotel_order_alert_number' => 'nullable|string|max:32',
             'firebase_enabled' => 'nullable|in:0,1',
             'firebase_api_key' => 'nullable|string|max:255',
             'firebase_project_id' => 'nullable|string|max:255',
@@ -341,6 +665,8 @@ class SettingController extends Controller
             'admin.settings.notifications',
             'admin.settings.map',
             'admin.settings.rewards',
+            'admin.settings.business',
+            'admin.settings.integrations',
         ];
 
         if (! in_array($redirectRoute, $allowedRoutes)) {
@@ -384,13 +710,19 @@ class SettingController extends Controller
             ]);
         }
 
+        if ($request->hasFile('invoice_signature_image')) {
+            $signaturePath = \App\Services\MediaStorage::store($request->file('invoice_signature_image'), 'branding');
+            AppSetting::updateOrCreate(['key' => 'invoice_signature_image'], ['value' => $signaturePath, 'type' => 'string']);
+        }
+
         $settings = $request->except([
             '_token',
             'firebase_service_account_json',
+            'invoice_signature_image',
             'redirect_to',
         ]);
 
-        foreach (['mail_password', 'twilio_auth_token', 'msg91_authkey', 'msg91_widget_token', 'firebase_api_key', 'firebase_project_id', 'firebase_database_url', 'firebase_storage_bucket', 'firebase_messaging_sender_id', 'firebase_app_id', 'firebase_server_key', 'pusher_app_secret', 'media_s3_secret'] as $sensitiveField) {
+        foreach (['mail_password', 'twilio_auth_token', 'msg91_authkey', 'msg91_widget_token', 'firebase_api_key', 'firebase_project_id', 'firebase_database_url', 'firebase_storage_bucket', 'firebase_messaging_sender_id', 'firebase_app_id', 'firebase_server_key', 'pusher_app_secret', 'media_s3_secret', 'exotel_api_key', 'exotel_api_token', 'exotel_webhook_secret', 'einvoice_password'] as $sensitiveField) {
             if (array_key_exists($sensitiveField, $settings) && $settings[$sensitiveField] === '') {
                 unset($settings[$sensitiveField]);
             }
@@ -421,10 +753,10 @@ class SettingController extends Controller
                 ]
             );
         }
-        
+
         // Clear cache
         Cache::forget('app_settings');
-        
+
         return redirect()->route($redirectRoute)
             ->with('success', 'Settings updated successfully!');
     }
@@ -495,8 +827,18 @@ class SettingController extends Controller
             'onboarding_slide_3_title' => 'nullable|string|max:255',
             'onboarding_slide_3_description' => 'nullable|string|max:500',
             'onboarding_slide_3_image' => 'nullable|image|mimes:png,jpg,jpeg,webp|max:2048',
+            'ai_feature_enabled' => 'nullable|in:0,1',
         ]);
-        
+
+        // The master AI on/off switch lives in App\Models\AiSetting (via
+        // AiSettingsService), not AppSetting -- everything else on this
+        // page is a plain AppSetting key. Writing it here keeps "enable AI"
+        // a single toggle on the branding page rather than requiring a trip
+        // to the (now access-gated-by-this-same-flag) AI settings page.
+        app(\App\Services\Ai\AiSettingsService::class)->update([
+            'ai_enabled' => $request->boolean('ai_feature_enabled') ? '1' : '0',
+        ]);
+
         if ($request->hasFile('app_logo')) {
             $path = $request->file('app_logo')->store('branding', 'public');
             AppSetting::updateOrCreate(['key' => 'app_logo'], ['value' => $path, 'type' => 'string']);

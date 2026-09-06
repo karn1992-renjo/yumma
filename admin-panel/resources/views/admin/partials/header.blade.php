@@ -1,295 +1,61 @@
-@php
-    $currencySymbol = \App\Models\AppSetting::sanitizedCurrencySymbol();
-    $currencyDecimals = \App\Models\AppSetting::currencyDecimals();
-    $appName = \App\Models\AppSetting::getValue('app_name', config('app.name', 'FoodFlow'));
-    $user = auth()->user();
-    $userAvatar = $user->profile_photo_url ?? null;
-    $userInitials = substr($user->name, 0, 2);
-    $userRole = $user->getRoleNames()->first() ?? 'Admin';
-@endphp
-
-<div class="top-header" id="topHeader">
+<div class="top-header">
     <div class="header-left">
-        <button class="menu-toggle" onclick="toggleSidebar()" aria-label="Toggle navigation">
+        <button class="menu-toggle" onclick="toggleSidebar()">
             <i class="fas fa-bars"></i>
         </button>
-
-        <!-- Enhanced Global Search -->
-        <div class="header-search-wrapper" x-data="headerSearch()" x-init="init()" @click.away="closeDropdowns()" @keydown.escape.window="closeDropdowns()">
+        
+        <div class="header-search-wrapper">
             <i class="fas fa-search search-icon"></i>
-            <input
-                type="text"
-                id="headerSearchInput"
-                x-model.debounce.300ms="query"
-                @focus="openDropdown('search')"
-                @input="handleSearchInput"
-                placeholder="Search orders, restaurants, users, drivers..."
-                autocomplete="off"
-                spellcheck="false"
-            />
-
-            <!-- Search Results Dropdown -->
-            <div
-                x-show="showSearchDropdown"
-                x-transition:enter="transition ease-out duration-150"
-                x-transition:enter-start="opacity-0 transform scale(0.95)"
-                x-transition:enter-end="opacity-100 transform scale(100%)"
-                x-transition:leave="transition ease-in duration-100"
-                x-transition:leave-start="opacity-100 transform scale(100%)"
-                x-transition:leave-end="opacity-0 transform scale(0.95)"
-                class="search-dropdown"
-                id="searchDropdown"
-            >
-                <!-- Recent Searches -->
-                <template x-if="query.length === 0 && recentSearches.length > 0">
-                    <div class="search-section">
-                        <div class="search-section-title">
-                            <i class="fas fa-clock-rotate-left"></i> Recent
-                        </div>
-                        <div class="search-result-item" @click="searchFromRecent(item)" x-for="item in recentSearches" :key="item">
-                            <i class="fas fa-search"></i>
-                            <span x-text="item"></span>
-                        </div>
-                        <div class="search-clear-recent" @click="clearRecentSearches">
-                            <i class="fas fa-trash-can"></i> Clear recent
-                        </div>
-                    </div>
-                </template>
-
-                <!-- Loading State -->
-                <template x-if="query.length > 0 && isLoading">
-                    <div class="search-loading">
-                        <div class="spinner-border spinner-border-sm" role="status">
-                            <span class="visually-hidden">Loading...</span>
-                        </div>
-                        <span>Searching...</span>
-                    </div>
-                </template>
-
-                <!-- Search Results -->
-                <template x-if="query.length > 0 && !isLoading && results.length > 0">
-                    <div class="search-section">
-                        <template x-for="group in groupedResults" :key="group.type">
-                            <div>
-                                <div class="search-group-title" x-text="group.label + ' (' + group.items.length + ')'">
-                                </div>
-                                <div
-                                    class="search-result-item"
-                                    @click="navigateTo(result.url)"
-                                    x-for="result in group.items"
-                                    :key="result.id"
-                                >
-                                    <div class="search-result-icon" :class="`bg-${result.color}-100`">
-                                        <i class="fas" :class="result.icon"></i>
-                                    </div>
-                                    <div class="search-result-content">
-                                        <div class="search-result-title" x-text="result.title"></div>
-                                        <div class="search-result-subtitle" x-text="result.subtitle"></div>
-                                    </div>
-                                    <div class="search-result-meta" x-text="formatCurrency(result.amount)"></div>
-                                </div>
-                            </div>
-                        </template>
-                    </div>
-                </template>
-
-                <!-- No Results -->
-                <template x-if="query.length > 0 && !isLoading && results.length === 0">
-                    <div class="search-no-results">
-                        <i class="fas fa-magnifying-glass"></i>
-                        <span>No results found for "<strong x-text="query"></strong>"</span>
-                    </div>
-                </template>
-            </div>
-        </div>
-
-        <!-- Keyboard Shortcut Hint -->
-        <div class="search-shortcut-hint" title="Press Ctrl/Cmd + K to search">
-            <kbd>Ctrl</kbd> <span>+</span> <kbd>K</kbd>
+            <input type="text" id="headerSearchInput" placeholder="Search orders, restaurants, users..." onkeyup="handleHeaderSearch(event)">
         </div>
     </div>
-
+    
     <div class="header-right">
-        <!-- Quick Actions -->
         <div class="header-actions">
-            <div x-data="{ open: false }" @click.away="open = false" @keydown.escape.window="open = false">
-                <button
-                    class="header-icon-btn"
-                    @click="open = !open"
-                    title="Quick actions"
-                    aria-label="Quick actions"
-                >
-                    <i class="fas fa-bolt"></i>
-                </button>
-
-                <div
-                    x-show="open"
-                    x-transition
-                    class="quick-actions-dropdown"
-                >
-                    <div class="quick-actions-header">
-                        <h4>Quick Actions</h4>
-                    </div>
-                    <div class="quick-actions-grid">
-                        <a href="{{ route('admin.pos.index') }}" class="quick-action-item" title="New Order (POS)">
-                            <div class="quick-action-icon bg-primary-100">
-                                <i class="fas fa-cash-register"></i>
-                            </div>
-                            <span>New Order</span>
-                        </a>
-                        <a href="{{ route('admin.restaurants.create') }}" class="quick-action-item" title="Add Restaurant">
-                            <div class="quick-action-icon bg-success-100">
-                                <i class="fas fa-store"></i>
-                            </div>
-                            <span>Add Restaurant</span>
-                        </a>
-                        <a href="{{ route('admin.users.create') }}" class="quick-action-item" title="Add User">
-                            <div class="quick-action-icon bg-info-100">
-                                <i class="fas fa-user-plus"></i>
-                            </div>
-                            <span>Add User</span>
-                        </a>
-                        <a href="{{ route('admin.drivers.create') }}" class="quick-action-item" title="Add Driver">
-                            <div class="quick-action-icon bg-warning-100">
-                                <i class="fas fa-motorcycle"></i>
-                            </div>
-                            <span>Add Driver</span>
-                        </a>
-                        <a href="{{ route('admin.orders.index') }}" class="quick-action-item" title="View Orders">
-                            <div class="quick-action-icon bg-danger-100">
-                                <i class="fas fa-box"></i>
-                            </div>
-                            <span>View Orders</span>
-                        </a>
-                        <a href="{{ route('admin.analytics') }}" class="quick-action-item" title="Analytics">
-                            <div class="quick-action-icon bg-purple-100">
-                                <i class="fas fa-chart-pie"></i>
-                            </div>
-                            <span>Analytics</span>
-                        </a>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Notification Center -->
-            <div x-data="notificationCenter()" x-init="init()" @click.away="closeDropdown()" @keydown.escape.window="closeDropdown()">
-                <button
-                    class="header-icon-btn"
-                    @click="open = !open; if(open) loadNotifications()"
-                    title="Notifications"
-                    aria-label="Notifications"
-                >
-                    <i class="fas fa-bell"></i>
-                    <span
-                        class="badge-notification"
-                        x-show="unreadCount > 0"
-                        x-text="unreadCount > 99 ? '99+' : unreadCount"
-                    ></span>
-                </button>
-
-                <div
-                    x-show="open"
-                    x-transition
-                    class="notification-dropdown"
-                    id="notificationDropdown"
-                >
-                    <div class="notification-header">
-                        <h4>Notifications</h4>
-                        <div class="notification-header-actions">
-                            <a
-                                href="#"
-                                @click="markAllRead(); $event.preventDefault()"
-                                x-show="unreadCount > 0"
-                                title="Mark all as read"
-                            >Mark all read</a>
-                            <a href="{{ route('admin.support.index') }}" title="View all">
-                                <i class="fas fa-external-link-alt"></i>
-                            </a>
-                        </div>
-                    </div>
-
-                    <div class="notification-list" x-show="notifications.length > 0">
-                        <template x-for="notification in notifications" :key="notification.id">
-                            <div
-                                class="notification-item"
-                                :class="{ 'unread': !notification.is_read }"
-                                @click="markAsRead(notification.id); navigateTo(notification.url)"
-                            >
-                                <div class="notification-icon" :class="`bg-${notification.color}-100`">
-                                    <i class="fas" :class="notification.icon"></i>
-                                </div>
-                                <div class="notification-content">
-                                    <div class="notification-title" x-text="notification.title"></div>
-                                    <div class="notification-message" x-text="notification.message"></div>
-                                    <div class="notification-time" x-text="notification.created_at"></div>
-                                </div>
-                                <div
-                                    class="notification-unread-dot"
-                                    x-show="!notification.is_read"
-                                    title="Unread"
-                                ></div>
-                            </div>
-                        </template>
-                    </div>
-
-                    <div
-                        class="notification-empty"
-                        x-show="notifications.length === 0"
-                    >
-                        <i class="fas fa-bell-slash"></i>
-                        <span>No notifications yet</span>
-                    </div>
-                </div>
-            </div>
+            <button type="button" class="header-icon-btn" id="themeToggleBtn" title="Toggle dark / light mode" aria-label="Toggle dark mode">
+                <i class="fas fa-moon"></i>
+            </button>
+            <a href="{{ route('admin.orders.index', ['status' => 'action_required']) }}" class="header-icon-btn" id="pendingOrdersBtn">
+                <i class="fas fa-bell"></i>
+                @php
+                    $pendingOrdersCount = \App\Models\Order::whereIn('status', ['pending', 'confirmed'])->count();
+                @endphp
+                <span class="badge-notification {{ $pendingOrdersCount > 0 ? '' : 'd-none' }}" id="adminPendingOrdersBadge">{{ $pendingOrdersCount > 99 ? '99+' : $pendingOrdersCount }}</span>
+            </a>
+            <a href="{{ route('admin.support.index') }}" class="header-icon-btn" id="supportInboxBtn" title="Live chat inbox">
+                <i class="fas fa-comments"></i>
+                <span class="badge-notification d-none" id="supportInboxBadge">0</span>
+            </a>
         </div>
-
+        
         <div class="header-divider"></div>
-
-        <!-- User Profile -->
-        <div class="user-profile-wrapper" id="userProfileButton" @click="toggleUserDropdown()" x-data="{ open: false }">
-            <div class="user-avatar-lg" id="userAvatar">
-                @if($userAvatar)
-                    <img src="{{ $userAvatar }}" alt="{{ $user->name }}" class="avatar-img">
-                @else
-                    {{ $userInitials }}
-                @endif
+        
+        <div class="user-profile-wrapper" id="userProfileButton" onclick="toggleUserDropdown()">
+            <div class="user-avatar-lg">
+                {{ substr(auth()->user()->name, 0, 2) }}
             </div>
             <div class="user-info-text d-none d-sm-block">
-                <span class="user-name">{{ $user->name }}</span>
-                <span class="user-role">{{ ucfirst($userRole) }}</span>
+                <span class="user-name">{{ auth()->user()->name }}</span>
+                <span class="user-role">Super Admin</span>
             </div>
             <i class="fas fa-chevron-down user-dropdown-arrow"></i>
         </div>
-
+        
         <div class="profile-dropdown-menu" id="userDropdownMenu">
             <div class="dropdown-user-header">
                 <div class="d-flex align-items-center gap-3">
                     <div class="user-avatar-lg" style="width: 48px; height: 48px; font-size: 20px;">
-                        @if($userAvatar)
-                            <img src="{{ $userAvatar }}" alt="{{ $user->name }}" class="avatar-img">
-                        @else
-                            {{ $userInitials }}
-                        @endif
+                        {{ substr(auth()->user()->name, 0, 2) }}
                     </div>
                     <div>
-                        <div class="fw-bold">{{ $user->name }}</div>
-                        <div class="small text-muted">{{ $user->email }}</div>
-                        <span class="badge badge-primary mt-1 d-inline-block" style="font-size: 10px;">{{ ucfirst($userRole) }}</span>
+                        <div class="fw-bold">{{ auth()->user()->name }}</div>
+                        <div class="small text-muted">{{ auth()->user()->email }}</div>
                     </div>
                 </div>
             </div>
-            <a href="{{ route('profile.edit') }}" class="dropdown-menu-item">
-                <i class="fas fa-user"></i>
-                <span>Profile</span>
-            </a>
             <a href="{{ route('admin.settings.index') }}" class="dropdown-menu-item">
                 <i class="fas fa-cog"></i>
                 <span>Settings</span>
-            </a>
-            <a href="#" class="dropdown-menu-item" onclick="toggleDarkMode(); return false;" id="darkModeToggle">
-                <i class="fas fa-moon"></i>
-                <span>Dark Mode</span>
-                <span class="dropdown-toggle-switch"></span>
             </a>
             <div class="dropdown-divider"></div>
             <form method="POST" action="{{ route('logout') }}" id="logoutForm">
@@ -303,252 +69,392 @@
     </div>
 </div>
 
+<div id="adminOrderToastContainer" class="admin-order-toast-container"></div>
+
+<style>
+    .admin-order-toast-container {
+        position: fixed;
+        top: 80px;
+        right: 20px;
+        z-index: 9999;
+        width: min(390px, calc(100vw - 40px));
+        pointer-events: none;
+    }
+
+    .admin-order-toast {
+        margin-bottom: 14px;
+        overflow: hidden;
+        border-left: 4px solid var(--primary);
+        border-radius: 16px;
+        background: #fff;
+        box-shadow: 0 20px 42px rgba(15, 23, 42, .18);
+        animation: slideInRight .3s ease;
+        pointer-events: auto;
+    }
+
+    .admin-order-toast-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 12px 15px;
+        color: #fff;
+        background: linear-gradient(135deg, var(--primary), var(--primary-dark));
+    }
+
+    .admin-order-toast-title {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 14px;
+        font-weight: 900;
+    }
+
+    .admin-order-toast-close {
+        border: 0;
+        background: transparent;
+        color: #fff;
+        font-size: 20px;
+        line-height: 1;
+        opacity: .75;
+    }
+
+    .admin-order-toast-close:hover {
+        opacity: 1;
+    }
+
+    .admin-order-toast-body {
+        padding: 15px;
+    }
+
+    .admin-order-toast-meta {
+        color: #64748b;
+        font-size: 12px;
+        font-weight: 700;
+    }
+
+    .admin-order-toast-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 13px;
+    }
+
+    .admin-order-toast-actions .btn {
+        border-radius: 10px;
+        font-size: 12px;
+        font-weight: 900;
+    }
+
+    @keyframes adminBadgePulse {
+        0% { transform: scale(1); }
+        50% { transform: scale(1.18); }
+        100% { transform: scale(1); }
+    }
+
+    .badge-pulse {
+        animation: adminBadgePulse .5s ease;
+    }
+</style>
+
 <script>
-    // Alpine.js component for header search
-    function headerSearch() {
-        return {
-            query: '',
-            showSearchDropdown: false,
-            isLoading: false,
-            results: [],
-            recentSearches: [],
-            searchTimeout: null,
+    const adminOrderNotificationRoutes = {
+        checkNew: @json(route('admin.orders.check-new')),
+        counts: @json(route('admin.orders.notification-counts')),
+        queue: @json(route('admin.orders.index', ['status' => 'action_required'])),
+        statusBase: @json(url('/admin/orders')),
+        favicon: @json(App\Models\AppSetting::getValue('app_favicon') ? \Illuminate\Support\Facades\Storage::disk('public')->url(App\Models\AppSetting::getValue('app_favicon')) : asset('favicon.ico')),
+    };
 
-            init() {
-                this.recentSearches = JSON.parse(localStorage.getItem('admin_recent_searches') || '[]');
-            },
+    async function refreshSupportInboxBadge() {
+        try {
+            const response = await fetch(`{{ route('admin.support.notification-summary') }}`, {
+                headers: { 'X-Requested-With': 'XMLHttpRequest' }
+            });
+            if (!response.ok) return;
+            const data = await response.json();
+            const badge = document.getElementById('supportInboxBadge');
+            if (!badge) return;
+            const count = Number(data.count || 0);
+            badge.textContent = count > 99 ? '99+' : String(count);
+            badge.classList.toggle('d-none', count <= 0);
+        } catch (error) {
+            console.debug('Support inbox polling skipped', error);
+        }
+    }
 
-            openDropdown(type) {
-                this.showSearchDropdown = type === 'search';
-            },
+    function handleHeaderSearch(event) {
+        if (event.key === 'Enter') {
+            const searchTerm = event.target.value.trim();
+            if (searchTerm) {
+                const currentPath = window.location.pathname;
+                if (currentPath.includes('/admin/orders')) {
+                    window.location.href = `{{ route('admin.orders.index') }}?search=${encodeURIComponent(searchTerm)}`;
+                } else if (currentPath.includes('/admin/restaurants')) {
+                    window.location.href = `{{ route('admin.restaurants.index') }}?search=${encodeURIComponent(searchTerm)}`;
+                } else if (currentPath.includes('/admin/users')) {
+                    window.location.href = `{{ route('admin.users.index') }}?search=${encodeURIComponent(searchTerm)}`;
+                } else if (currentPath.includes('/admin/drivers')) {
+                    window.location.href = `{{ route('admin.drivers.index') }}?search=${encodeURIComponent(searchTerm)}`;
+                } else {
+                    window.location.href = `{{ route('admin.orders.index') }}?search=${encodeURIComponent(searchTerm)}`;
+                }
+            }
+        }
+    }
 
-            closeDropdowns() {
-                this.showSearchDropdown = false;
-            },
+    class AdminOrderNotificationManager {
+        constructor(routes) {
+            this.routes = routes;
+            this.lastCheckTime = new Date();
+            this.lastCheckTime.setMinutes(this.lastCheckTime.getMinutes() - 2);
+            this.pollingFrequency = 5000;
+            this.pollingInterval = null;
+            this.audioContext = null;
+            this.useWebAudio = true;
+            this.toastContainer = document.getElementById('adminOrderToastContainer');
+            this.notifiedOrderIds = new Set(JSON.parse(sessionStorage.getItem('adminNotifiedOrderIds') || '[]'));
+            this.baseTitle = document.title.replace(/^\(\d+\)\s/, '');
+        }
 
-            handleSearchInput() {
-                if (this.query.length < 2) {
-                    this.results = [];
-                    this.isLoading = false;
+        init() {
+            this.startPolling();
+            setTimeout(() => this.checkNewOrders(), 1200);
+
+            document.addEventListener('visibilitychange', () => {
+                if (!document.hidden) this.refreshCounts();
+            });
+
+            if ('Notification' in window && Notification.permission === 'default') {
+                Notification.requestPermission().catch(() => {});
+            }
+        }
+
+        startPolling() {
+            this.pollingInterval = setInterval(() => this.checkNewOrders(), this.pollingFrequency);
+        }
+
+        async checkNewOrders() {
+            try {
+                const url = new URL(this.routes.checkNew, window.location.origin);
+                url.searchParams.set('last_check', this.lastCheckTime.toISOString());
+
+                const response = await fetch(url.toString(), {
+                    headers: {
+                        'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content || '',
+                        'Accept': 'application/json',
+                        'X-Requested-With': 'XMLHttpRequest'
+                    }
+                });
+                if (!response.ok) throw new Error('Order polling failed');
+
+                const data = await response.json();
+                if (data.success && Array.isArray(data.new_orders)) {
+                    data.new_orders.forEach(order => {
+                        const id = String(order.id);
+                        if (this.notifiedOrderIds.has(id)) return;
+
+                        this.notifiedOrderIds.add(id);
+                        this.persistNotifiedOrders();
+                        this.showOrderNotification(order);
+                        this.playNotificationSound();
+                    });
+                }
+
+                if (data.server_time) this.lastCheckTime = new Date(data.server_time);
+                this.updatePendingBadge(Number(data.pending_count || 0));
+            } catch (error) {
+                console.debug('Admin order polling skipped', error);
+            }
+        }
+
+        async refreshCounts() {
+            try {
+                const response = await fetch(this.routes.counts, {
+                    headers: {
+                        'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content || '',
+                        'Accept': 'application/json',
+                        'X-Requested-With': 'XMLHttpRequest'
+                    }
+                });
+                if (!response.ok) return;
+                const data = await response.json();
+                this.updatePendingBadge(Number(data.pending_count || 0));
+            } catch (error) {
+                console.debug('Admin order count refresh skipped', error);
+            }
+        }
+
+        playNotificationSound() {
+            if (!this.useWebAudio) return;
+            try {
+                if (!this.audioContext) {
+                    this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                }
+                if (this.audioContext.state === 'suspended') this.audioContext.resume();
+
+                const oscillator = this.audioContext.createOscillator();
+                const gainNode = this.audioContext.createGain();
+                oscillator.connect(gainNode);
+                gainNode.connect(this.audioContext.destination);
+                oscillator.frequency.value = 880;
+                gainNode.gain.value = .28;
+                oscillator.start();
+                gainNode.gain.exponentialRampToValueAtTime(.00001, this.audioContext.currentTime + .5);
+                oscillator.stop(this.audioContext.currentTime + .5);
+            } catch (error) {
+                this.useWebAudio = false;
+            }
+        }
+
+        showOrderNotification(order) {
+            const orderLabel = order.order_number || order.id;
+            const amount = this.formatCurrency(order.total);
+
+            if (document.hidden && 'Notification' in window && Notification.permission === 'granted') {
+                new Notification('New order received', {
+                    body: `#${orderLabel} from ${order.restaurant_name} - ${amount}`,
+                    icon: this.routes.favicon,
+                    tag: `admin-order-${order.id}`
+                });
+            }
+
+            const toast = document.createElement('div');
+            toast.className = 'admin-order-toast';
+            toast.dataset.orderId = order.id;
+            toast.innerHTML = `
+                <div class="admin-order-toast-header">
+                    <div class="admin-order-toast-title"><i class="fas fa-bell"></i> New Order Received</div>
+                    <button class="admin-order-toast-close" type="button" aria-label="Dismiss">&times;</button>
+                </div>
+                <div class="admin-order-toast-body">
+                    <div class="fw-bold text-dark">#${this.escapeHtml(orderLabel)}</div>
+                    <div class="admin-order-toast-meta">${this.escapeHtml(order.restaurant_name)} - ${this.escapeHtml(order.customer_name || 'Guest')}</div>
+                    <div class="admin-order-toast-meta">${Number(order.items_count || 0)} items${order.items_preview ? ` - ${this.escapeHtml(order.items_preview)}` : ''}</div>
+                    <div class="fw-bold text-primary mt-2">${amount}</div>
+                    <div class="admin-order-toast-actions">
+                        <a class="btn btn-outline-primary btn-sm" href="${order.show_url}"><i class="fas fa-eye me-1"></i>View</a>
+                        <a class="btn btn-outline-secondary btn-sm" href="${this.routes.queue}"><i class="fas fa-list me-1"></i>Queue</a>
+                        <button class="btn btn-success btn-sm js-admin-confirm-order" type="button"><i class="fas fa-check me-1"></i>Confirm</button>
+                    </div>
+                </div>
+            `;
+
+            toast.querySelector('.admin-order-toast-close')?.addEventListener('click', () => toast.remove());
+            toast.querySelector('.js-admin-confirm-order')?.addEventListener('click', () => this.confirmOrder(order.id, toast));
+            this.toastContainer?.appendChild(toast);
+
+            setTimeout(() => {
+                if (!toast.parentNode) return;
+                toast.classList.add('toast-slide-out');
+                setTimeout(() => toast.remove(), 300);
+            }, 25000);
+        }
+
+        async confirmOrder(orderId, toastElement) {
+            const button = toastElement.querySelector('.js-admin-confirm-order');
+            const original = button?.innerHTML;
+            if (button) {
+                button.disabled = true;
+                button.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Confirming';
+            }
+
+            try {
+                const response = await fetch(`${this.routes.statusBase}/${orderId}/status`, {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content || '',
+                        'Accept': 'application/json',
+                        'X-Requested-With': 'XMLHttpRequest'
+                    },
+                    body: JSON.stringify({ status: 'confirmed' })
+                });
+                const data = await response.json();
+
+                if (data.success) {
+                    toastElement.remove();
+                    if (typeof showToastMessage === 'function') showToastMessage('Order confirmed successfully.', 'success');
+                    this.refreshCounts();
+                    if (window.location.pathname.includes('/admin/orders')) setTimeout(() => location.reload(), 500);
                     return;
                 }
 
-                this.isLoading = true;
-
-                clearTimeout(this.searchTimeout);
-                this.searchTimeout = setTimeout(() => {
-                    this.performSearch();
-                }, 300);
-            },
-
-            async performSearch() {
-                try {
-                    const response = await fetch(`{{ route('admin.search') }}?q=${encodeURIComponent(this.query)}`, {
-                        headers: {
-                            'X-Requested-With': 'XMLHttpRequest',
-                            'Accept': 'application/json'
-                        }
-                    });
-                    const data = await response.json();
-                    this.results = data.results || [];
-                } catch (error) {
-                    console.error('Search failed:', error);
-                    this.results = [];
-                } finally {
-                    this.isLoading = false;
+                throw new Error(data.message || 'Could not confirm order');
+            } catch (error) {
+                if (button) {
+                    button.disabled = false;
+                    button.innerHTML = original;
                 }
-            },
-
-            navigateTo(url) {
-                if (url) {
-                    window.location.href = url;
-                }
-            },
-
-            searchFromRecent(item) {
-                this.query = item;
-                this.performSearch();
-            },
-
-            clearRecentSearches() {
-                this.recentSearches = [];
-                localStorage.removeItem('admin_recent_searches');
-            },
-
-            get groupedResults() {
-                const groups = {};
-                this.results.forEach(result => {
-                    if (!groups[result.type]) {
-                        groups[result.type] = {
-                            type: result.type,
-                            label: result.label || result.type,
-                            items: []
-                        };
-                    }
-                    groups[result.type].items.push(result);
-                });
-                return Object.values(groups);
-            },
-
-            formatCurrency(value) {
-                if (!value) return '';
-                const symbol = @json($currencySymbol);
-                const decimals = @json($currencyDecimals);
-                return symbol + Number(value).toLocaleString(undefined, {
-                    minimumFractionDigits: decimals,
-                    maximumFractionDigits: decimals
-                });
-            }
-        }
-    }
-
-    // Alpine.js component for notification center
-    function notificationCenter() {
-        return {
-            open: false,
-            notifications: [],
-            unreadCount: 0,
-            isLoading: false,
-
-            init() {
-                this.loadUnreadCount();
-                setInterval(() => this.loadUnreadCount(), 30000);
-            },
-
-            async loadUnreadCount() {
-                try {
-                    const response = await fetch(`{{ route('admin.notifications.stats') }}`, {
-                        headers: {
-                            'X-Requested-With': 'XMLHttpRequest',
-                            'Accept': 'application/json'
-                        }
-                    });
-                    const data = await response.json();
-                    this.unreadCount = data.unread_notifications || 0;
-                } catch (error) {
-                    console.error('Failed to load notification stats:', error);
-                }
-            },
-
-            async loadNotifications() {
-                this.isLoading = true;
-                try {
-                    const response = await fetch(`{{ route('admin.notifications.recent') }}?limit=10`, {
-                        headers: {
-                            'X-Requested-With': 'XMLHttpRequest',
-                            'Accept': 'application/json'
-                        }
-                    });
-                    const data = await response.json();
-                    this.notifications = data.notifications || [];
-                    this.unreadCount = data.unread_count || 0;
-                } catch (error) {
-                    console.error('Failed to load notifications:', error);
-                } finally {
-                    this.isLoading = false;
-                }
-            },
-
-            async markAsRead(id) {
-                try {
-                    const baseUrl = `{{ url('admin/notifications') }}/${id}/read`;
-                    await fetch(baseUrl, {
-                        method: 'POST',
-                        headers: {
-                            'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content,
-                            'X-Requested-With': 'XMLHttpRequest',
-                            'Accept': 'application/json'
-                        }
-                    });
-                    this.unreadCount = Math.max(0, this.unreadCount - 1);
-                } catch (error) {
-                    console.error('Failed to mark notification as read:', error);
-                }
-            },
-
-            async markAllRead() {
-                try {
-                    await fetch(`{{ route('admin.notifications.read-all') }}`, {
-                        method: 'POST',
-                        headers: {
-                            'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content,
-                            'X-Requested-With': 'XMLHttpRequest',
-                            'Accept': 'application/json'
-                        }
-                    });
-                    this.unreadCount = 0;
-                    this.notifications.forEach(n => n.is_read = true);
-                } catch (error) {
-                    console.error('Failed to mark all as read:', error);
-                }
-            },
-
-            navigateTo(url) {
-                if (url) {
-                    window.location.href = url;
-                }
-            },
-
-            closeDropdown() {
-                this.open = false;
-            }
-        }
-    }
-
-    // Dark mode toggle
-    function toggleDarkMode() {
-        const body = document.body;
-        const isDark = body.classList.contains('dark-mode');
-
-        if (isDark) {
-            body.classList.remove('dark-mode');
-            localStorage.setItem('admin_theme', 'light');
-        } else {
-            body.classList.add('dark-mode');
-            localStorage.setItem('admin_theme', 'dark');
-        }
-    }
-
-    // Initialize dark mode from localStorage
-    document.addEventListener('DOMContentLoaded', function() {
-        const savedTheme = localStorage.getItem('admin_theme');
-        if (savedTheme === 'dark') {
-            document.body.classList.add('dark-mode');
-        }
-    });
-
-    // Keyboard shortcut: Ctrl/Cmd + K for search
-    document.addEventListener('keydown', function(event) {
-        if ((event.ctrlKey || event.metaKey) && event.key === 'k') {
-            event.preventDefault();
-            const searchInput = document.getElementById('headerSearchInput');
-            if (searchInput) {
-                searchInput.focus();
-                searchInput.select();
+                if (typeof showToastMessage === 'function') showToastMessage(error.message || 'Failed to confirm order.', 'error');
             }
         }
 
-        // Ctrl/Cmd + Shift + N for new order (POS)
-        if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key === 'N') {
-            event.preventDefault();
-            window.location.href = '{{ route('admin.pos.index') }}';
-        }
-    });
+        updatePendingBadge(count) {
+            ['adminPendingOrdersBadge', 'adminOrderQueueSidebarBadge'].forEach(id => {
+                const badge = document.getElementById(id);
+                if (!badge) return;
+                badge.textContent = count > 99 ? '99+' : String(count);
+                badge.classList.toggle('d-none', count <= 0);
+                if (count > 0) {
+                    badge.classList.add('badge-pulse');
+                    setTimeout(() => badge.classList.remove('badge-pulse'), 500);
+                }
+            });
 
-    // Toggle user dropdown
-    function toggleUserDropdown() {
-        const dropdown = document.getElementById('userDropdownMenu');
-        if (dropdown) {
-            dropdown.classList.toggle('show');
+            document.title = count > 0 ? `(${count}) ${this.baseTitle}` : this.baseTitle;
+        }
+
+        persistNotifiedOrders() {
+            const latestIds = Array.from(this.notifiedOrderIds).slice(-80);
+            this.notifiedOrderIds = new Set(latestIds);
+            sessionStorage.setItem('adminNotifiedOrderIds', JSON.stringify(latestIds));
+        }
+
+        escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text == null ? '' : String(text);
+            return div.innerHTML;
+        }
+
+        formatCurrency(value) {
+            const amount = Number.parseFloat(value);
+            const decimals = Number.isFinite(Number(window.currencyDecimals)) ? Number(window.currencyDecimals) : 2;
+            const symbol = window.currencySymbol || 'Rs ';
+            return `${symbol}${Number.isFinite(amount) ? amount.toFixed(decimals) : (0).toFixed(decimals)}`;
         }
     }
 
-    // Close dropdowns on click outside
-    document.addEventListener('click', function(event) {
-        const dropdown = document.getElementById('userDropdownMenu');
-        const userProfile = document.getElementById('userProfileButton');
-        if (dropdown && userProfile && !userProfile.contains(event.target) && !dropdown.contains(event.target)) {
-            dropdown.classList.remove('show');
-        }
+    refreshSupportInboxBadge();
+    setInterval(refreshSupportInboxBadge, 15000);
+
+    document.addEventListener('DOMContentLoaded', () => {
+        window.adminOrderNotifications = new AdminOrderNotificationManager(adminOrderNotificationRoutes);
+        window.adminOrderNotifications.init();
     });
+</script>
+<script>
+    /* Dark / light mode toggle. Pre-paint init lives in the layout <head>. */
+    (function () {
+        var btn = document.getElementById('themeToggleBtn');
+        if (!btn) return;
+        var root = document.documentElement;
+
+        function current() {
+            return root.getAttribute('data-theme')
+                || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+        }
+        function paintIcon() {
+            var i = btn.querySelector('i');
+            if (i) i.className = current() === 'dark' ? 'fas fa-sun' : 'fas fa-moon';
+        }
+        paintIcon();
+
+        btn.addEventListener('click', function () {
+            var next = current() === 'dark' ? 'light' : 'dark';
+            root.setAttribute('data-theme', next);
+            try { localStorage.setItem('admin-theme', next); } catch (e) {}
+            paintIcon();
+        });
+    })();
 </script>

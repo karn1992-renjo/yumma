@@ -87,13 +87,13 @@
         <div>
             <h1 class="restaurant-page-title">{{ $restaurant->name }}</h1>
             <div class="restaurant-page-subtitle">
-                {{ $restaurant->email }} | {{ $restaurant->phone }} | {{ ucfirst(str_replace('_', ' ', $restaurant->restaurant_type ?? 'delivery')) }}
+                <strong>{{ $restaurant->code }}</strong> | {{ $restaurant->email }} | {{ $restaurant->phone }} | {{ ucfirst(str_replace('_', ' ', $restaurant->restaurant_type ?? 'delivery')) }}
             </div>
             <div class="d-flex flex-wrap gap-2 mt-2">
                 <span class="restaurant-chip {{ $statusChip[1] }}"><i class="fas fa-{{ $statusChip[2] }}"></i>{{ $statusChip[0] }}</span>
                 <span class="restaurant-chip {{ $verificationChip[1] }}"><i class="fas fa-{{ $verificationChip[2] }}"></i>{{ $verificationChip[0] }}</span>
-                @if($restaurant->is_featured)
-                    <span class="restaurant-chip primary"><i class="fas fa-star"></i>Featured</span>
+                @if(\App\Models\RestaurantAdCampaign::active()->where('restaurant_id', $restaurant->id)->exists())
+                    <span class="restaurant-chip primary"><i class="fas fa-bullhorn"></i>Sponsored</span>
                 @endif
             </div>
         </div>

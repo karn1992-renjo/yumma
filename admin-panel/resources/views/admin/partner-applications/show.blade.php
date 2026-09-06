@@ -421,6 +421,7 @@
                         'interior_image' => 'Interior Photo',
                         'food_image' => 'Food Photo',
                         'kitchen_image' => 'Kitchen Photo',
+                        'menu_photo' => 'Menu Photo',
                         'bank_proof' => 'Bank Proof',
                         'shop_license' => 'Shop License',
                     ] as $key => $label)
@@ -453,6 +454,7 @@
                         empty($meta['interior_image']) &&
                         empty($meta['food_image']) &&
                         empty($meta['kitchen_image']) &&
+                        empty($meta['menu_photo']) &&
                         empty($meta['bank_proof']) &&
                         empty($meta['shop_license'])
                     )

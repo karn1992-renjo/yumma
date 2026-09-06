@@ -97,6 +97,12 @@
                     </div>
                 </div>
 
+                <div class="settings-section-title mt-4">Invoice / Company Details</div>
+                <p class="settings-card-subtitle">
+                    Company identity, invoice presentation and the GST workflow have moved to
+                    <a href="{{ route('admin.settings.business') }}">Settings &rarr; Business</a>.
+                </p>
+
                 <div class="settings-section-title mt-4">Media Storage</div>
                 <div class="settings-grid" id="media-storage-settings">
                     <div class="settings-field settings-span-4">

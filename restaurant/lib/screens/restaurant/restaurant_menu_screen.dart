@@ -1,6 +1,7 @@
 // lib/screens/restaurant/restaurant_menu_screen.dart
 import 'dart:convert';
 import 'dart:io';
+import 'dart:ui' show ImageFilter;
 
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
@@ -11,9 +12,13 @@ import '../../models/menu_item.dart';
 import '../../providers/auth_provider.dart';
 import '../../providers/restaurant_provider.dart';
 import '../../theme/foodflow_theme.dart';
+import '../../theme/aurora_theme.dart';
+import '../../widgets/aurora/aurora.dart';
+import '../../widgets/aurora/aurora_dialogs.dart';
 import '../../utils/currency_utils.dart';
 import '../../widgets/common/network_image_loader.dart';
 import '../../widgets/restaurant/premium_restaurant_widgets.dart';
+import 'menu_analysis_screen.dart';
 
 const String _menuMetadataSeparator = ' • ';
 
@@ -27,7 +32,7 @@ InputDecoration _menuInputDecoration(
     hintText: hintText,
     prefixText: prefixText,
     suffixIcon: suffixIcon,
-    hintStyle: const TextStyle(
+    hintStyle: TextStyle(
       color: FoodFlowTheme.faint,
       fontSize: 14,
       fontWeight: FontWeight.w700,
@@ -37,11 +42,11 @@ InputDecoration _menuInputDecoration(
     fillColor: Colors.white,
     border: OutlineInputBorder(
       borderRadius: BorderRadius.circular(14),
-      borderSide: const BorderSide(color: FoodFlowTheme.line),
+      borderSide: BorderSide(color: FoodFlowTheme.line),
     ),
     enabledBorder: OutlineInputBorder(
       borderRadius: BorderRadius.circular(14),
-      borderSide: const BorderSide(color: FoodFlowTheme.line),
+      borderSide: BorderSide(color: FoodFlowTheme.line),
     ),
   );
 }
@@ -74,6 +79,10 @@ class _RestaurantMenuScreenState extends State<RestaurantMenuScreen>
   final Set<int> _expandedCategoryIds = <int>{};
   String _searchQuery = '';
   String _availabilityFilter = 'all';
+  String _stockFilter = 'all';
+  final ScrollController _menuScroll = ScrollController();
+  final Map<String, GlobalKey> _catKeys = {};
+  String? _activeCat;
   String _sortMode = 'name';
   int _selectedCategoryId = 0;
 
@@ -87,7 +96,36 @@ class _RestaurantMenuScreenState extends State<RestaurantMenuScreen>
   void dispose() {
     _tabController?.dispose();
     _searchController.dispose();
+    _menuScroll.dispose();
     super.dispose();
+  }
+
+  void _updateActiveCat(Iterable<String> cats) {
+    String? best;
+    double bestTop = double.infinity;
+    for (final c in cats) {
+      final ctx = _catKeys[c]?.currentContext;
+      if (ctx == null) continue;
+      final box = ctx.findRenderObject() as RenderBox?;
+      if (box == null || !box.attached) continue;
+      final dy = box.localToGlobal(Offset.zero).dy;
+      if (dy <= 220 && (220 - dy) < bestTop) {
+        bestTop = 220 - dy;
+        best = c;
+      }
+    }
+    best ??= cats.isEmpty ? null : cats.first;
+    if (best != _activeCat) setState(() => _activeCat = best);
+  }
+
+  void _jumpToCat(String c) {
+    final ctx = _catKeys[c]?.currentContext;
+    if (ctx == null) return;
+    Scrollable.ensureVisible(ctx,
+        duration: const Duration(milliseconds: 320),
+        curve: Curves.easeOutCubic,
+        alignment: 0.02);
+    setState(() => _activeCat = c);
   }
 
   Map<String, dynamic> _selectedRestaurantQueryParams() {
@@ -113,6 +151,23 @@ class _RestaurantMenuScreenState extends State<RestaurantMenuScreen>
       }
 
       final restaurantParams = _selectedRestaurantQueryParams();
+
+      // Cache-first: paint instantly from any locally stored responses.
+      final cached = await Future.wait([
+        _api.peekCache(ApiConstants.restaurantCategories,
+            queryParams: restaurantParams),
+        _api.peekCache(ApiConstants.popularCuisines),
+        _api.peekCache(ApiConstants.restaurantMenuItems,
+            queryParams: restaurantParams),
+        _api.peekCache(ApiConstants.restaurantGlobalMenu),
+        _api.peekCache(ApiConstants.restaurantGlobalCategories),
+      ]);
+      if (mounted && cached[0] is Map) {
+        _applyMenuResponses(
+            cached[0], cached[1], cached[2], cached[3], cached[4]);
+        setState(() => _isLoading = false);
+      }
+
       final categoriesResponse = await _api.get(
         ApiConstants.restaurantCategories,
         queryParams: restaurantParams,
@@ -127,11 +182,34 @@ class _RestaurantMenuScreenState extends State<RestaurantMenuScreen>
       final globalCategoriesResponse =
           await _api.get(ApiConstants.restaurantGlobalCategories);
 
-      if (categoriesResponse['success'] == true) {
-        setState(() {
-          _categories = categoriesResponse['data'] ?? [];
-        });
+      _applyMenuResponses(categoriesResponse, cuisinesResponse, menuResponse,
+          globalMenuResponse, globalCategoriesResponse);
+    } catch (e) {
+      debugPrint('Load menu error: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to load menu: $e')),
+        );
+      }
+    }
 
+    setState(() => _isLoading = false);
+  }
+
+  void _applyMenuResponses(
+    dynamic categoriesResponse,
+    dynamic cuisinesResponse,
+    dynamic menuResponse,
+    dynamic globalMenuResponse,
+    dynamic globalCategoriesResponse,
+  ) {
+    if (!mounted) return;
+    if (categoriesResponse is Map && categoriesResponse['success'] == true) {
+      final newCategories = categoriesResponse['data'] ?? [];
+      final changed = newCategories.length != _categories.length ||
+          _tabController == null;
+      setState(() => _categories = newCategories);
+      if (changed) {
         _tabController?.dispose();
         _tabController = TabController(
           length: _categories.length + 1,
@@ -147,63 +225,40 @@ class _RestaurantMenuScreenState extends State<RestaurantMenuScreen>
           }
         });
       }
-
-      if (cuisinesResponse['success'] == true) {
-        setState(() {
-          _cuisines = cuisinesResponse['data'] ?? [];
-        });
-      }
-
-      if (menuResponse['success'] == true) {
-        final List<dynamic> data = menuResponse['data'] ?? [];
-        setState(() {
-          _menuItems = data.map((json) => MenuItem.fromJson(json)).toList();
-        });
-      }
-
-      if (globalMenuResponse['success'] == true) {
-        setState(() {
-          _globalMenuItems = globalMenuResponse['data'] ?? [];
-        });
-      }
-
-      if (globalCategoriesResponse['success'] == true) {
-        setState(() {
-          _globalCategories = globalCategoriesResponse['data'] ?? [];
-        });
-      }
-    } catch (e) {
-      debugPrint('Load menu error: $e');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to load menu: $e')),
-        );
-      }
     }
 
-    setState(() => _isLoading = false);
+    if (cuisinesResponse is Map && cuisinesResponse['success'] == true) {
+      setState(() => _cuisines = cuisinesResponse['data'] ?? []);
+    }
+
+    if (menuResponse is Map && menuResponse['success'] == true) {
+      final List<dynamic> data = menuResponse['data'] ?? [];
+      setState(() {
+        _menuItems = data.map((json) => MenuItem.fromJson(json)).toList();
+      });
+    }
+
+    if (globalMenuResponse is Map && globalMenuResponse['success'] == true) {
+      setState(() => _globalMenuItems = globalMenuResponse['data'] ?? []);
+    }
+
+    if (globalCategoriesResponse is Map &&
+        globalCategoriesResponse['success'] == true) {
+      setState(() => _globalCategories = globalCategoriesResponse['data'] ?? []);
+    }
   }
 
   Future<void> _deleteMenuItem(int itemId) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Delete Item'),
-        content: const Text('Are you sure you want to delete this item?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Delete', style: TextStyle(color: Colors.red)),
-          ),
-        ],
-      ),
+    final confirmed = await showAuroraConfirm(
+      context,
+      icon: Icons.restaurant_menu_rounded,
+      title: 'Delete this item?',
+      message: 'It will be removed from your menu and any linked offers.',
+      confirmLabel: 'Delete',
+      destructive: true,
     );
 
-    if (confirmed != true) return;
+    if (!confirmed) return;
 
     try {
       final response = await _api.post(
@@ -217,9 +272,21 @@ class _RestaurantMenuScreenState extends State<RestaurantMenuScreen>
             const SnackBar(content: Text('Item deleted successfully')),
           );
         }
+      } else if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(response['message']?.toString() ??
+                'Could not delete this item'),
+          ),
+        );
       }
     } catch (e) {
       debugPrint('Delete item error: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not delete this item: $e')),
+        );
+      }
     }
   }
 
@@ -455,11 +522,30 @@ class _RestaurantMenuScreenState extends State<RestaurantMenuScreen>
     if (confirmed != true) return;
 
     final ids = _selectedItemIds.toList();
+    var failed = 0;
     for (final id in ids) {
-      await _api.post('${ApiConstants.restaurantMenuItems}/$id/delete');
+      try {
+        final response = await _api.post(
+          '${ApiConstants.restaurantMenuItems}/$id/delete',
+          queryParams: _selectedRestaurantQueryParams(),
+        );
+        if (response['success'] != true) failed++;
+      } catch (e) {
+        debugPrint('Bulk delete item $id error: $e');
+        failed++;
+      }
     }
     _setSelectionMode(false);
     await _loadData();
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(failed == 0
+              ? '${ids.length} item(s) deleted'
+              : '$failed of ${ids.length} item(s) could not be deleted'),
+        ),
+      );
+    }
   }
 
   int? _asInt(dynamic value) {
@@ -523,7 +609,7 @@ class _RestaurantMenuScreenState extends State<RestaurantMenuScreen>
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text(
+              Text(
                 'Select Menu Creation Method',
                 style: TextStyle(
                   color: FoodFlowTheme.ink,
@@ -596,7 +682,7 @@ class _RestaurantMenuScreenState extends State<RestaurantMenuScreen>
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Text(
+                  Text(
                     'Add From Global Menu',
                     style: TextStyle(
                       color: FoodFlowTheme.ink,
@@ -1107,7 +1193,7 @@ class _RestaurantMenuScreenState extends State<RestaurantMenuScreen>
                                       : selectedImage!.name,
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
+                                  style: TextStyle(
                                     color: FoodFlowTheme.ink,
                                     fontWeight: FontWeight.w800,
                                   ),
@@ -1279,7 +1365,7 @@ class _RestaurantMenuScreenState extends State<RestaurantMenuScreen>
                     padding: const EdgeInsets.fromLTRB(16, 16, 16, 10),
                     child: Row(
                       children: [
-                        const Expanded(
+                        Expanded(
                           child: Text(
                             'Edit Menu Item',
                             style: TextStyle(
@@ -1995,8 +2081,8 @@ class _RestaurantMenuScreenState extends State<RestaurantMenuScreen>
       builder: (context) => SafeArea(
         top: false,
         child: Container(
-          decoration: const BoxDecoration(
-            color: Colors.white,
+          decoration: BoxDecoration(
+            color: foodflow.isDark ? foodflow.elevatedSurface : Colors.white,
             borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
           ),
           child: ConstrainedBox(
@@ -2016,7 +2102,7 @@ class _RestaurantMenuScreenState extends State<RestaurantMenuScreen>
                           item.name,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
+                          style: TextStyle(
                             color: FoodFlowTheme.ink,
                             fontSize: 18,
                             fontWeight: FontWeight.w900,
@@ -2040,7 +2126,7 @@ class _RestaurantMenuScreenState extends State<RestaurantMenuScreen>
                                 width: 72,
                                 height: 72,
                                 color: const Color(0xFFEDEDEE),
-                                child: const Icon(Icons.fastfood_outlined,
+                                child: Icon(Icons.fastfood_outlined,
                                     color: FoodFlowTheme.muted),
                               )
                             : NetworkImageLoader(
@@ -2061,7 +2147,7 @@ class _RestaurantMenuScreenState extends State<RestaurantMenuScreen>
                                 if (item.hasDiscount) ...[
                                   Text(
                                     formatCurrency(context, item.price),
-                                    style: const TextStyle(
+                                    style: TextStyle(
                                       color: FoodFlowTheme.faint,
                                       fontSize: 13,
                                       fontWeight: FontWeight.w700,
@@ -2072,7 +2158,7 @@ class _RestaurantMenuScreenState extends State<RestaurantMenuScreen>
                                 ],
                                 Text(
                                   formatCurrency(context, item.finalPrice),
-                                  style: const TextStyle(
+                                  style: TextStyle(
                                     color: FoodFlowTheme.success,
                                     fontSize: 18,
                                     fontWeight: FontWeight.w900,
@@ -2090,14 +2176,14 @@ class _RestaurantMenuScreenState extends State<RestaurantMenuScreen>
                                 if (item.preparationTime != null)
                                   '${item.preparationTime} min',
                               ].join(_menuMetadataSeparator),
-                              style: const TextStyle(
+                              style: TextStyle(
                                 color: FoodFlowTheme.muted,
                                 fontWeight: FontWeight.w700,
                               ),
                             ),
                             if (item.isPriceInclusiveGst) ...[
                               const SizedBox(height: 5),
-                              const Text(
+                              Text(
                                 'Inclusive of GST',
                                 style: TextStyle(
                                   color: FoodFlowTheme.muted,
@@ -2115,7 +2201,7 @@ class _RestaurantMenuScreenState extends State<RestaurantMenuScreen>
                     const SizedBox(height: 14),
                     Text(
                       item.description!,
-                      style: const TextStyle(
+                      style: TextStyle(
                         color: FoodFlowTheme.inkSoft,
                         fontWeight: FontWeight.w700,
                       ),
@@ -2298,177 +2384,281 @@ class _RestaurantMenuScreenState extends State<RestaurantMenuScreen>
     final disabledItems =
         visibleItems.where((item) => item.isDisabled).toList(growable: false);
 
-    return Scaffold(
-      backgroundColor: const Color(0xFFF1F1F5),
-      appBar: AppBar(
-        backgroundColor: const Color(0xFFF1F1F5),
-        titleSpacing: 0,
+return Scaffold(
+      backgroundColor: foodflow.canvas,
+      extendBodyBehindAppBar: true,
+      appBar: GlassAppBar(
+        toolbarHeight: 64,
         leading: IconButton(
-            icon: const Icon(Icons.arrow_back),
-            onPressed: () => setState(() {
-                  _showMenuModePicker = true;
-                  _showGlobalCatalog = false;
-                })),
+          icon: Icon(Icons.arrow_back, color: foodflow.ink),
+          onPressed: () => setState(() {
+            _showMenuModePicker = true;
+            _showGlobalCatalog = false;
+          }),
+        ),
         title: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(_restaurantTitle(selected),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                      fontSize: 17, fontWeight: FontWeight.w900)),
-              Text(_restaurantSubtitle(selected),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                      color: FoodFlowTheme.muted,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w700)),
-            ]),
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              _restaurantTitle(selected),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: foodflow.ink,
+                fontSize: 17,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+            Text(
+              _restaurantSubtitle(selected),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: foodflow.muted,
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+        ),
         actions: [
+          IconButton(
+            tooltip: 'Menu analysis',
+            icon: Icon(Icons.insights_rounded, color: foodflow.ink),
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (_) => const MenuAnalysisScreen(),
+              ),
+            ),
+          ),
           PopupMenuButton<String>(
-              onSelected: (_) => setState(() {
-                    _showOutletPicker = true;
-                    _showMenuModePicker = false;
-                    _showGlobalCatalog = false;
-                  }),
-              itemBuilder: (_) => const [
-                    PopupMenuItem(value: 'outlet', child: Text('Change outlet'))
-                  ])
+            onSelected: (_) => setState(() {
+              _showOutletPicker = true;
+              _showMenuModePicker = false;
+              _showGlobalCatalog = false;
+            }),
+            icon: Icon(Icons.more_vert_rounded, color: foodflow.ink),
+            itemBuilder: (_) => const [
+              PopupMenuItem(value: 'outlet', child: Text('Change outlet')),
+            ],
+          ),
         ],
       ),
       floatingActionButton: FloatingActionButton.extended(
-        backgroundColor: FoodFlowTheme.ink,
+        backgroundColor: foodflow.orange,
         foregroundColor: Colors.white,
         onPressed: _menuTabIndex == 0 ? _showAddItemDialog : _showAddOnDialog,
         icon: const Icon(Icons.add),
-        label: Text(_menuTabIndex == 0 ? 'MENU' : 'ADD-ON'),
+        label: Text(_menuTabIndex == 0 ? 'Add item' : 'Add-on'),
       ),
-      body: RefreshIndicator(
-        onRefresh: _loadData,
-        child: _isLoading
-            ? const Center(child: CircularProgressIndicator())
-            : ListView(
-                padding: const EdgeInsets.fromLTRB(0, 18, 0, 104),
-                children: [
-                    Container(
-                      padding: const EdgeInsets.fromLTRB(18, 18, 18, 22),
-                      decoration: const BoxDecoration(
-                          color: Colors.white,
-                          borderRadius:
-                              BorderRadius.vertical(top: Radius.circular(24))),
-                      child: Column(children: [
-                        Row(children: [
-                          _MenuPill(
-                              label: 'Menu Items',
-                              selected: _menuTabIndex == 0,
-                              onTap: () => setState(() => _menuTabIndex = 0)),
-                          const SizedBox(width: 10),
-                          _MenuPill(
-                              label: 'Add-ons',
-                              selected: _menuTabIndex == 1,
-                              onTap: () => setState(() => _menuTabIndex = 1)),
-                          const Spacer(),
-                          if (_menuTabIndex == 0)
-                            TextButton.icon(
-                                onPressed: _showAddCategoryDialog,
-                                icon: const Icon(Icons.add, size: 17),
-                                label: const Text('Create Category')),
-                        ]),
-                        const SizedBox(height: 16),
-                        TextField(
-                            controller: _searchController,
-                            onChanged: (value) =>
-                                setState(() => _searchQuery = value),
-                            decoration: InputDecoration(
-                                hintText: _menuTabIndex == 0
-                                    ? 'Search for items'
-                                    : 'Search for add-on',
-                                suffixIcon: const Icon(Icons.search, size: 28),
-                                filled: true,
-                                fillColor: const Color(0xFFF0F0F4),
-                                border: OutlineInputBorder(
-                                    borderRadius: BorderRadius.circular(14),
-                                    borderSide: BorderSide.none))),
-                      ]),
+      body: Stack(
+        children: [
+          Positioned.fill(
+            child: DecoratedBox(
+              decoration: BoxDecoration(color: foodflow.canvas),
+              child: Stack(children: AuroraTheme.auroraBlobs()),
+            ),
+          ),
+          Positioned.fill(
+            child: _isLoading
+                ? Center(
+                    child: CircularProgressIndicator(color: foodflow.orange),
+                  )
+                : _menuTabIndex == 1
+                    ? RefreshIndicator(
+                        onRefresh: _loadData,
+                        color: foodflow.orange,
+                        child: ListView(
+                          padding: EdgeInsets.fromLTRB(14,
+                              MediaQuery.of(context).padding.top + 72, 14, 120),
+                          children: [
+                            _MenuTopBar(
+                              searchController: _searchController,
+                              onSearch: (v) =>
+                                  setState(() => _searchQuery = v),
+                              tabIndex: _menuTabIndex,
+                              onTab: (i) => setState(() => _menuTabIndex = i),
+                              onAddCategory: _showAddCategoryDialog,
+                            ),
+                            const SizedBox(height: 12),
+                            if (addons.isEmpty)
+                              Padding(
+                                padding: const EdgeInsets.only(top: 60),
+                                child: FoodFlowTheme.emptyState(
+                                  icon: Icons.playlist_add_outlined,
+                                  title: 'No add-ons found',
+                                  subtitle:
+                                      'Add-ons saved on real menu items will appear here.',
+                                ),
+                              )
+                            else
+                              Container(
+                                decoration: BoxDecoration(
+                                  color: foodflow.isDark
+                                      ? foodflow.elevatedSurface
+                                      : Colors.white,
+                                  borderRadius: BorderRadius.circular(20),
+                                  border: Border.all(color: foodflow.line),
+                                ),
+                                clipBehavior: Clip.antiAlias,
+                                child: Column(children: [
+                                  _CreateAddOnRow(onTap: _showAddOnDialog),
+                                  ...addons.map((addon) => _AddonRow(
+                                        addon: addon,
+                                        onEdit: () => _showEditItemDialog(
+                                            addon.sourceItem),
+                                        onToggle: () => _toggleAvailability(
+                                          addon.sourceItem.id,
+                                          addon.sourceItem.isAvailable,
+                                        ),
+                                      )),
+                                ]),
+                              ),
+                          ],
+                        ),
+                      )
+                    : _buildMenuGridBody(
+                        grouped, outOfStockItems, disabledItems),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMenuGridBody(
+    Map<String, List<MenuItem>> grouped,
+    List<MenuItem> outOfStock,
+    List<MenuItem> disabled,
+  ) {
+    final cats = grouped.keys.toList();
+    for (final c in cats) {
+      _catKeys.putIfAbsent(c, () => GlobalKey());
+    }
+    Map<String, List<MenuItem>> shown;
+    if (_stockFilter == 'oos') {
+      shown = {
+        for (final e in grouped.entries)
+          if (e.value.any((i) => i.isOutOfStock))
+            e.key: e.value.where((i) => i.isOutOfStock).toList()
+      };
+    } else if (_stockFilter == 'disabled') {
+      shown = {
+        for (final e in grouped.entries)
+          if (e.value.any((i) => i.isDisabled))
+            e.key: e.value.where((i) => i.isDisabled).toList()
+      };
+    } else {
+      shown = grouped;
+    }
+
+    return RefreshIndicator(
+      onRefresh: _loadData,
+      color: foodflow.orange,
+      child: NotificationListener<ScrollNotification>(
+        onNotification: (n) {
+          if (n is ScrollUpdateNotification) _updateActiveCat(cats);
+          return false;
+        },
+        child: CustomScrollView(
+          controller: _menuScroll,
+          slivers: [
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: EdgeInsets.fromLTRB(
+                    14, MediaQuery.of(context).padding.top + 72, 14, 0),
+                child: _MenuTopBar(
+                  searchController: _searchController,
+                  onSearch: (v) => setState(() => _searchQuery = v),
+                  tabIndex: _menuTabIndex,
+                  onTab: (i) => setState(() => _menuTabIndex = i),
+                  onAddCategory: _showAddCategoryDialog,
+                ),
+              ),
+            ),
+            if (cats.isNotEmpty)
+              SliverPersistentHeader(
+                pinned: true,
+                delegate: _MenuCategoryStrip(
+                  cats: cats,
+                  active: _activeCat ?? (cats.isEmpty ? null : cats.first),
+                  onTap: _jumpToCat,
+                ),
+              ),
+            if (outOfStock.isNotEmpty || disabled.isNotEmpty)
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(14, 8, 14, 0),
+                  child: Row(children: [
+                    _StockFilterChip(
+                      label: 'All items',
+                      selected: _stockFilter == 'all',
+                      onTap: () => setState(() => _stockFilter = 'all'),
                     ),
-                    if (_menuTabIndex == 0) ...[
-                      if (outOfStockItems.isNotEmpty)
-                        _MenuStatusBlock(
-                          color: const Color(0xFFFFEEF1),
-                          icon: Icons.error,
-                          label:
-                              '${outOfStockItems.length} ITEM${outOfStockItems.length == 1 ? '' : 'S'} OUT OF STOCK',
-                          items: outOfStockItems,
-                          onPreview: _showPreviewItemDialog,
-                          onEdit: _showEditItemDialog,
-                          onDelete: (item) => _deleteMenuItem(item.id),
-                          onToggle: (item) =>
-                              _toggleAvailability(item.id, item.isAvailable),
-                        ),
-                      if (disabledItems.isNotEmpty)
-                        _MenuStatusBlock(
-                          color: const Color(0xFFEDEDEE),
-                          icon: Icons.cancel,
-                          label:
-                              '${disabledItems.length} ITEM${disabledItems.length == 1 ? '' : 'S'} DISABLED',
-                          items: disabledItems,
-                          onPreview: _showPreviewItemDialog,
-                          onEdit: _showEditItemDialog,
-                          onDelete: (item) => _deleteMenuItem(item.id),
-                          onToggle: (item) =>
-                              _toggleAvailability(item.id, item.isAvailable),
-                        ),
-                      if (grouped.isEmpty)
-                        Padding(
-                            padding: const EdgeInsets.only(top: 72),
-                            child: FoodFlowTheme.emptyState(
-                                icon: Icons.menu_book_outlined,
-                                title: 'No menu items',
-                                subtitle:
-                                    'Items from this outlet will appear here once added.'))
-                      else
-                        ...grouped.entries.map((entry) {
-                          final id = _categoryIdForName(entry.key);
-                          final open = _expandedCategoryIds.contains(id);
-                          return _MenuCategoryBlock(
-                              title: entry.key,
-                              expanded: open,
-                              items: entry.value,
-                              onToggleExpanded: () => setState(() => open
-                                  ? _expandedCategoryIds.remove(id)
-                                  : _expandedCategoryIds.add(id)),
-                              onAddItem: _showAddItemDialog,
-                              onPreview: _showPreviewItemDialog,
-                              onEdit: _showEditItemDialog,
-                              onDelete: (item) => _deleteMenuItem(item.id),
-                              onToggle: (item) => _toggleAvailability(
-                                  item.id, item.isAvailable));
-                        }),
-                    ] else if (addons.isEmpty)
-                      Container(
-                          color: Colors.white,
-                          padding: const EdgeInsets.only(top: 72),
-                          child: FoodFlowTheme.emptyState(
-                              icon: Icons.playlist_add_outlined,
-                              title: 'No add-ons found',
-                              subtitle:
-                                  'Add-ons saved on real menu items will appear here.'))
-                    else
-                      Container(
-                          color: Colors.white,
-                          child: Column(children: [
-                            _CreateAddOnRow(onTap: _showAddOnDialog),
-                            ...addons.map((addon) => _AddonRow(
-                                addon: addon,
-                                onEdit: () =>
-                                    _showEditItemDialog(addon.sourceItem),
-                                onToggle: () => _toggleAvailability(
-                                    addon.sourceItem.id,
-                                    addon.sourceItem.isAvailable)))
-                          ])),
+                    if (outOfStock.isNotEmpty) ...[
+                      const SizedBox(width: 8),
+                      _StockFilterChip(
+                        label: 'Out of stock ${outOfStock.length}',
+                        selected: _stockFilter == 'oos',
+                        tint: foodflow.danger,
+                        onTap: () => setState(() => _stockFilter = 'oos'),
+                      ),
+                    ],
+                    if (disabled.isNotEmpty) ...[
+                      const SizedBox(width: 8),
+                      _StockFilterChip(
+                        label: 'Disabled ${disabled.length}',
+                        selected: _stockFilter == 'disabled',
+                        onTap: () =>
+                            setState(() => _stockFilter = 'disabled'),
+                      ),
+                    ],
                   ]),
+                ),
+              ),
+            if (grouped.isEmpty)
+              SliverFillRemaining(
+                hasScrollBody: false,
+                child: FoodFlowTheme.emptyState(
+                  icon: Icons.menu_book_outlined,
+                  title: 'No menu items',
+                  subtitle:
+                      'Items from this outlet will appear here once added.',
+                ),
+              )
+            else
+              for (final entry in shown.entries) ...[
+                SliverToBoxAdapter(
+                  child: _MenuSectionHeader(
+                    key: _catKeys[entry.key],
+                    title: entry.key,
+                    count: entry.value.length,
+                    onAdd: _showAddItemDialog,
+                  ),
+                ),
+                SliverPadding(
+                  padding: const EdgeInsets.fromLTRB(14, 0, 14, 4),
+                  sliver: SliverList(
+                    delegate: SliverChildBuilderDelegate(
+                      (context, i) {
+                        final item = entry.value[i];
+                        return _MenuItemTile(
+                          item: item,
+                          onTap: () => _showEditItemDialog(item),
+                          onToggle: () => _toggleAvailability(
+                              item.id, item.isAvailable),
+                          onPreview: () => _showPreviewItemDialog(item),
+                          onDelete: () => _deleteMenuItem(item.id),
+                        );
+                      },
+                      childCount: entry.value.length,
+                    ),
+                  ),
+                ),
+              ],
+            const SliverToBoxAdapter(child: SizedBox(height: 120)),
+          ],
+        ),
       ),
     );
   }
@@ -2666,8 +2856,8 @@ class _MenuItemFormScreenState extends State<_MenuItemFormScreen> {
             16,
             MediaQuery.viewInsetsOf(context).bottom + 16,
           ),
-          decoration: const BoxDecoration(
-            color: Colors.white,
+          decoration: BoxDecoration(
+            color: foodflow.isDark ? foodflow.elevatedSurface : Colors.white,
             borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
           ),
           child: Column(
@@ -2676,7 +2866,7 @@ class _MenuItemFormScreenState extends State<_MenuItemFormScreen> {
             children: [
               Row(
                 children: [
-                  const Expanded(
+                  Expanded(
                     child: Text(
                       'Add description',
                       style: TextStyle(
@@ -2756,8 +2946,8 @@ class _MenuItemFormScreenState extends State<_MenuItemFormScreen> {
           top: false,
           child: Container(
             padding: const EdgeInsets.fromLTRB(18, 18, 18, 14),
-            decoration: const BoxDecoration(
-              color: Colors.white,
+            decoration: BoxDecoration(
+              color: foodflow.isDark ? foodflow.elevatedSurface : Colors.white,
               borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
             ),
             child: Column(
@@ -2766,7 +2956,7 @@ class _MenuItemFormScreenState extends State<_MenuItemFormScreen> {
               children: [
                 Row(
                   children: [
-                    const Expanded(
+                    Expanded(
                       child: Text(
                         'Copy Add-ons from other items',
                         style: TextStyle(
@@ -2873,84 +3063,74 @@ class _MenuItemFormScreenState extends State<_MenuItemFormScreen> {
     final descriptionText = _descriptionController.text.trim();
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF0F0F4),
-      appBar: AppBar(
-        backgroundColor: Colors.white,
-        surfaceTintColor: Colors.white,
-        elevation: 1,
-        titleSpacing: 0,
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              title,
-              style: const TextStyle(
-                color: FoodFlowTheme.ink,
-                fontSize: 16,
-                fontWeight: FontWeight.w900,
-              ),
-            ),
-            if (!isAddOnOnly)
-              const Text(
-                'In Combo',
-                style: TextStyle(
-                  color: FoodFlowTheme.inkSoft,
-                  fontSize: 13,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-          ],
+      backgroundColor: foodflow.canvas,
+      extendBodyBehindAppBar: true,
+      appBar: GlassAppBar(
+        title: Text(
+          title,
+          style: TextStyle(
+            color: foodflow.ink,
+            fontSize: 17,
+            fontWeight: FontWeight.w900,
+          ),
         ),
       ),
-      bottomNavigationBar: SafeArea(
-        minimum: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-        child: Container(
-          padding: const EdgeInsets.all(10),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(18),
-            border: Border.all(color: FoodFlowTheme.line),
-          ),
-          child: SizedBox(
-            height: 52,
-            child: ElevatedButton(
-              onPressed: _isSubmitting ? null : _submit,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: FoodFlowTheme.orange,
-                disabledBackgroundColor: const Color(0xFFE1E1E7),
-                foregroundColor: Colors.white,
-                disabledForegroundColor: FoodFlowTheme.faint,
-                elevation: 0,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                textStyle: const TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w900,
+      bottomNavigationBar: ClipRect(
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+          child: Container(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+            decoration: BoxDecoration(
+              color: foodflow.canvas.withOpacity(0.82),
+              border: Border(top: BorderSide(color: foodflow.glassBorder)),
+            ),
+            child: SafeArea(
+              top: false,
+              child: SizedBox(
+                height: 52,
+                child: ElevatedButton(
+                  onPressed: _isSubmitting ? null : _submit,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: foodflow.orange,
+                    disabledBackgroundColor: foodflow.line,
+                    foregroundColor: Colors.white,
+                    disabledForegroundColor: foodflow.faint,
+                    elevation: 0,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    textStyle: const TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  child: _isSubmitting
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2, color: Colors.white),
+                        )
+                      : Text(isEditing
+                          ? 'Save changes'
+                          : 'Save & submit for review'),
                 ),
               ),
-              child: _isSubmitting
-                  ? const SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : Text(
-                      isEditing ? 'Save changes' : 'Save & Submit for review'),
             ),
           ),
         ),
       ),
-      body: SafeArea(
-        top: false,
-        child: Form(
+      body: Stack(children: [
+        ...AuroraTheme.auroraBlobs(),
+        Form(
           key: _formKey,
           child: ListView(
-            padding: const EdgeInsets.fromLTRB(0, 14, 0, 28),
+            padding: EdgeInsets.fromLTRB(
+                16, MediaQuery.of(context).padding.top + 72, 16, 28),
             children: [
               _FormSection(
-                title: 'Basic Details',
+                title: 'Basic details',
+                icon: Icons.info_outline_rounded,
                 children: [
                   Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -2963,7 +3143,7 @@ class _MenuItemFormScreenState extends State<_MenuItemFormScreen> {
                             hintText: isAddOnOnly
                                 ? 'Type add-on name*'
                                 : 'Type Item name*',
-                            hintStyle: const TextStyle(
+                            hintStyle: TextStyle(
                               color: FoodFlowTheme.faint,
                               fontWeight: FontWeight.w800,
                             ),
@@ -2984,7 +3164,7 @@ class _MenuItemFormScreenState extends State<_MenuItemFormScreen> {
                     ],
                   ),
                   const SizedBox(height: 22),
-                  const Text(
+                  Text(
                     'Item type*',
                     style: TextStyle(
                       color: FoodFlowTheme.inkSoft,
@@ -3062,14 +3242,8 @@ class _MenuItemFormScreenState extends State<_MenuItemFormScreen> {
                 ],
               ),
               _FormSection(
-                title: 'Item Pricing',
-                trailing: const Text(
-                  'Your GST Info  ?',
-                  style: TextStyle(
-                    color: FoodFlowTheme.muted,
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
+                title: 'Item pricing',
+                icon: Icons.payments_rounded,
                 children: [
                   TextFormField(
                     controller: _priceController,
@@ -3102,43 +3276,104 @@ class _MenuItemFormScreenState extends State<_MenuItemFormScreen> {
                       ),
                     ),
                   ],
+                  const SizedBox(height: 14),
+                  InkWell(
+                    onTap: () => setState(
+                        () => _priceInclusiveGst = !_priceInclusiveGst),
+                    borderRadius: BorderRadius.circular(12),
+                    child: Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: foodflow.canvas,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: foodflow.line),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(
+                            _priceInclusiveGst
+                                ? Icons.check_box_rounded
+                                : Icons.check_box_outline_blank_rounded,
+                            color: _priceInclusiveGst
+                                ? foodflow.orange
+                                : foodflow.muted,
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Price already includes GST',
+                                  style: TextStyle(
+                                      color: foodflow.ink,
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w900),
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  'Tick for packaged / MRP items (e.g. cold drinks). '
+                                  'Otherwise GST is applied at checkout per the platform tax settings.',
+                                  style: TextStyle(
+                                      color: foodflow.muted,
+                                      fontSize: 11,
+                                      height: 1.3),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
                   const SizedBox(height: 12),
-                  CheckboxListTile(
-                    value: _priceInclusiveGst,
-                    onChanged: (value) => setState(
-                      () => _priceInclusiveGst = value ?? false,
-                    ),
-                    contentPadding: EdgeInsets.zero,
-                    controlAffinity: ListTileControlAffinity.leading,
-                    title: const Text(
-                      'This price is inclusive of GST',
-                      style: TextStyle(fontWeight: FontWeight.w900),
-                    ),
-                    subtitle: const Text(
-                        'Mark if this is a packed item e.g Coldrink'),
-                  ),
-                  const Divider(height: 20, color: FoodFlowTheme.line),
-                  const Text(
-                    'Final item price',
-                    style: TextStyle(
-                      color: FoodFlowTheme.muted,
-                      fontSize: 15,
-                      fontWeight: FontWeight.w900,
-                    ),
-                  ),
-                  const Text(
-                    'Item price + GST',
-                    style: TextStyle(color: FoodFlowTheme.faint),
+                  AnimatedBuilder(
+                    animation: Listenable.merge(
+                        [_priceController, _discountedPriceController]),
+                    builder: (context, _) {
+                      final base =
+                          double.tryParse(_priceController.text.trim()) ?? 0;
+                      final offer = double.tryParse(
+                          _discountedPriceController.text.trim());
+                      final effective =
+                          (offer != null && offer > 0 && offer < base)
+                              ? offer
+                              : base;
+                      return Row(
+                        children: [
+                          Text(
+                            _priceInclusiveGst
+                                ? 'Customer pays'
+                                : 'You list (before GST)',
+                            style: TextStyle(
+                                color: foodflow.muted,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w700),
+                          ),
+                          const Spacer(),
+                          Text(
+                            effective > 0
+                                ? formatCurrency(context, effective)
+                                : '—',
+                            style: TextStyle(
+                                color: foodflow.ink,
+                                fontSize: 15,
+                                fontWeight: FontWeight.w900),
+                          ),
+                        ],
+                      );
+                    },
                   ),
                 ],
               ),
               if (!isAddOnOnly)
                 _FormSection(
                   title: 'Customisations',
+                  icon: Icons.tune_rounded,
                   children: [
                     Row(
                       children: [
-                        const Expanded(
+                        Expanded(
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
@@ -3174,7 +3409,7 @@ class _MenuItemFormScreenState extends State<_MenuItemFormScreen> {
                     const Divider(height: 26),
                     Row(
                       children: [
-                        const Expanded(
+                        Expanded(
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
@@ -3214,7 +3449,7 @@ class _MenuItemFormScreenState extends State<_MenuItemFormScreen> {
                   children: [
                     Row(
                       children: [
-                        const Icon(Icons.schedule,
+                        Icon(Icons.schedule,
                             size: 18, color: FoodFlowTheme.muted),
                         const SizedBox(width: 8),
                         Expanded(
@@ -3235,7 +3470,7 @@ class _MenuItemFormScreenState extends State<_MenuItemFormScreen> {
             ],
           ),
         ),
-      ),
+      ]),
     );
   }
 }
@@ -3267,7 +3502,7 @@ class _PreviewOptionLine extends StatelessWidget {
         children: [
           Text(
             title,
-            style: const TextStyle(
+            style: TextStyle(
               color: FoodFlowTheme.ink,
               fontWeight: FontWeight.w900,
             ),
@@ -3279,7 +3514,7 @@ class _PreviewOptionLine extends StatelessWidget {
                     ? '${option.name} (${formatCurrency(context, option.price)})'
                     : option.name)
                 .join(', '),
-            style: const TextStyle(
+            style: TextStyle(
               color: FoodFlowTheme.muted,
               fontWeight: FontWeight.w700,
             ),
@@ -3305,59 +3540,77 @@ class _MenuModeScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final topPad = MediaQuery.of(context).padding.top + 64;
     return Scaffold(
-      backgroundColor: Colors.white,
-      appBar: AppBar(
-        backgroundColor: Colors.white,
-        surfaceTintColor: Colors.white,
-        elevation: 1,
+      backgroundColor: foodflow.canvas,
+      extendBodyBehindAppBar: true,
+      appBar: GlassAppBar(
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
+          icon: Icon(Icons.arrow_back_rounded, color: foodflow.ink),
           onPressed: onBack,
         ),
-        title: const Text(
-          'Your Menu',
-          style: TextStyle(fontWeight: FontWeight.w900),
-        ),
-      ),
-      body: ListView(
-        padding: const EdgeInsets.fromLTRB(22, 32, 22, 32),
-        children: [
-          Text(
-            restaurantName,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              color: FoodFlowTheme.muted,
-              fontSize: 14,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-          const SizedBox(height: 8),
-          const Text(
-            'Select menu source',
+        title: Text('Menu source',
             style: TextStyle(
-              color: FoodFlowTheme.ink,
-              fontSize: 25,
-              fontWeight: FontWeight.w900,
-            ),
-          ),
-          const SizedBox(height: 24),
-          _MenuSourceCard(
-            icon: Icons.restaurant_menu_outlined,
-            title: 'Custom menu',
-            subtitle: 'Create and manage this outlet menu manually.',
-            onTap: onCustomMenu,
-          ),
-          const SizedBox(height: 14),
-          _MenuSourceCard(
-            icon: Icons.public_outlined,
-            title: 'Global menu',
-            subtitle: 'Select approved global items and add outlet pricing.',
-            onTap: onGlobalMenu,
-          ),
-        ],
+                color: foodflow.ink,
+                fontSize: 17,
+                fontWeight: FontWeight.w900)),
       ),
+      body: Stack(children: [
+        ...AuroraTheme.auroraBlobs(),
+        ListView(
+          padding: EdgeInsets.fromLTRB(16, topPad, 16, 28),
+          children: [
+            Text(
+              restaurantName,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: foodflow.muted,
+                fontSize: 13,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'How do you want to build this menu?',
+              style: TextStyle(
+                color: foodflow.ink,
+                fontSize: 22,
+                height: 1.2,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+            const SizedBox(height: 20),
+            _MenuSourceCard(
+              icon: Icons.tune_rounded,
+              title: 'Build a custom menu',
+              badge: 'MOST CONTROL',
+              highlighted: true,
+              bullets: const [
+                'Add your own dishes, photos and prices',
+                'Full control of categories and availability',
+                'Best for menus unique to this outlet',
+              ],
+              cta: 'Start custom menu',
+              onTap: onCustomMenu,
+            ),
+            const SizedBox(height: 14),
+            _MenuSourceCard(
+              icon: Icons.public_rounded,
+              title: 'Import from global catalog',
+              badge: 'FASTEST',
+              highlighted: false,
+              bullets: const [
+                'Pick from pre-approved platform items',
+                'Just set your outlet price for each',
+                'Quickest way to launch a standard menu',
+              ],
+              cta: 'Browse global items',
+              onTap: onGlobalMenu,
+            ),
+          ],
+        ),
+      ]),
     );
   }
 }
@@ -3365,73 +3618,135 @@ class _MenuModeScreen extends StatelessWidget {
 class _MenuSourceCard extends StatelessWidget {
   final IconData icon;
   final String title;
-  final String subtitle;
+  final String badge;
+  final bool highlighted;
+  final List<String> bullets;
+  final String cta;
   final VoidCallback onTap;
 
   const _MenuSourceCard({
     required this.icon,
     required this.title,
-    required this.subtitle,
+    required this.badge,
+    required this.highlighted,
+    required this.bullets,
+    required this.cta,
     required this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(18),
-      child: Container(
-        padding: const EdgeInsets.all(18),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(18),
-          border: Border.all(color: FoodFlowTheme.line),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.045),
-              blurRadius: 10,
-              offset: const Offset(0, 4),
+    return Material(
+      color: foodflow.surfaceColor,
+      borderRadius: BorderRadius.circular(20),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(20),
+        child: Container(
+          padding: const EdgeInsets.all(18),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(
+              color: highlighted
+                  ? foodflow.orange.withOpacity(0.5)
+                  : foodflow.line,
+              width: highlighted ? 1.4 : 1,
             ),
-          ],
-        ),
-        child: Row(
-          children: [
-            Container(
-              width: 46,
-              height: 46,
-              decoration: BoxDecoration(
-                color: FoodFlowTheme.orange.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(14),
-              ),
-              child: Icon(icon, color: FoodFlowTheme.orange),
-            ),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
                 children: [
-                  Text(
-                    title,
-                    style: const TextStyle(
-                      color: FoodFlowTheme.ink,
-                      fontSize: 17,
-                      fontWeight: FontWeight.w900,
+                  Container(
+                    width: 44,
+                    height: 44,
+                    decoration: BoxDecoration(
+                      color: foodflow.orange.withOpacity(0.10),
+                      borderRadius: BorderRadius.circular(13),
+                    ),
+                    child: Icon(icon, color: foodflow.orange),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      title,
+                      style: TextStyle(
+                        color: foodflow.ink,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w900,
+                      ),
                     ),
                   ),
-                  const SizedBox(height: 4),
-                  Text(
-                    subtitle,
-                    style: const TextStyle(
-                      color: FoodFlowTheme.muted,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w700,
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: highlighted
+                          ? foodflow.orange.withOpacity(0.12)
+                          : foodflow.canvas,
+                      borderRadius: BorderRadius.circular(999),
+                      border: Border.all(
+                          color: highlighted
+                              ? foodflow.orange.withOpacity(0.3)
+                              : foodflow.line),
+                    ),
+                    child: Text(
+                      badge,
+                      style: TextStyle(
+                        color: highlighted
+                            ? foodflow.orange
+                            : foodflow.muted,
+                        fontSize: 9,
+                        letterSpacing: 0.4,
+                        fontWeight: FontWeight.w900,
+                      ),
                     ),
                   ),
                 ],
               ),
-            ),
-            const Icon(Icons.chevron_right, color: FoodFlowTheme.inkSoft),
-          ],
+              const SizedBox(height: 14),
+              ...bullets.map(
+                (b) => Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(Icons.check_circle_rounded,
+                          size: 15, color: foodflow.orange),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          b,
+                          style: TextStyle(
+                            color: foodflow.inkSoft,
+                            fontSize: 12.5,
+                            height: 1.3,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 6),
+              Row(
+                children: [
+                  Text(
+                    cta,
+                    style: TextStyle(
+                      color: foodflow.orange,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  Icon(Icons.arrow_forward_rounded,
+                      size: 16, color: foodflow.orange),
+                ],
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -3497,123 +3812,222 @@ class _GlobalMenuCatalogScreenState extends State<_GlobalMenuCatalogScreen> {
               .contains(q);
     }).toList();
 
+    final topPad = MediaQuery.of(context).padding.top + 60;
+    final total = widget.items.whereType<Map>().length;
+
     return Scaffold(
-      backgroundColor: Colors.white,
-      appBar: AppBar(
-        backgroundColor: Colors.white,
-        surfaceTintColor: Colors.white,
-        elevation: 1,
+      backgroundColor: foodflow.canvas,
+      extendBodyBehindAppBar: true,
+      appBar: GlassAppBar(
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
+          icon: Icon(Icons.arrow_back_rounded, color: foodflow.ink),
           onPressed: widget.onBack,
         ),
-        title: const Text(
-          'Global Menu',
-          style: TextStyle(fontWeight: FontWeight.w900),
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text('Global catalog',
+                style: TextStyle(
+                    color: foodflow.ink,
+                    fontSize: 17,
+                    fontWeight: FontWeight.w900)),
+            Text(
+                _query.trim().isEmpty
+                    ? '$total approved items'
+                    : '${rows.length} of $total match',
+                style: TextStyle(
+                    color: foodflow.muted,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700)),
+          ],
         ),
       ),
-      body: ListView(
-        padding: const EdgeInsets.fromLTRB(18, 18, 18, 32),
-        children: [
-          TextField(
-            onChanged: (value) => setState(() => _query = value),
-            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
-            decoration: _menuInputDecoration(context, 'Search global items',
-                suffixIcon: const Icon(Icons.search)),
-          ),
-          const SizedBox(height: 18),
-          if (rows.isEmpty)
-            FoodFlowTheme.emptyState(
-              icon: Icons.public_off_outlined,
-              title: 'No global menu items',
-              subtitle: 'Approved global menu items will appear here.',
-            )
-          else
-            ...rows.map((item) {
-              final name = _text(item, ['name', 'title']);
-              final subtitle = [
-                _text(item, ['category_name']),
-                _text(item, ['subcategory_name']),
-                _text(item, ['cuisine_name']),
-              ].where((value) => value.isNotEmpty).join(_menuMetadataSeparator);
-              final image = _image(item);
-              final price = _price(item);
-              return InkWell(
-                onTap: () => widget.onSelect(item),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                  decoration: const BoxDecoration(
-                    border:
-                        Border(bottom: BorderSide(color: FoodFlowTheme.line)),
+      body: Stack(children: [
+        ...AuroraTheme.auroraBlobs(),
+        Column(
+          children: [
+            SizedBox(height: topPad),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 4, 16, 10),
+              child: Container(
+                decoration: BoxDecoration(
+                  color: foodflow.surfaceColor,
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: foodflow.line),
+                ),
+                child: TextField(
+                  onChanged: (value) => setState(() => _query = value),
+                  style: TextStyle(
+                      fontSize: 14,
+                      color: foodflow.ink,
+                      fontWeight: FontWeight.w600),
+                  decoration: InputDecoration(
+                    isDense: true,
+                    hintText: 'Search dishes or categories',
+                    hintStyle: TextStyle(color: foodflow.muted, fontSize: 14),
+                    prefixIcon:
+                        Icon(Icons.search_rounded, color: foodflow.muted),
+                    border: InputBorder.none,
+                    contentPadding:
+                        const EdgeInsets.symmetric(vertical: 14),
                   ),
-                  child: Row(
-                    children: [
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(12),
-                        child: image == null
-                            ? Container(
-                                width: 54,
-                                height: 54,
-                                color: const Color(0xFFF3F3F6),
-                                child: const Icon(Icons.restaurant_menu,
-                                    color: FoodFlowTheme.muted),
-                              )
-                            : NetworkImageLoader(
-                                imageUrl: image,
-                                width: 54,
-                                height: 54,
+                ),
+              ),
+            ),
+            Expanded(
+              child: rows.isEmpty
+                  ? FoodFlowTheme.emptyState(
+                      icon: Icons.public_off_outlined,
+                      title: 'No matching items',
+                      subtitle:
+                          'Approved global menu items will appear here.',
+                    )
+                  : ListView.separated(
+                      padding: const EdgeInsets.fromLTRB(16, 4, 16, 28),
+                      itemCount: rows.length,
+                      separatorBuilder: (_, __) =>
+                          const SizedBox(height: 10),
+                      itemBuilder: (context, i) {
+                        final item = rows[i];
+                        final name = _text(item, ['name', 'title']);
+                        final tags = [
+                          _text(item, ['category_name']),
+                          _text(item, ['subcategory_name']),
+                          _text(item, ['cuisine_name']),
+                        ].where((v) => v.isNotEmpty).toList();
+                        final image = _image(item);
+                        final price = _price(item);
+                        return Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: foodflow.surfaceColor,
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(color: foodflow.line),
+                          ),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              ClipRRect(
                                 borderRadius: BorderRadius.circular(12),
+                                child: image == null
+                                    ? Container(
+                                        width: 54,
+                                        height: 54,
+                                        color: foodflow.canvas,
+                                        child: Icon(Icons.restaurant_menu,
+                                            color: foodflow.muted),
+                                      )
+                                    : NetworkImageLoader(
+                                        imageUrl: image,
+                                        width: 54,
+                                        height: 54,
+                                        borderRadius:
+                                            BorderRadius.circular(12),
+                                      ),
                               ),
-                      ),
-                      const SizedBox(width: 14),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              name.isEmpty ? 'Menu item' : name,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                color: FoodFlowTheme.ink,
-                                fontSize: 16,
-                                fontWeight: FontWeight.w900,
-                              ),
-                            ),
-                            if (subtitle.isNotEmpty) ...[
-                              const SizedBox(height: 3),
-                              Text(
-                                subtitle,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  color: FoodFlowTheme.muted,
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w700,
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.start,
+                                  children: [
+                                    Row(
+                                      children: [
+                                        Expanded(
+                                          child: Text(
+                                            name.isEmpty ? 'Menu item' : name,
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: TextStyle(
+                                              color: foodflow.ink,
+                                              fontSize: 14,
+                                              fontWeight: FontWeight.w900,
+                                            ),
+                                          ),
+                                        ),
+                                        if (price != null)
+                                          Text(
+                                            formatCurrency(context, price),
+                                            style: TextStyle(
+                                              color: foodflow.ink,
+                                              fontSize: 13,
+                                              fontWeight: FontWeight.w900,
+                                            ),
+                                          ),
+                                      ],
+                                    ),
+                                    if (tags.isNotEmpty) ...[
+                                      const SizedBox(height: 6),
+                                      Wrap(
+                                        spacing: 6,
+                                        runSpacing: 6,
+                                        children: tags
+                                            .map((t) => Container(
+                                                  padding: const EdgeInsets
+                                                      .symmetric(
+                                                      horizontal: 7,
+                                                      vertical: 3),
+                                                  decoration: BoxDecoration(
+                                                    color: foodflow.canvas,
+                                                    borderRadius:
+                                                        BorderRadius.circular(
+                                                            6),
+                                                    border: Border.all(
+                                                        color:
+                                                            foodflow.line),
+                                                  ),
+                                                  child: Text(t,
+                                                      style: TextStyle(
+                                                          color: foodflow
+                                                              .muted,
+                                                          fontSize: 10,
+                                                          fontWeight:
+                                                              FontWeight
+                                                                  .w700)),
+                                                ))
+                                            .toList(),
+                                      ),
+                                    ],
+                                    const SizedBox(height: 10),
+                                    SizedBox(
+                                      height: 34,
+                                      child: OutlinedButton.icon(
+                                        onPressed: () =>
+                                            widget.onSelect(item),
+                                        icon: const Icon(Icons.add_rounded,
+                                            size: 16),
+                                        label: const Text('Add to my menu'),
+                                        style: OutlinedButton.styleFrom(
+                                          foregroundColor: foodflow.orange,
+                                          side: BorderSide(
+                                              color: foodflow.orange
+                                                  .withOpacity(0.4)),
+                                          padding:
+                                              const EdgeInsets.symmetric(
+                                                  horizontal: 12),
+                                          shape: RoundedRectangleBorder(
+                                            borderRadius:
+                                                BorderRadius.circular(10),
+                                          ),
+                                          textStyle: const TextStyle(
+                                              fontSize: 12,
+                                              fontWeight: FontWeight.w800),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
                                 ),
                               ),
                             ],
-                          ],
-                        ),
-                      ),
-                      if (price != null)
-                        Text(
-                          formatCurrency(context, price),
-                          style: const TextStyle(
-                            color: FoodFlowTheme.success,
-                            fontWeight: FontWeight.w900,
                           ),
-                        ),
-                      const SizedBox(width: 8),
-                      const Icon(Icons.chevron_right,
-                          color: FoodFlowTheme.inkSoft),
-                    ],
-                  ),
-                ),
-              );
-            }),
-        ],
-      ),
+                        );
+                      },
+                    ),
+            ),
+          ],
+        ),
+      ]),
     );
   }
 }
@@ -3677,8 +4091,8 @@ class _GlobalItemImportSheetState extends State<_GlobalItemImportSheet> {
           18,
           MediaQuery.viewInsetsOf(context).bottom + 18,
         ),
-        decoration: const BoxDecoration(
-          color: Colors.white,
+        decoration: BoxDecoration(
+          color: foodflow.isDark ? foodflow.elevatedSurface : Colors.white,
           borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
         ),
         child: Form(
@@ -3694,7 +4108,7 @@ class _GlobalItemImportSheetState extends State<_GlobalItemImportSheet> {
                       _name(),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
+                      style: TextStyle(
                         color: FoodFlowTheme.ink,
                         fontSize: 18,
                         fontWeight: FontWeight.w900,
@@ -3807,82 +4221,147 @@ class _OutletPickerScreen extends StatelessWidget {
   }
 
   @override
-  Widget build(BuildContext context) => Scaffold(
-        backgroundColor: Colors.white,
-        appBar: AppBar(
-            backgroundColor: Colors.white,
-            title: const Text('Your Menu',
-                style: TextStyle(fontWeight: FontWeight.w900))),
-        body: isLoading && restaurants.isEmpty
+  Widget build(BuildContext context) {
+    final topPad = MediaQuery.of(context).padding.top + 64;
+    return Scaffold(
+      backgroundColor: foodflow.canvas,
+      extendBodyBehindAppBar: true,
+      appBar: GlassAppBar(
+        title: Text('Choose outlet',
+            style: TextStyle(
+                color: foodflow.ink,
+                fontSize: 17,
+                fontWeight: FontWeight.w900)),
+      ),
+      body: Stack(children: [
+        ...AuroraTheme.auroraBlobs(),
+        isLoading && restaurants.isEmpty
             ? const Center(child: CircularProgressIndicator())
             : ListView(
-                padding: const EdgeInsets.fromLTRB(24, 56, 24, 24),
+                padding: EdgeInsets.fromLTRB(16, topPad, 16, 28),
                 children: [
-                    const Text('Select an outlet',
-                        style: TextStyle(
-                            color: FoodFlowTheme.ink,
-                            fontSize: 26,
-                            fontWeight: FontWeight.w900)),
-                    const SizedBox(height: 34),
-                    if (restaurants.isEmpty)
-                      FoodFlowTheme.emptyState(
-                          icon: Icons.storefront_outlined,
-                          title: 'No outlets found',
-                          subtitle:
-                              'Outlets from your account will appear here.')
-                    else
-                      ...restaurants.map((restaurant) {
-                        final id = _id(restaurant);
-                        final online = _online(restaurant);
-                        final subtitle = [
-                          online ? 'Online' : 'Offline',
-                          restaurant['area'],
-                          restaurant['city']
-                        ]
-                            .map((part) => part?.toString().trim() ?? '')
-                            .where((part) => part.isNotEmpty)
-                            .join(' - ');
-                        return InkWell(
+                  Text(
+                    'Which outlet’s menu do you want to manage?',
+                    style: TextStyle(
+                        color: foodflow.ink,
+                        fontSize: 20,
+                        height: 1.2,
+                        fontWeight: FontWeight.w900),
+                  ),
+                  const SizedBox(height: 18),
+                  if (restaurants.isEmpty)
+                    FoodFlowTheme.emptyState(
+                        icon: Icons.storefront_outlined,
+                        title: 'No outlets found',
+                        subtitle:
+                            'Outlets from your account will appear here.')
+                  else
+                    ...restaurants.map((restaurant) {
+                      final id = _id(restaurant);
+                      final online = _online(restaurant);
+                      final selected = id == selectedRestaurantId;
+                      final location = [
+                        restaurant['area'],
+                        restaurant['city'],
+                      ]
+                          .map((p) => p?.toString().trim() ?? '')
+                          .where((p) => p.isNotEmpty)
+                          .join(', ');
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 10),
+                        child: Material(
+                          color: foodflow.surfaceColor,
+                          borderRadius: BorderRadius.circular(16),
+                          child: InkWell(
                             onTap: () => onSelect(id),
+                            borderRadius: BorderRadius.circular(16),
                             child: Container(
-                                padding:
-                                    const EdgeInsets.symmetric(vertical: 18),
-                                decoration: const BoxDecoration(
-                                    border: Border(
-                                        bottom: BorderSide(
-                                            color: FoodFlowTheme.line))),
-                                child: Row(children: [
-                                  Icon(Icons.navigation,
-                                      color: FoodFlowTheme.orange, size: 30),
-                                  const SizedBox(width: 18),
-                                  Expanded(
-                                      child: Column(
-                                          crossAxisAlignment:
-                                              CrossAxisAlignment.start,
-                                          children: [
-                                        Text(
-                                            restaurant['name']?.toString() ??
-                                                'Outlet',
-                                            style: const TextStyle(
-                                                fontSize: 18,
-                                                fontWeight: FontWeight.w900)),
-                                        const SizedBox(height: 4),
-                                        Text(subtitle,
+                              padding: const EdgeInsets.all(14),
+                              decoration: BoxDecoration(
+                                borderRadius: BorderRadius.circular(16),
+                                border: Border.all(
+                                  color: selected
+                                      ? foodflow.orange
+                                      : foodflow.line,
+                                  width: selected ? 1.4 : 1,
+                                ),
+                              ),
+                              child: Row(children: [
+                                Container(
+                                  width: 44,
+                                  height: 44,
+                                  alignment: Alignment.center,
+                                  decoration: BoxDecoration(
+                                    color: foodflow.orange.withOpacity(0.10),
+                                    borderRadius: BorderRadius.circular(13),
+                                  ),
+                                  child: Icon(Icons.storefront_rounded,
+                                      color: foodflow.orange),
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        restaurant['name']?.toString() ??
+                                            'Outlet',
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                            color: foodflow.ink,
+                                            fontSize: 15,
+                                            fontWeight: FontWeight.w900),
+                                      ),
+                                      const SizedBox(height: 3),
+                                      Row(children: [
+                                        Container(
+                                          width: 7,
+                                          height: 7,
+                                          decoration: BoxDecoration(
+                                            color: online
+                                                ? const Color(0xFF16A34A)
+                                                : foodflow.muted,
+                                            shape: BoxShape.circle,
+                                          ),
+                                        ),
+                                        const SizedBox(width: 6),
+                                        Flexible(
+                                          child: Text(
+                                            [
+                                              online ? 'Online' : 'Offline',
+                                              if (location.isNotEmpty) location,
+                                            ].join('  ·  '),
                                             maxLines: 1,
                                             overflow: TextOverflow.ellipsis,
                                             style: TextStyle(
-                                                color: online
-                                                    ? FoodFlowTheme.success
-                                                    : FoodFlowTheme.danger,
-                                                fontWeight: FontWeight.w700))
-                                      ])),
-                                  if (id == selectedRestaurantId)
-                                    const Icon(Icons.check_circle,
-                                        color: FoodFlowTheme.success)
-                                ])));
-                      }),
-                  ]),
-      );
+                                                color: foodflow.muted,
+                                                fontSize: 11.5,
+                                                fontWeight: FontWeight.w700),
+                                          ),
+                                        ),
+                                      ]),
+                                    ],
+                                  ),
+                                ),
+                                if (selected)
+                                  Icon(Icons.check_circle_rounded,
+                                      color: foodflow.orange)
+                                else
+                                  Icon(Icons.chevron_right_rounded,
+                                      color: foodflow.faint),
+                              ]),
+                            ),
+                          ),
+                        ),
+                      );
+                    }),
+                ],
+              ),
+      ]),
+    );
+  }
 }
 
 class _MenuPill extends StatelessWidget {
@@ -3898,12 +4377,15 @@ class _MenuPill extends StatelessWidget {
       child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
           decoration: BoxDecoration(
-              color: selected ? FoodFlowTheme.ink : Colors.white,
+              color: selected
+                  ? foodflow.orange
+                  : (foodflow.isDark ? foodflow.surfaceColor : Colors.white),
               borderRadius: BorderRadius.circular(24),
-              border: Border.all(color: FoodFlowTheme.line)),
+              border: Border.all(
+                  color: selected ? foodflow.orange : foodflow.line)),
           child: Text(label,
               style: TextStyle(
-                  color: selected ? Colors.white : FoodFlowTheme.inkSoft,
+                  color: selected ? Colors.white : foodflow.inkSoft,
                   fontWeight: FontWeight.w900))));
 }
 
@@ -3917,7 +4399,7 @@ class _MenuTip extends StatelessWidget {
           color: const Color(0xFFF0EAFE),
           borderRadius: BorderRadius.circular(14)),
       child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        const Expanded(
+        Expanded(
             child: Text(
                 'Use the add item button to create real menu entries for this outlet.',
                 style: TextStyle(
@@ -3946,12 +4428,12 @@ class _MenuStrip extends StatelessWidget {
         const SizedBox(width: 10),
         Expanded(
             child: Text(label,
-                style: const TextStyle(
+                style: TextStyle(
                     color: FoodFlowTheme.muted,
                     fontSize: 12,
                     letterSpacing: 1.2,
                     fontWeight: FontWeight.w900))),
-        const Icon(Icons.keyboard_arrow_down, color: FoodFlowTheme.muted)
+        Icon(Icons.keyboard_arrow_down, color: FoodFlowTheme.muted)
       ]));
 }
 
@@ -3969,13 +4451,13 @@ class _CreateAddOnRow extends StatelessWidget {
                 height: 38,
                 alignment: Alignment.center,
                 decoration: BoxDecoration(
-                    border: Border.all(color: FoodFlowTheme.line),
-                    borderRadius: BorderRadius.circular(4)),
-                child: Icon(Icons.add, color: FoodFlowTheme.success)),
+                    border: Border.all(color: foodflow.line),
+                    borderRadius: BorderRadius.circular(8)),
+                child: Icon(Icons.add, color: foodflow.orange)),
             const SizedBox(width: 14),
-            const Text('Create an add-on',
+            Text('Create an add-on',
                 style: TextStyle(
-                    color: FoodFlowTheme.inkSoft,
+                    color: foodflow.inkSoft,
                     fontSize: 15,
                     fontWeight: FontWeight.w900))
           ])));
@@ -4012,22 +4494,28 @@ class _MenuStatusBlockState extends State<_MenuStatusBlock> {
   @override
   Widget build(BuildContext context) {
     return Container(
-      color: widget.color,
+      margin: const EdgeInsets.only(bottom: 10),
+      decoration: BoxDecoration(
+        color: widget.color,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: foodflow.line),
+      ),
+      clipBehavior: Clip.antiAlias,
       child: Column(
         children: [
           InkWell(
             onTap: () => setState(() => _expanded = !_expanded),
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(18, 12, 14, 12),
+              padding: const EdgeInsets.fromLTRB(16, 12, 12, 12),
               child: Row(
                 children: [
-                  Icon(widget.icon, color: FoodFlowTheme.danger, size: 16),
+                  Icon(widget.icon, color: foodflow.danger, size: 16),
                   const SizedBox(width: 10),
                   Expanded(
                     child: Text(
                       widget.label,
-                      style: const TextStyle(
-                        color: FoodFlowTheme.inkSoft,
+                      style: TextStyle(
+                        color: foodflow.inkSoft,
                         fontSize: 12,
                         fontWeight: FontWeight.w900,
                         letterSpacing: 1.6,
@@ -4082,15 +4570,20 @@ class _MenuCategoryBlock extends StatelessWidget {
       required this.onToggle});
   @override
   Widget build(BuildContext context) => Container(
-      margin: const EdgeInsets.only(top: 8),
-      color: Colors.white,
+      margin: const EdgeInsets.only(bottom: 10),
+      decoration: BoxDecoration(
+        color: foodflow.isDark ? foodflow.elevatedSurface : Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: foodflow.line),
+      ),
+      clipBehavior: Clip.antiAlias,
       child: Column(children: [
         ListTile(
             onTap: onToggleExpanded,
             title: Text(title,
-                style: const TextStyle(
-                    color: FoodFlowTheme.inkSoft,
-                    fontSize: 18,
+                style: TextStyle(
+                    color: foodflow.inkSoft,
+                    fontSize: 16,
                     fontWeight: FontWeight.w900)),
             trailing: Row(mainAxisSize: MainAxisSize.min, children: [
               IconButton(
@@ -4128,13 +4621,13 @@ class _CreateItemRow extends StatelessWidget {
                 height: 38,
                 alignment: Alignment.center,
                 decoration: BoxDecoration(
-                    border: Border.all(color: FoodFlowTheme.line),
-                    borderRadius: BorderRadius.circular(4)),
-                child: Icon(Icons.add, color: FoodFlowTheme.success)),
+                    border: Border.all(color: foodflow.line),
+                    borderRadius: BorderRadius.circular(8)),
+                child: Icon(Icons.add, color: foodflow.orange)),
             const SizedBox(width: 14),
-            const Text('Add an item',
+            Text('Add an item',
                 style: TextStyle(
-                    color: FoodFlowTheme.inkSoft,
+                    color: foodflow.inkSoft,
                     fontSize: 15,
                     fontWeight: FontWeight.w900))
           ])));
@@ -4155,18 +4648,20 @@ class _CompactMenuItemRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Container(
       padding: const EdgeInsets.fromLTRB(18, 14, 18, 14),
-      decoration: const BoxDecoration(
-          border: Border(top: BorderSide(color: Color(0xFFF0F0F0)))),
+      decoration: BoxDecoration(
+          border: Border(top: BorderSide(color: foodflow.line))),
       child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
         ClipRRect(
-            borderRadius: BorderRadius.circular(4),
+            borderRadius: BorderRadius.circular(10),
             child: item.imageUrl.isEmpty
                 ? Container(
                     width: 56,
                     height: 56,
-                    color: const Color(0xFFEDEDEE),
-                    child: const Icon(Icons.fastfood_outlined,
-                        color: FoodFlowTheme.muted))
+                    color: foodflow.isDark
+                        ? foodflow.surfaceColor
+                        : const Color(0xFFEDEDEE),
+                    child: Icon(Icons.fastfood_outlined,
+                        color: foodflow.muted))
                 : NetworkImageLoader(
                     imageUrl: item.imageUrl,
                     width: 56,
@@ -4179,13 +4674,13 @@ class _CompactMenuItemRow extends StatelessWidget {
           FoodFlowTheme.vegDot(item.foodType != 'non_veg', size: 14),
           const SizedBox(height: 5),
           Text('${item.name}, ${formatCurrency(context, item.finalPrice)}',
-              style: const TextStyle(
-                  color: FoodFlowTheme.inkSoft, fontWeight: FontWeight.w900)),
+              style: TextStyle(
+                  color: foodflow.inkSoft, fontWeight: FontWeight.w900)),
           if (item.unavailableUntil != null) ...[
             const SizedBox(height: 4),
             Text(
               _availabilityLabel(context),
-              style: const TextStyle(
+              style: TextStyle(
                 color: FoodFlowTheme.danger,
                 fontSize: 11,
                 fontWeight: FontWeight.w700,
@@ -4201,7 +4696,7 @@ class _CompactMenuItemRow extends StatelessWidget {
         Switch(
             value: item.isAvailable,
             onChanged: (_) => onToggle(),
-            activeColor: FoodFlowTheme.success),
+            activeColor: foodflow.success),
         PopupMenuButton<String>(
             onSelected: (value) {
               if (value == 'edit') onEdit();
@@ -4230,8 +4725,8 @@ class _AddonRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Container(
       padding: const EdgeInsets.fromLTRB(18, 16, 18, 16),
-      decoration: const BoxDecoration(
-          border: Border(top: BorderSide(color: Color(0xFFF0F0F0)))),
+      decoration: BoxDecoration(
+          border: Border(top: BorderSide(color: foodflow.line))),
       child: Row(children: [
         FoodFlowTheme.vegDot(addon.sourceItem.foodType != 'non_veg', size: 14),
         const SizedBox(width: 12),
@@ -4239,58 +4734,62 @@ class _AddonRow extends StatelessWidget {
             child:
                 Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text('${addon.name}, ${formatCurrency(context, addon.price)}',
-              style: const TextStyle(
-                  color: FoodFlowTheme.inkSoft, fontWeight: FontWeight.w900)),
+              style: TextStyle(
+                  color: foodflow.inkSoft, fontWeight: FontWeight.w900)),
           const SizedBox(height: 8),
           InkWell(onTap: onEdit, child: const Text('Edit'))
         ])),
         Switch(
             value: addon.isAvailable,
             onChanged: (_) => onToggle(),
-            activeColor: FoodFlowTheme.success)
+            activeColor: foodflow.success)
       ]));
 }
 
 class _FormSection extends StatelessWidget {
   final String title;
-  final Widget? trailing;
+  final IconData? icon;
   final List<Widget> children;
 
   const _FormSection({
     required this.title,
-    this.trailing,
+    this.icon,
     required this.children,
   });
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      margin: const EdgeInsets.fromLTRB(0, 0, 0, 16),
-      padding: const EdgeInsets.fromLTRB(16, 18, 16, 16),
+      margin: const EdgeInsets.fromLTRB(0, 0, 0, 14),
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: foodflow.surfaceColor,
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: FoodFlowTheme.line),
+        border: Border.all(color: foodflow.line),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
+              if (icon != null) ...[
+                Icon(icon, size: 16, color: foodflow.orange),
+                const SizedBox(width: 8),
+              ],
               Expanded(
                 child: Text(
-                  title,
-                  style: const TextStyle(
-                    color: FoodFlowTheme.inkSoft,
-                    fontSize: 19,
+                  title.toUpperCase(),
+                  style: TextStyle(
+                    color: foodflow.muted,
+                    fontSize: 12,
+                    letterSpacing: 0.6,
                     fontWeight: FontWeight.w900,
                   ),
                 ),
               ),
-              if (trailing != null) trailing!,
             ],
           ),
-          const Divider(height: 24),
+          Divider(height: 22, color: foodflow.line),
           ...children,
         ],
       ),
@@ -4399,7 +4898,7 @@ class _DashedPhotoButton extends StatelessWidget {
                       width: 24,
                       height: 24,
                       decoration: BoxDecoration(
-                        color: Colors.white,
+                        color: foodflow.isDark ? foodflow.elevatedSurface : Colors.white,
                         borderRadius: BorderRadius.circular(4),
                         boxShadow: const [
                           BoxShadow(
@@ -4431,8 +4930,8 @@ class _MenuPhotoPlaceholder extends StatelessWidget {
     return Column(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        const Text(
-          'ADD\\nPHOTO',
+        Text(
+          'ADD\nPHOTO',
           textAlign: TextAlign.center,
           style: TextStyle(
             color: FoodFlowTheme.inkSoft,
@@ -4474,7 +4973,7 @@ class _VariantEditorScreenState extends State<_VariantEditorScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: foodflow.surfaceColor,
       appBar: AppBar(
         leading: IconButton(
           icon: const Icon(Icons.close),
@@ -4512,7 +5011,7 @@ class _VariantEditorScreenState extends State<_VariantEditorScreen> {
             style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
           ),
           const SizedBox(height: 6),
-          const Text(
+          Text(
             'Please ensure that the options are in low to high price order',
             style: TextStyle(color: FoodFlowTheme.muted),
           ),
@@ -4624,13 +5123,13 @@ class _MenuOptionEditorState extends State<_MenuOptionEditor> {
               width: double.infinity,
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: Colors.white,
+                color: foodflow.isDark ? foodflow.elevatedSurface : Colors.white,
                 borderRadius: BorderRadius.circular(10),
                 border: Border.all(color: const Color(0xFFE5E7EB)),
               ),
               child: Text(
                 widget.emptyText,
-                style: const TextStyle(
+                style: TextStyle(
                   color: FoodFlowTheme.muted,
                   fontWeight: FontWeight.w700,
                 ),
@@ -4644,7 +5143,7 @@ class _MenuOptionEditorState extends State<_MenuOptionEditor> {
                   bottom: index == _options.length - 1 ? 0 : 10),
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: Colors.white,
+                color: foodflow.isDark ? foodflow.elevatedSurface : Colors.white,
                 borderRadius: BorderRadius.circular(10),
                 border: Border.all(color: const Color(0xFFE5E7EB)),
               ),
@@ -4689,7 +5188,7 @@ class _MenuOptionEditorState extends State<_MenuOptionEditor> {
                       IconButton(
                         tooltip: 'Remove option',
                         onPressed: () => _removeOption(index),
-                        icon: const Icon(Icons.close,
+                        icon: Icon(Icons.close,
                             color: FoodFlowTheme.danger),
                       ),
                     ],
@@ -4746,7 +5245,7 @@ class _MenuOptionEditorState extends State<_MenuOptionEditor> {
                   children: [
                     Text(
                       widget.label,
-                      style: const TextStyle(
+                      style: TextStyle(
                         color: FoodFlowTheme.ink,
                         fontWeight: FontWeight.w900,
                       ),
@@ -4754,7 +5253,7 @@ class _MenuOptionEditorState extends State<_MenuOptionEditor> {
                     const SizedBox(height: 2),
                     Text(
                       widget.helpText,
-                      style: const TextStyle(
+                      style: TextStyle(
                         color: FoodFlowTheme.muted,
                         fontSize: 12,
                         fontWeight: FontWeight.w600,
@@ -4819,7 +5318,7 @@ class _MenuOperatorCard extends StatelessWidget {
         margin: const EdgeInsets.only(bottom: 8),
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: foodflow.isDark ? foodflow.elevatedSurface : Colors.white,
           borderRadius: BorderRadius.circular(8),
           border: Border.all(
             color: isSelected ? FoodFlowTheme.orange : FoodFlowTheme.line,
@@ -4861,7 +5360,7 @@ class _MenuOperatorCard extends StatelessWidget {
                       Expanded(
                         child: Text(
                           item.name,
-                          style: const TextStyle(
+                          style: TextStyle(
                             color: FoodFlowTheme.ink,
                             fontWeight: FontWeight.w900,
                             fontSize: 15,
@@ -4877,7 +5376,7 @@ class _MenuOperatorCard extends StatelessWidget {
                   const SizedBox(height: 3),
                   Text(
                     metadata,
-                    style: const TextStyle(
+                    style: TextStyle(
                       color: FoodFlowTheme.muted,
                       fontSize: 12,
                       fontWeight: FontWeight.w700,
@@ -4891,7 +5390,7 @@ class _MenuOperatorCard extends StatelessWidget {
                       if (item.hasDiscount) ...[
                         Text(
                           formatCurrency(context, item.price),
-                          style: const TextStyle(
+                          style: TextStyle(
                             decoration: TextDecoration.lineThrough,
                             fontSize: 12,
                             color: FoodFlowTheme.faint,
@@ -4922,7 +5421,7 @@ class _MenuOperatorCard extends StatelessWidget {
                             '${item.totalOrders} orders',
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
+                            style: TextStyle(
                               color: FoodFlowTheme.muted,
                               fontSize: 11,
                               fontWeight: FontWeight.w800,
@@ -5162,7 +5661,7 @@ class _CategoryChip extends StatelessWidget {
         selected: selected,
         onSelected: (_) => onTap(),
         selectedColor: FoodFlowTheme.orange,
-        backgroundColor: Colors.white,
+        backgroundColor: foodflow.surfaceColor,
         labelStyle: TextStyle(
           color: selected ? Colors.white : FoodFlowTheme.ink,
           fontWeight: FontWeight.w900,
@@ -5234,6 +5733,408 @@ class _BulkActionToolbar extends StatelessWidget {
             icon: const Icon(Icons.delete_outline, color: Colors.white),
           ),
         ],
+      ),
+    );
+  }
+}
+
+
+class _MenuTopBar extends StatelessWidget {
+  const _MenuTopBar({
+    required this.searchController,
+    required this.onSearch,
+    required this.tabIndex,
+    required this.onTab,
+    required this.onAddCategory,
+  });
+
+  final TextEditingController searchController;
+  final ValueChanged<String> onSearch;
+  final int tabIndex;
+  final ValueChanged<int> onTab;
+  final VoidCallback onAddCategory;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(6),
+      decoration: BoxDecoration(
+        color: foodflow.isDark ? foodflow.elevatedSurface : Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: foodflow.line),
+      ),
+      child: Column(
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: _seg('Menu Items', tabIndex == 0, () => onTab(0)),
+              ),
+              const SizedBox(width: 6),
+              Expanded(
+                child: _seg('Add-ons', tabIndex == 1, () => onTab(1)),
+              ),
+              if (tabIndex == 0)
+                IconButton(
+                  onPressed: onAddCategory,
+                  visualDensity: VisualDensity.compact,
+                  icon: Icon(Icons.create_new_folder_outlined,
+                      color: foodflow.orange),
+                  tooltip: 'New category',
+                ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          TextField(
+            controller: searchController,
+            onChanged: onSearch,
+            decoration: InputDecoration(
+              isDense: true,
+              hintText: tabIndex == 0 ? 'Search items' : 'Search add-ons',
+              prefixIcon: Icon(Icons.search, size: 20, color: foodflow.muted),
+              filled: true,
+              fillColor: foodflow.isDark
+                  ? foodflow.surfaceColor
+                  : foodflow.canvas,
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide.none,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _seg(String label, bool sel, VoidCallback onTap) {
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 160),
+        padding: const EdgeInsets.symmetric(vertical: 10),
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: sel ? foodflow.orange : Colors.transparent,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Text(label,
+            style: TextStyle(
+              color: sel ? Colors.white : foodflow.muted,
+              fontSize: 13,
+              fontWeight: FontWeight.w900,
+            )),
+      ),
+    );
+  }
+}
+
+/// Pinned, scroll-spy category chip strip.
+class _MenuCategoryStrip extends SliverPersistentHeaderDelegate {
+  _MenuCategoryStrip({
+    required this.cats,
+    required this.active,
+    required this.onTap,
+  });
+
+  final List<String> cats;
+  final String? active;
+  final ValueChanged<String> onTap;
+
+  @override
+  double get minExtent => 50;
+  @override
+  double get maxExtent => 50;
+
+  @override
+  Widget build(BuildContext context, double shrinkOffset, bool overlaps) {
+    return ClipRect(
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+        child: Container(
+          color: foodflow.canvas.withOpacity(0.75),
+          alignment: Alignment.centerLeft,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+            itemCount: cats.length,
+            separatorBuilder: (_, __) => const SizedBox(width: 8),
+            itemBuilder: (context, i) {
+              final c = cats[i];
+              final sel = c == active;
+              return GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () => onTap(c),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 160),
+                  alignment: Alignment.center,
+                  padding: const EdgeInsets.symmetric(horizontal: 14),
+                  decoration: BoxDecoration(
+                    color: sel
+                        ? foodflow.orange
+                        : (foodflow.isDark
+                            ? foodflow.elevatedSurface
+                            : Colors.white),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                        color: sel ? foodflow.orange : foodflow.line),
+                  ),
+                  child: Text(
+                    c,
+                    style: TextStyle(
+                      color: sel ? Colors.white : foodflow.ink,
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  bool shouldRebuild(covariant _MenuCategoryStrip old) =>
+      old.active != active || old.cats != cats;
+}
+
+class _StockFilterChip extends StatelessWidget {
+  const _StockFilterChip({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+    this.tint,
+  });
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+  final Color? tint;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = tint ?? foodflow.orange;
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+        decoration: BoxDecoration(
+          color: selected ? c : c.withOpacity(0.10),
+          borderRadius: BorderRadius.circular(99),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            color: selected ? Colors.white : c,
+            fontSize: 11.5,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _MenuSectionHeader extends StatelessWidget {
+  const _MenuSectionHeader({
+    super.key,
+    required this.title,
+    required this.count,
+    required this.onAdd,
+  });
+  final String title;
+  final int count;
+  final VoidCallback onAdd;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 18, 10, 6),
+      child: Row(
+        children: [
+          Text(
+            title,
+            style: TextStyle(
+              color: foodflow.ink,
+              fontSize: 16,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+            decoration: BoxDecoration(
+              color: foodflow.orange.withOpacity(0.12),
+              borderRadius: BorderRadius.circular(99),
+            ),
+            child: Text('$count',
+                style: TextStyle(
+                  color: foodflow.orange,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w900,
+                )),
+          ),
+          const Spacer(),
+          TextButton.icon(
+            onPressed: onAdd,
+            icon: const Icon(Icons.add, size: 16),
+            label: const Text('Add'),
+            style: TextButton.styleFrom(
+              visualDensity: VisualDensity.compact,
+              foregroundColor: foodflow.orange,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Visual menu item card for the 2-col grid.
+class _MenuItemTile extends StatelessWidget {
+  const _MenuItemTile({
+    required this.item,
+    required this.onTap,
+    required this.onToggle,
+    required this.onPreview,
+    required this.onDelete,
+  });
+
+  final MenuItem item;
+  final VoidCallback onTap;
+  final VoidCallback onToggle;
+  final VoidCallback onPreview;
+  final VoidCallback onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    final dim = item.isOutOfStock || item.isDisabled;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Material(
+        color: foodflow.isDark ? foodflow.elevatedSurface : Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(10, 10, 6, 10),
+            child: Row(
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(12),
+                  child: SizedBox(
+                    width: 56,
+                    height: 56,
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        if (item.imageUrl.isEmpty)
+                          DecoratedBox(
+                            decoration: BoxDecoration(
+                              gradient: LinearGradient(
+                                begin: Alignment.topLeft,
+                                end: Alignment.bottomRight,
+                                colors: [
+                                  foodflow.orange.withOpacity(0.16),
+                                  foodflow.orange.withOpacity(0.04),
+                                ],
+                              ),
+                            ),
+                            child: Icon(Icons.restaurant_menu_rounded,
+                                color: foodflow.orange.withOpacity(0.5),
+                                size: 24),
+                          )
+                        else
+                          NetworkImageLoader(
+                            imageUrl: item.imageUrl,
+                            fit: BoxFit.cover,
+                          ),
+                        if (dim)
+                          Container(color: Colors.black.withOpacity(0.45)),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Row(
+                        children: [
+                          FoodFlowTheme.vegDot(
+                              item.foodType != 'non_veg',
+                              size: 13),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Text(
+                              item.name,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: foodflow.ink,
+                                fontSize: 14,
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 3),
+                      Row(
+                        children: [
+                          Text(
+                            formatCurrency(context, item.finalPrice),
+                            style: TextStyle(
+                              color: foodflow.orange,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                          if (dim) ...[
+                            const SizedBox(width: 8),
+                            Text(
+                              item.isDisabled ? 'Disabled' : 'Out of stock',
+                              style: TextStyle(
+                                color: foodflow.danger,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+                Switch(
+                  value: item.isAvailable,
+                  onChanged: (_) => onToggle(),
+                  activeColor: foodflow.success,
+                ),
+                PopupMenuButton<String>(
+                  onSelected: (v) {
+                    if (v == 'preview') onPreview();
+                    if (v == 'edit') onTap();
+                    if (v == 'delete') onDelete();
+                  },
+                  icon: Icon(Icons.more_vert_rounded, color: foodflow.muted),
+                  itemBuilder: (_) => const [
+                    PopupMenuItem(value: 'preview', child: Text('Preview')),
+                    PopupMenuItem(value: 'edit', child: Text('Edit item')),
+                    PopupMenuItem(value: 'delete', child: Text('Delete item')),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }

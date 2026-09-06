@@ -1,4 +1,6 @@
 // lib/screens/restaurant/restaurant_settings_screen.dart
+import 'dart:ui' show ImageFilter;
+
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:image_picker/image_picker.dart';
@@ -7,6 +9,8 @@ import '../../services/api_service.dart';
 import '../../config/api_constants.dart';
 import '../../providers/auth_provider.dart';
 import '../../theme/foodflow_theme.dart';
+import '../../theme/aurora_theme.dart';
+import '../../widgets/aurora/aurora.dart';
 import '../../utils/currency_utils.dart';
 import '../../utils/payout_gateway_utils.dart';
 import '../../widgets/restaurant/premium_restaurant_widgets.dart';
@@ -231,98 +235,73 @@ class _RestaurantSettingsScreenState extends State<RestaurantSettingsScreen> {
     );
 
     if (_isLoading) {
-      return const Center(child: CircularProgressIndicator());
+      return Scaffold(
+        backgroundColor: foodflow.canvas,
+        body: Stack(children: [
+          ...AuroraTheme.auroraBlobs(),
+          const Center(child: CircularProgressIndicator()),
+        ]),
+      );
     }
 
+    final topPad = MediaQuery.of(context).padding.top + 64;
+
     return Scaffold(
-      backgroundColor: FoodFlowTheme.canvas,
-      appBar: AppBar(
-        title: const Text('Profile'),
-        actions: [
-          TextButton(
-            onPressed: _isSaving ? null : _saveSettings,
-            child: Text(
-              'Save',
-              style: TextStyle(
-                color: _isSaving ? Colors.grey : FoodFlowTheme.orange,
-                fontWeight: FontWeight.w900,
+      backgroundColor: foodflow.canvas,
+      extendBodyBehindAppBar: true,
+      appBar: GlassAppBar(
+        title: Text('Settings',
+            style: TextStyle(
+                color: foodflow.ink,
+                fontSize: 17,
+                fontWeight: FontWeight.w900)),
+      ),
+      bottomNavigationBar: ClipRect(
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+          child: Container(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+            decoration: BoxDecoration(
+              color: foodflow.canvas.withOpacity(0.82),
+              border: Border(top: BorderSide(color: foodflow.glassBorder)),
+            ),
+            child: SafeArea(
+              top: false,
+              child: SizedBox(
+                height: 50,
+                child: ElevatedButton.icon(
+                  onPressed: _isSaving ? null : _saveSettings,
+                  icon: _isSaving
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2, color: Colors.white))
+                      : const Icon(Icons.check_rounded),
+                  label: Text(_isSaving ? 'Saving…' : 'Save changes'),
+                  style: FoodFlowTheme.zomatoPrimaryButton(),
+                ),
               ),
             ),
           ),
-        ],
+        ),
       ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.only(bottom: 32),
-        child: Form(
-          key: _formKey,
-          child: Column(
-            children: [
-              PremiumRestaurantHeader(
-                title: 'Restaurant Profile',
-                subtitle:
-                    'Keep store details, delivery promise, and account security polished.',
-                icon: Icons.tune,
-                trailing: IconButton(
-                  onPressed: _isSaving ? null : _saveSettings,
-                  icon: const Icon(Icons.save_outlined),
-                  color: Colors.white,
-                  style: IconButton.styleFrom(
-                    backgroundColor: Colors.white.withOpacity(0.14),
-                  ),
+      body: Stack(children: [
+        ...AuroraTheme.auroraBlobs(),
+        SingleChildScrollView(
+          padding: EdgeInsets.fromLTRB(0, topPad, 0, 32),
+          child: Form(
+            key: _formKey,
+            child: Column(
+              children: [
+                _IdentityHeader(
+                  logoUrl: _settings['logo_image']?.toString(),
+                  name: _nameController.text.isEmpty
+                      ? 'Your restaurant'
+                      : _nameController.text,
+                  onEditLogo: _uploadLogo,
                 ),
-              ),
-              // Restaurant Logo
-              Center(
-                child: Stack(
-                  children: [
-                    CircleAvatar(
-                      radius: 50,
-                      backgroundColor: Colors.grey.shade200,
-                      child: _settings['logo_image'] != null
-                          ? ClipOval(
-                              child: NetworkImageLoader(
-                                imageUrl: _settings['logo_image'].toString(),
-                                width: 100,
-                                height: 100,
-                                fit: BoxFit.cover,
-                                errorWidget: Icon(
-                                  Icons.restaurant,
-                                  size: 50,
-                                  color: Colors.grey.shade400,
-                                ),
-                              ),
-                            )
-                          : Icon(
-                              Icons.restaurant,
-                              size: 50,
-                              color: Colors.grey.shade400,
-                            ),
-                    ),
-                    Positioned(
-                      bottom: 0,
-                      right: 0,
-                      child: Container(
-                        decoration: BoxDecoration(
-                          color: FoodFlowTheme.orange,
-                          shape: BoxShape.circle,
-                          border: Border.all(color: Colors.white, width: 2),
-                        ),
-                        child: IconButton(
-                          icon: const Icon(Icons.camera_alt,
-                              size: 18, color: Colors.white),
-                          onPressed: _uploadLogo,
-                          padding: EdgeInsets.zero,
-                          constraints: const BoxConstraints(
-                            minWidth: 32,
-                            minHeight: 32,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 24),
+                const SizedBox(height: 20),
 
               // Restaurant Info
               Padding(
@@ -334,7 +313,7 @@ class _RestaurantSettingsScreenState extends State<RestaurantSettingsScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text(
+                        Text(
                           'Restaurant Information',
                           style: TextStyle(
                             fontSize: 16,
@@ -421,7 +400,7 @@ class _RestaurantSettingsScreenState extends State<RestaurantSettingsScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text(
+                        Text(
                           'Order Settings',
                           style: TextStyle(
                             fontSize: 16,
@@ -458,7 +437,7 @@ class _RestaurantSettingsScreenState extends State<RestaurantSettingsScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text(
+                        Text(
                           'Payout Details',
                           style: TextStyle(
                             fontSize: 16,
@@ -468,24 +447,11 @@ class _RestaurantSettingsScreenState extends State<RestaurantSettingsScreen> {
                         ),
                         const SizedBox(height: 6),
                         Text(
-                          '${payoutProfile.displayName} payouts are configured by admin for ${payoutProfile.countryCode}. Manual withdrawal is disabled.',
-                          style: const TextStyle(
+                          'Payouts are managed by the platform for region ${payoutProfile.countryCode}. Manual withdrawal is disabled.',
+                          style: TextStyle(
                             color: FoodFlowTheme.muted,
                             fontWeight: FontWeight.w600,
                           ),
-                        ),
-                        const SizedBox(height: 12),
-                        Wrap(
-                          spacing: 8,
-                          runSpacing: 8,
-                          children: [
-                            Chip(
-                                label: Text(
-                                    'Gateway: ${payoutProfile.displayName}')),
-                            Chip(
-                                label: Text(
-                                    'Country: ${payoutProfile.countryCode}')),
-                          ],
                         ),
                         const SizedBox(height: 16),
                         TextFormField(
@@ -567,15 +533,16 @@ class _RestaurantSettingsScreenState extends State<RestaurantSettingsScreen> {
                         ],
                         TextFormField(
                           controller: _stripeAccountController,
-                          decoration: InputDecoration(
-                            labelText: payoutProfile.accountIdLabel,
-                            hintText: payoutProfile.accountIdHint,
-                            border: const OutlineInputBorder(),
+                          decoration: const InputDecoration(
+                            labelText: 'Payout account ID',
+                            hintText:
+                                'Only if the platform gave you a payout reference',
+                            border: OutlineInputBorder(),
                           ),
                           validator: payoutProfile.requiresAccountId
                               ? (value) {
                                   if (value?.trim().isEmpty ?? true) {
-                                    return 'Please enter ${payoutProfile.accountIdLabel.toLowerCase()}';
+                                    return 'Please enter your payout account ID';
                                   }
                                   return null;
                                 }
@@ -583,8 +550,8 @@ class _RestaurantSettingsScreenState extends State<RestaurantSettingsScreen> {
                         ),
                         const SizedBox(height: 12),
                         Text(
-                          payoutProfile.helperText,
-                          style: const TextStyle(
+                          'Payout details are used only for platform settlements.',
+                          style: TextStyle(
                             color: FoodFlowTheme.muted,
                             fontWeight: FontWeight.w600,
                           ),
@@ -605,7 +572,7 @@ class _RestaurantSettingsScreenState extends State<RestaurantSettingsScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text(
+                        Text(
                           'Location Change Request',
                           style: TextStyle(
                             fontSize: 16,
@@ -618,7 +585,7 @@ class _RestaurantSettingsScreenState extends State<RestaurantSettingsScreen> {
                           _settings['pending_location_request'] != null
                               ? 'Your previous request is waiting for admin approval.'
                               : 'Restaurant coordinates change only after admin approval.',
-                          style: const TextStyle(
+                          style: TextStyle(
                             color: FoodFlowTheme.muted,
                             fontWeight: FontWeight.w600,
                           ),
@@ -705,12 +672,13 @@ class _RestaurantSettingsScreenState extends State<RestaurantSettingsScreen> {
                         title: const Text('Logout',
                             style: TextStyle(color: Colors.red)),
                         onTap: () async {
+                          final navigator =
+                              Navigator.of(context, rootNavigator: true);
                           await Provider.of<AuthProvider>(context,
                                   listen: false)
                               .logout();
-                          if (mounted) {
-                            Navigator.pushReplacementNamed(context, '/login');
-                          }
+                          navigator.pushNamedAndRemoveUntil(
+                              '/login', (route) => false);
                         },
                       ),
                     ],
@@ -721,7 +689,8 @@ class _RestaurantSettingsScreenState extends State<RestaurantSettingsScreen> {
             ],
           ),
         ),
-      ),
+        ),
+      ]),
     );
   }
 
@@ -814,6 +783,113 @@ class _RestaurantSettingsScreenState extends State<RestaurantSettingsScreen> {
             child: const Text('Update'),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _IdentityHeader extends StatelessWidget {
+  const _IdentityHeader({
+    required this.logoUrl,
+    required this.name,
+    required this.onEditLogo,
+  });
+
+  final String? logoUrl;
+  final String name;
+  final VoidCallback onEditLogo;
+
+  @override
+  Widget build(BuildContext context) {
+    final hasLogo = logoUrl != null && logoUrl!.trim().isNotEmpty;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          gradient: foodflow.brandGradient,
+          borderRadius: BorderRadius.circular(22),
+          boxShadow: [
+            BoxShadow(
+              color: foodflow.orange.withOpacity(0.26),
+              blurRadius: 22,
+              offset: const Offset(0, 12),
+            ),
+          ],
+        ),
+        child: Row(
+          children: [
+            GestureDetector(
+              onTap: onEditLogo,
+              child: Stack(
+                children: [
+                  Container(
+                    width: 60,
+                    height: 60,
+                    clipBehavior: Clip.antiAlias,
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.18),
+                      shape: BoxShape.circle,
+                    ),
+                    child: hasLogo
+                        ? NetworkImageLoader(
+                            imageUrl: logoUrl!,
+                            width: 60,
+                            height: 60,
+                            fit: BoxFit.cover,
+                            errorWidget: const Icon(Icons.restaurant,
+                                color: Colors.white),
+                          )
+                        : const Icon(Icons.restaurant, color: Colors.white),
+                  ),
+                  Positioned(
+                    right: 0,
+                    bottom: 0,
+                    child: Container(
+                      padding: const EdgeInsets.all(4),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(Icons.camera_alt_rounded,
+                          size: 12, color: foodflow.orange),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 18,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  GestureDetector(
+                    onTap: onEditLogo,
+                    child: Text(
+                      'Tap the logo to change your photo',
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.85),
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

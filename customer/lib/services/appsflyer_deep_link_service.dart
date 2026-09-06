@@ -3,7 +3,6 @@ import 'dart:io';
 
 import 'package:appsflyer_sdk/appsflyer_sdk.dart';
 import 'package:flutter/material.dart';
-import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../config/app_config.dart';
@@ -12,6 +11,7 @@ import '../screens/customer/home_screen.dart';
 import '../screens/customer/restaurant_detail_screen.dart';
 import '../screens/customer/campaign_landing_screen.dart';
 import 'navigation_service.dart';
+import 'tracking_authorization_service.dart';
 
 class AppsFlyerDeepLinkService {
   AppsFlyerDeepLinkService._();
@@ -70,18 +70,10 @@ class AppsFlyerDeepLinkService {
 
   Future<void> _requestTrackingAuthorizationIfNeeded() async {
     if (!Platform.isIOS) return;
-
-    try {
-      final currentStatus = await Permission.appTrackingTransparency.status;
-      if (currentStatus.isDenied) {
-        final status = await Permission.appTrackingTransparency.request();
-        _log('ATT authorization status: $status');
-        return;
-      }
-      _log('ATT authorization status: $currentStatus');
-    } catch (error) {
-      _log('ATT authorization unavailable: $error');
-    }
+    // The prompt is normally shown earlier in startup by
+    // TrackingAuthorizationService; this is a safety net if that step was
+    // skipped. It is a no-op once the status has been determined.
+    await TrackingAuthorizationService.instance.ensureRequested();
   }
 
   void _handleUnifiedDeepLink(DeepLinkResult result) {
@@ -404,9 +396,9 @@ class AppsFlyerDeepLinkDestination {
     if (segments.isEmpty) return null;
 
     final isSupportedAppLink = uri.scheme == 'foodflow' ||
-        uri.scheme == 'Yumma' ||
+        uri.scheme == 'Swado' ||
         uri.host == 'foodflow.in' ||
-        uri.host == 'yumma.online';
+        uri.host == 'yumma.in';
     if (isSupportedAppLink) {
       if (segments.isNotEmpty &&
           (segments[0] == 'referral' || segments[0] == 'invite')) {

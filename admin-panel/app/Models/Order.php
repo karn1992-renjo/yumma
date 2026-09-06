@@ -24,6 +24,10 @@ class Order extends Model
         'items',
         'subtotal',
         'delivery_fee',
+        'surge_fee',
+        'night_surcharge',
+        'long_distance_charge',
+        'delivery_distance_km',
         'original_delivery_fee',
         'delivery_discount',
         'delivery_subsidy_source',
@@ -35,6 +39,34 @@ class Order extends Model
         'reward_points_earned',
         'platform_fee',
         'tax',
+        'tax_breakdown',
+        'cgst_amount',
+        'sgst_amount',
+        'igst_amount',
+        'eco_gst_food',
+        'eco_gst_food_cgst',
+        'eco_gst_food_sgst',
+        'service_gst',
+        'service_gst_cgst',
+        'service_gst_sgst',
+        'tcs_cgst',
+        'tcs_sgst',
+        'tds_194o_amount',
+        'tds_194c_amount',
+        'tds_194o_rate',
+        'tds_194c_rate',
+        'place_of_supply',
+        'supplier_gstin',
+        'buyer_gstin',
+        'invoice_number',
+        'invoice_series',
+        'invoice_type',
+        'invoice_date',
+        'einvoice_status',
+        'einvoice_irn',
+        'einvoice_qr',
+        'einvoice_ack_no',
+        'einvoice_acked_at',
         'discount',
         'total',
         'tip_amount',
@@ -50,6 +82,8 @@ class Order extends Model
         'payment_attempts_count',
         'cash_collected_amount',
         'cash_collected_at',
+        'cod_collected_from_driver_amount',
+        'cod_last_collected_at',
         'cod_deposited_at',
         'online_payment_verified_at',
         'paid_at',
@@ -62,14 +96,28 @@ class Order extends Model
         'delivery_lng',
         'scheduled_time',
         'confirmed_at',
+        'confirmation_email_sent_at',
         'preparation_time_minutes',
         'preparing_at',
         'ready_at',
         'reached_at',
+        'arrived_at_customer',
+        'delivery_failed_at',
+        'delivery_failure_reason',
+        'resale_status',
+        'resale_price',
+        'resale_offer_expires_at',
+        'resale_claimed_by',
+        'resale_notified_customer_ids',
+        'food_returned_at',
+        'original_order_id',
+        'driver_earning_processed_at',
+        'restaurant_earning_processed_at',
         'delivered_at',
         'cancelled_at',
         'cancellation_reason',
         'special_instructions',
+        'delivery_instructions',
         'restaurant_earning',
         'driver_earning',
         'driver_delivery_base',
@@ -127,13 +175,40 @@ class Order extends Model
         'customer_address' => 'array',
         'scheduled_time' => 'datetime',
         'confirmed_at' => 'datetime',
+        'confirmation_email_sent_at' => 'datetime',
+        'tax_breakdown' => 'array',
+        'cgst_amount' => 'decimal:2',
+        'sgst_amount' => 'decimal:2',
+        'igst_amount' => 'decimal:2',
+        'eco_gst_food' => 'decimal:2',
+        'eco_gst_food_cgst' => 'decimal:2',
+        'eco_gst_food_sgst' => 'decimal:2',
+        'service_gst' => 'decimal:2',
+        'service_gst_cgst' => 'decimal:2',
+        'service_gst_sgst' => 'decimal:2',
+        'tcs_cgst' => 'decimal:2',
+        'tcs_sgst' => 'decimal:2',
+        'tds_194o_amount' => 'decimal:2',
+        'tds_194c_amount' => 'decimal:2',
+        'invoice_date' => 'datetime',
+        'einvoice_acked_at' => 'datetime',
         'preparation_time_minutes' => 'integer',
         'preparing_at' => 'datetime',
         'ready_at' => 'datetime',
         'reached_at' => 'datetime',
+        'arrived_at_customer' => 'datetime',
+        'delivery_failed_at' => 'datetime',
+        'resale_price' => 'decimal:2',
+        'resale_offer_expires_at' => 'datetime',
+        'resale_notified_customer_ids' => 'array',
+        'food_returned_at' => 'datetime',
+        'driver_earning_processed_at' => 'datetime',
+        'restaurant_earning_processed_at' => 'datetime',
         'delivered_at' => 'datetime',
         'cancelled_at' => 'datetime',
         'cash_collected_at' => 'datetime',
+        'cod_collected_from_driver_amount' => 'decimal:2',
+        'cod_last_collected_at' => 'datetime',
         'cod_deposited_at' => 'datetime',
         'online_payment_verified_at' => 'datetime',
         'paid_at' => 'datetime',
@@ -150,6 +225,10 @@ class Order extends Model
         'service_rating' => 'integer',
         'subtotal' => 'decimal:2',
         'delivery_fee' => 'decimal:2',
+        'surge_fee' => 'decimal:2',
+        'night_surcharge' => 'decimal:2',
+        'long_distance_charge' => 'decimal:2',
+        'delivery_distance_km' => 'decimal:3',
         'original_delivery_fee' => 'decimal:2',
         'delivery_discount' => 'decimal:2',
         'admin_delivery_subsidy' => 'decimal:2',
@@ -221,7 +300,31 @@ class Order extends Model
                 app(\App\Services\PayoutCalculationService::class)->processOrderEarnings($order->fresh());
                 app(BranchManagementService::class)->creditCompletedOrder($order->fresh());
                 app(\App\Services\OrderRewardPointService::class)->creditForDeliveredOrder($order->fresh());
+                try {
+                    $fresh = $order->fresh();
+                    $entry = app(\App\Services\Accounting\LedgerPostingService::class)->postOrderDelivered($fresh);
+                    \App\Services\Integration\LedgerEventEmitter::journal($entry, \App\Services\Integration\LedgerEventEmitter::orderMirror($fresh));
+                } catch (\Throwable $e) {
+                    \Illuminate\Support\Facades\Log::warning('Order delivered journal failed.', ['order_id' => $order->id, 'message' => $e->getMessage()]);
+                }
+                try {
+                    app(\App\Services\Tax\TaxLedgerService::class)->recordGigCess($order->fresh());
+                } catch (\Throwable $e) {
+                    \Illuminate\Support\Facades\Log::warning('Gig cess accrual failed.', ['order_id' => $order->id, 'message' => $e->getMessage()]);
+                }
             }
+
+            if ($order->wasChanged('driver_id') && $order->driver_id) {
+                app(\App\Services\CallMaskingService::class)->ensureMappingForOrder($order);
+            }
+
+            if ($order->wasChanged('status') && in_array($order->status, ['delivered', 'cancelled'], true)) {
+                app(\App\Services\CallMaskingService::class)->releaseMappingForOrder($order);
+            }
+        });
+
+        static::created(function ($order) {
+            app(\App\Services\CallMaskingService::class)->ensureMappingForOrder($order);
         });
     }
     
@@ -282,6 +385,21 @@ class Order extends Model
     public function driver(): BelongsTo
     {
         return $this->belongsTo(User::class, 'driver_id');
+    }
+
+    public function resaleClaimant(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'resale_claimed_by');
+    }
+
+    public function originalOrder(): BelongsTo
+    {
+        return $this->belongsTo(Order::class, 'original_order_id');
+    }
+
+    public function resaleOrder(): HasOne
+    {
+        return $this->hasOne(Order::class, 'original_order_id');
     }
 
     public function preparationReadyByAt()
@@ -381,6 +499,7 @@ class Order extends Model
             'picked_up' => 'Picked Up',
             'on_the_way' => 'On The Way',
             'delivered' => 'Delivered',
+            'delivery_failed' => 'Delivery Failed',
             'cancelled' => 'Cancelled'
         ];
     }
@@ -410,7 +529,19 @@ class Order extends Model
             'rejected' => 'Rejected'
         ];
     }
-    
+
+    /**
+     * Get return statuses
+     */
+    public static function getReturnStatuses(): array
+    {
+        return [
+            'requested' => 'Requested',
+            'completed' => 'Completed',
+            'rejected' => 'Rejected'
+        ];
+    }
+
     /**
      * Get payment methods
      */
@@ -503,7 +634,17 @@ class Order extends Model
         $this->refund_reason = $reason;
         $this->save();
     }
-    
+
+    /**
+     * Reject return
+     */
+    public function rejectReturn(string $reason): void
+    {
+        $this->return_status = 'rejected';
+        $this->return_reason = $reason;
+        $this->save();
+    }
+
     /**
      * Check if order can be cancelled
      */
@@ -529,8 +670,9 @@ class Order extends Model
      */
     public function isReturnable(): bool
     {
-        return $this->status === 'delivered' && 
-               is_null($this->return_status) && 
+        return $this->status === 'delivered' &&
+               is_null($this->return_status) &&
+               $this->delivered_at &&
                $this->delivered_at->diffInDays(now()) <= 7;
     }
     
@@ -547,6 +689,7 @@ class Order extends Model
             'picked_up' => '<span class="badge bg-dark">Picked Up</span>',
             'on_the_way' => '<span class="badge bg-info">On The Way</span>',
             'delivered' => '<span class="badge bg-success">Delivered</span>',
+            'delivery_failed' => '<span class="badge bg-dark">Delivery Failed</span>',
             'cancelled' => '<span class="badge bg-danger">Cancelled</span>'
         ];
         
@@ -765,5 +908,7 @@ class Order extends Model
             ->calculateDriverEarning($this)['driver_earning'];
     }
 }
+
+
 
 

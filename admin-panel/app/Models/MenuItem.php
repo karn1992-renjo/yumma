@@ -10,7 +10,7 @@ class MenuItem extends Model
 {
     protected $fillable = [
         'restaurant_id', 'master_menu_item_id', 'item_source', 'category_id', 'cuisine_id', 'name', 'description', 'price',
-        'discounted_price', 'is_price_inclusive_gst', 'images', 'is_veg', 'food_type', 'is_available', 'unavailable_until', 'is_recommended',
+        'discounted_price', 'is_price_inclusive_gst', 'gst_rate', 'hsn_code', 'images', 'is_veg', 'food_type', 'is_available', 'unavailable_until', 'is_recommended',
         'is_bestseller', 'is_new', 'is_spicy', 'is_combo', 'availability_schedule', 'approval_status',
         'preparation_time', 'rating', 'total_ratings', 'total_orders', 'tags', 'variants', 'add_ons'
     ];
@@ -32,6 +32,7 @@ class MenuItem extends Model
         'is_combo' => 'boolean',
         'price' => 'decimal:5',
         'discounted_price' => 'decimal:5',
+        'gst_rate' => 'decimal:2',
     ];
 
     protected $appends = [

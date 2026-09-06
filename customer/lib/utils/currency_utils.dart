@@ -4,13 +4,16 @@ import 'package:provider/provider.dart';
 
 import '../providers/auth_provider.dart';
 
-String _globalCurrencySymbol = 'Rs';
+String _globalCurrencySymbol = '₹';
 int _globalCurrencyDecimals = 2;
 
+/// Returns the admin-configured currency symbol as-is. Only falls back to the
+/// last known symbol when nothing is set -- never rewrites `₹` to `Rs`
+/// (the app now shows whatever the admin picked in Settings).
 String normalizeCurrencySymbol(String? value) {
   final symbol = value?.trim();
-  if (symbol == null || symbol.isEmpty || symbol == 'Ã¢â€šÂ¹') {
-    return 'Rs';
+  if (symbol == null || symbol.isEmpty) {
+    return _globalCurrencySymbol;
   }
   return symbol;
 }

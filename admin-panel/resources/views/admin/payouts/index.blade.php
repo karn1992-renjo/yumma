@@ -118,6 +118,11 @@
         color: #dc2626;
     }
 
+    .badge-partially_paid {
+        background: linear-gradient(135deg, #fed7aa, #fdba74);
+        color: #c2410c;
+    }
+
     .badge-processing {
         background: linear-gradient(135deg, #dbeafe, #bfdbfe);
         color: #1d4ed8;
@@ -208,6 +213,9 @@
             <button type="button" class="btn btn-modern btn-modern-primary me-2" data-bs-toggle="modal" data-bs-target="#generatePayoutModal">
                 <i class="fas fa-calculator me-2"></i> Generate Payouts
             </button>
+            <a href="{{ route('admin.payouts.create') }}" class="btn btn-outline-primary btn-modern me-2">
+                <i class="fas fa-plus me-2"></i> Create Manual Payout
+            </a>
             <button type="button" class="btn btn-outline-primary btn-modern" data-bs-toggle="modal" data-bs-target="#settingsModal">
                 <i class="fas fa-cog me-2"></i> Settings
             </button>
@@ -376,7 +384,7 @@
                             <span class="badge-modern" style="background: #e0f2fe; color: #0284c7;">
                                 <i class="fas fa-store me-1"></i> Restaurant
                             </span>
-                            @if(Str::startsWith((string) $payout->idempotency_key, 'manual_restaurant_'))
+                            @if($payout->source === 'manual_restaurant')
                                 <span class="badge-modern mt-1" style="background: #fef3c7; color: #b45309;">
                                     <i class="fas fa-hand-holding-usd me-1"></i> Manual request
                                 </span>
@@ -411,6 +419,9 @@
                     </td>
                     <td>
                         <span class="fw-bold">{{ $currencySymbol }}{{ number_format($payout->amount, App\Models\AppSetting::currencyDecimals()) }}</span>
+                        @if($payout->status === 'partially_paid')
+                            <br><small class="text-muted">paid {{ $currencySymbol }}{{ number_format($payout->paid_amount, App\Models\AppSetting::currencyDecimals()) }}</small>
+                        @endif
                     </td>
                     <td>
                         @if($payout->deduction_amount > 0)
@@ -442,6 +453,14 @@
                             <span class="badge-modern badge-processing">
                                 <i class="fas fa-sync-alt me-1"></i> Processing
                             </span>
+                        @elseif($payout->status == 'partially_paid')
+                            <span class="badge-modern badge-partially_paid">
+                                <i class="fas fa-coins me-1"></i> Partially Paid
+                            </span>
+                        @elseif($payout->status == 'cancelled')
+                            <span class="badge-modern badge-pending" style="opacity:.7;">
+                                <i class="fas fa-ban me-1"></i> Cancelled
+                            </span>
                         @else
                             <span class="badge-modern badge-failed">
                                 <i class="fas fa-exclamation-circle me-1"></i> Failed
@@ -465,16 +484,24 @@
                                     <i class="fas fa-rupee-sign"></i>
                                 </button>
                             @endif
-                            @if(in_array($payout->status, ['pending', 'processing', 'queued', 'failed']) || ($payout->status === 'completed' && strtolower((string) $payout->gateway) === 'cash'))
+                            @if(in_array($payout->status, ['pending', 'processing', 'queued', 'failed', 'partially_paid']) || ($payout->status === 'completed' && strtolower((string) $payout->gateway) === 'cash'))
                                 <button type="button"
                                         class="btn btn-sm btn-modern-warning rounded-3 me-1"
-                                        onclick="markCashPaid({{ $payout->id }})"
-                                        title="{{ $payout->status === 'completed' ? 'Sync Cash Wallet' : 'Mark as Cash Paid' }}">
+                                        onclick="markCashPaid({{ $payout->id }}, {{ $payout->status === 'completed' ? 0 : round((float) $payout->amount - (float) $payout->paid_amount, 2) }})"
+                                        title="{{ $payout->status === 'completed' ? 'Sync Cash Wallet' : ($payout->status === 'partially_paid' ? 'Record Cash Payment' : 'Mark as Cash Paid') }}">
                                     <i class="fas fa-money-bill-wave"></i>
                                 </button>
                             @endif
-                            <button type="button" 
-                                    class="btn btn-sm btn-outline-primary rounded-3" 
+                            @if(in_array($payout->status, ['pending', 'failed']) && (float) $payout->paid_amount <= 0)
+                                <button type="button"
+                                        class="btn btn-sm btn-outline-danger rounded-3 me-1"
+                                        onclick="cancelPayoutReservation({{ $payout->id }})"
+                                        title="Cancel payout & release reservation">
+                                    <i class="fas fa-ban"></i>
+                                </button>
+                            @endif
+                            <button type="button"
+                                    class="btn btn-sm btn-outline-primary rounded-3"
                                     onclick="viewDetails({{ $payout->id }})"
                                     title="View Details">
                                 <i class="fas fa-eye"></i>
@@ -674,6 +701,151 @@
     </div>
 </div>
 
+<!-- Settle / Process Payout Modal -->
+<div class="modal fade" id="processPayoutModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+        <div class="modal-content border-0 rounded-4">
+            <div class="modal-header border-0" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">
+                <h5 class="modal-title text-white fw-bold">
+                    <i class="fas fa-rupee-sign me-2"></i> Settle Payout
+                </h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body p-4">
+                <div id="settlePayoutLoading" class="text-center py-5">
+                    <div class="spinner-border text-primary" role="status"><span class="visually-hidden">Loading...</span></div>
+                    <p class="text-muted mt-3 mb-0">Fetching wallet balance…</p>
+                </div>
+                <div id="settlePayoutError" class="alert alert-danger d-none">
+                    <i class="fas fa-exclamation-circle me-2"></i> <span id="settlePayoutErrorText">Failed to load payout.</span>
+                </div>
+                <div id="settlePayoutBody" class="d-none">
+                    <input type="hidden" id="settle_payout_id">
+
+                    <div class="d-flex justify-content-between align-items-start mb-3">
+                        <div>
+                            <div class="text-muted small text-uppercase fw-semibold">Recipient</div>
+                            <div class="fs-5 fw-bold" id="settle_recipient">—</div>
+                            <span class="badge bg-secondary-subtle text-secondary-emphasis" id="settle_payee_type">—</span>
+                        </div>
+                        <div class="text-end">
+                            <div class="text-muted small text-uppercase fw-semibold">Outstanding</div>
+                            <div class="fs-4 fw-bold text-primary" id="settle_outstanding">—</div>
+                        </div>
+                    </div>
+
+                    <div class="row g-2 mb-3">
+                        <div class="col-4">
+                            <div class="border rounded-3 p-2 text-center h-100">
+                                <div class="text-muted small">Payout amount</div>
+                                <div class="fw-bold" id="settle_amount">—</div>
+                            </div>
+                        </div>
+                        <div class="col-4">
+                            <div class="border rounded-3 p-2 text-center h-100">
+                                <div class="text-muted small">Deduction</div>
+                                <div class="fw-bold" id="settle_deduction">—</div>
+                            </div>
+                        </div>
+                        <div class="col-4">
+                            <div class="border rounded-3 p-2 text-center h-100">
+                                <div class="text-muted small">Already paid</div>
+                                <div class="fw-bold" id="settle_paid">—</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="rounded-4 p-3 mb-3" style="background: #f8f9ff; border: 1px solid #e6e8ff;">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <span class="fw-semibold"><i class="fas fa-wallet me-2 text-primary"></i>Vendor settlement wallet</span>
+                            <span id="settle_fund_badge" class="badge rounded-pill bg-secondary">—</span>
+                        </div>
+                        <div class="row g-3">
+                            <div class="col-6 col-md-3">
+                                <div class="text-muted small">Available balance</div>
+                                <div class="fs-5 fw-bold text-success" id="settle_wallet_balance">—</div>
+                            </div>
+                            <div class="col-6 col-md-3">
+                                <div class="text-muted small">Locked / reserved</div>
+                                <div class="fs-6 fw-semibold" id="settle_wallet_locked">—</div>
+                            </div>
+                            <div class="col-6 col-md-3">
+                                <div class="text-muted small">Reserved for this payout</div>
+                                <div class="fs-6 fw-semibold" id="settle_reserved">—</div>
+                            </div>
+                            <div class="col-6 col-md-3">
+                                <div class="text-muted small">Needs from balance</div>
+                                <div class="fs-6 fw-semibold" id="settle_needs">—</div>
+                            </div>
+                        </div>
+                        <div id="settle_short_warning" class="alert alert-warning mt-3 mb-0 py-2 px-3 small d-none">
+                            <i class="fas fa-exclamation-triangle me-1"></i>
+                            The wallet is short by <strong id="settle_shortfall">—</strong>. An automated transfer will fail with
+                            an insufficient-balance error — record a cash payment or wait for the wallet to be funded.
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Settlement method</label>
+                        <div class="btn-group w-100" role="group">
+                            <input type="radio" class="btn-check" name="settle_mode" id="settle_mode_gateway" value="gateway" autocomplete="off">
+                            <label class="btn btn-outline-primary" for="settle_mode_gateway">
+                                <i class="fas fa-bolt me-1"></i> Process via gateway (<span id="settle_gateway_name">—</span>)
+                            </label>
+                            <input type="radio" class="btn-check" name="settle_mode" id="settle_mode_cash" value="cash" autocomplete="off">
+                            <label class="btn btn-outline-warning" for="settle_mode_cash">
+                                <i class="fas fa-money-bill-wave me-1"></i> Record cash payment
+                            </label>
+                        </div>
+                        <div id="settle_gateway_unavailable" class="form-text text-warning d-none">
+                            <i class="fas fa-info-circle me-1"></i> The active gateway does not support automated processing — use cash settlement.
+                        </div>
+                    </div>
+
+                    <div id="settle_cash_fields" class="d-none">
+                        <div class="row g-3">
+                            <div class="col-md-6">
+                                <label class="form-label fw-semibold">Amount to record (cash)</label>
+                                <input type="number" step="0.01" min="0.01" class="form-control" id="settle_cash_amount" placeholder="Full outstanding">
+                                <div class="form-text">Leave blank to settle the full outstanding amount.</div>
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label fw-semibold">Receipt / reference no. <span class="text-muted">(optional)</span></label>
+                                <input type="text" class="form-control" id="settle_cash_reference" placeholder="e.g. RCP-00123">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="settle_cancel_panel" class="d-none mt-3 pt-3 border-top">
+                        <div class="alert alert-danger py-2 px-3 small mb-2">
+                            <i class="fas fa-exclamation-triangle me-1"></i>
+                            Cancelling returns the locked reservation to the vendor's available balance and puts these
+                            orders' earnings back into <strong>pending payout</strong> for the next cycle. The payout row
+                            is marked <strong>cancelled</strong>.
+                        </div>
+                        <label class="form-label fw-semibold">Reason for cancellation</label>
+                        <textarea class="form-control" id="settle_cancel_reason" rows="2" placeholder="Why is this payout being cancelled?"></textarea>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer border-0 p-4 pt-0">
+                <button type="button" class="btn btn-outline-danger rounded-3 px-3 me-auto d-none" id="settleCancelToggle" onclick="toggleCancelPanel()">
+                    <i class="fas fa-ban me-2"></i> Cancel payout &amp; release reservation
+                </button>
+                <button type="button" class="btn btn-light rounded-3 px-4" data-bs-dismiss="modal">
+                    <i class="fas fa-times me-2"></i> Close
+                </button>
+                <button type="button" class="btn btn-danger rounded-3 px-4 d-none" id="settleCancelConfirmBtn" onclick="submitCancelPayout()">
+                    <i class="fas fa-ban me-2"></i> Confirm cancellation
+                </button>
+                <button type="button" class="btn btn-modern-success rounded-3 px-4" id="settleConfirmBtn" onclick="submitSettlement()" disabled>
+                    <i class="fas fa-check me-2"></i> <span id="settleConfirmLabel">Confirm</span>
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <script>
     // Show/hide payout day field based on frequency
     document.addEventListener('DOMContentLoaded', function() {
@@ -692,70 +864,257 @@
         }
     });
     
-    // Process a single payout
+    // ---- Payout settlement modal (shows vendor wallet balance before processing) ----
+    let settleState = { payout: null, settlement: null };
+
     function processPayout(payoutId) {
-        if (!confirm('Are you sure you want to process this payout? This will attempt an automated transfer through the active payout gateway.')) {
-            return;
-        }
-        
-        const csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
-        
-        fetch(`/admin/payouts/${payoutId}/process`, {
-            method: 'POST',
-            headers: {
-                'X-CSRF-TOKEN': csrfToken,
-                'Content-Type': 'application/json',
-                'Accept': 'application/json'
-            }
-        })
-        .then(response => response.json())
-        .then(data => {
-            if (data.success) {
-                showToast(data.message || 'Payout processed successfully!', 'success');
-                setTimeout(() => location.reload(), 1500);
-            } else {
-                showToast(data.message || 'Failed to process payout', 'error');
-            }
-        })
-        .catch(error => {
-            console.error('Error:', error);
-            showToast('Network error occurred', 'error');
-        });
+        openSettleModal(payoutId, 'gateway');
     }
 
-    function markCashPaid(payoutId) {
-        if (!confirm('Mark or sync this payout as paid in cash? This will settle the wallet without calling any gateway.')) {
-            return;
+    function markCashPaid(payoutId, remainingAmount) {
+        openSettleModal(payoutId, 'cash');
+    }
+
+    function settleFmtMoney(v, currency) {
+        const n = Number(v || 0);
+        const sym = (!currency || currency === 'INR') ? '₹' : (currency + ' ');
+        return sym + n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    }
+
+    function getSettleModal() {
+        const el = document.getElementById('processPayoutModal');
+        return bootstrap.Modal.getInstance(el) || new bootstrap.Modal(el);
+    }
+
+    function cancelPayoutReservation(payoutId) {
+        openSettleModal(payoutId, 'cash', true);
+    }
+
+    function openSettleModal(payoutId, preferredMode, autoCancel) {
+        const modal = getSettleModal();
+        document.getElementById('settlePayoutLoading').classList.remove('d-none');
+        document.getElementById('settlePayoutError').classList.add('d-none');
+        document.getElementById('settlePayoutBody').classList.add('d-none');
+        document.getElementById('settleConfirmBtn').disabled = true;
+        modal.show();
+
+        fetch(`/admin/payouts/${payoutId}`, { headers: { 'Accept': 'application/json' } })
+            .then(r => r.json())
+            .then(data => {
+                if (!data.success || !data.settlement) {
+                    throw new Error(data.message || 'Failed to load payout details.');
+                }
+                settleState.payout = data.payout;
+                settleState.settlement = data.settlement;
+                renderSettleModal(payoutId, preferredMode);
+                if (autoCancel && !document.getElementById('settleCancelToggle').classList.contains('d-none')) {
+                    toggleCancelPanel();
+                }
+            })
+            .catch(err => {
+                document.getElementById('settlePayoutLoading').classList.add('d-none');
+                document.getElementById('settlePayoutErrorText').textContent = err.message || 'Network error occurred.';
+                document.getElementById('settlePayoutError').classList.remove('d-none');
+            });
+    }
+
+    function renderSettleModal(payoutId, preferredMode) {
+        const s = settleState.settlement;
+        const cur = s.currency || 'INR';
+
+        document.getElementById('settlePayoutLoading').classList.add('d-none');
+        document.getElementById('settlePayoutBody').classList.remove('d-none');
+
+        document.getElementById('settle_payout_id').value = payoutId;
+        document.getElementById('settle_recipient').textContent = s.payee_name || '—';
+        document.getElementById('settle_payee_type').textContent = s.payee_type === 'driver' ? 'Driver payout' : 'Restaurant payout';
+        document.getElementById('settle_outstanding').textContent = settleFmtMoney(s.outstanding, cur);
+        document.getElementById('settle_amount').textContent = settleFmtMoney(s.payout_amount, cur);
+        document.getElementById('settle_deduction').textContent = settleFmtMoney(s.deduction, cur);
+        document.getElementById('settle_paid').textContent = settleFmtMoney(s.paid_amount, cur);
+
+        document.getElementById('settle_wallet_balance').textContent = settleFmtMoney(s.wallet_balance, cur);
+        document.getElementById('settle_wallet_locked').textContent = settleFmtMoney(s.wallet_locked, cur);
+        document.getElementById('settle_reserved').textContent = settleFmtMoney(s.already_reserved, cur);
+        document.getElementById('settle_needs').textContent = settleFmtMoney(s.needs_from_balance, cur);
+        document.getElementById('settle_gateway_name').textContent = (s.gateway || 'gateway');
+
+        const badge = document.getElementById('settle_fund_badge');
+        const shortWrap = document.getElementById('settle_short_warning');
+        if (s.can_fund) {
+            badge.className = 'badge rounded-pill bg-success';
+            badge.innerHTML = '<i class="fas fa-check me-1"></i> Funded';
+            shortWrap.classList.add('d-none');
+        } else {
+            badge.className = 'badge rounded-pill bg-danger';
+            badge.innerHTML = '<i class="fas fa-exclamation-triangle me-1"></i> Short by ' + settleFmtMoney(s.shortfall, cur);
+            document.getElementById('settle_shortfall').textContent = settleFmtMoney(s.shortfall, cur);
+            shortWrap.classList.remove('d-none');
         }
 
-        const transactionReference = prompt('Cash receipt/reference number (optional):', '');
-        if (transactionReference === null) {
-            return;
+        const gwRadio = document.getElementById('settle_mode_gateway');
+        const gwHint = document.getElementById('settle_gateway_unavailable');
+        if (s.gateway_automation) {
+            gwRadio.disabled = false;
+            gwHint.classList.add('d-none');
+        } else {
+            gwRadio.disabled = true;
+            gwHint.classList.remove('d-none');
         }
 
+        let mode = preferredMode;
+        if (mode === 'gateway' && !s.gateway_automation) mode = 'cash';
+        document.getElementById('settle_mode_gateway').checked = (mode === 'gateway');
+        document.getElementById('settle_mode_cash').checked = (mode === 'cash');
+
+        document.getElementById('settle_cash_amount').value = '';
+        document.getElementById('settle_cash_amount').placeholder = settleFmtMoney(s.outstanding, cur).replace(/[^0-9.]/g, '');
+        document.getElementById('settle_cash_reference').value = '';
+
+        // Cancel / release-reservation affordance — only for pending or failed payouts.
+        const st = (settleState.payout && settleState.payout.status) || '';
+        const canCancel = (st === 'pending' || st === 'failed') && Number(settleState.payout.paid_amount || 0) < 0.005;
+        document.getElementById('settleCancelToggle').classList.toggle('d-none', !canCancel);
+        document.getElementById('settle_cancel_panel').classList.add('d-none');
+        document.getElementById('settle_cancel_reason').value = '';
+        document.getElementById('settleCancelConfirmBtn').classList.add('d-none');
+
+        applySettleMode();
+    }
+
+    function toggleCancelPanel() {
+        const panel = document.getElementById('settle_cancel_panel');
+        const confirmBtn = document.getElementById('settleCancelConfirmBtn');
+        const settleBtn = document.getElementById('settleConfirmBtn');
+        const opening = panel.classList.contains('d-none');
+
+        panel.classList.toggle('d-none', !opening);
+        confirmBtn.classList.toggle('d-none', !opening);
+        // While cancelling, hide the settle button and the cash/method fields to avoid confusion.
+        settleBtn.classList.toggle('d-none', opening);
+        document.getElementById('settle_cash_fields').classList.toggle('d-none', opening || !document.getElementById('settle_mode_cash').checked);
+        if (opening) document.getElementById('settle_cancel_reason').focus();
+    }
+
+    function submitCancelPayout() {
+        const payoutId = document.getElementById('settle_payout_id').value;
+        const reason = document.getElementById('settle_cancel_reason').value.trim();
+        if (reason === '') {
+            showToast('Enter a reason for cancelling this payout', 'error');
+            return;
+        }
         const csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
+        const btn = document.getElementById('settleCancelConfirmBtn');
+        btn.disabled = true;
 
-        fetch(`/admin/payouts/${payoutId}/cash-paid`, {
+        fetch(`/admin/payouts/${payoutId}/cancel`, {
             method: 'POST',
             headers: {
                 'X-CSRF-TOKEN': csrfToken,
                 'Content-Type': 'application/json',
                 'Accept': 'application/json'
             },
-            body: JSON.stringify({ transaction_reference: transactionReference })
+            body: JSON.stringify({ reason: reason })
         })
-        .then(response => response.json())
+        .then(r => r.json())
         .then(data => {
             if (data.success) {
-                showToast(data.message || 'Payout marked as cash paid!', 'success');
-                setTimeout(() => location.reload(), 1500);
+                showToast(data.message || 'Payout cancelled.', 'success');
+                const m = bootstrap.Modal.getInstance(document.getElementById('processPayoutModal'));
+                if (m) m.hide();
+                setTimeout(() => location.reload(), 1200);
             } else {
-                showToast(data.message || 'Failed to mark payout as cash paid', 'error');
+                showToast(data.message || 'Failed to cancel payout', 'error');
+                btn.disabled = false;
             }
         })
         .catch(error => {
             console.error('Error:', error);
             showToast('Network error occurred', 'error');
+            btn.disabled = false;
+        });
+    }
+
+    function applySettleMode() {
+        const checked = document.querySelector('input[name="settle_mode"]:checked');
+        const mode = checked ? checked.value : 'cash';
+        const s = settleState.settlement || {};
+        const cashFields = document.getElementById('settle_cash_fields');
+        const btn = document.getElementById('settleConfirmBtn');
+        const label = document.getElementById('settleConfirmLabel');
+
+        if (mode === 'cash') {
+            cashFields.classList.remove('d-none');
+            btn.className = 'btn btn-modern-warning rounded-3 px-4';
+            label.textContent = 'Record cash payment';
+            btn.disabled = false;
+        } else {
+            cashFields.classList.add('d-none');
+            btn.className = 'btn btn-modern-success rounded-3 px-4';
+            label.textContent = 'Process via gateway';
+            btn.disabled = !s.can_fund;
+        }
+    }
+
+    document.addEventListener('change', function (e) {
+        if (e.target && e.target.name === 'settle_mode') {
+            applySettleMode();
+        }
+    });
+
+    function submitSettlement() {
+        const payoutId = document.getElementById('settle_payout_id').value;
+        const checked = document.querySelector('input[name="settle_mode"]:checked');
+        const mode = checked ? checked.value : 'cash';
+        const csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
+        const btn = document.getElementById('settleConfirmBtn');
+        btn.disabled = true;
+
+        let url, body;
+        if (mode === 'gateway') {
+            url = `/admin/payouts/${payoutId}/process`;
+            body = null;
+        } else {
+            url = `/admin/payouts/${payoutId}/cash-paid`;
+            const ref = document.getElementById('settle_cash_reference').value.trim();
+            body = { transaction_reference: ref };
+            const amt = document.getElementById('settle_cash_amount').value.trim();
+            if (amt !== '') {
+                const parsed = parseFloat(amt);
+                if (isNaN(parsed) || parsed <= 0) {
+                    showToast('Enter a valid amount greater than zero', 'error');
+                    btn.disabled = false;
+                    return;
+                }
+                body.amount = parsed;
+            }
+        }
+
+        fetch(url, {
+            method: 'POST',
+            headers: {
+                'X-CSRF-TOKEN': csrfToken,
+                'Content-Type': 'application/json',
+                'Accept': 'application/json'
+            },
+            body: body ? JSON.stringify(body) : undefined
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showToast(data.message || 'Payout settled successfully!', 'success');
+                const m = bootstrap.Modal.getInstance(document.getElementById('processPayoutModal'));
+                if (m) m.hide();
+                setTimeout(() => location.reload(), 1200);
+            } else {
+                showToast(data.message || 'Failed to settle payout', 'error');
+                btn.disabled = false;
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            showToast('Network error occurred', 'error');
+            btn.disabled = false;
         });
     }
     
@@ -890,7 +1249,9 @@
                                         ? 'Completed'
                                         : (payout.status === 'processing' || payout.status === 'queued')
                                             ? 'Processing'
-                                            : 'Failed'}
+                                            : payout.status === 'partially_paid'
+                                                ? 'Partially Paid'
+                                                : 'Failed'}
                             </span>
                         </p>
                     </div>

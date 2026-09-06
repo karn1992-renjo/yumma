@@ -24,7 +24,7 @@ class OrderCard extends StatelessWidget {
     final items = order['items'] as List? ?? [];
     final status = order['status'];
     final statusColor = _getStatusColor(status);
-    
+
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       decoration: BoxDecoration(
@@ -117,7 +117,7 @@ class OrderCard extends StatelessWidget {
                   ],
                 ),
                 const SizedBox(height: 12),
-                
+
                 // Items Preview
                 Wrap(
                   spacing: 8,
@@ -154,26 +154,30 @@ class OrderCard extends StatelessWidget {
                     ),
                   ),
                 const SizedBox(height: 12),
-                
+
                 // Customer Info
                 Row(
                   children: [
-                    Icon(Icons.person_outline, size: 14, color: Colors.grey.shade600),
+                    Icon(Icons.person_outline,
+                        size: 14, color: Colors.grey.shade600),
                     const SizedBox(width: 4),
                     Text(
                       order['customer_name'] ?? 'Guest',
-                      style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
+                      style:
+                          TextStyle(fontSize: 12, color: Colors.grey.shade700),
                     ),
                     const SizedBox(width: 12),
-                    Icon(Icons.phone_outlined, size: 14, color: Colors.grey.shade600),
+                    Icon(Icons.phone_outlined,
+                        size: 14, color: Colors.grey.shade600),
                     const SizedBox(width: 4),
                     Text(
                       order['customer_phone'] ?? 'N/A',
-                      style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
+                      style:
+                          TextStyle(fontSize: 12, color: Colors.grey.shade700),
                     ),
                   ],
                 ),
-                
+
                 // Action Buttons
                 if (isPending && onAccept != null)
                   Padding(
@@ -207,7 +211,7 @@ class OrderCard extends StatelessWidget {
                       ],
                     ),
                   ),
-                
+
                 // Status Update Buttons for Active Orders
                 if (!isPending &&
                     onStatusUpdate != null &&
@@ -221,10 +225,11 @@ class OrderCard extends StatelessWidget {
                       child: Row(
                         children: [
                           if (status == 'preparing')
-                            _buildStatusButton('Mark Ready', Icons.check_circle, () =>
-                                onStatusUpdate!('ready_for_pickup')),
+                            _buildStatusButton('Mark Ready', Icons.check_circle,
+                                () => onStatusUpdate!('ready_for_pickup')),
                           if (status != 'preparing')
-                            _buildStatusButton('Update Status', Icons.edit, null),
+                            _buildStatusButton(
+                                'Update Status', Icons.edit, null),
                         ],
                       ),
                     ),
@@ -237,7 +242,8 @@ class OrderCard extends StatelessWidget {
     );
   }
 
-  Widget _buildStatusButton(String label, IconData icon, VoidCallback? onPressed) {
+  Widget _buildStatusButton(
+      String label, IconData icon, VoidCallback? onPressed) {
     return ElevatedButton(
       onPressed: onPressed,
       style: ElevatedButton.styleFrom(
@@ -259,7 +265,7 @@ class OrderCard extends StatelessWidget {
 
   void _showOrderDetails(BuildContext context) {
     final items = order['items'] as List? ?? [];
-    
+
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -298,7 +304,8 @@ class OrderCard extends StatelessWidget {
                     ),
                   ),
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                     decoration: BoxDecoration(
                       color: _getStatusColor(order['status']).withOpacity(0.1),
                       borderRadius: BorderRadius.circular(20),
@@ -314,7 +321,7 @@ class OrderCard extends StatelessWidget {
                 ],
               ),
               const SizedBox(height: 16),
-              
+
               // Customer Info Card
               Container(
                 padding: const EdgeInsets.all(16),
@@ -338,7 +345,8 @@ class OrderCard extends StatelessWidget {
                     const SizedBox(height: 8),
                     Row(
                       children: [
-                        const Icon(Icons.location_on, size: 20, color: Colors.grey),
+                        const Icon(Icons.location_on,
+                            size: 20, color: Colors.grey),
                         const SizedBox(width: 8),
                         Expanded(
                           child: Text(
@@ -352,7 +360,7 @@ class OrderCard extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 16),
-              
+
               // Order Items
               Text(
                 'Order Items',
@@ -431,7 +439,7 @@ class OrderCard extends StatelessWidget {
                   },
                 ),
               ),
-              
+
               // Price Summary
               Container(
                 padding: const EdgeInsets.all(16),
@@ -441,13 +449,13 @@ class OrderCard extends StatelessWidget {
                 ),
                 child: Column(
                   children: [
-                    _buildPriceRow(context, 'Subtotal', order['subtotal']),
-                    _buildPriceRow(context, 'Delivery Fee', order['delivery_fee']),
-                    _buildPriceRow(context, 'Tax', order['tax']),
-                    if (order['discount'] > 0)
-                      _buildPriceRow(context, 'Discount', -order['discount']),
+                    _buildPriceRow(context, 'Item total', order['subtotal']),
+                    if (_asNum(order['discount']) > 0)
+                      _buildPriceRow(
+                          context, 'Discount', -_asNum(order['discount'])),
                     const Divider(),
-                    _buildPriceRow(context, 'Total', order['total'], isBold: true),
+                    _buildPriceRow(context, 'Total', order['total'],
+                        isBold: true),
                   ],
                 ),
               ),
@@ -492,29 +500,47 @@ class OrderCard extends StatelessWidget {
 
   Color _getStatusColor(String status) {
     switch (status) {
-      case 'pending': return Colors.orange;
-      case 'confirmed': return Colors.blue;
-      case 'preparing': return Colors.purple;
-      case 'ready_for_pickup': return Colors.teal;
-      case 'picked_up': return Colors.indigo;
-      case 'on_the_way': return Colors.cyan;
-      case 'delivered': return Colors.green;
-      case 'cancelled': return Colors.red;
-      default: return Colors.grey;
+      case 'pending':
+        return Colors.orange;
+      case 'confirmed':
+        return Colors.blue;
+      case 'preparing':
+        return Colors.purple;
+      case 'ready_for_pickup':
+        return Colors.teal;
+      case 'picked_up':
+        return Colors.indigo;
+      case 'on_the_way':
+        return Colors.cyan;
+      case 'delivered':
+        return Colors.green;
+      case 'cancelled':
+        return Colors.red;
+      default:
+        return Colors.grey;
     }
   }
 
   String _getStatusText(String status) {
     switch (status) {
-      case 'pending': return 'Pending';
-      case 'confirmed': return 'Confirmed';
-      case 'preparing': return 'Preparing';
-      case 'ready_for_pickup': return 'Ready';
-      case 'picked_up': return 'Picked Up';
-      case 'on_the_way': return 'On The Way';
-      case 'delivered': return 'Delivered';
-      case 'cancelled': return 'Cancelled';
-      default: return status;
+      case 'pending':
+        return 'Pending';
+      case 'confirmed':
+        return 'Confirmed';
+      case 'preparing':
+        return 'Preparing';
+      case 'ready_for_pickup':
+        return 'Ready';
+      case 'picked_up':
+        return 'Picked Up';
+      case 'on_the_way':
+        return 'On The Way';
+      case 'delivered':
+        return 'Delivered';
+      case 'cancelled':
+        return 'Cancelled';
+      default:
+        return status;
     }
   }
 }

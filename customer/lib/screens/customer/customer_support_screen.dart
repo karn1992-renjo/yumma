@@ -1,13 +1,19 @@
 // lib/screens/customer/customer_support_screen.dart
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../config/api_constants.dart';
 import '../../models/app_branding.dart';
 import '../../models/order.dart';
+import '../../providers/order_provider.dart';
 import '../../services/api_service.dart';
 import '../../services/app_branding_service.dart';
 import '../../services/websocket_service.dart';
 import '../../theme/foodflow_theme.dart';
+import '../../utils/currency_utils.dart';
+import 'order_tracking_screen.dart';
 
 class CustomerSupportScreen extends StatefulWidget {
   final Order? order;
@@ -39,13 +45,19 @@ class _CustomerSupportScreenState extends State<CustomerSupportScreen> {
   int _csatRating = 0;
   AppBranding _branding = AppBranding.fallback();
 
+  // --- Client-side assistant (Chat tab, before a live agent is pulled in) ---
+  final TextEditingController _asstInput = TextEditingController();
+  final List<_AsstMsg> _asst = [];
+  bool _asstTyping = false;
+  bool _liveChat = false;
+  Map<String, dynamic>? _refundPolicyCache;
+  bool _awaitSubject = false;
+
   @override
   void initState() {
     super.initState();
     _loadBranding();
-    if (widget.openChat) {
-      _startOrLoadConversation();
-    }
+    _seedAssistant();
   }
 
   @override
@@ -55,8 +67,24 @@ class _CustomerSupportScreenState extends State<CustomerSupportScreen> {
     }
     _messageController.dispose();
     _csatCommentController.dispose();
+    _asstInput.dispose();
     _scrollController.dispose();
     super.dispose();
+  }
+
+  void _seedAssistant() {
+    _asst.add(_AsstMsg.bot(
+      'Hi! I\'m the $_assistantName assistant. What do you need help with?',
+      chips: [
+        for (final t in _kTopics) _AsstChip(t.label, () => _runTopic(t.key)),
+        _AsstChip('Something else', _offerHuman),
+      ],
+    ));
+  }
+
+  String get _assistantName {
+    final n = _branding.displayName.trim();
+    return n.isEmpty ? 'Yumma!' : n;
   }
 
   String? get _orderContextText {
@@ -100,7 +128,7 @@ class _CustomerSupportScreenState extends State<CustomerSupportScreen> {
       return Future.value();
     }
     final subject = _orderContextText == null
-        ? 'FoodFlow support request'
+        ? 'Yumma! support request'
         : 'Support request for $_orderContextText';
     return _launch(
       Uri(
@@ -375,9 +403,6 @@ class _CustomerSupportScreenState extends State<CustomerSupportScreen> {
         labelStyle: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w900),
         unselectedLabelStyle:
             const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700),
-        onTap: (index) {
-          if (index == 1) _startOrLoadConversation();
-        },
         tabs: const [
           Tab(text: 'Help'),
           Tab(text: 'Chat'),
@@ -513,6 +538,8 @@ class _CustomerSupportScreenState extends State<CustomerSupportScreen> {
   }
 
   Widget _buildChatTab() {
+    if (!_liveChat) return _buildAssistantTab();
+
     if (_isLoading && _messages.isEmpty) {
       return const Center(child: CircularProgressIndicator());
     }
@@ -555,8 +582,733 @@ class _CustomerSupportScreenState extends State<CustomerSupportScreen> {
     );
   }
 
+  // ======================================================================
+  // Client-side assistant
+  // ======================================================================
+
+  Widget _buildAssistantTab() {
+    return Column(
+      children: [
+        if (_orderContextText != null)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+            child: _buildOrderBanner(),
+          ),
+        Container(
+          margin: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+          decoration: BoxDecoration(
+            color: const Color(0xFFF3F0FF),
+            borderRadius: BorderRadius.circular(14),
+          ),
+          child: Row(
+            children: const [
+              Icon(Icons.smart_toy_outlined,
+                  size: 16, color: Color(0xFF6D5BD0)),
+              SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Chatting with the assistant',
+                  style: TextStyle(
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w700,
+                    color: Color(0xFF6D5BD0),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        Expanded(
+          child: ListView.builder(
+            controller: _scrollController,
+            padding: const EdgeInsets.fromLTRB(16, 14, 16, 20),
+            itemCount: _asst.length + (_asstTyping ? 1 : 0),
+            itemBuilder: (context, index) {
+              if (index == _asst.length) return const _AsstTypingDots();
+              return _buildAsstBubble(_asst[index]);
+            },
+          ),
+        ),
+        _buildAsstInputBar(),
+      ],
+    );
+  }
+
+  void _asstScroll() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_scrollController.hasClients) return;
+      _scrollController.animateTo(
+        _scrollController.position.maxScrollExtent + 200,
+        duration: const Duration(milliseconds: 240),
+        curve: Curves.easeOut,
+      );
+    });
+  }
+
+  void _asstUser(String text) {
+    setState(() => _asst.add(_AsstMsg.user(text)));
+    _asstScroll();
+  }
+
+  void _asstSay(String text, {List<_AsstChip>? chips, Widget? custom}) {
+    setState(() => _asstTyping = true);
+    _asstScroll();
+    Timer(const Duration(milliseconds: 650), () {
+      if (!mounted) return;
+      setState(() {
+        _asstTyping = false;
+        _asst.add(_AsstMsg.bot(text, chips: chips, custom: custom));
+      });
+      _asstScroll();
+    });
+  }
+
+  // ---- data ----
+
+  Future<Map<String, dynamic>> _refundPolicy() async {
+    if (_refundPolicyCache != null) return _refundPolicyCache!;
+    try {
+      final res = await _api.get(ApiConstants.refundPolicy);
+      final data = res is Map ? res['data'] : null;
+      _refundPolicyCache =
+          data is Map ? Map<String, dynamic>.from(data) : <String, dynamic>{};
+    } catch (_) {
+      _refundPolicyCache = <String, dynamic>{};
+    }
+    return _refundPolicyCache!;
+  }
+
+  /// (cancellationCharge, refundAmount, note)
+  Future<(double, double, String)> _refundPreview(Order o) async {
+    if (!o.isPaymentPaid) {
+      return (0.0, 0.0, 'No payment was collected, so there\'s nothing to refund.');
+    }
+    final policy = await _refundPolicy();
+    final rules = policy['cancellation_refund_rules'];
+    double? pct;
+    if (rules is Map && rules[o.status] != null) {
+      pct = double.tryParse('${rules[o.status]}');
+    }
+    pct ??=
+        const {'pending': 95.0, 'confirmed': 85.0, 'preparing': 70.0}[o.status];
+    pct ??= 0.0;
+    final refund = double.parse((o.total * pct / 100).toStringAsFixed(2));
+    final charge = double.parse((o.total - refund).toStringAsFixed(2));
+    return (charge, refund, '');
+  }
+
+  Future<void> _ensureOrders() async {
+    final provider = context.read<OrderProvider>();
+    if (provider.orders.isNotEmpty) return;
+    setState(() => _asstTyping = true);
+    _asstScroll();
+    await provider.fetchMyOrders(notifyLoading: false);
+    if (!mounted) return;
+    setState(() => _asstTyping = false);
+  }
+
+  Future<void> _needOrder(void Function(Order) then) async {
+    // An order passed into the screen wins outright.
+    if (widget.order != null) {
+      then(widget.order!);
+      return;
+    }
+    await _ensureOrders();
+    if (!mounted) return;
+    final orders = context.read<OrderProvider>().orders;
+    if (orders.isEmpty) {
+      _asstSay('I can\'t see any orders on your account yet.', chips: [
+        _AsstChip('Talk to a human', () => _talkToHuman()),
+      ]);
+      return;
+    }
+    final recent = orders.take(5).toList();
+    if (recent.length == 1) {
+      then(recent.first);
+      return;
+    }
+    _asstSay('Which order? Here are your latest ones.',
+        custom: _AsstOrderPicker(
+          orders: recent,
+          onPick: (o) {
+            _asstUser('#${o.orderNumber}');
+            then(o);
+          },
+        ));
+  }
+
+  // ---- topics ----
+
+  void _runTopic(String key) {
+    final t = _kTopics.firstWhere((t) => t.key == key,
+        orElse: () => _kTopics.first);
+    _asstUser(t.label);
+    _dispatch(key);
+  }
+
+  void _dispatch(String key) {
+    switch (key) {
+      case 'order':
+        _needOrder(_answerTrack);
+        break;
+      case 'payment':
+        _needOrder(_answerPayment);
+        break;
+      case 'refund':
+        _needOrder(_answerRefund);
+        break;
+      case 'delivery':
+        _needOrder(_answerDelivery);
+        break;
+      case 'cancel':
+        _needOrder(_cancelForOrder);
+        break;
+      case 'account':
+        _asstSay(
+            'Update your name, phone or photo in Profile → Edit Profile. Manage saved addresses under Saved Addresses. To close your account, contact support.');
+        break;
+    }
+  }
+
+  String _friendlyStatus(Order o) {
+    switch (o.status) {
+      case 'delivered':
+        return 'Delivered';
+      case 'cancelled':
+        return 'Cancelled';
+      case 'out_for_delivery':
+      case 'picked_up':
+      case 'on_the_way':
+        return 'On the way';
+      case 'ready':
+      case 'ready_for_pickup':
+        return 'Ready';
+      case 'preparing':
+        return 'Being prepared';
+      case 'confirmed':
+        return 'Confirmed by the restaurant';
+      default:
+        return 'Waiting for the restaurant to accept';
+    }
+  }
+
+  String _methodLabel(String raw) {
+    switch (raw.toLowerCase()) {
+      case 'cod':
+        return 'Cash on delivery';
+      case 'wallet':
+        return 'Wallet';
+      case 'razorpay':
+        return 'Razorpay';
+      case 'stripe':
+        return 'Stripe';
+      case 'cashfree':
+        return 'Cashfree';
+      case '':
+        return 'your payment method';
+      default:
+        return raw[0].toUpperCase() + raw.substring(1);
+    }
+  }
+
+  String _money(num v) => formatCurrency(context, v);
+
+  void _openTracking(Order o) {
+    Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => OrderTrackingScreen(orderId: o.id),
+    ));
+  }
+
+  void _answerTrack(Order o) {
+    final buf = StringBuffer()
+      ..writeln('Order #${o.orderNumber} — ${_friendlyStatus(o)}');
+    final eta = o.etaRange ??
+        (o.etaMinutes != null ? 'about ${o.etaMinutes} min' : null);
+    if (!o.isDelivered && !o.isCancelled && eta != null) {
+      buf.writeln('Estimated arrival: $eta');
+    }
+    if (o.deliveryAddress.trim().isNotEmpty && !o.isTakeaway) {
+      buf.writeln('Delivering to: ${o.deliveryAddress.trim()}');
+    }
+    _asstSay(buf.toString().trimRight(), chips: [
+      _AsstChip('Open live tracking', () => _openTracking(o)),
+      _AsstChip('That helped', _thanks),
+      _AsstChip('Talk to a human',
+          () => _talkToHuman(prefill: 'Question about order #${o.orderNumber}.')),
+    ]);
+  }
+
+  Future<void> _answerPayment(Order o) async {
+    setState(() => _asstTyping = true);
+    _asstScroll();
+    String status = o.paymentStatus;
+    String method = o.paymentMethod;
+    String? txn = o.refundTransactionId;
+    DateTime? paidAt = o.paidAt;
+    try {
+      final res = await _api.get(ApiConstants.orderPaymentStatus(o.id));
+      final d = res is Map ? res['data'] : null;
+      if (d is Map) {
+        status = '${d['payment_status'] ?? status}';
+        method = '${d['payment_method'] ?? method}';
+        final t = '${d['transaction_id'] ?? ''}';
+        if (t.isNotEmpty && t != 'null') txn = t;
+        final p = d['paid_at']?.toString();
+        if (p != null && p.isNotEmpty) paidAt = DateTime.tryParse(p) ?? paidAt;
+      }
+    } catch (_) {/* fall back to model */}
+    if (!mounted) return;
+    setState(() => _asstTyping = false);
+
+    final m = _methodLabel(method);
+    String reply;
+    final chips = <_AsstChip>[];
+    switch (status.toLowerCase()) {
+      case 'success':
+      case 'paid':
+      case 'completed':
+        reply =
+            'Paid ${_money(o.total)} via $m${paidAt != null ? ' on ${_fmtDate(paidAt)}' : ''}. Nothing is pending on this order.';
+        break;
+      case 'refunded':
+        reply =
+            'This payment was refunded. Ask me about "Refund status" for the details.';
+        chips.add(_AsstChip('Refund status', () {
+          _asstUser('Refund status');
+          _answerRefund(o);
+        }));
+        break;
+      case 'failed':
+      case 'cancelled':
+        reply =
+            'The payment did not go through, so no money was captured. If your bank shows a temporary hold it is released in 3–5 working days.';
+        if (o.canPayOnlineNow) {
+          chips.add(_AsstChip('Pay again', () => _openTracking(o)));
+        }
+        break;
+      default:
+        reply =
+            'The payment for this order is not confirmed yet. Please don\'t retry for about 15 minutes — if money was debited it is reversed automatically to the original method within 3–5 working days.';
+        if (o.canPayOnlineNow) {
+          chips.add(_AsstChip('Pay again', () => _openTracking(o)));
+        }
+    }
+    if (txn != null && txn.isNotEmpty && txn != 'null') {
+      reply = '$reply\nReference: $txn';
+    }
+    chips.add(_AsstChip('That helped', _thanks));
+    chips.add(_AsstChip('Talk to a human',
+        () => _talkToHuman(prefill: 'Payment issue with order #${o.orderNumber}.')));
+    _asstSay(reply, chips: chips);
+  }
+
+  Future<void> _answerRefund(Order o) async {
+    final policy = await _refundPolicy();
+    if (!mounted) return;
+    final windowH = policy['refund_window_hours'];
+    final rs = (o.refundStatus ?? '').toLowerCase();
+    final dest = o.refundModeLabel ?? _methodLabel(o.paymentMethod);
+    String reply;
+    final chips = <_AsstChip>[];
+    if (rs.isEmpty) {
+      if (o.isDelivered && o.isPaymentPaid) {
+        reply =
+            'There is no refund in progress for this order. If something was wrong with it you can request one.';
+        chips.add(_AsstChip('Request a refund', () => _requestRefund(o)));
+      } else {
+        reply = 'There is no refund in progress for this order.';
+      }
+      if (windowH != null) {
+        reply =
+            '$reply\nRefunds can be requested within $windowH hours of ordering.';
+      }
+    } else if (rs == 'pending' || rs == 'requested') {
+      reply =
+          'Your refund request has been received and is awaiting review by our team.';
+    } else if (rs == 'processing') {
+      reply =
+          'Your refund of ${_money(o.refundAmount ?? 0)} is approved and on its way to $dest. It usually settles in 3–5 working days.';
+    } else if (rs == 'completed' || rs == 'refunded' || rs == 'success') {
+      reply = '${_money(o.refundAmount ?? 0)} was refunded to $dest.';
+      if ((o.refundTransactionId ?? '').isNotEmpty) {
+        reply = '$reply\nReference: ${o.refundTransactionId}';
+      }
+    } else if (rs == 'rejected' || rs == 'declined' || rs == 'failed') {
+      reply =
+          'Your refund request was not approved. Talk to a human if you\'d like our team to take another look.';
+      chips.add(_AsstChip('Talk to a human',
+          () => _talkToHuman(prefill: 'Refund query for order #${o.orderNumber}.')));
+    } else {
+      reply = 'Refund status: $rs.';
+    }
+    chips.add(_AsstChip('That helped', _thanks));
+    chips.add(_AsstChip('Talk to a human',
+        () => _talkToHuman(prefill: 'Refund query for order #${o.orderNumber}.')));
+    _asstSay(reply, chips: chips);
+  }
+
+  void _answerDelivery(Order o) {
+    _asstSay(
+      'Sorry your order had a problem. Our team can review order #${o.orderNumber} and make it right.',
+      chips: [
+        _AsstChip('Talk to a human',
+            () => _talkToHuman(
+                prefill:
+                    'I had a delivery problem with order #${o.orderNumber}.')),
+      ],
+    );
+  }
+
+  Future<void> _requestRefund(Order o) async {
+    final ok = await context
+        .read<OrderProvider>()
+        .requestRefund(o.id, 'Requested from support chat');
+    if (!mounted) return;
+    _asstSay(ok
+        ? 'Refund request submitted. Our team will review it and you\'ll be updated in Notifications.'
+        : 'Could not submit the refund request. Please try again later.');
+  }
+
+  // ---- cancel ----
+
+  Future<void> _cancelForOrder(Order o) async {
+    if (o.isCancelled) {
+      _asstSay('This order is already cancelled.');
+      return;
+    }
+    const tooLate = ['out_for_delivery', 'picked_up', 'on_the_way', 'delivered'];
+    if (o.isDelivered || tooLate.contains(o.status)) {
+      _asstSay(
+        'This order is too far along to cancel — our team can still help.',
+        chips: [
+          _AsstChip('Talk to a human',
+              () => _talkToHuman(
+                  prefill: 'Please cancel order #${o.orderNumber}.')),
+        ],
+      );
+      return;
+    }
+
+    setState(() => _asstTyping = true);
+    _asstScroll();
+    final (charge, refund, note) = await _refundPreview(o);
+    if (!mounted) return;
+    setState(() => _asstTyping = false);
+
+    final method = o.refundModeLabel ?? _methodLabel(o.paymentMethod);
+
+    if (o.canCancel) {
+      _asstSay(
+        'You can still cancel order #${o.orderNumber} right now.',
+        custom: _AsstCancelCard(
+          orderNumber: o.orderNumber,
+          charge: charge,
+          refund: refund,
+          method: method,
+          note: note,
+          confirmLabel: 'Confirm cancel',
+          onConfirm: () => _doInstantCancel(o),
+          onDismiss: () => _asstSay('No problem — your order is unchanged.'),
+        ),
+      );
+      return;
+    }
+
+    if (o.canForceCancel) {
+      _asstSay(
+        'The restaurant has already started preparing order #${o.orderNumber}, so I can\'t cancel it instantly. I can pass a cancellation request to our team.',
+        custom: _AsstCancelCard(
+          orderNumber: o.orderNumber,
+          charge: charge,
+          refund: refund,
+          method: method,
+          note: note.isEmpty
+              ? 'Refund shown is an estimate — the final amount is confirmed by our team.'
+              : note,
+          confirmLabel: 'Request cancellation',
+          onConfirm: () => _talkToHuman(
+              prefill:
+                  'Please cancel order #${o.orderNumber}. Estimated refund ${_money(refund)}.'),
+          onDismiss: () => _asstSay('No problem — your order is unchanged.'),
+        ),
+      );
+      return;
+    }
+
+    _asstSay('This order can\'t be cancelled from here.', chips: [
+      _AsstChip('Talk to a human',
+          () => _talkToHuman(prefill: 'Please cancel order #${o.orderNumber}.')),
+    ]);
+  }
+
+  Future<void> _doInstantCancel(Order o) async {
+    setState(() => _asstTyping = true);
+    _asstScroll();
+    final provider = context.read<OrderProvider>();
+    bool ok = false;
+    String? apiMsg;
+    try {
+      ok = await provider.cancelOrder(o.id, 'Cancelled from support chat');
+      apiMsg = provider.error;
+    } catch (e) {
+      apiMsg = e.toString();
+    }
+    if (!mounted) return;
+    setState(() => _asstTyping = false);
+    if (ok) {
+      await provider.fetchMyOrders(notifyLoading: false);
+      final fresh =
+          provider.orders.firstWhere((x) => x.id == o.id, orElse: () => o);
+      final amount = fresh.refundAmount ?? 0;
+      _asstSay(amount > 0
+          ? 'Order #${o.orderNumber} is cancelled. ${_money(amount)} will be refunded to ${fresh.refundModeLabel ?? _methodLabel(o.paymentMethod)}.'
+          : 'Order #${o.orderNumber} is cancelled.');
+    } else {
+      final reason = (apiMsg == null || apiMsg.isEmpty)
+          ? 'please try again'
+          : apiMsg.replaceFirst('Exception: ', '');
+      _asstSay(
+        'I couldn\'t cancel it: $reason. Our team can still handle it.',
+        chips: [
+          _AsstChip('Talk to a human',
+              () => _talkToHuman(
+                  prefill: 'Please cancel order #${o.orderNumber}.')),
+        ],
+      );
+    }
+  }
+
+  // ---- human handoff ----
+
+  void _thanks() {
+    _asstUser('That helped');
+    _asstSay('Glad I could help! Ask me anything else, anytime.', chips: [
+      for (final t in _kTopics.take(4)) _AsstChip(t.label, () => _runTopic(t.key)),
+    ]);
+  }
+
+  void _offerHuman() {
+    _asstUser('Something else');
+    _awaitSubject = true;
+    _asstSay('Sure — tell me the subject of your issue in a few words.');
+  }
+
+  Future<void> _talkToHuman({String? prefill}) async {
+    _asstSay('Connecting you with a support agent…');
+    await _startOrLoadConversation();
+    if (!mounted) return;
+    if (_conversationId != null && _stage == 'bot') {
+      await _escalateToAgent();
+    }
+    if (!mounted) return;
+    if (prefill != null && prefill.trim().isNotEmpty && _conversationId != null) {
+      await _sendMessage(prefill.trim());
+    }
+    if (!mounted) return;
+    setState(() => _liveChat = true);
+  }
+
+  _AsstTopic? _matchTopic(String text) {
+    final q = text.toLowerCase();
+    for (final t in _kTopics) {
+      if (t.keywords.any(q.contains)) return t;
+    }
+    return null;
+  }
+
+  void _asstSend() {
+    final text = _asstInput.text.trim();
+    if (text.isEmpty) return;
+    _asstInput.clear();
+    _asstUser(text);
+
+    if (_awaitSubject) {
+      _awaitSubject = false;
+      _asstSay('Got it. I\'ll connect you with an agent about "$text".',
+          chips: [
+            _AsstChip('Talk to a human', () => _talkToHuman(prefill: text)),
+            _AsstChip('Never mind', () {}),
+          ]);
+      return;
+    }
+
+    final t = _matchTopic(text);
+    if (t != null) {
+      _dispatch(t.key);
+    } else {
+      _asstSay(
+        'I\'m not sure I can answer that, but a support agent can help.',
+        chips: [
+          _AsstChip('Talk to a human', () => _talkToHuman(prefill: text)),
+        ],
+      );
+    }
+  }
+
+  String _fmtDate(DateTime d) {
+    final l = d.toLocal();
+    final h = l.hour > 12 ? l.hour - 12 : (l.hour == 0 ? 12 : l.hour);
+    final mm = l.minute.toString().padLeft(2, '0');
+    final ap = l.hour >= 12 ? 'PM' : 'AM';
+    const months = [
+      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+    ];
+    return '${l.day} ${months[l.month - 1]}, $h:$mm $ap';
+  }
+
+  // ---- assistant UI ----
+
+  Widget _buildAsstBubble(_AsstMsg m) {
+    return Column(
+      crossAxisAlignment:
+          m.bot ? CrossAxisAlignment.start : CrossAxisAlignment.end,
+      children: [
+        if (m.text.trim().isNotEmpty)
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.end,
+            mainAxisAlignment:
+                m.bot ? MainAxisAlignment.start : MainAxisAlignment.end,
+            children: [
+              if (m.bot) _avatar(isBot: true),
+              Flexible(
+                child: Container(
+                  margin: const EdgeInsets.only(bottom: 6),
+                  constraints: const BoxConstraints(maxWidth: 260),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: m.bot ? Colors.white : FoodFlowTheme.crimson,
+                    borderRadius: BorderRadius.only(
+                      topLeft: const Radius.circular(16),
+                      topRight: const Radius.circular(16),
+                      bottomLeft: Radius.circular(m.bot ? 4 : 16),
+                      bottomRight: Radius.circular(m.bot ? 16 : 4),
+                    ),
+                    border: m.bot
+                        ? Border.all(color: Colors.grey.shade200)
+                        : null,
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.04),
+                        blurRadius: 10,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
+                  ),
+                  child: Text(
+                    m.text,
+                    style: TextStyle(
+                      color: m.bot ? Colors.black87 : Colors.white,
+                      fontSize: 13,
+                      height: 1.35,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        if (m.custom != null)
+          Padding(
+            padding: EdgeInsets.only(bottom: 8, left: m.bot ? 34 : 0),
+            child: m.custom!,
+          ),
+        if (m.chips != null && m.chips!.isNotEmpty)
+          Padding(
+            padding: EdgeInsets.only(bottom: 12, top: 2, left: m.bot ? 34 : 0),
+            child: Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (final c in m.chips!)
+                  OutlinedButton(
+                    onPressed: c.onTap,
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: FoodFlowTheme.crimson,
+                      side: const BorderSide(color: Color(0xFFFFD2AA)),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 8),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(20)),
+                    ),
+                    child: Text(
+                      c.label,
+                      style: const TextStyle(
+                          fontSize: 12, fontWeight: FontWeight.w700),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildAsstInputBar() {
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(16, 6, 6, 6),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(28),
+            border: Border.all(color: const Color(0xFFE8E8EE)),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.06),
+                blurRadius: 18,
+                offset: const Offset(0, 10),
+              ),
+            ],
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _asstInput,
+                  minLines: 1,
+                  maxLines: 3,
+                  textInputAction: TextInputAction.send,
+                  onSubmitted: (_) => _asstSend(),
+                  decoration: const InputDecoration(
+                    hintText: 'Type your message',
+                    border: InputBorder.none,
+                    isDense: true,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 6),
+              Container(
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: LinearGradient(
+                    colors: [
+                      FoodFlowTheme.crimson,
+                      Color.lerp(FoodFlowTheme.crimson, Colors.black, 0.15) ??
+                          FoodFlowTheme.crimson,
+                    ],
+                  ),
+                ),
+                child: IconButton(
+                  onPressed: _asstSend,
+                  color: Colors.white,
+                  icon: const Icon(Icons.send_rounded, size: 20),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   /// A persistent strip under the header, mirroring the "Chatting with
-  /// Yumma Assistant / Talk to a human" bar Zomato & Swiggy keep pinned
+  /// FoodFlow Assistant / Talk to a human" bar Zomato & Swiggy keep pinned
   /// above the message list while a bot is triaging the issue.
   Widget _buildChatStatusStrip() {
     if (_stage == 'resolved') return const SizedBox.shrink();
@@ -580,7 +1332,7 @@ class _CustomerSupportScreenState extends State<CustomerSupportScreen> {
           Expanded(
             child: Text(
               isBot
-                  ? 'Chatting with Yumma Assistant'
+                  ? 'Chatting with the Yumma! assistant'
                   : 'A support agent has joined this chat',
               style: TextStyle(
                 fontSize: 11.5,
@@ -848,7 +1600,7 @@ class _CustomerSupportScreenState extends State<CustomerSupportScreen> {
 
     final bubbleColor = isMine ? FoodFlowTheme.crimson : Colors.white;
     final senderLabel = switch (senderType) {
-      'bot' => 'Yumma Assistant',
+      'bot' => 'Yumma! Assistant',
       'admin' => 'Support Team',
       _ => message['sender_name']?.toString() ?? 'You',
     };
@@ -1165,6 +1917,347 @@ class _CustomerSupportScreenState extends State<CustomerSupportScreen> {
           ),
         ],
       ),
+    );
+  }
+}
+
+// ==========================================================================
+// Client-side assistant — models & widgets
+// ==========================================================================
+
+class _AsstTopic {
+  const _AsstTopic(this.key, this.label, this.keywords);
+  final String key;
+  final String label;
+  final List<String> keywords;
+}
+
+const List<_AsstTopic> _kTopics = [
+  _AsstTopic('order', 'Track my order', [
+    'track', 'where', 'order', 'status', 'late', 'delay', 'eta', 'arrive'
+  ]),
+  _AsstTopic('payment', 'Payment issue', [
+    'pay', 'payment', 'deducted', 'debited', 'failed', 'upi', 'card', 'money', 'charged'
+  ]),
+  _AsstTopic('refund', 'Refund status',
+      ['refund', 'return money', 'reversal', 'cashback', 'money back']),
+  _AsstTopic('cancel', 'Cancel an order',
+      ['cancel', 'stop order', 'don\'t want', 'do not want']),
+  _AsstTopic('delivery', 'Delivery problem', [
+    'missing', 'wrong item', 'spilled', 'spilt', 'damaged', 'not delivered', 'quality', 'cold'
+  ]),
+  _AsstTopic('account', 'Account & profile', [
+    'account', 'profile', 'phone number', 'address', 'delete account', 'password', 'name'
+  ]),
+];
+
+class _AsstMsg {
+  _AsstMsg.bot(this.text, {this.chips, this.custom}) : bot = true;
+  _AsstMsg.user(this.text)
+      : bot = false,
+        chips = null,
+        custom = null;
+
+  final bool bot;
+  final String text;
+  final List<_AsstChip>? chips;
+  final Widget? custom;
+}
+
+class _AsstChip {
+  const _AsstChip(this.label, this.onTap);
+  final String label;
+  final VoidCallback onTap;
+}
+
+class _AsstTypingDots extends StatefulWidget {
+  const _AsstTypingDots();
+
+  @override
+  State<_AsstTypingDots> createState() => _AsstTypingDotsState();
+}
+
+class _AsstTypingDotsState extends State<_AsstTypingDots>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _c = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1100),
+  )..repeat();
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10, left: 34),
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: const BorderRadius.only(
+              topLeft: Radius.circular(16),
+              topRight: Radius.circular(16),
+              bottomLeft: Radius.circular(4),
+              bottomRight: Radius.circular(16),
+            ),
+            border: Border.all(color: Colors.grey.shade200),
+          ),
+          child: AnimatedBuilder(
+            animation: _c,
+            builder: (_, __) => Row(
+              mainAxisSize: MainAxisSize.min,
+              children: List.generate(3, (d) {
+                final phase = (_c.value * 3 - d).clamp(0.0, 1.0);
+                final wave = (0.5 - (phase - 0.5).abs()) * 2;
+                return Padding(
+                  padding: EdgeInsets.only(right: d < 2 ? 5 : 0),
+                  child: Transform.translate(
+                    offset: Offset(0, -3 * wave),
+                    child: Opacity(
+                      opacity: 0.35 + 0.65 * wave,
+                      child: Container(
+                        width: 6,
+                        height: 6,
+                        decoration: const BoxDecoration(
+                          color: FoodFlowTheme.crimson,
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                    ),
+                  ),
+                );
+              }),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _AsstOrderPicker extends StatefulWidget {
+  const _AsstOrderPicker({required this.orders, required this.onPick});
+  final List<Order> orders;
+  final void Function(Order) onPick;
+
+  @override
+  State<_AsstOrderPicker> createState() => _AsstOrderPickerState();
+}
+
+class _AsstOrderPickerState extends State<_AsstOrderPicker> {
+  bool _done = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 280),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          for (final o in widget.orders)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: InkWell(
+                borderRadius: BorderRadius.circular(14),
+                onTap: _done
+                    ? null
+                    : () {
+                        setState(() => _done = true);
+                        widget.onPick(o);
+                      },
+                child: Opacity(
+                  opacity: _done ? 0.5 : 1,
+                  child: Container(
+                    padding: const EdgeInsets.all(11),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: const Color(0xFFE8E8EE)),
+                    ),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text('#${o.orderNumber}',
+                                  style: const TextStyle(
+                                      fontSize: 12.5,
+                                      fontWeight: FontWeight.w900)),
+                              const SizedBox(height: 2),
+                              Text(
+                                '${o.items.length} item(s) · ${o.status.replaceAll('_', ' ')}',
+                                style: TextStyle(
+                                    color: Colors.grey.shade600,
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w600),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const Icon(Icons.chevron_right_rounded,
+                            size: 18, color: Color(0xFF9AA0A6)),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AsstCancelCard extends StatefulWidget {
+  const _AsstCancelCard({
+    required this.orderNumber,
+    required this.charge,
+    required this.refund,
+    required this.method,
+    required this.note,
+    required this.confirmLabel,
+    required this.onConfirm,
+    required this.onDismiss,
+  });
+
+  final String orderNumber;
+  final double charge;
+  final double refund;
+  final String method;
+  final String note;
+  final String confirmLabel;
+  final Future<void> Function() onConfirm;
+  final VoidCallback onDismiss;
+
+  @override
+  State<_AsstCancelCard> createState() => _AsstCancelCardState();
+}
+
+class _AsstCancelCardState extends State<_AsstCancelCard> {
+  bool _busy = false;
+  bool _done = false;
+
+  @override
+  Widget build(BuildContext context) {
+    String money(num v) => formatCurrency(context, v);
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 280),
+      child: Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: const Color(0xFFE8E8EE)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _kv('Order', '#${widget.orderNumber}'),
+            const SizedBox(height: 6),
+            _kv('Cancellation charge', money(widget.charge)),
+            const SizedBox(height: 6),
+            _kv('Refund to ${widget.method}', money(widget.refund), strong: true),
+            if (widget.note.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Text(widget.note,
+                  style: TextStyle(
+                      color: Colors.grey.shade600,
+                      fontSize: 11,
+                      height: 1.35,
+                      fontWeight: FontWeight.w500)),
+            ],
+            const SizedBox(height: 12),
+            if (_done)
+              const Text('Done.',
+                  style: TextStyle(
+                      color: FoodFlowTheme.crimson,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w800))
+            else
+              Row(
+                children: [
+                  Expanded(
+                    child: ElevatedButton(
+                      onPressed: _busy
+                          ? null
+                          : () async {
+                              setState(() => _busy = true);
+                              await widget.onConfirm();
+                              if (mounted) setState(() => _done = true);
+                            },
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: FoodFlowTheme.crimson,
+                        foregroundColor: Colors.white,
+                        elevation: 0,
+                        padding: const EdgeInsets.symmetric(vertical: 11),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12)),
+                      ),
+                      child: _busy
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(
+                                  strokeWidth: 2, color: Colors.white))
+                          : Text(widget.confirmLabel,
+                              style: const TextStyle(
+                                  fontSize: 12.5,
+                                  fontWeight: FontWeight.w900)),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  OutlinedButton(
+                    onPressed: _busy
+                        ? null
+                        : () {
+                            setState(() => _done = true);
+                            widget.onDismiss();
+                          },
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: FoodFlowTheme.crimson,
+                      side: const BorderSide(color: Color(0xFFFFD2AA)),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 14, vertical: 11),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12)),
+                    ),
+                    child: const Text('Keep order',
+                        style: TextStyle(
+                            fontSize: 12.5, fontWeight: FontWeight.w800)),
+                  ),
+                ],
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _kv(String k, String v, {bool strong = false}) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Flexible(
+          child: Text(k,
+              style: TextStyle(
+                  color: Colors.grey.shade700,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600)),
+        ),
+        const SizedBox(width: 10),
+        Text(v,
+            style: TextStyle(
+                color: strong ? FoodFlowTheme.crimson : Colors.black87,
+                fontSize: strong ? 13.5 : 12.5,
+                fontWeight: FontWeight.w900)),
+      ],
     );
   }
 }

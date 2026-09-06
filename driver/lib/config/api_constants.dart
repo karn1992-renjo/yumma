@@ -19,15 +19,24 @@ class ApiConstants {
   static const String deleteAccount = '/user/account';
   static const String updateProfile = '/user/profile';
   static const String registerFcmToken = '/user/fcm-token';
+  static const String notifications = '/notifications';
+  static const String notificationsRead = '/notifications/read';
   static const String changePassword = '/user/change-password';
   static const String updatePassword = changePassword;
   static const String wallet = '/wallet';
   static const String walletWithdraw = '/wallet/withdraw';
   static const String walletTopUp = '/wallet/top-up';
   static const String walletTopUpVerify = '/wallet/top-up/verify';
-  static const String supportTickets = '/support/tickets';
-  static String supportTicketReply(int ticketId) =>
-      '/support/tickets/$ticketId/reply';
+  static const String supportConversations = '/support/conversations';
+  static String supportConversation(int id) => '/support/conversations/$id';
+  static String supportConversationMessages(int id) =>
+      '/support/conversations/$id/messages';
+  static String supportConversationEscalate(int id) =>
+      '/support/conversations/$id/escalate';
+  static String supportConversationRead(int id) =>
+      '/support/conversations/$id/read';
+  static String supportConversationCsat(int id) =>
+      '/support/conversations/$id/csat';
   static String orderChat(int orderId) => '/orders/$orderId/chat';
   static String restaurantOrderChat(int orderId) =>
       '/restaurant/orders/$orderId/chat';
@@ -47,6 +56,14 @@ class ApiConstants {
   static const String legalContent = '/content/legal';
   static const String partnerApplications = '/partner-applications';
   static const String activeDeliveryAreas = '/delivery-areas/active';
+
+  // Realtime document verification (Cashfree) during registration
+  static const String verifyGstin = '/verification/gstin';
+  static const String verifyPan = '/verification/pan';
+  static const String verifyVehicleRc = '/verification/vehicle-rc';
+  static const String verifyDrivingLicense = '/verification/driving-license';
+  static const String verifyPanDocument = '/verification/pan-document';
+  static const String verifyAadhaarDocument = '/verification/aadhaar-document';
 
   // Order Customer endpoints
   static const String createOrder = '/orders';
@@ -126,6 +143,14 @@ class ApiConstants {
       '/driver/orders/$orderId/reject';
   static String updateOrderStatus(int orderId) =>
       '/driver/orders/$orderId/status';
+  static String driverArrived(int orderId) =>
+      '/driver/orders/$orderId/arrived';
+  static String driverReportDeliveryFailed(int orderId) =>
+      '/driver/orders/$orderId/report-delivery-failed';
+  static String driverCallParticipant(int orderId) =>
+      '/driver/orders/$orderId/call';
+  static String driverConfirmFoodReturned(int orderId) =>
+      '/driver/orders/$orderId/confirm-food-returned';
   static String driverPaymentLink(int orderId) =>
       '/orders/$orderId/driver/payment-link';
   static String driverCash(int orderId) => '/orders/$orderId/driver/cash';

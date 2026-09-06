@@ -26,6 +26,7 @@ class Branch extends Model
         'address',
         'gst_number',
         'pan_number',
+        'tan',
         'trade_license',
         'status',
         'platform_commission_percent',

@@ -123,6 +123,26 @@
                     <span class="input-group-text">{{ $currencySymbol }}</span>
                     <input type="number" name="discounted_price" value="{{ old('discounted_price', $menuItem->discounted_price) }}" step="{{ $priceStep }}" min="0" class="form-control">
                 </div>
+
+                <hr class="my-3">
+                <label class="form-label fw-semibold small text-muted">GST (used only when GST invoicing is on)</label>
+                <div class="row g-2">
+                    <div class="col-6">
+                        <label class="form-label small">GST Rate %</label>
+                        <input type="number" name="gst_rate" value="{{ old('gst_rate', $menuItem->gst_rate) }}" step="0.01" min="0" max="28" class="form-control form-control-sm" placeholder="master / default">
+                    </div>
+                    <div class="col-6">
+                        <label class="form-label small">HSN / SAC</label>
+                        <input type="text" name="hsn_code" value="{{ old('hsn_code', $menuItem->hsn_code) }}" maxlength="20" class="form-control form-control-sm" placeholder="master / default">
+                    </div>
+                    <div class="col-12">
+                        <div class="form-check mt-1">
+                            <input type="hidden" name="is_price_inclusive_gst" value="0">
+                            <input type="checkbox" name="is_price_inclusive_gst" value="1" id="priceInclGst" class="form-check-input" @checked(old('is_price_inclusive_gst', $menuItem->is_price_inclusive_gst))>
+                            <label for="priceInclGst" class="form-check-label small">Price is GST-inclusive</label>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
 

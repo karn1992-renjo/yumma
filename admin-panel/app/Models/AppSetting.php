@@ -30,6 +30,31 @@ class AppSetting extends Model
         return $settings[$key] ?? $default;
     }
 
+    public static function defaultDeliveryRadius(): float
+    {
+        try {
+            $configured = self::getValue('default_delivery_radius');
+            if (is_numeric($configured) && (float) $configured > 0) {
+                return (float) $configured;
+            }
+
+            $zoneRadius = DeliveryArea::query()
+                ->active()
+                ->where('area_type', 'circle')
+                ->max('radius_km');
+            if (is_numeric($zoneRadius) && (float) $zoneRadius > 0) {
+                return (float) $zoneRadius;
+            }
+
+            $restaurantRadius = Restaurant::query()
+                ->where('delivery_radius', '>', 0)
+                ->max('delivery_radius');
+
+            return is_numeric($restaurantRadius) ? max(0.0, (float) $restaurantRadius) : 0.0;
+        } catch (\Throwable $e) {
+            return 0.0;
+        }
+    }
     public static function currencyDecimals(): int
     {
         $value = (int) self::getValue('currency_decimals', 2);
@@ -99,3 +124,4 @@ class AppSetting extends Model
         $this->attributes['value'] = $value === null ? '' : (string) $value;
     }
 }
+

@@ -48,6 +48,15 @@ class CashfreeVerificationService
         ]));
     }
 
+    public function verifyBankAccount(string $accountNumber, string $ifsc, ?string $name = null, ?string $phone = null): array
+    {
+        return $this->call('post', '/bank-account/sync', array_filter([
+            'bank_account' => preg_replace('/\s+/', '', $accountNumber),
+            'ifsc' => strtoupper(preg_replace('/\s+/', '', $ifsc)),
+            'name' => $name,
+            'phone' => $phone ? preg_replace('/\D+/', '', $phone) : null,
+        ], static fn ($value) => $value !== null && $value !== ''));
+    }
     public function verifyPanFromImage(string $storageDiskPath, string $verificationId): array
     {
         return $this->callMultipart('/document/pan', 'front_image', $storageDiskPath, [
@@ -74,10 +83,17 @@ class CashfreeVerificationService
 
     public function isEnabled(): bool
     {
-        return filter_var(
+        $autoVerificationEnabled = filter_var(
             AppSetting::getValue('cashfree_vrs_enabled', '0'),
             FILTER_VALIDATE_BOOLEAN
         );
+        $paymentGatewayEnabled = filter_var(
+            AppSetting::getValue('payment_gateway_enabled', '1'),
+            FILTER_VALIDATE_BOOLEAN
+        );
+        $paymentGateway = strtolower((string) AppSetting::getValue('payment_gateway_provider', ''));
+
+        return $autoVerificationEnabled && $paymentGatewayEnabled && $paymentGateway === 'cashfree';
     }
 
     /**
@@ -137,11 +153,32 @@ class CashfreeVerificationService
                     );
                 }
             }
+
+            $bankDetails = $this->bankDetails($application);
+            if (! empty($bankDetails['account_number']) && ! empty($bankDetails['ifsc'])) {
+                $results['bank_account'] = $this->verifyBankAccount(
+                    (string) $bankDetails['account_number'],
+                    (string) $bankDetails['ifsc'],
+                    $bankDetails['holder_name'] ?? $application->contact_name ?? $application->full_name,
+                    $application->contact_phone ?? $application->phone ?? $application->business_phone
+                );
+            }
         } catch (\Throwable $e) {
             \Log::error('Cashfree document verification failed for application ' . $application->id . ': ' . $e->getMessage());
         }
 
         return $results;
+    }
+
+    private function bankDetails(PartnerApplication $application): array
+    {
+        if (is_array($application->bank_details)) {
+            return $application->bank_details;
+        }
+
+        $bankDetails = json_decode((string) $application->bank_details, true);
+
+        return is_array($bankDetails) ? $bankDetails : [];
     }
 
     private function call(string $method, string $path, array $payload): array
@@ -202,9 +239,12 @@ class CashfreeVerificationService
         }
 
         $valid = $data['valid'] ?? null;
+        $accountStatus = Str::lower((string) ($data['account_status'] ?? $data['accountStatus'] ?? ''));
         $status = match (true) {
             $valid === true => 'verified',
             $valid === false => 'invalid',
+            $accountStatus === 'valid' => 'verified',
+            $accountStatus === 'invalid' => 'invalid',
             isset($data['status']) && Str::lower((string) $data['status']) === 'valid' => 'verified',
             isset($data['status']) && Str::lower((string) $data['status']) === 'invalid' => 'invalid',
             default => 'checked',
@@ -258,3 +298,7 @@ class CashfreeVerificationService
             : 'https://sandbox.cashfree.com/verification';
     }
 }
+
+
+
+

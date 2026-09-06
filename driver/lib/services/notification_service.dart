@@ -193,7 +193,7 @@ class FirebaseNotificationService {
     const androidChannel = AndroidNotificationChannel(
       'default_notification_channel',
       'Default Notifications',
-      description: 'General notifications from renjo',
+      description: 'General notifications from Yumma!',
       importance: Importance.high,
     );
 
@@ -387,10 +387,14 @@ class FirebaseNotificationService {
       return;
     }
 
-    final route =
-        data['role'] == 'driver' || data['type'] == 'driver_order_assigned'
-            ? '/driver/order'
-            : '/restaurant/order';
+    const driverTypes = {
+      'driver_order_assigned',
+      'driver_tip_received',
+    };
+    final route = data['role'] == 'driver' ||
+            driverTypes.contains(data['type']?.toString())
+        ? '/driver/order'
+        : '/restaurant/order';
 
     appNavigatorKey.currentState?.pushNamed(route, arguments: orderId);
   }
@@ -483,7 +487,9 @@ class FirebaseNotificationService {
 
   static bool _isDriverOrderData(Map<String, dynamic> data) {
     final type = data['type']?.toString() ?? '';
-    return data['role'] == 'driver' || type == 'driver_order_assigned';
+    return data['role'] == 'driver' ||
+        type == 'driver_order_assigned' ||
+        type == 'driver_tip_received';
   }
 
   static bool _isIncomingOrderData(Map<String, dynamic> data) {

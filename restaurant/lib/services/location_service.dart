@@ -5,6 +5,8 @@ import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../config/app_config.dart';
+
 class LocationService {
   static const String _savedCityKey = 'saved_city';
   static const String _savedLatKey = 'saved_latitude';
@@ -67,7 +69,7 @@ class LocationService {
         Uri.parse(
             'https://nominatim.openstreetmap.org/reverse?lat=$lat&lon=$lng&format=json&accept-language=en'),
         headers: {
-          'User-Agent': 'FoodFlowApp/1.0 (https://example.com)',
+          'User-Agent': '${AppConfig.appName}/1.0 (${AppConfig.supportEmail})',
           'Accept-Language': 'en',
         },
       );
@@ -98,7 +100,7 @@ class LocationService {
         Uri.parse(
             'https://nominatim.openstreetmap.org/reverse?lat=$lat&lon=$lng&format=json&addressdetails=1&accept-language=en'),
         headers: {
-          'User-Agent': 'FoodFlowApp/1.0 (https://example.com)',
+          'User-Agent': '${AppConfig.appName}/1.0 (${AppConfig.supportEmail})',
           'Accept-Language': 'en',
         },
       );
@@ -151,7 +153,7 @@ class LocationService {
         Uri.parse(
             'https://nominatim.openstreetmap.org/search?q=${Uri.encodeComponent(address)}&format=json&addressdetails=1&limit=1'),
         headers: {
-          'User-Agent': 'FoodFlowApp/1.0 (https://example.com)',
+          'User-Agent': '${AppConfig.appName}/1.0 (${AppConfig.supportEmail})',
           'Accept-Language': 'en',
         },
       );
@@ -200,7 +202,7 @@ class LocationService {
         Uri.parse(
             'https://nominatim.openstreetmap.org/search?q=${Uri.encodeComponent(trimmed)}&format=json&addressdetails=1&limit=6&accept-language=en'),
         headers: {
-          'User-Agent': 'FoodFlowApp/1.0 (https://example.com)',
+          'User-Agent': '${AppConfig.appName}/1.0 (${AppConfig.supportEmail})',
           'Accept-Language': 'en',
         },
       );

@@ -129,7 +129,7 @@
                                 <div class="h-100 rounded-4 overflow-hidden border bg-white shadow-sm">
                                     <div class="position-relative" style="height:190px;background:#f8fafc;">
                                         @if($image)
-                                            <img src="{{ $image }}" alt="{{ $title }}" class="w-100 h-100" style="object-fit:cover;">
+                                            <img src="{{ $image }}" alt="{{ $title }}" width="400" height="240" loading="lazy" class="w-100 h-100" style="object-fit:cover;">
                                         @else
                                             <div class="w-100 h-100 d-flex align-items-center justify-content-center" style="background:linear-gradient(135deg,#16a34a,#f97316);">
                                                 <i class="fas fa-gift text-white fa-3x"></i>

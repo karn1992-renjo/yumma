@@ -228,6 +228,7 @@
                             'interior_image' => 'Interior Photo',
                             'food_image' => 'Food Photo',
                             'kitchen_image' => 'Kitchen Photo',
+                            'menu_photo' => 'Menu Photo',
                             'gst_certificate' => 'GST Certificate',
                             'fssai_license' => 'FSSAI License',
                             'bank_proof' => 'Bank Proof',

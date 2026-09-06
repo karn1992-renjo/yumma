@@ -7,12 +7,13 @@ import 'package:flutter/services.dart';
 class SoundService {
   static const String _newOrderSoundAsset = 'sound/order-tone.mp3';
   static const MethodChannel _androidAudioChannel =
-      MethodChannel('com.renjo.restro.android/order_audio');
+      MethodChannel('com.adgraph.yumma_vendor/order_audio');
 
   static final AudioPlayer _player = AudioPlayer();
   static final AudioPlayer _alarmPlayer = AudioPlayer();
   static Timer? _incomingOrderAlarmTimer;
   static Timer? _restoreAudioRouteTimer;
+  static StreamSubscription<void>? _alarmCompleteSubscription;
   static bool _assetUnavailable = false;
   static bool _urgentAudioPrepared = false;
   static bool _incomingOrderAlarmActive = false;
@@ -77,9 +78,14 @@ class SoundService {
 
     _incomingOrderAlarmActive = true;
     _restoreAudioRouteTimer?.cancel();
+    _alarmCompleteSubscription ??= _alarmPlayer.onPlayerComplete.listen((_) {
+      if (_incomingOrderAlarmActive) {
+        unawaited(_startIncomingOrderPlayback());
+      }
+    });
     unawaited(_startIncomingOrderPlayback());
     _incomingOrderAlarmTimer = Timer.periodic(
-      const Duration(seconds: 2),
+      const Duration(seconds: 3),
       (_) => _pulseIncomingOrderAlert(),
     );
   }
@@ -108,6 +114,9 @@ class SoundService {
     await HapticFeedback.heavyImpact();
     if (_incomingOrderAlarmActive && _assetUnavailable) {
       await SystemSound.play(SystemSoundType.alert);
+    } else if (_incomingOrderAlarmActive &&
+        _alarmPlayer.state != PlayerState.playing) {
+      await _startIncomingOrderPlayback();
     }
   }
 
@@ -134,6 +143,8 @@ class SoundService {
 
   static Future<void> dispose() async {
     await stopIncomingOrderAlarm();
+    await _alarmCompleteSubscription?.cancel();
+    _alarmCompleteSubscription = null;
     await _player.dispose();
     await _alarmPlayer.dispose();
   }

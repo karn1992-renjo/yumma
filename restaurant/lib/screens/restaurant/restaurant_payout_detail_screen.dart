@@ -4,9 +4,12 @@ import 'package:intl/intl.dart';
 import '../../config/app_config.dart';
 import '../../config/api_constants.dart';
 import '../../services/api_service.dart';
+import '../../services/local_cache_service.dart';
 import '../../theme/foodflow_theme.dart';
 import '../../utils/currency_utils.dart';
 import '../../widgets/common/network_image_loader.dart';
+import '../../theme/aurora_theme.dart';
+import '../../widgets/aurora/aurora.dart';
 
 class RestaurantPayoutDetailScreen extends StatefulWidget {
   const RestaurantPayoutDetailScreen({
@@ -27,36 +30,54 @@ class _RestaurantPayoutDetailScreenState
     extends State<RestaurantPayoutDetailScreen> {
   final ApiService _api = ApiService();
   bool _isLoading = true;
+  bool _hasData = false;
   Map<String, dynamic> _payout = {};
   List<Map<String, dynamic>> _orders = [];
+
+  String get _cacheKey =>
+      '${AppConfig.apiBaseUrl}${ApiConstants.walletPayoutDetails(widget.payoutId)}';
 
   @override
   void initState() {
     super.initState();
-    _loadPayout();
+    // Seed instantly: the transaction row we were opened with, then any cached
+    // full response, then a silent network refresh.
+    if (widget.initialTransaction != null) {
+      _payout = Map<String, dynamic>.from(widget.initialTransaction!);
+      _isLoading = false;
+    }
+    final cached = LocalCacheService.get(_cacheKey);
+    if (cached is Map && _applyPayout(cached)) {
+      _isLoading = false;
+      _hasData = true;
+    }
+    _loadPayout(silent: _isLoading == false);
   }
 
-  Future<void> _loadPayout() async {
-    setState(() => _isLoading = true);
+  bool _applyPayout(Map<dynamic, dynamic> response) {
+    if (response['success'] != true) return false;
+    final data = _asMap(response['data']);
+    final orders = data['orders'] is List ? data['orders'] as List : const [];
+    _payout = _asMap(data['payout']);
+    _orders = orders
+        .whereType<Map>()
+        .map((item) => Map<String, dynamic>.from(item))
+        .toList();
+    return true;
+  }
+
+  Future<void> _loadPayout({bool silent = false}) async {
+    if (!silent) setState(() => _isLoading = true);
     try {
       final response = await _api.get(
         ApiConstants.walletPayoutDetails(widget.payoutId),
       );
-      if (response['success'] == true) {
-        final data = _asMap(response['data']);
-        final orders =
-            data['orders'] is List ? data['orders'] as List : const [];
-        if (!mounted) return;
-        setState(() {
-          _payout = _asMap(data['payout']);
-          _orders = orders
-              .whereType<Map>()
-              .map((item) => Map<String, dynamic>.from(item))
-              .toList();
-        });
+      if (!mounted) return;
+      if (response is Map && _applyPayout(response)) {
+        setState(() => _hasData = true);
       }
     } catch (e) {
-      if (mounted) {
+      if (mounted && !_hasData && widget.initialTransaction == null) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Payout details unavailable: $e')),
         );
@@ -69,31 +90,42 @@ class _RestaurantPayoutDetailScreenState
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: FoodFlowTheme.canvas,
-      appBar: AppBar(
-        title: const Text('Payout Details'),
+      backgroundColor: foodflow.canvas,
+      extendBodyBehindAppBar: true,
+      appBar: GlassAppBar(
+        leading: const BackButton(),
+        title: Text('Payout statement',
+            style: TextStyle(
+              color: foodflow.ink,
+              fontSize: 18,
+              fontWeight: FontWeight.w900,
+            )),
         actions: [
           IconButton(
             onPressed: _isLoading ? null : _loadPayout,
-            icon: const Icon(Icons.refresh_rounded),
+            icon: Icon(Icons.refresh_rounded, color: foodflow.ink),
           ),
         ],
       ),
-      body: RefreshIndicator(
-        color: FoodFlowTheme.orange,
-        onRefresh: _loadPayout,
-        child: _isLoading
-            ? ListView(
-                physics: const AlwaysScrollableScrollPhysics(),
-                children: const [
-                  SizedBox(height: 220),
-                  Center(child: CircularProgressIndicator()),
-                ],
-              )
-            : ListView(
-                physics: const AlwaysScrollableScrollPhysics(),
-                padding: const EdgeInsets.fromLTRB(16, 14, 16, 26),
-                children: [
+      body: Stack(children: [
+        Positioned.fill(
+          child: DecoratedBox(
+            decoration: BoxDecoration(color: foodflow.canvas),
+            child: Stack(children: AuroraTheme.auroraBlobs()),
+          ),
+        ),
+        Positioned.fill(
+          child: RefreshIndicator(
+            color: foodflow.orange,
+            onRefresh: _loadPayout,
+            child: _isLoading
+                ? Center(
+                    child: CircularProgressIndicator(color: foodflow.orange))
+                : ListView(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    padding: EdgeInsets.fromLTRB(16,
+                        MediaQuery.of(context).padding.top + 64, 16, 30),
+                    children: [
                   _PayoutHero(
                     payout: _payout,
                     transaction: widget.initialTransaction,
@@ -112,10 +144,29 @@ class _RestaurantPayoutDetailScreenState
                   if (_orders.isEmpty)
                     const _NoOrdersState()
                   else
-                    ..._orders.map((order) => _PayoutOrderCard(order: order)),
-                ],
-              ),
-      ),
+                    ..._orders.map((order) => _PayoutOrderCard(
+                          order: order,
+                          onOpenOrder: _openOrderDetails,
+                        )),
+                    ],
+                  ),
+          ),
+        ),
+      ]),
+    );
+  }
+
+  void _openOrderDetails(Map<String, dynamic> order) {
+    final orderId = _toInt(order['id'] ?? order['order_id']);
+    if (orderId == null) return;
+    final restaurantId = _restaurantIdFrom(order);
+    Navigator.pushNamed(
+      context,
+      '/restaurant/order',
+      arguments: {
+        'orderId': orderId,
+        if (restaurantId != null) 'restaurantId': restaurantId,
+      },
     );
   }
 }
@@ -167,7 +218,7 @@ class _PayoutHero extends StatelessWidget {
                       'Payout #${payout['id'] ?? ''}',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
+                      style: TextStyle(
                         color: FoodFlowTheme.ink,
                         fontSize: 16,
                         fontWeight: FontWeight.w900,
@@ -178,7 +229,7 @@ class _PayoutHero extends StatelessWidget {
                       _dateRange(payout),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
+                      style: TextStyle(
                         color: FoodFlowTheme.muted,
                         fontSize: 11,
                         fontWeight: FontWeight.w700,
@@ -193,7 +244,7 @@ class _PayoutHero extends StatelessWidget {
           const SizedBox(height: 16),
           Text(
             formatCurrencyWithDecimals(context, amount),
-            style: const TextStyle(
+            style: TextStyle(
               color: FoodFlowTheme.ink,
               fontSize: 28,
               height: 1,
@@ -240,35 +291,52 @@ class _PayoutBreakdown extends StatelessWidget {
     final deduction = _toDouble(payout['deduction_amount']);
     final net = _toDouble(payout['net_amount'] ?? payout['amount']);
 
+    final deductTotal = commission + gst + gatewayFee + deduction;
+    final base = gross <= 0 ? (net + deductTotal) : gross;
     return Container(
-      padding: const EdgeInsets.all(14),
+      padding: const EdgeInsets.all(16),
       decoration: _panelDecoration(),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            'Payout Bifurcation',
-            style: TextStyle(
-              color: FoodFlowTheme.ink,
-              fontSize: 15,
-              fontWeight: FontWeight.w900,
+          Text('How this payout was calculated',
+              style: TextStyle(
+                color: foodflow.ink,
+                fontSize: 15,
+                fontWeight: FontWeight.w900,
+              )),
+          const SizedBox(height: 14),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(99),
+            child: SizedBox(
+              height: 14,
+              child: Row(
+                children: [
+                  Expanded(
+                    flex: base <= 0 ? 1 : (net.clamp(0, base) * 1000).round(),
+                    child: ColoredBox(color: foodflow.success),
+                  ),
+                  if (deductTotal > 0)
+                    Expanded(
+                      flex: base <= 0
+                          ? 0
+                          : (deductTotal.clamp(0, base) * 1000).round(),
+                      child: ColoredBox(color: foodflow.danger),
+                    ),
+                ],
+              ),
             ),
           ),
-          const SizedBox(height: 11),
+          const SizedBox(height: 12),
           _moneyRow(context, 'Covered order value', gross),
           _moneyRow(context, 'Platform commission', commission, negative: true),
           _moneyRow(context, 'GST on commission', gst, negative: true),
           _moneyRow(context, 'Payment gateway fee', gatewayFee, negative: true),
           if (deduction > 0)
             _moneyRow(context, 'Other deduction', deduction, negative: true),
-          const Divider(height: 20),
-          _moneyRow(
-            context,
-            'Total payout',
-            net,
-            strong: true,
-            color: FoodFlowTheme.orange,
-          ),
+          Divider(height: 20, color: foodflow.line),
+          _moneyRow(context, 'Net payout to you', net,
+              strong: true, color: foodflow.orange),
         ],
       ),
     );
@@ -276,9 +344,10 @@ class _PayoutBreakdown extends StatelessWidget {
 }
 
 class _PayoutOrderCard extends StatelessWidget {
-  const _PayoutOrderCard({required this.order});
+  const _PayoutOrderCard({required this.order, required this.onOpenOrder});
 
   final Map<String, dynamic> order;
+  final ValueChanged<Map<String, dynamic>> onOpenOrder;
 
   @override
   Widget build(BuildContext context) {
@@ -288,78 +357,98 @@ class _PayoutOrderCard extends StatelessWidget {
         : <String, dynamic>{};
     final payout = _toDouble(order['restaurant_earning']);
 
-    return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.all(12),
-      decoration: _panelDecoration(),
-      child: Column(
-        children: [
-          Row(
-            children: [
-              _MenuThumb(item: firstItem, size: 50),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(14),
+          onTap: () => onOpenOrder(order),
+          child: Ink(
+            padding: const EdgeInsets.all(12),
+            decoration: _panelDecoration(),
+            child: Column(
+              children: [
+                Row(
                   children: [
-                    Text(
-                      '#${order['order_number'] ?? order['id'] ?? ''}',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: FoodFlowTheme.ink,
-                        fontSize: 14,
-                        fontWeight: FontWeight.w900,
+                    _MenuThumb(item: firstItem, size: 50),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            '#${order['order_number'] ?? order['id'] ?? ''}',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: FoodFlowTheme.ink,
+                              fontSize: 14,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            '${items.length} item${items.length == 1 ? '' : 's'} - ${_formatDate(order['delivered_at'] ?? order['created_at'])}',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: FoodFlowTheme.muted,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          const SizedBox(height: 5),
+                          Text(
+                            '${order['customer_name'] ?? 'Customer'}',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: FoodFlowTheme.muted,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
-                    const SizedBox(height: 4),
-                    Text(
-                      '${items.length} item${items.length == 1 ? '' : 's'} - ${_formatDate(order['delivered_at'] ?? order['created_at'])}',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: FoodFlowTheme.muted,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    const SizedBox(height: 5),
-                    Text(
-                      '${order['customer_name'] ?? 'Customer'}',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: FoodFlowTheme.muted,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w700,
-                      ),
+                    const SizedBox(width: 8),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Text(
+                          formatCurrency(context, payout),
+                          style: TextStyle(
+                            color: FoodFlowTheme.orange,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            _StatusPill(text: '${order['status'] ?? ''}'),
+                            const SizedBox(width: 4),
+                            Icon(
+                              Icons.chevron_right_rounded,
+                              color: FoodFlowTheme.muted,
+                              size: 18,
+                            ),
+                          ],
+                        ),
+                      ],
                     ),
                   ],
                 ),
-              ),
-              const SizedBox(width: 8),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Text(
-                    formatCurrency(context, payout),
-                    style: TextStyle(
-                      color: FoodFlowTheme.orange,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w900,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  _StatusPill(text: '${order['status'] ?? ''}'),
+                if (items.isNotEmpty) ...[
+                  const SizedBox(height: 11),
+                  _ItemStrip(items: items),
                 ],
-              ),
-            ],
+              ],
+            ),
           ),
-          if (items.isNotEmpty) ...[
-            const SizedBox(height: 11),
-            _ItemStrip(items: items),
-          ],
-        ],
+        ),
       ),
     );
   }
@@ -398,7 +487,7 @@ class _ItemStrip extends StatelessWidget {
                     '${item['quantity'] ?? 1} x ${item['name'] ?? 'Item'}',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
+                    style: TextStyle(
                       color: FoodFlowTheme.ink,
                       fontSize: 11,
                       fontWeight: FontWeight.w800,
@@ -477,7 +566,7 @@ class _SectionHeading extends StatelessWidget {
       children: [
         Text(
           title,
-          style: const TextStyle(
+          style: TextStyle(
             color: FoodFlowTheme.ink,
             fontSize: 17,
             fontWeight: FontWeight.w900,
@@ -486,7 +575,7 @@ class _SectionHeading extends StatelessWidget {
         const SizedBox(height: 2),
         Text(
           subtitle,
-          style: const TextStyle(
+          style: TextStyle(
             color: FoodFlowTheme.muted,
             fontSize: 11,
             fontWeight: FontWeight.w700,
@@ -553,7 +642,7 @@ class _InfoChip extends StatelessWidget {
           const SizedBox(width: 5),
           Text(
             text,
-            style: const TextStyle(
+            style: TextStyle(
               color: FoodFlowTheme.muted,
               fontSize: 11,
               fontWeight: FontWeight.w800,
@@ -573,7 +662,7 @@ class _NoOrdersState extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 30),
       decoration: _panelDecoration(),
-      child: const Column(
+      child: Column(
         children: [
           Icon(Icons.receipt_long_outlined,
               color: FoodFlowTheme.muted, size: 34),
@@ -643,12 +732,12 @@ Widget _moneyRow(
 
 BoxDecoration _panelDecoration() {
   return BoxDecoration(
-    color: Colors.white,
-    borderRadius: BorderRadius.circular(14),
-    border: Border.all(color: FoodFlowTheme.line),
+    color: foodflow.isDark ? foodflow.elevatedSurface : Colors.white,
+    borderRadius: BorderRadius.circular(16),
+    border: Border.all(color: foodflow.line),
     boxShadow: [
       BoxShadow(
-        color: Colors.black.withOpacity(0.035),
+        color: Colors.black.withOpacity(foodflow.isDark ? 0.3 : 0.035),
         blurRadius: 14,
         offset: const Offset(0, 6),
       ),
@@ -665,6 +754,22 @@ Map<String, dynamic> _asMap(dynamic value) {
 double _toDouble(dynamic value) {
   if (value is num) return value.toDouble();
   return double.tryParse('${value ?? 0}') ?? 0;
+}
+
+int? _toInt(dynamic value) {
+  if (value is int) return value;
+  if (value is num) return value.toInt();
+  return int.tryParse('${value ?? ''}');
+}
+
+int? _restaurantIdFrom(Map<String, dynamic> value) {
+  final restaurant = _asMap(value['restaurant']);
+  return _toInt(
+    value['restaurant_id'] ??
+        value['restaurantId'] ??
+        restaurant['id'] ??
+        restaurant['restaurant_id'],
+  );
 }
 
 String _dateRange(Map<String, dynamic> payout) {

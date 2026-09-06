@@ -1,7 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../../config/api_constants.dart';
 import '../../services/api_service.dart';
 import '../../theme/foodflow_theme.dart';
+import '../../theme/aurora_theme.dart';
+import '../../widgets/aurora/aurora.dart';
+import '../../widgets/aurora/aurora_dialogs.dart';
 import '../../widgets/restaurant/premium_restaurant_widgets.dart';
 
 class StaffManagementScreen extends StatefulWidget {
@@ -53,39 +57,61 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
     try {
       final response =
           await _api.post('${ApiConstants.restaurantStaff}/$id/toggle');
-      if (response['success'] == true) await _loadStaff();
+      if (response['success'] == true) {
+        await _loadStaff();
+      } else if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              response['message']?.toString() ?? 'Could not update staff status.',
+            ),
+          ),
+        );
+      }
     } catch (e) {
       debugPrint('Toggle staff error: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to update status: ${_apiMessage(e)}')),
+        );
+      }
     }
   }
 
   Future<void> _deleteStaff(int id) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Remove Staff'),
-        content: const Text('Remove this staff member from your restaurant?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Remove', style: TextStyle(color: Colors.red)),
-          ),
-        ],
-      ),
+    final confirmed = await showAuroraConfirm(
+      context,
+      icon: Icons.person_remove_rounded,
+      title: 'Remove staff member?',
+      message:
+          'Their login is revoked immediately. Order and menu history stays.',
+      confirmLabel: 'Remove',
+      destructive: true,
     );
-    if (confirmed != true) return;
+    if (!confirmed) return;
 
     try {
-      final response = await _api.post(
-        '${ApiConstants.restaurantStaff}/$id/delete',
+      final response = await _api.delete(
+        '${ApiConstants.restaurantStaff}/$id',
       );
-      if (response['success'] == true) await _loadStaff();
+      if (response['success'] == true) {
+        await _loadStaff();
+      } else if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              response['message']?.toString() ?? 'Could not remove staff member.',
+            ),
+          ),
+        );
+      }
     } catch (e) {
       debugPrint('Delete staff error: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to remove staff: ${_apiMessage(e)}')),
+        );
+      }
     }
   }
 
@@ -128,7 +154,7 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
     try {
       final response = id == null
           ? await _api.post(ApiConstants.restaurantStaff, data: data)
-          : await _api.post('${ApiConstants.restaurantStaff}/$id', data: data);
+          : await _api.put('${ApiConstants.restaurantStaff}/$id', data: data);
       if (response['success'] == true) {
         await _loadStaff();
         if (!mounted) return;
@@ -140,17 +166,39 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
               : null;
           if (account is Map) {
             await _showAccountCreatedDialog(Map<String, dynamic>.from(account));
+          } else if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Staff account created.')),
+            );
           }
+        } else if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Staff details updated.')),
+          );
         }
+      } else if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              response['message']?.toString() ?? 'Could not save staff member.',
+            ),
+          ),
+        );
       }
     } catch (e) {
       debugPrint('Save staff error: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to save staff: $e')),
+          SnackBar(content: Text('Failed to save staff: ${_apiMessage(e)}')),
         );
       }
     }
+  }
+
+  String _apiMessage(Object error) {
+    if (error is ApiException) return error.message;
+    final text = error.toString();
+    return text.startsWith('Exception: ') ? text.substring(11) : text;
   }
 
   bool _hasPermission(Map<String, dynamic>? staff, String permission) {
@@ -186,6 +234,19 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
         ),
         actions: [
           TextButton(
+            onPressed: () {
+              Clipboard.setData(
+                ClipboardData(
+                  text: 'Email: $email\nPhone: $phone\nPassword: $password',
+                ),
+              );
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Login details copied')),
+              );
+            },
+            child: const Text('Copy'),
+          ),
+          TextButton(
             onPressed: () => Navigator.pop(context),
             child: const Text('Close'),
           ),
@@ -198,118 +259,388 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
   Widget build(BuildContext context) {
     final activeCount =
         _staff.where((item) => item is Map && item['is_active'] == true).length;
+    final topPad = MediaQuery.of(context).padding.top + 60;
 
     return Scaffold(
-      backgroundColor: FoodFlowTheme.canvas,
-      appBar: AppBar(
-        title: const Text('Staff Management'),
-        actions: [
-          IconButton(
-            onPressed: () => _openStaffEditor(),
-            icon: const Icon(Icons.person_add_alt_1),
-            tooltip: 'Add staff',
+      backgroundColor: foodflow.canvas,
+      extendBodyBehindAppBar: true,
+      appBar: GlassAppBar(
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text('Staff',
+                style: TextStyle(
+                    color: foodflow.ink,
+                    fontSize: 17,
+                    fontWeight: FontWeight.w900)),
+            Text('$activeCount of ${_staff.length} active',
+                style: TextStyle(
+                    color: foodflow.muted,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700)),
+          ],
+        ),
+      ),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: () => _openStaffEditor(),
+        backgroundColor: foodflow.orange,
+        foregroundColor: Colors.white,
+        icon: const Icon(Icons.person_add_alt_1),
+        label: const Text('Add staff',
+            style: TextStyle(fontWeight: FontWeight.w800)),
+      ),
+      body: Stack(
+        children: [
+          ...AuroraTheme.auroraBlobs(),
+          _isLoading
+              ? const Center(child: CircularProgressIndicator())
+              : RefreshIndicator(
+                  onRefresh: _loadStaff,
+                  child: ListView(
+                    padding: EdgeInsets.fromLTRB(16, topPad, 16, 96),
+                    children: [
+                      _TeamHero(
+                        active: activeCount,
+                        total: _staff.length,
+                        onAdd: () => _openStaffEditor(),
+                      ),
+                      const SizedBox(height: 14),
+                      if (_staff.isEmpty)
+                        _StaffEmpty(onAdd: () => _openStaffEditor())
+                      else
+                        ..._staff.map((item) {
+                          final staff = Map<String, dynamic>.from(item as Map);
+                          return Padding(
+                            padding: const EdgeInsets.only(top: 10),
+                            child: _StaffRosterCard(
+                              staff: staff,
+                              onEdit: () => _openStaffEditor(staff: staff),
+                              onToggle: () => _toggleStaff(staff['id'] as int),
+                              onDelete: () => _deleteStaff(staff['id'] as int),
+                            ),
+                          );
+                        }),
+                    ],
+                  ),
+                ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TeamHero extends StatelessWidget {
+  const _TeamHero(
+      {required this.active, required this.total, required this.onAdd});
+
+  final int active;
+  final int total;
+  final VoidCallback onAdd;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        gradient: foodflow.brandGradient,
+        borderRadius: BorderRadius.circular(22),
+        boxShadow: [
+          BoxShadow(
+            color: foodflow.orange.withOpacity(0.26),
+            blurRadius: 22,
+            offset: const Offset(0, 12),
           ),
         ],
       ),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : RefreshIndicator(
-              onRefresh: _loadStaff,
-              child: ListView(
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
-                children: [
-                  PremiumRestaurantHeader(
-                    title: 'Team Control',
-                    subtitle:
-                        '$activeCount active • ${_staff.length} total staff members',
-                    icon: Icons.groups_2_outlined,
-                    trailing: IconButton(
-                      onPressed: () => _openStaffEditor(),
-                      icon: const Icon(Icons.add),
-                      color: Colors.white,
-                    ),
-                  ),
-                  if (_staff.isEmpty)
-                    FoodFlowTheme.emptyState(
-                      icon: Icons.people_outline,
-                      title: 'No staff added',
-                      subtitle:
-                          'Add managers, chefs, cashiers, and packing staff.',
-                    )
-                  else
-                    ..._staff.map((item) {
-                      final staff = Map<String, dynamic>.from(item as Map);
-                      final isActive = staff['is_active'] == true;
-                      final id = staff['id'] as int;
-                      return Container(
-                        margin: const EdgeInsets.only(bottom: 12),
-                        decoration: RestaurantPremium.panel(radius: 16),
-                        child: ListTile(
-                          contentPadding:
-                              const EdgeInsets.fromLTRB(14, 10, 8, 10),
-                          leading: CircleAvatar(
-                            backgroundColor: isActive
-                                ? FoodFlowTheme.orange
-                                : FoodFlowTheme.faint,
-                            child: Text(
-                              (staff['name']?.toString().isNotEmpty == true
-                                      ? staff['name'].toString()[0]
-                                      : 'S')
-                                  .toUpperCase(),
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontWeight: FontWeight.w900,
-                              ),
-                            ),
-                          ),
-                          title: Text(
-                            staff['name']?.toString() ?? 'Staff',
-                            style: const TextStyle(
-                              color: FoodFlowTheme.ink,
-                              fontWeight: FontWeight.w900,
-                            ),
-                          ),
-                          subtitle: Text(
-                            '${staff['role'] ?? 'Staff'} • ${staff['shift'] ?? 'No shift'}\n${staff['phone'] ?? 'No phone'}',
-                            style: const TextStyle(
-                              color: FoodFlowTheme.muted,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                          isThreeLine: true,
-                          trailing: PopupMenuButton<String>(
-                            onSelected: (value) {
-                              if (value == 'edit')
-                                _openStaffEditor(staff: staff);
-                              if (value == 'toggle') _toggleStaff(id);
-                              if (value == 'delete') _deleteStaff(id);
-                            },
-                            itemBuilder: (context) => [
-                              const PopupMenuItem(
-                                value: 'edit',
-                                child: Text('Edit'),
-                              ),
-                              PopupMenuItem(
-                                value: 'toggle',
-                                child:
-                                    Text(isActive ? 'Deactivate' : 'Activate'),
-                              ),
-                              const PopupMenuItem(
-                                value: 'delete',
-                                child: Text('Remove'),
-                              ),
-                            ],
-                          ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.16),
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: const Icon(Icons.groups_2_rounded, color: Colors.white),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text.rich(
+                  TextSpan(
+                    text: '$active',
+                    style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 30,
+                        height: 1,
+                        fontWeight: FontWeight.w900),
+                    children: [
+                      TextSpan(
+                        text: '  / $total staff on shift access',
+                        style: TextStyle(
+                          color: Colors.white.withOpacity(0.85),
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
                         ),
-                      );
-                    }),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Each login sees only what you grant below',
+                  style: TextStyle(
+                    color: Colors.white.withOpacity(0.8),
+                    fontSize: 11,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            onPressed: onAdd,
+            icon: const Icon(Icons.add_rounded, color: Colors.white),
+            style: IconButton.styleFrom(
+              backgroundColor: Colors.white.withOpacity(0.16),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _StaffEmpty extends StatelessWidget {
+  const _StaffEmpty({required this.onAdd});
+  final VoidCallback onAdd;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 32, horizontal: 20),
+      decoration: BoxDecoration(
+        color: foodflow.surfaceColor,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: foodflow.line),
+      ),
+      child: Column(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: foodflow.orange.withOpacity(0.10),
+              shape: BoxShape.circle,
+            ),
+            child:
+                Icon(Icons.people_outline, color: foodflow.orange, size: 30),
+          ),
+          const SizedBox(height: 14),
+          Text('No staff logins yet',
+              style: TextStyle(
+                  color: foodflow.ink,
+                  fontSize: 16,
+                  fontWeight: FontWeight.w900)),
+          const SizedBox(height: 6),
+          Text(
+            'Give managers, chefs and cashiers their own login with scoped access.',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: foodflow.muted, fontSize: 13),
+          ),
+          const SizedBox(height: 16),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: onAdd,
+              icon: const Icon(Icons.person_add_alt_1),
+              label: const Text('Add first staff'),
+              style: FoodFlowTheme.zomatoPrimaryButton(),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Roster row rebuilt around scoped-access visibility: avatar, name/role, a live
+/// permission chip strip, and an inline active switch.
+class _StaffRosterCard extends StatelessWidget {
+  const _StaffRosterCard({
+    required this.staff,
+    required this.onEdit,
+    required this.onToggle,
+    required this.onDelete,
+  });
+
+  final Map<String, dynamic> staff;
+  final VoidCallback onEdit;
+  final VoidCallback onToggle;
+  final VoidCallback onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    final isActive = staff['is_active'] == true;
+    final name = staff['name']?.toString() ?? 'Staff';
+    final initial = name.isNotEmpty ? name[0].toUpperCase() : 'S';
+    final perms = staff['permissions'];
+    final permList = perms is List ? perms.map((e) => '$e').toList() : <String>[];
+    const permMeta = {
+      'orders': ('Orders', Icons.receipt_long_rounded),
+      'menu': ('Menu', Icons.restaurant_menu_rounded),
+      'reports': ('Reports', Icons.insights_rounded),
+    };
+
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: foodflow.surfaceColor,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: isActive ? foodflow.line : foodflow.line.withOpacity(0.6),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: isActive
+                      ? foodflow.orange
+                      : foodflow.muted.withOpacity(0.4),
+                  shape: BoxShape.circle,
+                ),
+                child: Text(initial,
+                    style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w900,
+                        fontSize: 16)),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                            color: foodflow.ink,
+                            fontWeight: FontWeight.w900,
+                            fontSize: 14)),
+                    const SizedBox(height: 1),
+                    Text(
+                      '${staff['role'] ?? 'Staff'} · ${staff['shift']?.toString().isNotEmpty == true ? staff['shift'] : 'No shift'}',
+                      style: TextStyle(
+                          color: foodflow.muted,
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w700),
+                    ),
+                  ],
+                ),
+              ),
+              PopupMenuButton<String>(
+                icon: Icon(Icons.more_vert_rounded, color: foodflow.muted),
+                onSelected: (value) {
+                  if (value == 'edit') onEdit();
+                  if (value == 'toggle') onToggle();
+                  if (value == 'delete') onDelete();
+                },
+                itemBuilder: (context) => [
+                  const PopupMenuItem(value: 'edit', child: Text('Edit')),
+                  PopupMenuItem(
+                    value: 'toggle',
+                    child: Text(isActive ? 'Deactivate' : 'Activate'),
+                  ),
+                  const PopupMenuItem(value: 'delete', child: Text('Remove')),
                 ],
               ),
-            ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => _openStaffEditor(),
-        icon: const Icon(Icons.person_add_alt_1),
-        label: const Text('Add Staff'),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Expanded(
+                child: Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  children: [
+                    if (permList.isEmpty)
+                      _PermChip(
+                          label: 'View only',
+                          icon: Icons.visibility_outlined,
+                          on: false)
+                    else
+                      ...permMeta.entries.map((e) => _PermChip(
+                            label: e.value.$1,
+                            icon: e.value.$2,
+                            on: permList.contains(e.key),
+                          )),
+                  ],
+                ),
+              ),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(isActive ? 'Active' : 'Off',
+                      style: TextStyle(
+                          color: foodflow.muted,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w800)),
+                  Transform.scale(
+                    scale: 0.8,
+                    child: Switch.adaptive(
+                      value: isActive,
+                      onChanged: (_) => onToggle(),
+                      activeColor: foodflow.orange,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PermChip extends StatelessWidget {
+  const _PermChip(
+      {required this.label, required this.icon, required this.on});
+
+  final String label;
+  final IconData icon;
+  final bool on;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = on ? foodflow.orange : foodflow.muted;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: on ? foodflow.orange.withOpacity(0.10) : foodflow.canvas,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+            color: on ? foodflow.orange.withOpacity(0.3) : foodflow.line),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 12, color: color),
+          const SizedBox(width: 4),
+          Text(label,
+              style: TextStyle(
+                  color: color,
+                  fontSize: 10.5,
+                  fontWeight: FontWeight.w800)),
+        ],
       ),
     );
   }
@@ -415,7 +746,7 @@ class _StaffEditorScreenState extends State<_StaffEditorScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: FoodFlowTheme.canvas,
+      backgroundColor: foodflow.canvas,
       appBar: AppBar(
         title: Text(_isCreating ? 'Add Staff' : 'Edit Staff'),
       ),
@@ -551,7 +882,7 @@ class _StaffEditorScreenState extends State<_StaffEditorScreen> {
                 ],
               ),
               const SizedBox(height: 16),
-              const Text(
+              Text(
                 'Access Control',
                 style: TextStyle(
                   color: FoodFlowTheme.ink,

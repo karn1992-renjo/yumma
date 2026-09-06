@@ -1,4 +1,5 @@
 import 'dart:async';
+import '../../theme/foodflow_theme.dart';
 
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
@@ -26,9 +27,9 @@ class DriverOrderChatScreen extends StatefulWidget {
 }
 
 class _DriverOrderChatScreenState extends State<DriverOrderChatScreen> {
-  static const _ink = Color(0xFF111827);
-  static const _muted = Color(0xFF6B7280);
-  static const _line = Color(0xFFE5E7EB);
+  Color get _ink => foodflow.ink;
+  Color get _muted => foodflow.muted;
+  Color get _line => foodflow.line;
 
   final ApiService _api = ApiService();
   final WebSocketService _webSocketService = WebSocketService();
@@ -370,7 +371,7 @@ class _DriverOrderChatScreenState extends State<DriverOrderChatScreen> {
     return Scaffold(
       backgroundColor: AppConfig.backgroundColor,
       appBar: AppBar(
-        backgroundColor: Colors.white,
+        backgroundColor: foodflow.surfaceColor,
         elevation: 0,
         titleSpacing: 0,
         title: Column(
@@ -378,7 +379,7 @@ class _DriverOrderChatScreenState extends State<DriverOrderChatScreen> {
           children: [
             Text(
               _participantName(_recipientRole),
-              style: const TextStyle(
+              style:  TextStyle(
                 color: _ink,
                 fontWeight: FontWeight.w800,
                 fontSize: 18,
@@ -386,7 +387,7 @@ class _DriverOrderChatScreenState extends State<DriverOrderChatScreen> {
             ),
             Text(
               _otherPartyTyping ? 'typing...' : 'Realtime logistics chat',
-              style: const TextStyle(
+              style:  TextStyle(
                 color: _muted,
                 fontSize: 12,
                 fontWeight: FontWeight.w400,
@@ -407,7 +408,7 @@ class _DriverOrderChatScreenState extends State<DriverOrderChatScreen> {
                   width: double.infinity,
                   padding: const EdgeInsets.all(6),
                   decoration: BoxDecoration(
-                    color: Colors.white,
+                    color: foodflow.surfaceColor,
                     borderRadius: BorderRadius.circular(20),
                     border: Border.all(color: _line),
                   ),
@@ -433,8 +434,8 @@ class _DriverOrderChatScreenState extends State<DriverOrderChatScreen> {
                     itemBuilder: (context, index) {
                       final text = _quickReplies()[index];
                       return ActionChip(
-                        backgroundColor: Colors.white,
-                        side: const BorderSide(color: _line),
+                        backgroundColor: foodflow.surfaceColor,
+                        side:  BorderSide(color: _line),
                         label: Text(text),
                         onPressed: () {
                           _messageController.text = text;
@@ -468,11 +469,11 @@ class _DriverOrderChatScreenState extends State<DriverOrderChatScreen> {
                               vertical: 12,
                             ),
                             decoration: BoxDecoration(
-                              color: Colors.white,
+                              color: foodflow.surfaceColor,
                               borderRadius: BorderRadius.circular(20),
                               border: Border.all(color: _line),
                             ),
-                            child: const Text(
+                            child:  Text(
                               'Typing...',
                               style: TextStyle(
                                 color: _muted,
@@ -494,7 +495,7 @@ class _DriverOrderChatScreenState extends State<DriverOrderChatScreen> {
               child: Container(
                 padding: const EdgeInsets.fromLTRB(10, 8, 8, 8),
                 decoration: BoxDecoration(
-                  color: Colors.white,
+                  color: foodflow.surfaceColor,
                   borderRadius: BorderRadius.circular(28),
                   border: Border.all(color: _line),
                 ),
@@ -527,14 +528,14 @@ class _DriverOrderChatScreenState extends State<DriverOrderChatScreen> {
                       ),
                       child: IconButton(
                         onPressed: _isSending ? null : _sendText,
-                        color: Colors.white,
+                        color: foodflow.surfaceColor,
                         icon: _isSending
-                            ? const SizedBox(
+                            ?  SizedBox(
                                 width: 18,
                                 height: 18,
                                 child: CircularProgressIndicator(
                                   strokeWidth: 2,
-                                  color: Colors.white,
+                                  color: foodflow.surfaceColor,
                                 ),
                               )
                             : const Icon(Icons.send_rounded),
@@ -577,8 +578,8 @@ class _DriverOrderChatScreenState extends State<DriverOrderChatScreen> {
           const SizedBox(height: 6),
           Text(
             _summary['status_label']?.toString() ?? 'Live order communication',
-            style: const TextStyle(
-              color: Colors.white,
+            style:  TextStyle(
+              color: foodflow.surfaceColor,
               fontWeight: FontWeight.w800,
               fontSize: 22,
             ),
@@ -622,8 +623,8 @@ class _DriverOrderChatScreenState extends State<DriverOrderChatScreen> {
             value,
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              color: Colors.white,
+            style:  TextStyle(
+              color: foodflow.surfaceColor,
               fontWeight: FontWeight.w800,
             ),
           ),
@@ -637,7 +638,7 @@ class _DriverOrderChatScreenState extends State<DriverOrderChatScreen> {
     final isMine = senderRole == 'driver';
     final isSystem = senderRole == 'system' ||
         message['message_type']?.toString() == 'system';
-    final bubbleColor = isMine ? _primary : Colors.white;
+    final bubbleColor = isMine ? _primary : foodflow.surfaceColor;
 
     if (isSystem) {
       return Center(
@@ -650,7 +651,7 @@ class _DriverOrderChatScreenState extends State<DriverOrderChatScreen> {
           ),
           child: Text(
             message['message']?.toString() ?? '',
-            style: const TextStyle(
+            style:  TextStyle(
               color: _muted,
               fontSize: 12,
               fontWeight: FontWeight.w800,

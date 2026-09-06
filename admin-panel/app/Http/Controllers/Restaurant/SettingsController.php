@@ -51,6 +51,47 @@ class SettingsController extends Controller
     }
 
     /**
+     * Update GST / PAN / deductee-type used for tax invoices, commission-GST
+     * ITC, and TDS 194-O certificates.
+     */
+    public function updateTax(Request $request)
+    {
+        $restaurant = $this->getCurrentRestaurant();
+        $tc = \App\Services\Tax\TaxConfig::class;
+
+        $data = $request->validate([
+            'is_gst_registered' => 'nullable|in:0,1',
+            'gstin' => 'nullable|string|max:20',
+            'pan' => 'nullable|string|max:15',
+            'state_code' => 'nullable|string|max:2',
+            'tax_deductee_type' => 'required|in:individual,company,firm,huf,other',
+        ]);
+
+        $gstin = strtoupper(trim((string) ($data['gstin'] ?? '')));
+        $pan = strtoupper(trim((string) ($data['pan'] ?? '')));
+
+        if ($gstin !== '' && ! $tc::validGstin($gstin)) {
+            return back()->withInput()->withErrors(['gstin' => 'Enter a valid 15-character GSTIN.']);
+        }
+        if ($pan !== '' && ! $tc::validPan($pan)) {
+            return back()->withInput()->withErrors(['pan' => 'Enter a valid 10-character PAN.']);
+        }
+
+        $registered = $gstin !== '' && $tc::validGstin($gstin);
+
+        $restaurant->update([
+            'is_gst_registered' => $registered ? 1 : 0,
+            'gstin' => $gstin ?: null,
+            'pan' => $pan ?: ($registered ? $tc::panFromGstin($gstin) : ($restaurant->pan ?: null)),
+            'state_code' => $registered ? $tc::stateCodeFromGstin($gstin) : ($data['state_code'] ?: null),
+            'tax_deductee_type' => $data['tax_deductee_type'],
+        ]);
+
+        return redirect()->route('restaurant.settings.index')
+            ->with('success', 'Tax details updated.');
+    }
+
+    /**
      * Show day-wise timing settings
      */
     public function timing()

@@ -10,6 +10,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../models/app_branding.dart';
 import '../../providers/auth_provider.dart';
+import '../../theme/foodflow_theme.dart';
+import '../../theme/aurora_theme.dart';
 import '../../services/app_branding_service.dart';
 import '../../services/firebase_phone_auth_service.dart';
 import '../../services/location_service.dart';
@@ -1072,82 +1074,84 @@ class _RegisterScreenState extends State<RegisterScreen> {
   @override
   Widget build(BuildContext context) {
     if (loading) {
-      return const Scaffold(
-        backgroundColor: bg,
-        body: Center(child: CircularProgressIndicator(color: orange)),
+      return Scaffold(
+        backgroundColor: foodflow.canvas,
+        body: Stack(children: [
+          ...AuroraTheme.auroraBlobs(),
+          const Center(child: CircularProgressIndicator(color: orange)),
+        ]),
       );
     }
+    final names = ['Restaurant', 'Business', 'Bank', 'Review'];
     return Scaffold(
-      backgroundColor: Colors.white,
-      body: SafeArea(
-        child: Column(
-          children: [
-            _header(),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(24, 12, 24, 16),
-              child: _stepper(),
+      backgroundColor: foodflow.canvas,
+      resizeToAvoidBottomInset: true,
+      body: Stack(
+        children: [
+          ...AuroraTheme.auroraBlobs(),
+          SafeArea(
+            child: Column(
+              children: [
+                _header(names[step.clamp(0, names.length - 1)]),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(18, 4, 18, 10),
+                  child: _stepper(),
+                ),
+                Expanded(
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 18),
+                    child: _card(),
+                  ),
+                ),
+                _stickyActions(),
+              ],
             ),
-            Expanded(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(20, 0, 20, 18),
-                child: Center(child: _card()),
-              ),
-            ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
 
-  Widget _header() {
+  Widget _header(String stepName) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(18, 16, 18, 6),
+      padding: const EdgeInsets.fromLTRB(6, 10, 6, 4),
       child: Row(
         children: [
           IconButton(
             onPressed: _back,
-            icon: const Icon(Icons.arrow_back_rounded, size: 30),
+            icon: Icon(Icons.arrow_back_rounded, size: 26, color: foodflow.ink),
           ),
           Expanded(
             child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Register Your Restaurant',
-                  textAlign: TextAlign.center,
-                  style: t(23, weight: FontWeight.w700, color: Colors.black),
+                  'Register your restaurant',
+                  style: t(17, weight: FontWeight.w900, color: foodflow.ink),
                 ),
-                const SizedBox(height: 7),
                 Text(
-                  'Create your restaurant profile and start receiving orders',
-                  textAlign: TextAlign.center,
-                  style: t(16, weight: FontWeight.w500, color: muted),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  saveStatus,
+                  'Step ${step + 1} of ${steps.length} · $stepName'
+                  '${saveStatus.isNotEmpty ? '  ·  $saveStatus' : ''}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: t(
-                    11,
+                    12,
                     weight: FontWeight.w700,
-                    color: saveStatus.startsWith('Save failed') ? red : green,
+                    color: saveStatus.startsWith('Save failed')
+                        ? red
+                        : foodflow.muted,
                   ),
                 ),
               ],
             ),
           ),
-          Column(
-            children: [
-              IconButton(
-                onPressed: () => _toast(
-                  'Support will help you complete registration.',
-                  false,
-                ),
-                icon: const Icon(Icons.help_outline_rounded, size: 28),
-              ),
-              Text(
-                'Help',
-                style: t(13, weight: FontWeight.w600, color: Colors.black),
-              ),
-            ],
+          IconButton(
+            onPressed: () => _toast(
+              'Support will help you complete registration.',
+              false,
+            ),
+            icon: Icon(Icons.help_outline_rounded,
+                size: 24, color: foodflow.muted),
           ),
         ],
       ),
@@ -1156,63 +1160,83 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   Widget _stepper() {
     return Row(
-      children: List.generate(steps.length * 2 - 1, (i) {
-        if (i.isOdd) {
-          final done = i ~/ 2 < step;
-          return Expanded(
-            child: Container(
-              height: 1.5,
-              margin: const EdgeInsets.only(bottom: 25),
-              color: done ? orange : const Color(0xFFD0D5DD),
+      children: List.generate(steps.length, (index) {
+        final done = index <= step;
+        return Expanded(
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 220),
+            margin: EdgeInsets.only(right: index == steps.length - 1 ? 0 : 6),
+            height: 5,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(4),
+              gradient: done ? foodflow.brandGradient : null,
+              color: done ? null : foodflow.line,
             ),
-          );
-        }
-        final index = i ~/ 2;
-        final done = index < step;
-        final active = index == step;
-        return SizedBox(
-          width: 76,
-          child: Column(
-            children: [
-              Container(
-                width: 44,
-                height: 44,
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  color: active ? orange : Colors.white,
-                  shape: BoxShape.circle,
-                  border: Border.all(
-                    color: done || active ? orange : const Color(0xFFD0D5DD),
-                    width: 1.4,
-                  ),
-                ),
-                child: done
-                    ? const Icon(Icons.check_rounded, color: orange, size: 22)
-                    : Text(
-                        '${index + 1}',
-                        style: t(
-                          16,
-                          weight: FontWeight.w700,
-                          color: active ? Colors.white : muted,
-                        ),
-                      ),
-              ),
-              const SizedBox(height: 9),
-              Text(
-                steps[index],
-                textAlign: TextAlign.center,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: t(
-                  13,
-                  weight: active ? FontWeight.w700 : FontWeight.w500,
-                  color: active ? orange : muted,
-                ),
-              ),
-            ],
           ),
         );
       }),
+    );
+  }
+
+  Widget _stickyActions() {
+    final last = step == 3;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 14),
+      decoration: BoxDecoration(
+        color: foodflow.surfaceColor,
+        border: Border(top: BorderSide(color: foodflow.line)),
+      ),
+      child: Row(
+        children: [
+          if (step > 0) ...[
+            SizedBox(
+              height: 50,
+              child: OutlinedButton(
+                onPressed: submitting ? null : _back,
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: foodflow.ink,
+                  side: BorderSide(color: foodflow.line),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                ),
+                child: const Text('Back'),
+              ),
+            ),
+            const SizedBox(width: 10),
+          ],
+          Expanded(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: foodflow.brandGradient,
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: ElevatedButton(
+                onPressed: submitting ? null : _next,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.transparent,
+                  shadowColor: Colors.transparent,
+                  foregroundColor: Colors.white,
+                  minimumSize: const Size.fromHeight(50),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  textStyle:
+                      const TextStyle(fontWeight: FontWeight.w900, fontSize: 15),
+                ),
+                child: submitting
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2, color: Colors.white),
+                      )
+                    : Text(last ? 'Submit application' : 'Continue  →'),
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -1234,18 +1258,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
     ];
     return Container(
       constraints: const BoxConstraints(maxWidth: 900),
-      padding: const EdgeInsets.fromLTRB(26, 24, 26, 24),
+      padding: const EdgeInsets.fromLTRB(18, 18, 18, 18),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: border),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(.035),
-            blurRadius: 18,
-            offset: const Offset(0, 8),
-          ),
-        ],
+        color: foodflow.surfaceColor,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: foodflow.line),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1253,40 +1270,42 @@ class _RegisterScreenState extends State<RegisterScreen> {
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              Container(
+                padding: const EdgeInsets.all(9),
+                decoration: BoxDecoration(
+                  color: (step == 2 ? green : foodflow.orange).withOpacity(0.10),
+                  borderRadius: BorderRadius.circular(11),
+                ),
+                child: Icon(
+                  step == 2
+                      ? Icons.account_balance_rounded
+                      : Icons.storefront_rounded,
+                  color: step == 2 ? green : foodflow.orange,
+                  size: 18,
+                ),
+              ),
+              const SizedBox(width: 12),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
                       heads[step].$1,
-                      style: t(
-                        23,
-                        weight: FontWeight.w700,
-                        color: Colors.black,
-                      ),
+                      style: t(17, weight: FontWeight.w900, color: foodflow.ink),
                     ),
-                    const SizedBox(height: 6),
-                    Text(heads[step].$2, style: t(15, color: muted)),
+                    const SizedBox(height: 3),
+                    Text(heads[step].$2,
+                        style: t(12.5, color: foodflow.muted)),
                   ],
                 ),
               ),
-              _miniIllustration(
-                step == 2
-                    ? Icons.account_balance_rounded
-                    : Icons.storefront_rounded,
-                step == 2 ? green : orange,
-              ),
             ],
           ),
-          const SizedBox(height: 24),
+          Divider(height: 26, color: foodflow.line),
           if (step == 0) _basic(),
           if (step == 1) _business(),
           if (step == 2) _bank(),
           if (step == 3) _preview(),
-          const SizedBox(height: 24),
-          const Divider(color: border),
-          const SizedBox(height: 20),
-          _actions(),
         ],
       ),
     );

@@ -102,7 +102,13 @@ class DashboardController extends Controller
         $revenueTrend = $this->revenueTrend($restaurantIds);
         $bestOrderTime = $this->bestOrderTime($restaurantIds);
         $payoutSummary = $this->payoutSummary($restaurantIds);
-            
+        $pendingAiApprovals = \App\Models\AiApproval::whereIn('restaurant_id', $restaurantIds)
+            ->where('approver_type', 'restaurant')
+            ->where('status', 'pending')
+            ->with(['decision', 'action'])
+            ->latest()
+            ->get();
+
         return view('restaurant.dashboard', compact(
             'restaurant',
             'restaurants',
@@ -125,7 +131,8 @@ class DashboardController extends Controller
             'restaurantBreakdown',
             'revenueTrend',
             'bestOrderTime',
-            'payoutSummary'
+            'payoutSummary',
+            'pendingAiApprovals'
         ));
     }
 

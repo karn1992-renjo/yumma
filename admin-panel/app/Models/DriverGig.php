@@ -11,6 +11,7 @@ class DriverGig extends Model
     protected $appends = [
         'duration',
         'estimated_earning',
+        'projected_orders_per_driver',
         'date_short',
         'slot_start_local',
         'slot_end_local',
@@ -94,14 +95,43 @@ class DriverGig extends Model
         return $this->time_range;
     }
 
+    /**
+     * What a driver on this slot can realistically expect to earn -- base pay
+     * + order incentive for the number of orders the demand forecast projects
+     * for one driver in this slot (not just the bare min_orders_required
+     * threshold, which understates a busy slot) + login incentive, lifted by
+     * the slot's surge multiplier the same way App\Services\GigIncentiveService
+     * pays it out. Falls back to min_orders_required when there is no forecast.
+     */
     public function getEstimatedEarningAttribute(): float
     {
-        return round(
-            (float) $this->base_pay
-            + ((float) $this->order_incentive * (int) $this->min_orders_required)
-            + (float) $this->login_incentive,
-            2
-        );
+        $subtotal = (float) $this->base_pay
+            + ((float) $this->order_incentive * $this->projectedOrdersPerDriver())
+            + (float) $this->login_incentive;
+
+        $surge = max(1.0, (float) ($this->surge_multiplier ?? 1));
+
+        return round($subtotal * $surge, 2);
+    }
+
+    public function getProjectedOrdersPerDriverAttribute(): int
+    {
+        return $this->projectedOrdersPerDriver();
+    }
+
+    private function projectedOrdersPerDriver(): int
+    {
+        $minOrders = max(0, (int) $this->min_orders_required);
+        $forecast = (int) $this->forecasted_orders;
+
+        if ($forecast <= 0) {
+            return $minOrders;
+        }
+
+        $slots = (int) ($this->recommended_capacity ?: $this->capacity);
+        $slots = max(1, $slots);
+
+        return max($minOrders, (int) ceil($forecast / $slots));
     }
 
     public function getBookedCountAttribute(): int

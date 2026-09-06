@@ -24,6 +24,11 @@
     $recentOrders = $recentOrders ?? collect();
     $topRestaurants = $topRestaurants ?? collect();
     $topDrivers = $topDrivers ?? collect();
+    $financialSummary = $financialSummary ?? [];
+    $payoutSummary = $payoutSummary ?? [];
+    $branchPerformance = $branchPerformance ?? collect();
+    $zonePerformance = $zonePerformance ?? collect();
+    $customerSegments = $customerSegments ?? [];
     $avgOrderValue = $totalOrders > 0 ? $totalRevenue / max($deliveredOrdersCount, 1) : 0;
     $activityOrders = $recentOrders->take(4);
     $platformHealth = $successRate >= 80 ? 'Operational' : 'Watch';
@@ -52,6 +57,14 @@
 
     .dashboard-row-secondary {
         grid-template-columns: minmax(300px, .95fr) minmax(320px, 1fr) minmax(300px, .85fr) minmax(280px, .8fr);
+    }
+
+    .financial-grid {
+        grid-template-columns: repeat(6, minmax(0, 1fr));
+    }
+
+    .performance-row {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
     }
 
     .kpi-card,
@@ -368,6 +381,22 @@
         min-height: 108px;
     }
 
+    .financial-grid .mini-stat-card {
+        min-height: 118px;
+    }
+
+    .finance-icon {
+        width: 34px;
+        height: 34px;
+        border-radius: 12px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        color: var(--accent, #6d28d9);
+        background: color-mix(in srgb, var(--accent, #6d28d9) 12%, white);
+        margin-bottom: 10px;
+    }
+
     .mini-label {
         color: #64748b;
         font-size: 12px;
@@ -398,15 +427,19 @@
 
     @media (max-width: 1500px) {
         .kpi-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+        .financial-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
         .dashboard-row-main { grid-template-columns: minmax(0, 1fr) minmax(340px, .78fr); }
         .dashboard-row-main .dash-panel:last-child { grid-column: 1 / -1; }
         .dashboard-row-secondary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .performance-row { grid-template-columns: minmax(0, 1fr); }
     }
 
     @media (max-width: 900px) {
         .kpi-grid,
+        .financial-grid,
         .dashboard-row-main,
         .dashboard-row-secondary,
+        .performance-row,
         .chart-summary {
             grid-template-columns: 1fr;
         }
@@ -471,6 +504,81 @@
             <div class="kpi-value">{{ number_format($successRate, 1) }}%</div>
             <canvas class="sparkline" data-color="#14b8a6" data-values='{{ json_encode([82,86,84,88,87,90,91,89,92,93,94,96]) }}'></canvas>
             <div class="kpi-sub">{{ number_format($cancellationRate, 1) }}% cancellation rate</div>
+        </div>
+    </section>
+
+    <section class="saas-grid financial-grid">
+        <div class="mini-stat-card" style="--accent:#0f766e;--card-glow:rgba(15,118,110,.14);">
+            <div class="finance-icon"><i class="fas fa-sack-dollar"></i></div>
+            <div class="mini-label">Admin Income Total</div>
+            <div class="mini-value">{{ $currencySymbol }}{{ number_format($financialSummary['admin_income_total'] ?? 0, $currencyDecimals) }}</div>
+            <div class="small text-success fw-bold">Delivered orders</div>
+        </div>
+        <div class="mini-stat-card" style="--accent:#f97316;--card-glow:rgba(249,115,22,.12);">
+            <div class="finance-icon"><i class="fas fa-store"></i></div>
+            <div class="mini-label">Income from Restaurant</div>
+            <div class="mini-value">{{ $currencySymbol }}{{ number_format($financialSummary['restaurant_income'] ?? 0, $currencyDecimals) }}</div>
+            <div class="small text-muted fw-bold">Commission after branch share</div>
+        </div>
+        <div class="mini-stat-card" style="--accent:#3b82f6;--card-glow:rgba(59,130,246,.12);">
+            <div class="finance-icon"><i class="fas fa-layer-group"></i></div>
+            <div class="mini-label">Income from Platform Charge</div>
+            <div class="mini-value">{{ $currencySymbol }}{{ number_format($financialSummary['platform_charge_income'] ?? 0, $currencyDecimals) }}</div>
+            <div class="small text-muted fw-bold">Platform fees</div>
+        </div>
+        <div class="mini-stat-card" style="--accent:#14b8a6;--card-glow:rgba(20,184,166,.12);">
+            <div class="finance-icon"><i class="fas fa-file-invoice-dollar"></i></div>
+            <div class="mini-label">Tax Collected</div>
+            <div class="mini-value">{{ $currencySymbol }}{{ number_format($financialSummary['tax_collected'] ?? 0, $currencyDecimals) }}</div>
+            <div class="small text-muted fw-bold">Customer tax total</div>
+        </div>
+        <div class="mini-stat-card" style="--accent:#8b5cf6;--card-glow:rgba(139,92,246,.12);">
+            <div class="finance-icon"><i class="fas fa-plus-circle"></i></div>
+            <div class="mini-label">Income from Extra Charges</div>
+            <div class="mini-value">{{ $currencySymbol }}{{ number_format($financialSummary['extra_charge_income'] ?? 0, $currencyDecimals) }}</div>
+            <div class="small text-muted fw-bold">Delivery, surge and deductions</div>
+        </div>
+        <div class="mini-stat-card" style="--accent:#ef4444;--card-glow:rgba(239,68,68,.12);">
+            <div class="finance-icon"><i class="fas fa-circle-xmark"></i></div>
+            <div class="mini-label">Failed Order Amount</div>
+            <div class="mini-value">{{ $currencySymbol }}{{ number_format($financialSummary['failed_order_amount'] ?? 0, $currencyDecimals) }}</div>
+            <div class="small text-danger fw-bold">{{ number_format($financialSummary['failed_order_count'] ?? 0) }} orders</div>
+        </div>
+        <div class="mini-stat-card" style="--accent:#ec4899;--card-glow:rgba(236,72,153,.12);">
+            <div class="finance-icon"><i class="fas fa-rotate-left"></i></div>
+            <div class="mini-label">Refunded Order Count and Value</div>
+            <div class="mini-value">{{ number_format($financialSummary['refunded_order_count'] ?? 0) }}</div>
+            <div class="small text-danger fw-bold">{{ $currencySymbol }}{{ number_format($financialSummary['refunded_order_value'] ?? 0, $currencyDecimals) }}</div>
+        </div>
+        <div class="mini-stat-card" style="--accent:#22c55e;--card-glow:rgba(34,197,94,.12);">
+            <div class="finance-icon"><i class="fas fa-circle-check"></i></div>
+            <div class="mini-label">Payout Done</div>
+            <div class="mini-value">{{ $currencySymbol }}{{ number_format($payoutSummary['done_amount'] ?? 0, $currencyDecimals) }}</div>
+            <div class="small text-success fw-bold">{{ number_format($payoutSummary['done_count'] ?? 0) }} payouts</div>
+        </div>
+        <div class="mini-stat-card" style="--accent:#06b6d4;--card-glow:rgba(6,182,212,.12);">
+            <div class="finance-icon"><i class="fas fa-motorcycle"></i></div>
+            <div class="mini-label">Upcoming Payout Driver</div>
+            <div class="mini-value">{{ $currencySymbol }}{{ number_format($payoutSummary['upcoming_driver_amount'] ?? 0, $currencyDecimals) }}</div>
+            <div class="small text-muted fw-bold">{{ number_format($payoutSummary['upcoming_driver_count'] ?? 0) }} pending</div>
+        </div>
+        <div class="mini-stat-card" style="--accent:#a855f7;--card-glow:rgba(168,85,247,.12);">
+            <div class="finance-icon"><i class="fas fa-utensils"></i></div>
+            <div class="mini-label">Upcoming Payout Restaurant</div>
+            <div class="mini-value">{{ $currencySymbol }}{{ number_format($payoutSummary['upcoming_restaurant_amount'] ?? 0, $currencyDecimals) }}</div>
+            <div class="small text-muted fw-bold">{{ number_format($payoutSummary['upcoming_restaurant_count'] ?? 0) }} pending</div>
+        </div>
+        <div class="mini-stat-card" style="--accent:#b91c1c;--card-glow:rgba(185,28,28,.12);">
+            <div class="finance-icon"><i class="fas fa-triangle-exclamation"></i></div>
+            <div class="mini-label">Failed Payout</div>
+            <div class="mini-value">{{ $currencySymbol }}{{ number_format($payoutSummary['failed_amount'] ?? 0, $currencyDecimals) }}</div>
+            <div class="small text-danger fw-bold">{{ number_format($payoutSummary['failed_count'] ?? 0) }} failed, {{ number_format($payoutSummary['failed_attempts'] ?? 0) }} attempts</div>
+        </div>
+        <div class="mini-stat-card" style="--accent:#f59e0b;--card-glow:rgba(245,158,11,.14);">
+            <div class="finance-icon"><i class="fas fa-hand-holding-dollar"></i></div>
+            <div class="mini-label">COD Pending to Collect</div>
+            <div class="mini-value">{{ $currencySymbol }}{{ number_format($financialSummary['cod_pending_amount'] ?? 0, $currencyDecimals) }}</div>
+            <div class="small text-warning fw-bold">{{ number_format($financialSummary['cod_pending_orders'] ?? 0) }} orders, {{ number_format($financialSummary['cod_pending_drivers'] ?? 0) }} drivers</div>
         </div>
     </section>
 
@@ -672,6 +780,86 @@
             </div>
         </div>
     </section>
+
+    <section class="saas-grid performance-row">
+        <div class="dash-panel">
+            <div class="panel-head">
+                <h3 class="panel-title">Branch Wise Performance</h3>
+                <a href="{{ route('admin.branches.index') }}" class="panel-link">View All</a>
+            </div>
+            <div class="rank-list">
+                @forelse($branchPerformance as $index => $branch)
+                    <div class="rank-card">
+                        <span class="rank-number">{{ $index + 1 }}</span>
+                        <div class="rank-logo"><i class="fas fa-code-branch"></i></div>
+                        <div class="min-w-0 flex-fill">
+                            <div class="fw-bold text-dark text-truncate">{{ $branch->name }}</div>
+                            <div class="small text-muted">{{ $branch->city ?: 'All areas' }} - {{ number_format($branch->orders_count) }} orders</div>
+                        </div>
+                        <div class="text-end">
+                            <div class="fw-black text-dark">{{ $currencySymbol }}{{ number_format($branch->revenue ?? 0, $currencyDecimals) }}</div>
+                            <div class="small text-success fw-bold">{{ number_format($branch->delivered_count) }} delivered</div>
+                        </div>
+                    </div>
+                @empty
+                    <div class="text-center text-muted py-5">No branch performance yet.</div>
+                @endforelse
+            </div>
+        </div>
+
+        <div class="dash-panel">
+            <div class="panel-head">
+                <h3 class="panel-title">Delivery Zone Wise Performance</h3>
+                <a href="{{ route('admin.branches.zones') }}" class="panel-link">View All</a>
+            </div>
+            <div class="rank-list">
+                @forelse($zonePerformance as $index => $zone)
+                    <div class="rank-card">
+                        <span class="rank-number">{{ $index + 1 }}</span>
+                        <div class="rank-logo"><i class="fas fa-location-dot"></i></div>
+                        <div class="min-w-0 flex-fill">
+                            <div class="fw-bold text-dark text-truncate">{{ $zone->name }}</div>
+                            <div class="small text-muted">{{ $zone->branch_name ?? 'Unassigned branch' }} - {{ number_format($zone->restaurants_count) }} restaurants</div>
+                        </div>
+                        <div class="text-end">
+                            <div class="fw-black text-dark">{{ $currencySymbol }}{{ number_format($zone->revenue ?? 0, $currencyDecimals) }}</div>
+                            <div class="small text-success fw-bold">{{ number_format($zone->orders_count) }} orders</div>
+                        </div>
+                    </div>
+                @empty
+                    <div class="text-center text-muted py-5">No delivery zone performance yet.</div>
+                @endforelse
+            </div>
+        </div>
+
+        <div class="dash-panel">
+            <div class="panel-head">
+                <h3 class="panel-title">Customer Mix</h3>
+            </div>
+            <div class="mini-stat-grid">
+                <div class="mini-stat-card" style="--card-glow:rgba(59,130,246,.14);">
+                    <div class="mini-label">New Customer</div>
+                    <div class="mini-value">{{ number_format($customerSegments['new_customers'] ?? 0) }}</div>
+                    <div class="small text-muted fw-bold">First-time ordering customers</div>
+                </div>
+                <div class="mini-stat-card" style="--card-glow:rgba(34,197,94,.14);">
+                    <div class="mini-label">Returning Customer</div>
+                    <div class="mini-value">{{ number_format($customerSegments['returning_customers'] ?? 0) }}</div>
+                    <div class="small text-success fw-bold">Placed 2+ orders</div>
+                </div>
+                <div class="mini-stat-card" style="--card-glow:rgba(249,115,22,.12);">
+                    <div class="mini-label">Avg Orders per Customer</div>
+                    <div class="mini-value">{{ number_format($customerSegments['average_orders_per_customer'] ?? 0, 1) }}</div>
+                    <div class="small text-muted fw-bold">Known customer orders</div>
+                </div>
+                <div class="mini-stat-card" style="--card-glow:rgba(139,92,246,.12);">
+                    <div class="mini-label">Registered Customers</div>
+                    <div class="mini-value">{{ number_format($totalUsers) }}</div>
+                    <div class="small text-muted fw-bold">All customer accounts</div>
+                </div>
+            </div>
+        </div>
+    </section>
 </div>
 
 <script>
@@ -783,7 +971,7 @@
 
     function updateChart() {
         const period = document.getElementById('chartPeriod').value;
-        fetch(`{{ route('admin.orders.statistics') }}?period=${period}`)
+        fetch(`{{ route('admin.orders.statistics') }}?period=${period}`, { headers: { 'Accept': 'application/json' } })
             .then(response => response.json())
             .then(data => {
                 if (!data.success || !data.daily || !revenueChart) return;
@@ -801,3 +989,4 @@
     window.addEventListener('resize', () => document.querySelectorAll('.sparkline').forEach(drawMiniSparkline));
 </script>
 @endsection
+

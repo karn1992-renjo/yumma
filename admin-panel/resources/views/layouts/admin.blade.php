@@ -4,6 +4,15 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="csrf-token" content="{{ csrf_token() }}">
+    <script>
+        /* Apply the saved dark/light choice before paint (no flash). Toggle lives in the header. */
+        (function () {
+            try {
+                var t = localStorage.getItem('admin-theme');
+                if (t === 'dark' || t === 'light') document.documentElement.setAttribute('data-theme', t);
+            } catch (e) {}
+        })();
+    </script>
     @php
         $currencySymbol = App\Models\AppSetting::sanitizedCurrencySymbol();
         $currencyDecimals = App\Models\AppSetting::currencyDecimals();
@@ -122,6 +131,42 @@
                 body.dashboard-ui-compact {
                     transform: none;
                 }
+            }
+        }
+
+        /* The body zoom re-anchors `position: fixed`, so a Bootstrap modal + its
+           backdrop otherwise render mid-page with only partial dimming. Counter
+           the body zoom on the modal layer so it maps to the real viewport
+           (correct centering + full-screen backdrop) and Bootstrap's own
+           height math for scrollable modals keeps working. The dialog then
+           renders ~1:1 — a touch larger than the compact page, which is fine. */
+        body.dashboard-ui-compact .modal,
+        body.dashboard-ui-compact .modal-backdrop {
+            zoom: calc(1 / var(--dashboard-ui-scale));
+        }
+        body.dashboard-ui-compact.modal-open {
+            padding-right: 0 !important;
+        }
+
+        /* Browsers without `zoom` scale the body with `transform`, which a
+           per-modal zoom can't undo — drop the body transform while a modal is
+           open there. */
+        @supports not (zoom: 1) {
+            body.dashboard-ui-compact .modal,
+            body.dashboard-ui-compact .modal-backdrop {
+                zoom: normal;
+            }
+            body.dashboard-ui-compact.modal-open {
+                transform: none !important;
+                width: 100% !important;
+                max-width: 100% !important;
+            }
+        }
+
+        @media (max-width: 1024px) {
+            body.dashboard-ui-compact .modal,
+            body.dashboard-ui-compact .modal-backdrop {
+                zoom: 1;
             }
         }
 
@@ -1654,611 +1699,684 @@
                 padding: 4px;
             }
         }
-    </style>
 
-    <!-- Enhanced Header Styles -->
-    <style>
-        /* ===== Dark Mode Variables ===== */
-        body.dark-mode {
-            --primary: #8b5cf6;
-            --primary-light: #a78bfa;
-            --primary-dark: #7c3aed;
-            --secondary: #e2e8f0;
-            --success: #34d399;
-            --warning: #fbbf24;
-            --danger: #f87171;
-            --info: #60a5fa;
-            --dark: #0f172a;
-            --light: #0f172a;
-            --border: #334155;
-            --sidebar-bg: #0f172a;
-            --topbar-bg: #1e293b;
-            --card-bg: #1e293b;
-            --text-primary: #f8fafc;
-            --text-secondary: #94a3b8;
-            --text-muted: #64748b;
-        }
-
-        body.dark-mode .top-header {
-            background: rgba(30, 41, 59, 0.84) !important;
-            border-bottom-color: rgba(52, 65, 89, 0.78) !important;
-        }
-
-        body.dark-mode .header-icon-btn {
-            background: rgba(30, 41, 59, 0.86) !important;
-            border-color: rgba(148, 163, 184, 0.4) !important;
-            color: #cbd5e1 !important;
-        }
-
-        body.dark-mode .header-icon-btn:hover {
-            background: rgba(56, 68, 102, 0.86) !important;
-            color: var(--primary) !important;
-        }
-
-        body.dark-mode .user-profile-wrapper {
-            background: rgba(30, 41, 59, 0.72) !important;
-            border-color: rgba(226, 232, 240, 0.15) !important;
-        }
-
-        body.dark-mode .user-info-text .user-name {
-            color: #f8fafc !important;
-        }
-
-        body.dark-mode .user-info-text .user-role {
-            color: #94a3b8 !important;
-        }
-
-        body.dark-mode .profile-dropdown-menu {
-            background: #1e293b !important;
-            border-color: rgba(226, 232, 240, 0.15) !important;
-        }
-
-        body.dark-mode .dropdown-menu-item {
-            color: #e2e8f0 !important;
-        }
-
-        body.dark-mode .dropdown-menu-item:hover {
-            background: rgba(139, 92, 246, 0.15) !important;
-            color: #fff !important;
-        }
-
-        body.dark-mode .dropdown-divider {
-            border-color: rgba(226, 232, 240, 0.1) !important;
-        }
-
-        body.dark-mode .dropdown-user-header {
-            border-bottom-color: rgba(226, 232, 240, 0.1) !important;
-        }
-
-        /* ===== Search Dropdown ===== */
-        .search-dropdown {
-            position: absolute;
-            top: 100%;
-            left: 0;
-            right: 0;
-            z-index: 1100;
-            background: #fff;
-            border: 1px solid var(--border);
-            border-radius: 16px;
-            box-shadow: 0 20px 60px rgba(15, 23, 42, 0.15);
-            max-height: 480px;
-            overflow-y: auto;
-            margin-top: 8px;
-        }
-
-        body.dark-mode .search-dropdown {
-            background: #1e293b !important;
-            border-color: rgba(226, 232, 240, 0.15) !important;
-        }
-
-        .search-section {
-            padding: 8px 0;
-        }
-
-        .search-section-title {
-            padding: 8px 16px 4px;
-            font-size: 11px;
-            font-weight: 800;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-            color: #94a3b8;
-        }
-
-        .search-result-item {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            padding: 10px 16px;
-            border-radius: 10px;
-            margin: 0 8px;
-            cursor: pointer;
-            transition: all 0.15s ease;
-            text-decoration: none;
-            color: inherit;
-        }
-
-        .search-result-item:hover {
-            background: #f8fafc;
-        }
-
-        body.dark-mode .search-result-item:hover {
-            background: rgba(56, 68, 102, 0.5);
-        }
-
-        .search-result-icon {
-            width: 36px;
-            height: 36px;
-            border-radius: 10px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 16px;
-            flex-shrink: 0;
-        }
-
-        .search-result-content {
-            flex: 1;
-            min-width: 0;
-        }
-
-        .search-result-title {
-            font-size: 13px;
-            font-weight: 700;
-            color: #0f172a;
-            line-height: 1.2;
-        }
-
-        body.dark-mode .search-result-title {
-            color: #f8fafc !important;
-        }
-
-        .search-result-subtitle {
-            font-size: 11px;
-            color: #64748b;
-            line-height: 1.2;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-        }
-
-        .search-result-meta {
-            font-size: 12px;
-            font-weight: 700;
-            color: #047857;
-            flex-shrink: 0;
-        }
-
-        .search-group-title {
-            padding: 6px 16px 2px;
-            font-size: 10px;
-            font-weight: 800;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-            color: #94a3b8;
-        }
-
-        .search-loading {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            padding: 16px;
-            color: #64748b;
-            font-size: 13px;
-        }
-
-        .search-no-results {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            padding: 20px 16px;
-            color: #94a3b8;
-            font-size: 13px;
-            text-align: center;
-        }
-
-        .search-clear-recent {
-            padding: 8px 16px;
-            color: #ef4444;
-            font-size: 12px;
-            font-weight: 700;
-            cursor: pointer;
-            transition: background 0.15s ease;
-        }
-
-        .search-clear-recent:hover {
-            background: #fef2f2;
-        }
-
-        .search-shortcut-hint {
-            display: flex;
-            align-items: center;
-            gap: 4px;
-            margin-left: 12px;
-            padding: 4px 10px;
-            border-radius: 6px;
-            background: #f1f5f9;
-            font-size: 11px;
-            color: #64748b;
-            font-weight: 600;
-        }
-
-        body.dark-mode .search-shortcut-hint {
-            background: rgba(226, 232, 240, 0.1);
-            color: #94a3b8;
-        }
-
-        .search-shortcut-hint kbd {
-            background: #e2e8f0;
-            border: 1px solid #cbd5e1;
-            border-radius: 4px;
-            padding: 2px 6px;
-            font-size: 10px;
-            font-weight: 700;
-            color: #334155;
-        }
-
-        body.dark-mode .search-shortcut-hint kbd {
-            background: #334155;
-            border-color: #475569;
-            color: #e2e8f0;
-        }
-
-        /* ===== Quick Actions Dropdown ===== */
-        .quick-actions-dropdown {
-            position: absolute;
-            top: 100%;
-            right: 0;
-            z-index: 1100;
-            background: #fff;
-            border: 1px solid var(--border);
-            border-radius: 16px;
-            box-shadow: 0 20px 60px rgba(15, 23, 42, 0.15);
-            min-width: 280px;
-            margin-top: 8px;
-            padding: 12px;
-        }
-
-        body.dark-mode .quick-actions-dropdown {
-            background: #1e293b !important;
-            border-color: rgba(226, 232, 240, 0.15) !important;
-        }
-
-        .quick-actions-header {
-            padding: 8px 16px 4px;
-        }
-
-        .quick-actions-header h4 {
-            margin: 0;
-            font-size: 13px;
-            font-weight: 800;
-            color: #64748b;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-        }
-
-        .quick-actions-grid {
-            display: grid;
-            grid-template-columns: repeat(3, minmax(0, 1fr));
-            gap: 8px;
-            padding: 4px 8px 8px;
-        }
-
-        .quick-action-item {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            gap: 6px;
-            padding: 12px 8px;
-            border-radius: 12px;
-            text-decoration: none;
-            color: inherit;
-            transition: all 0.15s ease;
-            text-align: center;
-        }
-
-        .quick-action-item:hover {
-            background: #f8fafc;
-            transform: translateY(-1px);
-        }
-
-        body.dark-mode .quick-action-item:hover {
-            background: rgba(56, 68, 102, 0.5);
-        }
-
-        .quick-action-icon {
-            width: 44px;
-            height: 44px;
-            border-radius: 14px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 18px;
-            flex-shrink: 0;
-        }
-
-        .quick-action-item span {
-            font-size: 11px;
-            font-weight: 700;
-            color: #334155;
-        }
-
-        body.dark-mode .quick-action-item span {
-            color: #cbd5e1 !important;
-        }
-
-        /* ===== Notification Dropdown ===== */
-        .notification-dropdown {
-            position: absolute;
-            top: 100%;
-            right: 0;
-            z-index: 1100;
-            background: #fff;
-            border: 1px solid var(--border);
-            border-radius: 16px;
-            box-shadow: 0 20px 60px rgba(15, 23, 42, 0.15);
-            min-width: 360px;
-            max-height: 500px;
-            margin-top: 8px;
-            display: flex;
-            flex-direction: column;
-            overflow: hidden;
-        }
-
-        body.dark-mode .notification-dropdown {
-            background: #1e293b !important;
-            border-color: rgba(226, 232, 240, 0.15) !important;
-        }
-
-        .notification-header {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            padding: 14px 18px;
-            border-bottom: 1px solid var(--border);
-            background: #f8fafc;
-        }
-
-        body.dark-mode .notification-header {
-            background: rgba(30, 41, 59, 0.5) !important;
-            border-color: rgba(226, 232, 240, 0.1) !important;
-        }
-
-        .notification-header h4 {
-            margin: 0;
-            font-size: 14px;
-            font-weight: 800;
-            color: #0f172a;
-        }
-
-        body.dark-mode .notification-header h4 {
-            color: #f8fafc !important;
-        }
-
-        .notification-header-actions {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-        }
-
-        .notification-header-actions a {
-            font-size: 11px;
-            font-weight: 700;
-            color: #64748b;
-            text-decoration: none;
-            transition: color 0.15s ease;
-        }
-
-        .notification-header-actions a:hover {
-            color: var(--primary);
-        }
-
-        .notification-header-actions i {
-            font-size: 14px;
-            color: #64748b;
-            cursor: pointer;
-            transition: color 0.15s ease;
-        }
-
-        .notification-header-actions i:hover {
-            color: var(--primary);
-        }
-
-        .notification-list {
-            flex: 1;
-            overflow-y: auto;
-            padding: 4px 0;
-        }
-
-        .notification-item {
-            display: flex;
-            align-items: flex-start;
-            gap: 12px;
-            padding: 12px 16px;
-            border-bottom: 1px solid var(--border);
-            cursor: pointer;
-            transition: background 0.15s ease;
-            position: relative;
-        }
-
-        .notification-item:hover {
-            background: #f8fafc;
-        }
-
-        body.dark-mode .notification-item:hover {
-            background: rgba(56, 68, 102, 0.3);
-        }
-
-        .notification-item.unread {
-            background: rgba(59, 130, 246, 0.04);
-        }
-
-        body.dark-mode .notification-item.unread {
-            background: rgba(59, 130, 246, 0.1);
-        }
-
-        .notification-item:last-child {
-            border-bottom: none;
-        }
-
-        .notification-icon {
-            width: 40px;
-            height: 40px;
-            border-radius: 12px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 16px;
-            flex-shrink: 0;
-        }
-
-        .notification-content {
-            flex: 1;
-            min-width: 0;
-        }
-
-        .notification-title {
-            font-size: 13px;
-            font-weight: 700;
-            color: #0f172a;
-            line-height: 1.2;
-        }
-
-        body.dark-mode .notification-title {
-            color: #f8fafc !important;
-        }
-
-        .notification-message {
-            font-size: 12px;
-            color: #64748b;
-            line-height: 1.3;
-            margin-top: 2px;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-        }
-
-        .notification-time {
-            font-size: 11px;
-            color: #94a3b8;
-            margin-top: 4px;
-        }
-
-        .notification-unread-dot {
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-            background: var(--primary);
-            flex-shrink: 0;
-            margin-top: 2px;
-        }
-
-        .notification-empty {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            gap: 12px;
-            padding: 32px 16px;
-            text-align: center;
-            color: #94a3b8;
-            font-size: 13px;
-        }
-
-        .notification-empty i {
-            font-size: 36px;
-            opacity: 0.4;
-        }
-
-        /* ===== Avatar Images ===== */
-        .avatar-img {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
-            border-radius: inherit;
-            display: block;
-        }
-
-        /* ===== Dropdown Toggle Switch ===== */
-        .dropdown-toggle-switch {
-            width: 16px;
-            height: 16px;
-            border-radius: 50%;
-            background: #cbd5e1;
-            display: inline-block;
-            margin-left: auto;
-            transition: background 0.2s ease;
-        }
-
-        body.dark-mode .dropdown-toggle-switch {
-            background: var(--primary);
-        }
-
-        /* ===== Spinner ===== */
-        .spinner-border {
-            display: inline-block;
-            width: 1rem;
-            height: 1rem;
-            border: 2px solid currentColor;
-            border-right-color: transparent;
-            border-radius: 50%;
-            animation: spinner-border 0.75s linear infinite;
-        }
-
-        @keyframes spinner-border {
-            to { transform: rotate(360deg); }
-        }
-
-        .visually-hidden {
-            position: absolute !important;
-            width: 1px !important;
-            height: 1px !important;
-            padding: 0 !important;
-            margin: -1px !important;
-            overflow: hidden !important;
-            clip: rect(0, 0, 0, 0) !important;
-            white-space: nowrap !important;
+        /* ================================================================
+           MODERN BENTO + MATERIAL 3 + LIGHT GLASSMORPHISM
+           Light airy tonal background, M3 tonal surfaces with a soft
+           frosted-glass finish, bento-grid card tiles with big radii and
+           generous gaps. Content rules are scoped to `.page-content` so
+           existing pages stay intact; chrome (sidebar/topbar) is themed
+           directly. Matches auth/login.blade.php.
+           ================================================================ */
+        :root {
+            /* radii */
+            --m3-r-xs: 10px;
+            --m3-r-sm: 14px;
+            --m3-r-md: 18px;
+            --m3-r-lg: 24px;
+            --m3-r-xl: 30px;
+            --m3-blur: blur(18px) saturate(150%);
+
+            /* LIGHT theme tokens (defaults) */
+            --m3-body-bg:
+                radial-gradient(1100px 720px at 4% -8%, color-mix(in srgb, var(--primary) 14%, transparent), transparent 55%),
+                radial-gradient(960px 700px at 108% 0%, rgba(56, 189, 248, 0.10), transparent 55%),
+                radial-gradient(900px 760px at 104% 110%, rgba(236, 72, 153, 0.08), transparent 55%),
+                radial-gradient(760px 640px at -6% 114%, color-mix(in srgb, var(--primary) 10%, transparent), transparent 58%),
+                linear-gradient(160deg, #f7f5fc 0%, #f3f1fa 46%, #fbf4f7 100%);
+            --m3-text: #3b3652;
+            --m3-text-strong: #241a3d;
+            --m3-text-muted: #7a748f;
+            --m3-surface: rgba(255, 255, 255, 0.72);
+            --m3-surface-2: rgba(255, 255, 255, 0.74);
+            --m3-nav: rgba(255, 255, 255, 0.86);
+            --m3-sheet: rgba(255, 255, 255, 0.5);
+            --m3-sheet-border: rgba(255, 255, 255, 0.7);
+            --m3-topbar: rgba(255, 255, 255, 0.62);
+            --m3-menu: rgba(255, 255, 255, 0.94);
+            --m3-outline: rgba(120, 110, 150, 0.16);
+            --m3-outline-strong: rgba(120, 110, 150, 0.26);
+            --m3-primary-container: color-mix(in srgb, var(--primary) 15%, #ffffff);
+            --m3-secondary-container: color-mix(in srgb, var(--primary) 11%, #ffffff);
+            --m3-on-container: color-mix(in srgb, var(--primary) 72%, #1c1430);
+            --m3-state: color-mix(in srgb, var(--primary) 9%, transparent);
+            --m3-tint-input: color-mix(in srgb, var(--primary) 4%, #ffffff);
+            --m3-input-focus-bg: #ffffff;
+            --m3-scroll-thumb: rgba(120, 110, 150, 0.30);
+            --m3-scroll-track: transparent;
+            --m3-elev-1: 0 1px 2px rgba(30, 20, 55, 0.06), 0 2px 6px -2px rgba(50, 35, 90, 0.10);
+            --m3-elev-2: 0 2px 8px rgba(30, 20, 55, 0.07), 0 14px 30px -14px rgba(50, 35, 90, 0.20);
+            --m3-elev-3: 0 8px 18px rgba(30, 20, 55, 0.09), 0 28px 56px -22px rgba(50, 35, 90, 0.26);
+        }
+
+        /* DARK theme tokens — applied via the OS preference OR an explicit
+           header toggle (html[data-theme="dark"]). The [data-theme="light"]
+           guard lets the toggle force light even on a dark OS. */
+        @media (prefers-color-scheme: dark) {
+            :root:not([data-theme="light"]) {
+                color-scheme: dark;
+                --m3-body-bg:
+                    radial-gradient(1100px 720px at 4% -8%, color-mix(in srgb, var(--primary) 26%, transparent), transparent 55%),
+                    radial-gradient(960px 700px at 108% 0%, rgba(56, 189, 248, 0.12), transparent 55%),
+                    radial-gradient(900px 760px at 104% 112%, rgba(236, 72, 153, 0.12), transparent 55%),
+                    linear-gradient(160deg, #141219 0%, #17151f 48%, #1a141c 100%);
+                --m3-text: #e7e3f1;
+                --m3-text-strong: #f6f3fc;
+                --m3-text-muted: #a9a2c0;
+                --m3-surface: rgba(40, 38, 50, 0.72);
+                --m3-surface-2: rgba(46, 44, 58, 0.72);
+                --m3-nav: rgba(30, 28, 39, 0.78);
+                --m3-sheet: rgba(32, 30, 42, 0.42);
+                --m3-sheet-border: rgba(255, 255, 255, 0.06);
+                --m3-topbar: rgba(28, 26, 37, 0.66);
+                --m3-menu: rgba(38, 36, 49, 0.96);
+                --m3-outline: rgba(200, 190, 235, 0.14);
+                --m3-outline-strong: rgba(200, 190, 235, 0.24);
+                --m3-primary-container: color-mix(in srgb, var(--primary) 30%, #1d1a26);
+                --m3-secondary-container: color-mix(in srgb, var(--primary) 24%, #201d29);
+                --m3-on-container: color-mix(in srgb, var(--primary) 32%, #ffffff);
+                --m3-state: rgba(255, 255, 255, 0.07);
+                --m3-tint-input: rgba(255, 255, 255, 0.05);
+                --m3-input-focus-bg: rgba(255, 255, 255, 0.09);
+                --m3-scroll-thumb: rgba(200, 190, 235, 0.24);
+                --m3-elev-1: 0 1px 2px rgba(0, 0, 0, 0.4), 0 2px 8px -2px rgba(0, 0, 0, 0.5);
+                --m3-elev-2: 0 3px 10px rgba(0, 0, 0, 0.45), 0 18px 38px -16px rgba(0, 0, 0, 0.6);
+                --m3-elev-3: 0 10px 24px rgba(0, 0, 0, 0.5), 0 34px 66px -22px rgba(0, 0, 0, 0.66);
+            }
+        }
+        :root[data-theme="dark"] {
+            color-scheme: dark;
+            --m3-body-bg:
+                radial-gradient(1100px 720px at 4% -8%, color-mix(in srgb, var(--primary) 26%, transparent), transparent 55%),
+                radial-gradient(960px 700px at 108% 0%, rgba(56, 189, 248, 0.12), transparent 55%),
+                radial-gradient(900px 760px at 104% 112%, rgba(236, 72, 153, 0.12), transparent 55%),
+                linear-gradient(160deg, #141219 0%, #17151f 48%, #1a141c 100%);
+            --m3-text: #e7e3f1;
+            --m3-text-strong: #f6f3fc;
+            --m3-text-muted: #a9a2c0;
+            --m3-surface: rgba(40, 38, 50, 0.72);
+            --m3-surface-2: rgba(46, 44, 58, 0.72);
+            --m3-nav: rgba(30, 28, 39, 0.78);
+            --m3-sheet: rgba(32, 30, 42, 0.42);
+            --m3-sheet-border: rgba(255, 255, 255, 0.06);
+            --m3-topbar: rgba(28, 26, 37, 0.66);
+            --m3-menu: rgba(38, 36, 49, 0.96);
+            --m3-outline: rgba(200, 190, 235, 0.14);
+            --m3-outline-strong: rgba(200, 190, 235, 0.24);
+            --m3-primary-container: color-mix(in srgb, var(--primary) 30%, #1d1a26);
+            --m3-secondary-container: color-mix(in srgb, var(--primary) 24%, #201d29);
+            --m3-on-container: color-mix(in srgb, var(--primary) 32%, #ffffff);
+            --m3-state: rgba(255, 255, 255, 0.07);
+            --m3-tint-input: rgba(255, 255, 255, 0.05);
+            --m3-input-focus-bg: rgba(255, 255, 255, 0.09);
+            --m3-scroll-thumb: rgba(200, 190, 235, 0.24);
+            --m3-elev-1: 0 1px 2px rgba(0, 0, 0, 0.4), 0 2px 8px -2px rgba(0, 0, 0, 0.5);
+            --m3-elev-2: 0 3px 10px rgba(0, 0, 0, 0.45), 0 18px 38px -16px rgba(0, 0, 0, 0.6);
+            --m3-elev-3: 0 10px 24px rgba(0, 0, 0, 0.5), 0 34px 66px -22px rgba(0, 0, 0, 0.66);
+        }
+
+        body {
+            background: var(--m3-body-bg) !important;
+            color: var(--m3-text);
+        }
+
+        /* ---- Scrollbars (both themes) ---- */
+        * { scrollbar-width: thin; scrollbar-color: var(--m3-scroll-thumb) var(--m3-scroll-track); }
+        *::-webkit-scrollbar { width: 10px; height: 10px; }
+        *::-webkit-scrollbar-track { background: var(--m3-scroll-track); }
+        *::-webkit-scrollbar-thumb {
+            background: var(--m3-scroll-thumb);
+            border-radius: 999px;
+            border: 2px solid transparent;
+            background-clip: content-box;
+        }
+        *::-webkit-scrollbar-thumb:hover { background: color-mix(in srgb, var(--m3-scroll-thumb) 100%, #000 12%); background-clip: content-box; }
+        .sidebar::-webkit-scrollbar-thumb,
+        .main-content::-webkit-scrollbar-thumb { background: var(--m3-scroll-thumb) !important; }
+        .sidebar::-webkit-scrollbar-track { background: var(--m3-scroll-track) !important; }
+
+        /* ---- Sidebar → M3 navigation drawer, LIGHT frosted glass ---- */
+        .sidebar {
+            background: var(--m3-nav) !important;
+            border-right: 1px solid var(--m3-outline) !important;
+            box-shadow: var(--m3-elev-2) !important;
+            backdrop-filter: var(--m3-blur) !important;
+            -webkit-backdrop-filter: var(--m3-blur) !important;
+        }
+        .sidebar-logo-section { border-bottom: 1px solid var(--m3-outline) !important; }
+        .sidebar-logo-icon {
+            border-radius: var(--m3-r-md) !important;
+            background: linear-gradient(135deg, var(--primary), var(--primary-dark, var(--primary))) !important;
             border: 0 !important;
+            box-shadow: var(--m3-elev-1) !important;
+        }
+        .sidebar-logo-text h2 { color: var(--m3-text-strong) !important; }
+        .sidebar-logo-text h2 span { color: var(--primary) !important; }
+        .sidebar-logo-text small,
+        .sidebar-section-title { color: var(--m3-text-muted) !important; }
+        .sidebar-nav-link {
+            color: var(--m3-text) !important;
+            font-weight: 600 !important;
+            border-radius: 9999px !important;
+            min-height: 44px;
+        }
+        .sidebar-nav-link i { color: var(--m3-text-muted) !important; background: transparent !important; }
+        .sidebar-nav-link:hover { background: var(--m3-state) !important; color: var(--m3-text-strong) !important; transform: none !important; }
+        .sidebar-nav-link:hover i { color: var(--primary) !important; }
+        .sidebar-nav-link.active {
+            background: var(--m3-secondary-container) !important;
+            color: var(--m3-on-container) !important;
+            font-weight: 700 !important;
+            box-shadow: none !important;
+        }
+        .sidebar-nav-link.active i { color: var(--m3-on-container) !important; background: transparent !important; }
+        .sidebar-nav-link.active::before { display: none !important; }
+        .sidebar-submenu { border-left: 1px solid var(--m3-outline) !important; }
+        .sidebar-submenu .sidebar-nav-link { color: var(--m3-text-muted) !important; }
+        .sidebar-submenu .sidebar-nav-link:hover { background: var(--m3-state) !important; color: var(--m3-text-strong) !important; }
+        .sidebar-submenu .sidebar-nav-link.active {
+            background: var(--m3-secondary-container) !important;
+            color: var(--m3-on-container) !important;
+            box-shadow: none !important;
         }
 
-        /* ===== Header Right Section Spacing ===== */
-        .header-right {
-            display: flex;
-            align-items: center;
-            gap: 16px;
+        /* ---- Topbar → M3 top app bar, frosted glass ---- */
+        .top-header {
+            background: var(--m3-topbar) !important;
+            border-bottom: 1px solid var(--m3-outline) !important;
+            box-shadow: var(--m3-elev-1) !important;
+            backdrop-filter: var(--m3-blur) !important;
+            -webkit-backdrop-filter: var(--m3-blur) !important;
+        }
+        .top-header.scrolled {
+            background: color-mix(in srgb, var(--m3-topbar) 100%, #000 0%) !important;
+            border-color: var(--m3-outline) !important;
+            box-shadow: var(--m3-elev-2) !important;
+        }
+        .top-header .menu-toggle,
+        .top-header .user-profile-wrapper .user-name,
+        .top-header .header-search-wrapper .search-icon { color: var(--m3-text) !important; }
+        .top-header .user-profile-wrapper .user-role { color: var(--m3-text-muted) !important; }
+        .top-header .header-divider { background: var(--m3-outline-strong) !important; }
+        .top-header.scrolled .menu-toggle,
+        .top-header.scrolled .header-icon-btn,
+        .top-header.scrolled .user-profile-wrapper,
+        .top-header.scrolled .header-search-wrapper input,
+        .top-header.scrolled .header-search-wrapper .search-icon,
+        .top-header.scrolled .header-divider,
+        .top-header.scrolled .user-profile-wrapper .user-name,
+        .top-header.scrolled .user-profile-wrapper .user-role {
+            background: initial;
+            color: inherit;
+            border-color: var(--m3-outline);
+        }
+        .header-search-wrapper input {
+            background: var(--m3-tint-input) !important;
+            border: 1px solid transparent !important;
+            border-radius: 9999px !important;
+            color: var(--m3-text) !important;
+        }
+        .header-search-wrapper input::placeholder { color: var(--m3-text-muted) !important; }
+        .header-search-wrapper input:focus {
+            background: var(--m3-input-focus-bg) !important;
+            border-color: var(--primary) !important;
+            box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 16%, transparent) !important;
+        }
+        .header-icon-btn,
+        .user-profile-wrapper {
+            background: var(--m3-tint-input) !important;
+            border: 1px solid var(--m3-outline) !important;
+            border-radius: 9999px !important;
+            color: var(--m3-text) !important;
+        }
+        .header-icon-btn:hover { background: var(--m3-state) !important; }
+
+        /* ---- Content sheet + bento grid ---- */
+        .main-content { background: transparent !important; }
+        .page-content {
+            margin: 16px;
+            padding: 22px;
+            border-radius: var(--m3-r-xl);
+            color: var(--m3-text);
+            background: var(--m3-sheet);
+            border: 1px solid var(--m3-sheet-border);
+            box-shadow: var(--m3-elev-2);
+            backdrop-filter: blur(14px) saturate(140%);
+            -webkit-backdrop-filter: blur(14px) saturate(140%);
+            min-height: calc(100vh - var(--topbar-height) - 36px);
+        }
+        /* Bento spacing — roomier gaps between grid tiles */
+        .page-content .row { --bs-gutter-x: 1.5rem; --bs-gutter-y: 1.5rem; }
+
+        /* ---- Bento tiles: every card / dashboard panel is an M3 frosted
+           surface. Token-driven so both themes stay legible -- the dashboard
+           and AI pages ship their own hard-coded #0f172a / #64748b colours
+           that are invisible in dark mode without this. ---- */
+        .page-content .card,
+        .page-content .dash-panel,
+        .page-content .kpi-card,
+        .page-content .stat-card,
+        .page-content .mini-stat-card,
+        .page-content .table-card,
+        .page-content .summary-card,
+        .page-content .ai-kpi-card,
+        .page-content .ai-panel,
+        .page-content .ai-row-card,
+        .page-content .ai-exception-card {
+            border-radius: var(--m3-r-lg) !important;
+            background: var(--m3-surface-2) !important;
+            border: 1px solid var(--m3-outline) !important;
+            box-shadow: var(--m3-elev-1) !important;
+            color: var(--m3-text);
+            backdrop-filter: blur(6px);
+            -webkit-backdrop-filter: blur(6px);
+            transition: box-shadow 0.2s ease, transform 0.2s ease;
+        }
+        .page-content .card:hover,
+        .page-content .kpi-card:hover,
+        .page-content .dash-panel:hover { box-shadow: var(--m3-elev-2) !important; }
+        .page-content .card > .card-header,
+        .page-content .card > .card-footer {
+            background: transparent !important;
+            border-color: var(--m3-outline) !important;
+            color: var(--m3-text-strong);
+        }
+        /* Headings / big numbers */
+        .page-content .card-title,
+        .page-content .card-header,
+        .page-content .panel-title,
+        .page-content .dash-panel-title,
+        .page-content .ai-panel-title,
+        .page-content .ai-row-title,
+        .page-content .kpi-value,
+        .page-content .summary-value,
+        .page-content .mini-value,
+        .page-content .ai-kpi-value,
+        .page-content .stat-value,
+        .page-content .dash-panel h1,
+        .page-content .dash-panel h2,
+        .page-content .dash-panel h3,
+        .page-content .dash-panel h4 { color: var(--m3-text-strong) !important; }
+        /* Secondary / caption text */
+        .page-content .kpi-label,
+        .page-content .kpi-sub,
+        .page-content .summary-label,
+        .page-content .mini-label,
+        .page-content .ai-kpi-label,
+        .page-content .ai-kpi-hint,
+        .page-content .ai-panel-sub,
+        .page-content .ai-row-meta,
+        .page-content .panel-head .text-muted,
+        .page-content .stat-label { color: var(--m3-text-muted) !important; }
+        /* Inset rows (activity feed, list rows, mini panels) */
+        .page-content .activity-list,
+        .page-content .activity-row,
+        .page-content .summary-row,
+        .page-content .list-row,
+        .page-content .ai-row-list > * { background: var(--m3-tint-input) !important; border-color: var(--m3-outline) !important; }
+        .page-content .kpi-icon,
+        .page-content .ai-kpi-icon { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25) !important; }
+
+        /* ---- M3 buttons: pill shape, tonal ---- */
+        .page-content .btn,
+        .page-content .btn-sm,
+        .page-content .btn-lg { border-radius: 9999px !important; font-weight: 600 !important; box-shadow: none !important; }
+        .page-content .btn-primary {
+            background: var(--primary) !important;
+            border-color: var(--primary) !important;
+            box-shadow: var(--m3-elev-1) !important;
+        }
+        .page-content .btn-primary:hover { box-shadow: var(--m3-elev-2) !important; filter: brightness(1.04); }
+        .page-content .btn-outline-primary { color: var(--primary) !important; border-color: var(--m3-outline-strong) !important; }
+        .page-content .btn-outline-primary:hover { background: var(--m3-state) !important; color: var(--primary) !important; }
+        .page-content .btn-outline-secondary,
+        .page-content .btn-outline-dark { color: var(--m3-text) !important; border-color: var(--m3-outline-strong) !important; }
+        .page-content .btn-outline-secondary:hover,
+        .page-content .btn-outline-dark:hover { background: var(--m3-state) !important; color: var(--m3-text-strong) !important; }
+        .page-content .btn-light { background: var(--m3-surface) !important; border-color: var(--m3-outline) !important; color: var(--m3-text) !important; }
+
+        /* ---- M3 filled text fields ---- */
+        .page-content .form-control,
+        .page-content .form-select {
+            border-radius: var(--m3-r-sm) !important;
+            border: 1px solid var(--m3-outline-strong) !important;
+            background: var(--m3-tint-input) !important;
+            color: var(--m3-text) !important;
+        }
+        .page-content .form-control::placeholder { color: var(--m3-text-muted) !important; }
+        .page-content .form-control:focus,
+        .page-content .form-select:focus {
+            border-color: var(--primary) !important;
+            background: var(--m3-input-focus-bg) !important;
+            box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 15%, transparent) !important;
+        }
+        .page-content .input-group-text {
+            border-radius: var(--m3-r-sm) !important;
+            border-color: var(--m3-outline-strong) !important;
+            background: var(--m3-secondary-container) !important;
+            color: var(--m3-on-container) !important;
+        }
+        .page-content .form-check-input { background-color: var(--m3-tint-input); border-color: var(--m3-outline-strong); }
+        .page-content .form-check-input:checked { background-color: var(--primary); border-color: var(--primary); }
+        .page-content .form-check-label { color: var(--m3-text); }
+
+        /* ---- Tables, badges, alerts, dropdowns → soften to match ---- */
+        .page-content .table { color: var(--m3-text); --bs-table-color: var(--m3-text); --bs-table-bg: transparent; }
+        .page-content .table > :not(caption) > * > * { border-color: var(--m3-outline) !important; background-color: transparent; }
+        .page-content .table thead th {
+            color: var(--m3-text-muted) !important;
+            font-weight: 700 !important;
+            border-bottom: 1px solid var(--m3-outline-strong) !important;
+        }
+        .page-content .table-hover > tbody > tr:hover > * { background-color: var(--m3-state) !important; color: var(--m3-text-strong); }
+        .page-content .badge { border-radius: 9999px !important; font-weight: 700 !important; }
+        .page-content .alert { border-radius: var(--m3-r-md) !important; border: 1px solid var(--m3-outline) !important; }
+        .page-content .nav-tabs { border-bottom-color: var(--m3-outline) !important; }
+        .page-content .nav-tabs .nav-link { color: var(--m3-text-muted); }
+        .page-content .nav-tabs .nav-link.active {
+            color: var(--m3-text-strong);
+            background: var(--m3-surface-2);
+            border-color: var(--m3-outline) var(--m3-outline) transparent;
+        }
+        .page-content .nav-pills .nav-link { border-radius: 9999px !important; color: var(--m3-text); }
+        .page-content .nav-pills .nav-link.active { background: var(--primary) !important; color: #fff; }
+        .page-content .progress { border-radius: 9999px !important; background: var(--m3-secondary-container) !important; }
+        .page-content .list-group-item { border-color: var(--m3-outline) !important; background: transparent !important; color: var(--m3-text); }
+        .page-content hr { border-top-color: var(--m3-outline) !important; opacity: 1; }
+        .page-content .modal-content,
+        .page-content .offcanvas,
+        .page-content .accordion-item,
+        .page-content .accordion-button {
+            background: var(--m3-surface) !important;
+            color: var(--m3-text) !important;
+            border-color: var(--m3-outline) !important;
         }
 
-        .header-actions {
-            display: flex;
-            align-items: center;
-            gap: 8px;
+        /* Text / surface legibility — TOKEN-DRIVEN and UNCONDITIONAL so it is
+           correct in light mode, in OS dark mode, AND under the header toggle
+           (html[data-theme="dark"]). Semantic colours (success / danger /
+           warning / info) are deliberately left alone. */
+        .page-content h1, .page-content h2, .page-content h3, .page-content h4,
+        .page-content h5, .page-content h6,
+        .page-content .h1, .page-content .h2, .page-content .h3,
+        .page-content .h4, .page-content .h5,
+        .page-content strong, .page-content b, .page-content dt,
+        .page-content label, .page-content .form-label,
+        .page-content .fw-bold, .page-content .fw-semibold,
+        .page-content .text-dark, .page-content .text-black,
+        .page-content .text-body, .page-content .text-body-emphasis,
+        .page-content .text-gray-900, .page-content .text-gray-800,
+        .page-content .text-gray-700 { color: var(--m3-text-strong) !important; }
+
+        .page-content .text-muted, .page-content .text-secondary,
+        .page-content small, .page-content .small,
+        .page-content .text-gray-600, .page-content .text-gray-500,
+        .page-content .text-gray-400,
+        .page-content .kpi-sub, .page-content .mini-sub,
+        .page-content .panel-sub, .page-content .stat-caption { color: var(--m3-text-muted) !important; }
+        /* nested muted sub-lines inside stat cards */
+        .page-content .mini-stat-card .small,
+        .page-content .kpi-card .small,
+        .page-content .summary-card .small { color: var(--m3-text-muted) !important; }
+
+        .page-content .bg-white, .page-content .bg-light,
+        .page-content .bg-body, .page-content .bg-body-tertiary,
+        .page-content .bg-gray-100, .page-content .bg-gray-50 {
+            background-color: var(--m3-surface-2) !important;
+            color: var(--m3-text) !important;
+        }
+        .page-content .border { border-color: var(--m3-outline) !important; }
+
+        /* Dashboard inset rows (Platform Health / Top Drivers / Activity Feed) */
+        .page-content .health-row,
+        .page-content .driver-row,
+        .page-content .activity-row,
+        .page-content .summary-row,
+        .page-content .list-row,
+        .page-content .rank-list > *,
+        .page-content .ai-row-list > * {
+            background: var(--m3-tint-input) !important;
+            border-color: var(--m3-outline) !important;
+            color: var(--m3-text);
+        }
+        /* status chips (.health-state.warn/.ok/.crit) keep their semantic
+           colours — they already carry their own contrasty fg. */
+
+        /* .text-primary: keep it the brand colour in light, lift it for
+           contrast only when dark. */
+        :root[data-theme="dark"] .page-content .text-primary { color: color-mix(in srgb, var(--primary) 45%, #ffffff) !important; }
+        @media (prefers-color-scheme: dark) {
+            :root:not([data-theme="light"]) .page-content .text-primary { color: color-mix(in srgb, var(--primary) 45%, #ffffff) !important; }
         }
 
-        /* ===== Responsive Adjustments ===== */
-        @media (max-width: 992px) {
-            .search-shortcut-hint {
-                display: none;
-            }
+        /* =========================================================================
+           CATCH-ALL: blades that ship their own hard-coded light colours
+           (#0f172a / #1e293b / #334155 / #64748b / #fff / #f8fafc …) or custom
+           class names the block above doesn't enumerate. Token-driven parts are
+           unconditional (correct in both themes); anything that must only bite in
+           dark (inline styles, raw text elements forced light) is theme-scoped.
+           ========================================================================= */
 
-            .quick-actions-grid {
-                grid-template-columns: repeat(2, minmax(0, 1fr));
-            }
+        /* 1. Raw block text elements default to the themed body colour.
+              Token-driven so light mode is unchanged; Bootstrap's !important
+              semantic utilities (.text-success/…) still win. Deliberately NOT
+              `span`/`td` — those routinely hold badges/pills with their own
+              light backgrounds. */
+        .page-content p,
+        .page-content li,
+        .page-content dd,
+        .page-content dt,
+        .page-content summary,
+        .page-content figcaption,
+        .page-content blockquote { color: var(--m3-text); }
 
-            .notification-dropdown {
-                min-width: 320px;
-                max-height: 400px;
+        /* Custom light-background badges that only set `background` — force a
+           dark foreground so they read in either theme. */
+        .page-content .badge.badge-info,
+        .page-content .badge.badge-success,
+        .page-content .badge.badge-warning,
+        .page-content .badge.badge-danger,
+        .page-content .badge.badge-primary,
+        .page-content .badge.badge-secondary,
+        .page-content .badge.badge-light,
+        .page-content .badge.badge-soft { color: #1e293b !important; }
+
+        /* 2. Custom AI / decision blade classes (not in the enumerated block). */
+        .page-content .ai-appr-action,
+        .page-content .ai-appr-id,
+        .page-content .aid-action-key,
+        .page-content .aid-approval-title,
+        .page-content .aid-summary-text,
+        .page-content .ai-kicker,
+        .page-content .value-table-wrap td { color: var(--m3-text) !important; }
+
+        .page-content .ai-appr-table thead th,
+        .page-content .ai-appr-key,
+        .page-content .ai-appr-time,
+        .page-content .ai-appr-time small,
+        .page-content .ai-appr-muted,
+        .page-content .aid-sub,
+        .page-content .aid-kpi .k,
+        .page-content .aid-approval-meta,
+        .page-content .aid-empty { color: var(--m3-text-muted) !important; }
+
+        .page-content .aid-kpi,
+        .page-content .aid-action {
+            background: var(--m3-surface-2) !important;
+            border-color: var(--m3-outline) !important;
+            color: var(--m3-text);
+        }
+        .page-content .aid-kpi .v { color: var(--m3-text-strong) !important; }
+        .page-content .ai-appr-table { background: transparent !important; }
+        .page-content .ai-appr-table thead th,
+        .page-content .ai-appr-table td { border-color: var(--m3-outline) !important; }
+        .page-content .aid-json pre { border: 1px solid var(--m3-outline) !important; }
+
+        /* 3. Inline styles — only override in dark (the hard-coded value is
+              correct in light). */
+        :root[data-theme="dark"] .page-content [style*="color:#0f172a"],
+        :root[data-theme="dark"] .page-content [style*="color: #0f172a"],
+        :root[data-theme="dark"] .page-content [style*="color:#1e293b"],
+        :root[data-theme="dark"] .page-content [style*="color: #1e293b"],
+        :root[data-theme="dark"] .page-content [style*="color:#111827"],
+        :root[data-theme="dark"] .page-content [style*="color: #111827"],
+        :root[data-theme="dark"] .page-content [style*="color:#0F172A"],
+        :root[data-theme="dark"] .page-content [style*="color: #0F172A"] { color: var(--m3-text-strong) !important; }
+        :root[data-theme="dark"] .page-content [style*="color:#334155"],
+        :root[data-theme="dark"] .page-content [style*="color: #334155"],
+        :root[data-theme="dark"] .page-content [style*="color:#475569"],
+        :root[data-theme="dark"] .page-content [style*="color: #475569"],
+        :root[data-theme="dark"] .page-content [style*="color:#64748b"],
+        :root[data-theme="dark"] .page-content [style*="color: #64748b"],
+        :root[data-theme="dark"] .page-content [style*="color:#94a3b8"],
+        :root[data-theme="dark"] .page-content [style*="color: #94a3b8"] { color: var(--m3-text-muted) !important; }
+        :root[data-theme="dark"] .page-content [style*="background:#fff"],
+        :root[data-theme="dark"] .page-content [style*="background: #fff"],
+        :root[data-theme="dark"] .page-content [style*="background:#ffffff"],
+        :root[data-theme="dark"] .page-content [style*="background: #ffffff"],
+        :root[data-theme="dark"] .page-content [style*="background-color:#fff"],
+        :root[data-theme="dark"] .page-content [style*="background-color: #fff"],
+        :root[data-theme="dark"] .page-content [style*="background:#f8fafc"],
+        :root[data-theme="dark"] .page-content [style*="background: #f8fafc"],
+        :root[data-theme="dark"] .page-content [style*="background: rgba(248"],
+        :root[data-theme="dark"] .page-content [style*="background:rgba(248"] {
+            background: var(--m3-surface-2) !important;
+            color: var(--m3-text) !important;
+        }
+        @media (prefers-color-scheme: dark) {
+            :root:not([data-theme="light"]) .page-content [style*="color:#0f172a"],
+            :root:not([data-theme="light"]) .page-content [style*="color: #0f172a"],
+            :root:not([data-theme="light"]) .page-content [style*="color:#1e293b"],
+            :root:not([data-theme="light"]) .page-content [style*="color: #1e293b"],
+            :root:not([data-theme="light"]) .page-content [style*="color:#111827"],
+            :root:not([data-theme="light"]) .page-content [style*="color: #111827"] { color: var(--m3-text-strong) !important; }
+            :root:not([data-theme="light"]) .page-content [style*="color:#334155"],
+            :root:not([data-theme="light"]) .page-content [style*="color: #334155"],
+            :root:not([data-theme="light"]) .page-content [style*="color:#475569"],
+            :root:not([data-theme="light"]) .page-content [style*="color: #475569"],
+            :root:not([data-theme="light"]) .page-content [style*="color:#64748b"],
+            :root:not([data-theme="light"]) .page-content [style*="color: #64748b"],
+            :root:not([data-theme="light"]) .page-content [style*="color:#94a3b8"],
+            :root:not([data-theme="light"]) .page-content [style*="color: #94a3b8"] { color: var(--m3-text-muted) !important; }
+            :root:not([data-theme="light"]) .page-content [style*="background:#fff"],
+            :root:not([data-theme="light"]) .page-content [style*="background: #fff"],
+            :root:not([data-theme="light"]) .page-content [style*="background:#ffffff"],
+            :root:not([data-theme="light"]) .page-content [style*="background: #ffffff"],
+            :root:not([data-theme="light"]) .page-content [style*="background:#f8fafc"],
+            :root:not([data-theme="light"]) .page-content [style*="background: #f8fafc"],
+            :root:not([data-theme="light"]) .page-content [style*="background: rgba(248"],
+            :root:not([data-theme="light"]) .page-content [style*="background:rgba(248"] {
+                background: var(--m3-surface-2) !important;
+                color: var(--m3-text) !important;
             }
         }
 
-        @media (max-width: 768px) {
-            .quick-actions-grid {
-                grid-template-columns: 1fr;
-            }
+        /* 4. Per-page <style> blocks name their own card/stat/panel classes
+              (ao-panel, ai-kpi-card, aid-action, xy-tile …) with hard-coded
+              light backgrounds and #0f172a / #64748b text. Catch them by naming
+              convention — DARK-SCOPED so light mode is never touched. */
+        :root[data-theme="dark"] .page-content [class*="-panel"]:not([class*="-panel-"]),
+        :root[data-theme="dark"] .page-content [class*="-card"]:not([class*="-card-"]),
+        :root[data-theme="dark"] .page-content [class*="-stat"]:not([class*="-stat-"]),
+        :root[data-theme="dark"] .page-content [class*="-tile"]:not([class*="-tile-"]),
+        :root[data-theme="dark"] .page-content [class*="-box"]:not([class*="-box-"]),
+        :root[data-theme="dark"] .page-content [class*="-widget"]:not([class*="-widget-"]),
+        :root[data-theme="dark"] .page-content [class*="-metric"]:not([class*="-metric-"]),
+        :root[data-theme="dark"] .page-content [class*="-toolbar"]:not([class*="-toolbar-"]),
+        :root[data-theme="dark"] .page-content [class*="-hero"]:not([class*="-hero-"]),
+        :root[data-theme="dark"] .page-content [class*="-banner"]:not([class*="-banner-"]) {
+            background: var(--m3-surface-2) !important;
+            border-color: var(--m3-outline) !important;
+            color: var(--m3-text);
+        }
+        :root[data-theme="dark"] .page-content [class*="-label"],
+        :root[data-theme="dark"] .page-content [class*="-subtitle"],
+        :root[data-theme="dark"] .page-content [class*="-caption"],
+        :root[data-theme="dark"] .page-content [class*="-meta"],
+        :root[data-theme="dark"] .page-content [class*="-muted"],
+        :root[data-theme="dark"] .page-content [class*="-hint"],
+        :root[data-theme="dark"] .page-content [class*="-sub"]:not([class*="-subject"]) { color: var(--m3-text-muted) !important; }
+        :root[data-theme="dark"] .page-content [class*="-value"],
+        :root[data-theme="dark"] .page-content [class*="-title"],
+        :root[data-theme="dark"] .page-content [class*="-heading"],
+        :root[data-theme="dark"] .page-content [class*="-name"],
+        :root[data-theme="dark"] .page-content [class*="-amount"] { color: var(--m3-text-strong) !important; }
+        /* Custom (non-.table) list headers frequently ship a light strip. */
+        :root[data-theme="dark"] .page-content thead,
+        :root[data-theme="dark"] .page-content thead tr,
+        :root[data-theme="dark"] .page-content thead th,
+        :root[data-theme="dark"] .page-content [class*="-thead"],
+        :root[data-theme="dark"] .page-content [class*="table-head"],
+        :root[data-theme="dark"] .page-content [class*="list-head"] {
+            background: transparent !important;
+            color: var(--m3-text-muted) !important;
+        }
 
-            .header-right {
-                gap: 8px;
+        @media (prefers-color-scheme: dark) {
+            :root:not([data-theme="light"]) .page-content [class*="-panel"]:not([class*="-panel-"]),
+            :root:not([data-theme="light"]) .page-content [class*="-card"]:not([class*="-card-"]),
+            :root:not([data-theme="light"]) .page-content [class*="-stat"]:not([class*="-stat-"]),
+            :root:not([data-theme="light"]) .page-content [class*="-tile"]:not([class*="-tile-"]),
+            :root:not([data-theme="light"]) .page-content [class*="-box"]:not([class*="-box-"]),
+            :root:not([data-theme="light"]) .page-content [class*="-widget"]:not([class*="-widget-"]),
+            :root:not([data-theme="light"]) .page-content [class*="-metric"]:not([class*="-metric-"]),
+            :root:not([data-theme="light"]) .page-content [class*="-toolbar"]:not([class*="-toolbar-"]),
+            :root:not([data-theme="light"]) .page-content [class*="-hero"]:not([class*="-hero-"]),
+            :root:not([data-theme="light"]) .page-content [class*="-banner"]:not([class*="-banner-"]) {
+                background: var(--m3-surface-2) !important;
+                border-color: var(--m3-outline) !important;
+                color: var(--m3-text);
             }
+            :root:not([data-theme="light"]) .page-content [class*="-label"],
+            :root:not([data-theme="light"]) .page-content [class*="-subtitle"],
+            :root:not([data-theme="light"]) .page-content [class*="-caption"],
+            :root:not([data-theme="light"]) .page-content [class*="-meta"],
+            :root:not([data-theme="light"]) .page-content [class*="-muted"],
+            :root:not([data-theme="light"]) .page-content [class*="-hint"],
+            :root:not([data-theme="light"]) .page-content [class*="-sub"]:not([class*="-subject"]) { color: var(--m3-text-muted) !important; }
+            :root:not([data-theme="light"]) .page-content [class*="-value"],
+            :root:not([data-theme="light"]) .page-content [class*="-title"],
+            :root:not([data-theme="light"]) .page-content [class*="-heading"],
+            :root:not([data-theme="light"]) .page-content [class*="-name"],
+            :root:not([data-theme="light"]) .page-content [class*="-amount"] { color: var(--m3-text-strong) !important; }
+            :root:not([data-theme="light"]) .page-content thead,
+            :root:not([data-theme="light"]) .page-content thead tr,
+            :root:not([data-theme="light"]) .page-content thead th,
+            :root:not([data-theme="light"]) .page-content [class*="-thead"],
+            :root:not([data-theme="light"]) .page-content [class*="table-head"],
+            :root:not([data-theme="light"]) .page-content [class*="list-head"] {
+                background: transparent !important;
+                color: var(--m3-text-muted) !important;
+            }
+        }
+
+        /* Header dropdowns (outside .page-content) */
+        .dropdown-menu,
+        .profile-dropdown-menu {
+            border-radius: var(--m3-r-md) !important;
+            border: 1px solid var(--m3-outline) !important;
+            box-shadow: var(--m3-elev-3) !important;
+            background: var(--m3-menu) !important;
+            color: var(--m3-text) !important;
+            backdrop-filter: var(--m3-blur);
+            -webkit-backdrop-filter: var(--m3-blur);
+        }
+        .dropdown-menu .dropdown-item,
+        .profile-dropdown-menu .dropdown-menu-item { color: var(--m3-text) !important; }
+        .dropdown-menu .dropdown-item:hover,
+        .profile-dropdown-menu .dropdown-menu-item:hover { background: var(--m3-state) !important; color: var(--m3-text-strong) !important; }
+        .dropdown-divider { border-top-color: var(--m3-outline) !important; }
+
+        @media (max-width: 1024px) {
+            .page-content { margin: 12px; border-radius: var(--m3-r-lg); padding: 16px; }
+            .page-content .row { --bs-gutter-x: 1rem; --bs-gutter-y: 1rem; }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            .page-content .card { transition: none; }
         }
     </style>
-
+    
     @yield('styles')
 </head>
 <body class="dashboard-ui-compact">
@@ -2291,7 +2409,24 @@
                     <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
                 </div>
             @endif
-            
+
+            @if($errors->any())
+                <div class="alert alert-danger alert-dismissible fade show" role="alert">
+                    <i class="fas fa-exclamation-circle me-2"></i>
+                    @if($errors->count() === 1)
+                        {{ $errors->first() }}
+                    @else
+                        <strong>Please fix the following:</strong>
+                        <ul class="mb-0">
+                            @foreach($errors->all() as $error)
+                                <li>{{ $error }}</li>
+                            @endforeach
+                        </ul>
+                    @endif
+                    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                </div>
+            @endif
+
             @yield('content')
         </div>
     </div>
@@ -2394,6 +2529,28 @@
 
         window.addEventListener('scroll', updateHeaderScrollState);
         document.addEventListener('DOMContentLoaded', updateHeaderScrollState);
+
+        (function () {
+            // 1) Move every modal up to <body> so it isn't trapped in
+            //    .main-content's stacking context (which paints below the
+            //    body-level .modal-backdrop -> modal appears greyed & unclickable).
+            //    Bootstrap 4 did this automatically; Bootstrap 5 does not.
+            document.addEventListener('show.bs.modal', function (e) {
+                var m = e.target;
+                if (m && m.parentElement !== document.body) document.body.appendChild(m);
+            });
+
+            // 2) Clear orphaned backdrops left by an interrupted open.
+            function clearOrphanBackdrops() {
+                if (document.querySelector('.modal.show')) return;
+                document.querySelectorAll('.modal-backdrop').forEach(function (b) { b.remove(); });
+                document.body.classList.remove('modal-open');
+                document.body.style.removeProperty('overflow');
+                document.body.style.removeProperty('padding-right');
+            }
+            document.addEventListener('DOMContentLoaded', clearOrphanBackdrops);
+            document.addEventListener('hidden.bs.modal', function () { setTimeout(clearOrphanBackdrops, 60); });
+        })();
     </script>
     
     @include('partials.web-visit-tracker', ['panel' => 'admin'])

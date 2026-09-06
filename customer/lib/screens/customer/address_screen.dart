@@ -64,11 +64,7 @@ class _AddressScreenState extends State<AddressScreen> {
   }
 
   Future<void> _openEditAddress(Address address) async {
-    await Navigator.pushNamed(
-      context,
-      '/addresses/edit',
-      arguments: address,
-    );
+    await Navigator.pushNamed(context, '/addresses/edit', arguments: address);
     if (mounted) await _loadAddresses(forceRefresh: true);
   }
 
@@ -92,8 +88,8 @@ class _AddressScreenState extends State<AddressScreen> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text('Delete address'),
-        content: Text('Are you sure you want to delete this address?'),
+        title: const Text('Delete address'),
+        content: const Text('Are you sure you want to delete this address?'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
@@ -105,7 +101,7 @@ class _AddressScreenState extends State<AddressScreen> {
                 fontWeight: FontWeight.w800,
               ),
             ),
-            child: Text('Cancel'),
+            child: const Text('Cancel'),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(context, true),
@@ -118,7 +114,7 @@ class _AddressScreenState extends State<AddressScreen> {
                 fontWeight: FontWeight.w900,
               ),
             ),
-            child: Text('Delete'),
+            child: const Text('Delete'),
           ),
         ],
       ),
@@ -152,71 +148,30 @@ class _AddressScreenState extends State<AddressScreen> {
             children: [
               ListView(
                 physics: const AlwaysScrollableScrollPhysics(),
-                padding: const EdgeInsets.fromLTRB(18, 14, 18, 116),
+                padding: const EdgeInsets.fromLTRB(18, 14, 18, 40),
                 children: [
-                  ProfilePageTopBar(
+                  const ProfilePageTopBar(
                     title: 'Saved Addresses',
-                    subtitle: _addresses.isEmpty
-                        ? 'Manage your delivery places'
-                        : '${_addresses.length} saved delivery places',
-                    actions: [
-                      const SizedBox(width: 12),
-                      ProfileRoundButton(
-                        icon: LucideIcons.plus,
-                        color: profileAccentColor(context),
-                        onTap: _openAddAddress,
-                      ),
-                    ],
+                    subtitle: 'Your delivery places',
                   ),
-                  const SizedBox(height: 22),
-                  ProfileSurfaceCard(
-                    padding: const EdgeInsets.fromLTRB(14, 14, 14, 12),
-                    child: Row(
-                      children: [
-                        ProfileAccentIcon(
-                          icon: LucideIcons.map_pin,
-                          size: 58,
-                          iconSize: 26,
-                          radius: 20,
-                        ),
-                        const SizedBox(width: 14),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                'Your delivery places',
-                                style: TextStyle(
-                                  color: profileTextColor(context),
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.w800,
-                                  height: 1.1,
-                                ),
-                              ),
-                              SizedBox(height: 6),
-                              Text(
-                                'Save home, work, and go-to places for faster checkout.',
-                                style: TextStyle(
-                                  color: profileMutedColor(context),
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w500,
-                                  height: 1.35,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
+                  const SizedBox(height: 20),
+
+                  // Add-address action tile (dashed)
+                  _AddAddressTile(onTap: _openAddAddress),
                   const SizedBox(height: 18),
-                  ProfileSectionLabel(
-                    title:
-                        _addresses.isEmpty ? 'Get started' : 'Saved locations',
-                  ),
-                  const SizedBox(height: 10),
+
+                  if (_addresses.isNotEmpty || (_isLoading == false)) ...[
+                    ProfileSectionLabel(
+                      title: _addresses.isEmpty
+                          ? 'No places yet'
+                          : '${_addresses.length} saved '
+                              '${_addresses.length == 1 ? 'place' : 'places'}',
+                    ),
+                    const SizedBox(height: 10),
+                  ],
+
                   if (_isLoading && _addresses.isEmpty)
-                    const AppSkeletonColumn(itemCount: 4, itemHeight: 104)
+                    const AppSkeletonColumn(itemCount: 3, itemHeight: 132)
                   else if (_addresses.isEmpty)
                     _EmptyAddresses(onAdd: _openAddAddress)
                   else
@@ -244,24 +199,141 @@ class _AddressScreenState extends State<AddressScreen> {
           ),
         ),
       ),
-      bottomNavigationBar: SafeArea(
-        top: false,
-        minimum: const EdgeInsets.fromLTRB(18, 8, 18, 14),
-        child: SizedBox(
-          height: 54,
-          child: ElevatedButton.icon(
-            onPressed: _openAddAddress,
-            style: FoodFlowTheme.zomatoPrimaryButton(
-                color: profileButtonColor(context),
-                foregroundColor: profileOnButtonColor(context),
-                radius: 18),
-            icon: const Icon(LucideIcons.plus, size: 18),
-            label: Text('Add New Address'),
+    );
+  }
+}
+
+IconData _iconForAddress(String name) {
+  final n = name.toLowerCase();
+  if (n.contains('home') || n.contains('house')) return LucideIcons.house;
+  if (n.contains('work') || n.contains('office') || n.contains('job')) {
+    return LucideIcons.briefcase;
+  }
+  if (n.contains('hotel') || n.contains('stay')) return LucideIcons.bed_double;
+  return LucideIcons.map_pin;
+}
+
+class _AddAddressTile extends StatelessWidget {
+  const _AddAddressTile({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = profileAccentColor(context);
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(18),
+      child: DottedBorderBox(
+        color: accent.withOpacity(0.5),
+        radius: 18,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 16),
+          child: Row(
+            children: [
+              Container(
+                width: 42,
+                height: 42,
+                decoration: BoxDecoration(
+                  color: profileSoftColor(context),
+                  borderRadius: BorderRadius.circular(13),
+                ),
+                child: Icon(LucideIcons.plus, color: accent, size: 20),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Add a new address',
+                      style: TextStyle(
+                        color: profileTextColor(context),
+                        fontSize: 15,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      'Home, work or a go-to spot',
+                      style: TextStyle(
+                        color: profileMutedColor(context),
+                        fontSize: 12,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Icon(LucideIcons.chevron_right,
+                  color: profileMutedColor(context), size: 20),
+            ],
           ),
         ),
       ),
     );
   }
+}
+
+/// Lightweight dashed border container (no extra package needed).
+class DottedBorderBox extends StatelessWidget {
+  const DottedBorderBox({
+    super.key,
+    required this.child,
+    required this.color,
+    this.radius = 16,
+  });
+
+  final Widget child;
+  final Color color;
+  final double radius;
+
+  @override
+  Widget build(BuildContext context) {
+    return CustomPaint(
+      painter: _DashedRRectPainter(color: color, radius: radius),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(radius),
+        child: child,
+      ),
+    );
+  }
+}
+
+class _DashedRRectPainter extends CustomPainter {
+  _DashedRRectPainter({required this.color, required this.radius});
+
+  final Color color;
+  final double radius;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = color
+      ..strokeWidth = 1.4
+      ..style = PaintingStyle.stroke;
+    final rrect = RRect.fromRectAndRadius(
+      Offset.zero & size,
+      Radius.circular(radius),
+    );
+    final path = Path()..addRRect(rrect);
+    const dash = 6.0;
+    const gap = 5.0;
+    for (final metric in path.computeMetrics()) {
+      double d = 0;
+      while (d < metric.length) {
+        canvas.drawPath(
+          metric.extractPath(d, (d + dash).clamp(0, metric.length)),
+          paint,
+        );
+        d += dash + gap;
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _DashedRRectPainter old) =>
+      old.color != color || old.radius != radius;
 }
 
 class _AddressCard extends StatelessWidget {
@@ -279,6 +351,7 @@ class _AddressCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final accent = profileAccentColor(context);
     return ProfileSurfaceCard(
       padding: const EdgeInsets.all(16),
       child: Column(
@@ -286,56 +359,42 @@ class _AddressCard extends StatelessWidget {
         children: [
           Row(
             children: [
-              ProfileAccentIcon(
-                icon: LucideIcons.house,
-                size: 48,
-                iconSize: 22,
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: profileSoftColor(context),
+                  borderRadius: BorderRadius.circular(13),
+                ),
+                child: Icon(_iconForAddress(address.name),
+                    color: accent, size: 20),
               ),
-              const SizedBox(width: 16),
+              const SizedBox(width: 14),
               Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      address.name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: profileTextColor(context),
-                        fontSize: 16,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      'Phone: ${address.phone}',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: profileMutedColor(context),
-                        fontSize: 11,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                  ],
+                child: Text(
+                  address.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: profileTextColor(context),
+                    fontSize: 16,
+                    fontWeight: FontWeight.w800,
+                  ),
                 ),
               ),
               if (address.isDefault)
                 Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 6,
-                  ),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                   decoration: BoxDecoration(
                     color: profileSoftColor(context),
                     borderRadius: BorderRadius.circular(999),
-                    border: Border.all(
-                        color: profileAccentColor(context).withOpacity(0.24)),
+                    border: Border.all(color: accent.withOpacity(0.24)),
                   ),
                   child: Text(
                     'Default',
                     style: TextStyle(
-                      color: profileAccentColor(context),
+                      color: accent,
                       fontSize: 11,
                       fontWeight: FontWeight.w800,
                     ),
@@ -348,49 +407,90 @@ class _AddressCard extends StatelessWidget {
             address.fullAddress,
             style: TextStyle(
               color: profileMutedColor(context),
-              fontSize: 12,
+              fontSize: 12.5,
               fontWeight: FontWeight.w500,
-              height: 1.35,
+              height: 1.4,
             ),
           ),
-          const SizedBox(height: 14),
-          Row(
-            children: [
-              if (!address.isDefault) ...[
-                Expanded(
-                  child: OutlinedButton(
-                    onPressed: onSetDefault,
-                    style: FoodFlowTheme.zomatoOutlineButton(
-                      color: profileButtonColor(context),
-                      radius: 14,
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                    ),
-                    child: Text('Set as Default'),
+          if (address.phone.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Row(
+              children: [
+                Icon(LucideIcons.phone,
+                    size: 12, color: profileMutedColor(context)),
+                const SizedBox(width: 6),
+                Text(
+                  address.phone,
+                  style: TextStyle(
+                    color: profileMutedColor(context),
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w600,
                   ),
                 ),
-                const SizedBox(width: 10),
               ],
-              IconButton(
-                style: FoodFlowTheme.softIconButton(
-                  backgroundColor: profileButtonSoftColor(context),
-                  foregroundColor: profileButtonColor(context),
+            ),
+          ],
+          const SizedBox(height: 12),
+          Divider(height: 1, color: profileLineColor(context)),
+          const SizedBox(height: 6),
+          Row(
+            children: [
+              if (!address.isDefault)
+                _CardAction(
+                  icon: LucideIcons.circle_check,
+                  label: 'Set default',
+                  onTap: onSetDefault,
                 ),
-                icon: const Icon(LucideIcons.pencil, size: 18),
-                onPressed: onEdit,
+              const Spacer(),
+              _CardAction(
+                icon: LucideIcons.pencil,
+                label: 'Edit',
+                onTap: onEdit,
               ),
-              const SizedBox(width: 8),
-              IconButton(
-                style: FoodFlowTheme.softIconButton(
-                  backgroundColor: profileButtonSoftColor(context),
-                  foregroundColor: profileButtonColor(context),
-                ),
-                icon: const Icon(LucideIcons.trash_2, size: 18),
-                onPressed: onDelete,
+              const SizedBox(width: 4),
+              _CardAction(
+                icon: LucideIcons.trash_2,
+                label: 'Delete',
+                onTap: onDelete,
+                danger: true,
               ),
             ],
           ),
         ],
       ),
+    );
+  }
+}
+
+class _CardAction extends StatelessWidget {
+  const _CardAction({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+    this.danger = false,
+  });
+
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+  final bool danger;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = danger
+        ? Theme.of(context).colorScheme.error
+        : profileButtonColor(context);
+    return TextButton.icon(
+      onPressed: onTap,
+      style: TextButton.styleFrom(
+        foregroundColor: color,
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        minimumSize: Size.zero,
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        textStyle: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800),
+      ),
+      icon: Icon(icon, size: 15),
+      label: Text(label),
     );
   }
 }
@@ -408,11 +508,11 @@ class _EmptyAddresses extends StatelessWidget {
         children: [
           ProfileAccentIcon(
             icon: LucideIcons.map_pin_plus,
-            size: 66,
-            iconSize: 30,
+            size: 62,
+            iconSize: 28,
             radius: 20,
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 14),
           Text(
             'No saved addresses yet',
             textAlign: TextAlign.center,
@@ -439,10 +539,11 @@ class _EmptyAddresses extends StatelessWidget {
             child: ElevatedButton(
               onPressed: onAdd,
               style: FoodFlowTheme.zomatoPrimaryButton(
-                  color: profileButtonColor(context),
-                  foregroundColor: profileOnButtonColor(context),
-                  radius: 14),
-              child: Text('Add New Address'),
+                color: profileButtonColor(context),
+                foregroundColor: profileOnButtonColor(context),
+                radius: 14,
+              ),
+              child: const Text('Add New Address'),
             ),
           ),
         ],

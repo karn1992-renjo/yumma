@@ -10,15 +10,19 @@ use App\Services\GigOperationsService;
 use App\Services\GigOperationsBroadcastService;
 use App\Services\GigExternalSignalService;
 use App\Services\GigDemandForecastService;
+use App\Models\GigDemandForecast;
 use App\Models\GigPayoutApproval;
 use App\Models\GigFraudSignal;
+use App\Models\GigDispute;
+use App\Models\AppSetting;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use App\Services\GigLifecycleService;
 use Carbon\Carbon;
 
 class GigController extends Controller
 {
-    public function index(Request $request, GigLifecycleService $gigLifecycleService, GigOperationsService $gigOperationsService)
+    public function index(Request $request)
     {
         $validated = $request->validate([
             'date' => 'nullable|date',
@@ -27,80 +31,89 @@ class GigController extends Controller
             ? Carbon::parse($validated['date'])->format('Y-m-d')
             : null;
 
-        $availableGigs = DriverGig::with(['driver', 'area', 'bookings.driver'])
-            ->withCount(['activeBookings as active_bookings_count'])
-            ->where('status', 'available')
-            ->when(
-                $selectedDate,
-                fn ($query) => $query->whereDate('date', $selectedDate),
-                fn ($query) => $query->whereDate('date', '>=', today())
-            )
-            ->orderBy('date')
-            ->orderBy('start_time')
-            ->get();
-            
-        $bookedGigs = DriverGig::with(['driver', 'area', 'bookings.driver'])
-            ->withCount(['activeBookings as active_bookings_count'])
-            ->where('status', 'booked')
-            ->when(
-                $selectedDate,
-                fn ($query) => $query->whereDate('date', $selectedDate),
-                fn ($query) => $query->whereDate('date', '>=', today())
-            )
-            ->orderBy('date')
-            ->orderBy('start_time')
-            ->get();
-            
-        $completedGigs = DriverGig::with(['driver', 'area', 'bookings.driver'])
-            ->withCount(['activeBookings as active_bookings_count'])
-            ->where('status', 'completed')
-            ->when(
-                $selectedDate,
-                fn ($query) => $query->whereDate('date', $selectedDate),
-                fn ($query) => $query->whereDate('date', '>=', today()->subDays(7))
-            )
-            ->orderBy('date', 'desc')
-            ->orderBy('start_time')
-            ->limit(50)
-            ->get();
-            
-        $cancelledGigs = DriverGig::with(['driver', 'area', 'bookings.driver'])
-            ->withCount(['activeBookings as active_bookings_count'])
-            ->where('status', 'cancelled')
-            ->when(
-                $selectedDate,
-                fn ($query) => $query->whereDate('date', $selectedDate),
-                fn ($query) => $query->whereDate('date', '>=', today()->subDays(7))
-            )
-            ->orderBy('date', 'desc')
-            ->limit(30)
-            ->get();
-            
-        // Stats for dashboard
-        $stats = [
-            'total_today' => DriverGig::whereDate('date', today())->count(),
-            'active_gigs' => DriverGig::whereIn('status', ['available', 'booked'])
-                ->whereDate('date', today())
-                ->count(),
-            'completed_today' => DriverGig::whereDate('date', today())
-                ->where('status', 'completed')
-                ->count(),
-            'available_today' => DriverGig::whereDate('date', today())
-                ->where('status', 'available')
-                ->count(),
-            'globally_open' => DriverGig::withCount(['activeBookings as active_bookings_count'])
-                ->whereIn('status', ['available', 'booked'])
-                ->whereDate('date', '>=', today())
-                ->get()
-                ->filter(fn (DriverGig $gig) => $gig->available_seats > 0)
-                ->count(),
-        ];
-        
-        $deliveryAreas = DeliveryArea::where('is_active', true)->orderBy('name')->get();
-        
-        return view('admin.gigs.index', compact('availableGigs', 'bookedGigs', 'completedGigs', 'cancelledGigs', 'deliveryAreas', 'stats', 'selectedDate', 'heatmap', 'operations'));
+        $availableGigs = $this->gigStatusQuery('available', $selectedDate)->get();
+        $bookedGigs = $this->gigStatusQuery('booked', $selectedDate)->get();
+        $completedGigs = $this->gigStatusQuery('completed', $selectedDate)->limit(50)->get();
+        $cancelledGigs = $this->gigStatusQuery('cancelled', $selectedDate)->limit(30)->get();
+        $stats = $this->gigStats();
+
+        return view('admin.gigs.index', compact('availableGigs', 'bookedGigs', 'completedGigs', 'cancelledGigs', 'stats', 'selectedDate'));
     }
-    
+
+    public function analytics(Request $request, GigLifecycleService $gigLifecycleService, GigOperationsService $gigOperationsService)
+    {
+        $validated = $request->validate([
+            'date' => 'nullable|date',
+        ]);
+
+        $selectedDate = !empty($validated['date'])
+            ? Carbon::parse($validated['date'])->format('Y-m-d')
+            : today()->toDateString();
+        $date = Carbon::parse($selectedDate);
+        $operations = $gigOperationsService->controlRoom($date);
+        $heatmap = $gigLifecycleService->heatmap($date);
+        $stats = $this->gigStats();
+        $forecastSettings = [
+            'gig_forecast_lookback_days' => (int) AppSetting::getValue('gig_forecast_lookback_days', 28),
+            'gig_ml_forecast_lookback_days' => (int) AppSetting::getValue('gig_ml_forecast_lookback_days', 56),
+            'gig_target_orders_per_driver_per_hour' => (int) AppSetting::getValue('gig_target_orders_per_driver_per_hour', 3),
+        ];
+
+        return view('admin.gigs.analytics', compact('operations', 'heatmap', 'stats', 'selectedDate', 'forecastSettings'));
+    }
+
+    public function bulk()
+    {
+        $deliveryAreas = DeliveryArea::where('is_active', true)->orderBy('name')->get();
+
+        return view('admin.gigs.bulk', compact('deliveryAreas'));
+    }
+
+    public function payoutApprovals(Request $request)
+    {
+        $status = $request->input('status', 'pending');
+        $allowedStatuses = ['pending', 'approved', 'rejected'];
+        $status = in_array($status, $allowedStatuses, true) ? $status : 'pending';
+
+        $approvals = GigPayoutApproval::with(['driver', 'gig.area', 'booking'])
+            ->where('status', $status)
+            ->latest()
+            ->paginate(25)
+            ->withQueryString();
+
+        return view('admin.gigs.payout-approvals', compact('approvals', 'status', 'allowedStatuses'));
+    }
+
+    public function fraudSignals(Request $request)
+    {
+        $status = $request->input('status', 'open');
+        $allowedStatuses = ['open', 'cleared', 'confirmed', 'ignored'];
+        $status = in_array($status, $allowedStatuses, true) ? $status : 'open';
+
+        $signals = GigFraudSignal::with(['driver', 'gig.area', 'booking'])
+            ->where('status', $status)
+            ->latest()
+            ->paginate(25)
+            ->withQueryString();
+
+        return view('admin.gigs.fraud-signals', compact('signals', 'status', 'allowedStatuses'));
+    }
+
+    public function disputes(Request $request)
+    {
+        $status = $request->input('status', 'open');
+        $allowedStatuses = ['open', 'resolved', 'dismissed'];
+        $status = in_array($status, $allowedStatuses, true) ? $status : 'open';
+
+        $disputes = GigDispute::with(['driver', 'gig.area', 'booking', 'incentive'])
+            ->where('status', $status)
+            ->latest()
+            ->paginate(25)
+            ->withQueryString();
+
+        return view('admin.gigs.disputes', compact('disputes', 'status', 'allowedStatuses'));
+    }
+
     public function create()
     {
         $deliveryAreas = DeliveryArea::where('is_active', true)->orderBy('name')->get();
@@ -124,25 +137,18 @@ class GigController extends Controller
             'min_login_minutes' => 'nullable|integer|min:0',
             'max_cancellations_allowed' => 'nullable|integer|min:0',
             'terms_conditions' => 'nullable|string|max:5000',
+            'auto_pricing_enabled' => 'nullable|boolean',
+            'surge_multiplier' => 'nullable|numeric|min:1|max:10',
+            'demand_score' => 'nullable|numeric|min:0|max:100',
+            'forecasted_orders' => 'nullable|integer|min:0',
+            'recommended_capacity' => 'nullable|integer|min:1',
         ]);
 
         $gigDate = Carbon::parse($validated['date'])->format('Y-m-d');
         $startTime = Carbon::createFromFormat('Y-m-d H:i', $gigDate . ' ' . $validated['start_time']);
         $endTime = Carbon::createFromFormat('Y-m-d H:i', $gigDate . ' ' . $validated['end_time']);
 
-        $existingGig = DriverGig::where('area_id', $validated['area_id'])
-            ->whereDate('date', $gigDate)
-            ->where(function ($query) use ($startTime, $endTime) {
-                $query->whereBetween('start_time', [$startTime, $endTime])
-                    ->orWhereBetween('end_time', [$startTime, $endTime])
-                    ->orWhere(function ($inner) use ($startTime, $endTime) {
-                        $inner->where('start_time', '<=', $startTime)
-                            ->where('end_time', '>=', $endTime);
-                    });
-            })
-            ->exists();
-
-        if ($existingGig) {
+        if ($this->gigOverlaps($validated['area_id'], $gigDate, $startTime, $endTime)) {
             return redirect()->back()->withInput()->with('error', 'A gig slot already exists for this area and time range.');
         }
 
@@ -163,6 +169,11 @@ class GigController extends Controller
             'min_login_minutes' => $validated['min_login_minutes'] ?? 0,
             'max_cancellations_allowed' => $validated['max_cancellations_allowed'] ?? 0,
             'terms_conditions' => $validated['terms_conditions'] ?? null,
+            'auto_pricing_enabled' => $request->boolean('auto_pricing_enabled', true),
+            'surge_multiplier' => $validated['surge_multiplier'] ?? 1,
+            'demand_score' => $validated['demand_score'] ?? 0,
+            'forecasted_orders' => $validated['forecasted_orders'] ?? 0,
+            'recommended_capacity' => $validated['recommended_capacity'] ?? null,
         ]);
         
         return redirect()->route('admin.gigs.index')
@@ -193,6 +204,11 @@ class GigController extends Controller
             'min_login_minutes' => 'nullable|integer|min:0',
             'max_cancellations_allowed' => 'nullable|integer|min:0',
             'terms_conditions' => 'nullable|string|max:5000',
+            'auto_pricing_enabled' => 'nullable|boolean',
+            'surge_multiplier' => 'nullable|numeric|min:1|max:10',
+            'demand_score' => 'nullable|numeric|min:0|max:100',
+            'forecasted_orders' => 'nullable|integer|min:0',
+            'recommended_capacity' => 'nullable|integer|min:1',
         ]);
         
         if ($request->status === 'booked' && ! $this->checkAreaBookingLimit($gig, $request->area_id)) {
@@ -202,6 +218,10 @@ class GigController extends Controller
         $gigDate = Carbon::parse($validated['date'])->format('Y-m-d');
         $startTime = Carbon::createFromFormat('Y-m-d H:i', $gigDate . ' ' . $validated['start_time']);
         $endTime = Carbon::createFromFormat('Y-m-d H:i', $gigDate . ' ' . $validated['end_time']);
+
+        if ($this->gigOverlaps($validated['area_id'], $gigDate, $startTime, $endTime, $gig->id)) {
+            return redirect()->back()->withInput()->with('error', 'Another gig slot already exists for this area and time range.');
+        }
 
         $bookedCount = $gig->activeBookings()->count();
         if ((int) $validated['capacity'] < $bookedCount) {
@@ -224,6 +244,11 @@ class GigController extends Controller
             'min_login_minutes' => $validated['min_login_minutes'] ?? 0,
             'max_cancellations_allowed' => $validated['max_cancellations_allowed'] ?? 0,
             'terms_conditions' => $validated['terms_conditions'] ?? null,
+            'auto_pricing_enabled' => $request->boolean('auto_pricing_enabled', true),
+            'surge_multiplier' => $validated['surge_multiplier'] ?? 1,
+            'demand_score' => $validated['demand_score'] ?? 0,
+            'forecasted_orders' => $validated['forecasted_orders'] ?? 0,
+            'recommended_capacity' => $validated['recommended_capacity'] ?? null,
         ]);
 
         $this->syncBookingsForTerminalStatus($gig, $validated['status']);
@@ -299,6 +324,11 @@ class GigController extends Controller
             'min_login_minutes' => 'nullable|integer|min:0',
             'max_cancellations_allowed' => 'nullable|integer|min:0',
             'terms_conditions' => 'nullable|string|max:5000',
+            'auto_pricing_enabled' => 'nullable|boolean',
+            'surge_multiplier' => 'nullable|numeric|min:1|max:10',
+            'demand_score' => 'nullable|numeric|min:0|max:100',
+            'forecasted_orders' => 'nullable|integer|min:0',
+            'recommended_capacity' => 'nullable|integer|min:1',
         ]);
         
         $dates = [];
@@ -317,19 +347,7 @@ class GigController extends Controller
             $slotStart = Carbon::parse($date . ' ' . $request->start_time);
             $slotEnd = Carbon::parse($date . ' ' . $request->end_time);
 
-            $existingGig = DriverGig::where('area_id', $request->area_id)
-                ->whereDate('date', $date)
-                ->where(function ($q) use ($slotStart, $slotEnd) {
-                    $q->whereBetween('start_time', [$slotStart, $slotEnd])
-                      ->orWhereBetween('end_time', [$slotStart, $slotEnd])
-                      ->orWhere(function ($inner) use ($slotStart, $slotEnd) {
-                          $inner->where('start_time', '<=', $slotStart)
-                              ->where('end_time', '>=', $slotEnd);
-                      });
-                })
-                ->exists();
-
-            if (!$existingGig) {
+            if (! $this->gigOverlaps($request->area_id, $date, $slotStart, $slotEnd)) {
                 DriverGig::create([
                     'title' => $request->title,
                     'description' => $request->description,
@@ -347,6 +365,11 @@ class GigController extends Controller
                     'min_login_minutes' => $request->min_login_minutes ?? 0,
                     'max_cancellations_allowed' => $request->max_cancellations_allowed ?? 0,
                     'terms_conditions' => $request->terms_conditions,
+                    'auto_pricing_enabled' => $request->boolean('auto_pricing_enabled', true),
+                    'surge_multiplier' => $request->surge_multiplier ?? 1,
+                    'demand_score' => $request->demand_score ?? 0,
+                    'forecasted_orders' => $request->forecasted_orders ?? 0,
+                    'recommended_capacity' => $request->recommended_capacity ?: null,
                 ]);
                 $created++;
             } else {
@@ -366,12 +389,15 @@ class GigController extends Controller
 
         $date = !empty($validated['date']) ? Carbon::parse($validated['date']) : today();
 
+        if (! $request->expectsJson() && ! $request->ajax()) {
+            return redirect()->route('admin.gigs.analytics', ['date' => $date->toDateString()]);
+        }
+
         return response()->json([
             'success' => true,
             'data' => $gigOperationsService->controlRoom($date),
         ]);
     }
-
     public function forecast(Request $request, GigDemandForecastService $forecastService)
     {
         $validated = $request->validate([
@@ -385,7 +411,7 @@ class GigController extends Controller
         app(GigOperationsBroadcastService::class)->broadcast();
 
         if (! $request->expectsJson()) {
-            return redirect()->route('admin.gigs.index', ['date' => $date->toDateString()])
+            return redirect()->route('admin.gigs.analytics', ['date' => $date->toDateString()])
                 ->with('success', count($data) . ' forecast cells refreshed.');
         }
 
@@ -393,6 +419,71 @@ class GigController extends Controller
             'success' => true,
             'data' => $data,
         ]);
+    }
+
+    /**
+     * Looks up the already-computed forecast for a single area/date/hour so
+     * the gig create/edit forms can pre-fill capacity/surge/demand fields
+     * instead of admins guessing them by hand. Returns found=false (not an
+     * error) when no forecast row exists yet for that slot -- forecasts are
+     * only computed hourly for today/tomorrow, so far-future or just-created
+     * area slots won't have one until the next scheduled run.
+     */
+    public function forecastLookup(Request $request)
+    {
+        $validated = $request->validate([
+            'area_id' => 'nullable|exists:delivery_areas,id',
+            'date' => 'required|date',
+            'hour' => 'required|integer|min:0|max:23',
+        ]);
+
+        $query = GigDemandForecast::whereDate('date', Carbon::parse($validated['date'])->toDateString())
+            ->where('hour', $validated['hour']);
+
+        if (! empty($validated['area_id'])) {
+            $query->where('area_id', $validated['area_id']);
+        } else {
+            $query->whereNull('area_id');
+        }
+
+        $forecast = $query->first();
+
+        return response()->json([
+            'success' => true,
+            'found' => (bool) $forecast,
+            'data' => $forecast ? [
+                'forecasted_orders' => $forecast->forecasted_orders,
+                'recommended_capacity' => $forecast->recommended_capacity,
+                'demand_score' => $forecast->demand_score,
+                'surge_multiplier' => $forecast->surge_multiplier,
+            ] : null,
+        ]);
+    }
+
+    /**
+     * Tuning knobs for GigDemandForecastService/GigMlForecastService --
+     * intentionally a small standalone form rather than folded into the
+     * general settings page, since that page's shared multi-section form
+     * has a validation trap where one unrelated required field silently
+     * blocks saving everything else on it.
+     */
+    public function updateForecastSettings(Request $request)
+    {
+        $validated = $request->validate([
+            'gig_forecast_lookback_days' => 'required|integer|min:7|max:180',
+            'gig_ml_forecast_lookback_days' => 'required|integer|min:7|max:365',
+            'gig_target_orders_per_driver_per_hour' => 'required|integer|min:1|max:50',
+            'redirect_date' => 'nullable|date',
+        ]);
+
+        foreach (['gig_forecast_lookback_days', 'gig_ml_forecast_lookback_days', 'gig_target_orders_per_driver_per_hour'] as $key) {
+            AppSetting::updateOrCreate(['key' => $key], ['value' => $validated[$key], 'type' => 'number']);
+        }
+
+        Cache::forget('app_settings');
+
+        return redirect()->route('admin.gigs.analytics', ['date' => $validated['redirect_date'] ?? today()->toDateString()])
+            ->with('success', 'Forecast tuning settings updated.');
     }
 
     public function approvePayout(Request $request, GigPayoutApproval $approval, GigPayoutApprovalService $approvalService)
@@ -408,7 +499,11 @@ class GigController extends Controller
             $approvalService->reject($approval, auth()->id(), $validated['note'] ?? null);
         }
 
-        return response()->json(['success' => true]);
+        if ($request->ajax() || $request->wantsJson()) {
+            return response()->json(['success' => true]);
+        }
+
+        return redirect()->back()->with('success', 'Payout ' . $validated['action'] . 'd successfully.');
     }
 
     public function resolveFraudSignal(Request $request, GigFraudSignal $signal)
@@ -423,7 +518,32 @@ class GigController extends Controller
             'reviewed_by' => auth()->id(),
         ])->save();
 
-        return response()->json(['success' => true]);
+        if ($request->ajax() || $request->wantsJson()) {
+            return response()->json(['success' => true]);
+        }
+
+        return redirect()->back()->with('success', 'Fraud signal marked as ' . $validated['status'] . '.');
+    }
+
+    public function resolveDispute(Request $request, GigDispute $dispute)
+    {
+        $validated = $request->validate([
+            'status' => 'required|in:resolved,dismissed',
+            'resolution_note' => 'nullable|string|max:1000',
+        ]);
+
+        $dispute->forceFill([
+            'status' => $validated['status'],
+            'resolution_note' => $validated['resolution_note'] ?? null,
+            'resolved_at' => now(),
+            'resolved_by' => auth()->id(),
+        ])->save();
+
+        if ($request->ajax() || $request->wantsJson()) {
+            return response()->json(['success' => true]);
+        }
+
+        return redirect()->back()->with('success', 'Dispute marked as ' . $validated['status'] . '.');
     }
     public function ingestSignal(Request $request, GigExternalSignalService $signalService)
     {
@@ -451,6 +571,10 @@ class GigController extends Controller
         ]);
 
         $date = !empty($validated['date']) ? Carbon::parse($validated['date']) : today();
+
+        if (! $request->expectsJson() && ! $request->ajax()) {
+            return redirect()->route('admin.gigs.analytics', ['date' => $date->toDateString()]);
+        }
 
         return response()->json([
             'success' => true,
@@ -496,6 +620,46 @@ class GigController extends Controller
         return response()->json($events);
     }
 
+    protected function gigStatusQuery(string $status, ?string $selectedDate)
+    {
+        return DriverGig::with(['driver', 'area', 'bookings.driver'])
+            ->withCount(['activeBookings as active_bookings_count'])
+            ->where('status', $status)
+            ->when(
+                $selectedDate,
+                fn ($query) => $query->whereDate('date', $selectedDate),
+                fn ($query) => in_array($status, ['available', 'booked'], true)
+                    ? $query->whereDate('date', '>=', today())
+                    : $query->whereDate('date', '>=', today()->subDays(7))
+            )
+            ->orderBy('date', in_array($status, ['completed', 'cancelled'], true) ? 'desc' : 'asc')
+            ->orderBy('start_time');
+    }
+
+    protected function gigStats(): array
+    {
+        return [
+            'total_today' => DriverGig::whereDate('date', today())->count(),
+            'active_gigs' => DriverGig::whereIn('status', ['available', 'booked'])->whereDate('date', today())->count(),
+            'completed_today' => DriverGig::whereDate('date', today())->where('status', 'completed')->count(),
+            'available_today' => DriverGig::whereDate('date', today())->where('status', 'available')->count(),
+            'globally_open' => DriverGig::withCount(['activeBookings as active_bookings_count'])
+                ->whereIn('status', ['available', 'booked'])
+                ->whereDate('date', '>=', today())
+                ->get()
+                ->filter(fn (DriverGig $gig) => $gig->available_seats > 0)
+                ->count(),
+        ];
+    }
+    protected function gigOverlaps($areaId, string $date, Carbon $startTime, Carbon $endTime, ?int $ignoreId = null): bool
+    {
+        return DriverGig::where('area_id', $areaId)
+            ->whereDate('date', $date)
+            ->when($ignoreId, fn ($query) => $query->where('id', '!=', $ignoreId))
+            ->where('start_time', '<', $endTime)
+            ->where('end_time', '>', $startTime)
+            ->exists();
+    }
     protected function checkAreaBookingLimit(DriverGig $gig, $areaId): bool
     {
         if (!$areaId) {

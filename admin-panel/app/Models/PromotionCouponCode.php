@@ -30,6 +30,13 @@ class PromotionCouponCode extends Model
         'metadata' => 'array',
     ];
 
+    protected static function booted(): void
+    {
+        $bump = fn () => \App\Services\PromotionFinder::bumpCacheVersion();
+        static::saved($bump);
+        static::deleted($bump);
+    }
+
     public function promotion(): BelongsTo
     {
         return $this->belongsTo(Promotion::class);

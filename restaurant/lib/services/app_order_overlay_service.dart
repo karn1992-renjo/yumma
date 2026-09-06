@@ -65,7 +65,7 @@ class AppOrderOverlayService {
                 };
             return accept(orderId, minutes);
           },
-          onReject: () async {
+          onReject: (reason) async {
             final reject = onReject ??
                 (id, reason) async {
                   final response = await ApiService().post(
@@ -74,7 +74,7 @@ class AppOrderOverlayService {
                   );
                   return response['success'] == true;
                 };
-            return reject(orderId, 'Rejected by restaurant');
+            return reject(orderId, reason);
           },
           onMarkOutOfStock: (menuItemIds, availabilityOption) async {
             if (onMarkOutOfStock == null) return false;
@@ -358,7 +358,7 @@ class _OrderCancelledSheetState extends State<_OrderCancelledSheet> {
       child: SafeArea(
         top: true,
         child: Material(
-          color: const Color(0xFFF0F0F4),
+          color: foodflow.canvas,
           child: SizedBox(
             height: MediaQuery.sizeOf(context).height,
             child: Column(
@@ -366,10 +366,10 @@ class _OrderCancelledSheetState extends State<_OrderCancelledSheet> {
                 Container(
                   constraints: const BoxConstraints(minHeight: 56),
                   padding: const EdgeInsets.fromLTRB(6, 6, 10, 6),
-                  decoration: const BoxDecoration(
-                    color: Colors.white,
+                  decoration: BoxDecoration(
+                    color: foodflow.isDark ? foodflow.elevatedSurface : Colors.white,
                     border: Border(
-                      bottom: BorderSide(color: FoodFlowTheme.line),
+                      bottom: BorderSide(color: foodflow.line),
                     ),
                   ),
                   child: Row(
@@ -380,7 +380,7 @@ class _OrderCancelledSheetState extends State<_OrderCancelledSheet> {
                         tooltip: 'Dismiss alert',
                         visualDensity: VisualDensity.compact,
                       ),
-                      const Expanded(
+                      Expanded(
                         child: Text(
                           'Order cancelled',
                           style: TextStyle(
@@ -423,7 +423,7 @@ class _OrderCancelledSheetState extends State<_OrderCancelledSheet> {
                                 children: [
                                   Text(
                                     '#$orderNumber',
-                                    style: const TextStyle(
+                                    style: TextStyle(
                                       color: FoodFlowTheme.ink,
                                       fontSize: 17,
                                       fontWeight: FontWeight.w900,
@@ -434,7 +434,7 @@ class _OrderCancelledSheetState extends State<_OrderCancelledSheet> {
                                     const SizedBox(height: 3),
                                     Text(
                                       restaurantName,
-                                      style: const TextStyle(
+                                      style: TextStyle(
                                         color: FoodFlowTheme.muted,
                                         fontSize: 13,
                                         fontWeight: FontWeight.w700,
@@ -453,7 +453,7 @@ class _OrderCancelledSheetState extends State<_OrderCancelledSheet> {
                                 color: FoodFlowTheme.crimson.withOpacity(0.10),
                                 borderRadius: BorderRadius.circular(7),
                               ),
-                              child: const Text(
+                              child: Text(
                                 'CANCELLED',
                                 style: TextStyle(
                                   color: FoodFlowTheme.crimson,
@@ -478,7 +478,7 @@ class _OrderCancelledSheetState extends State<_OrderCancelledSheet> {
                               const SizedBox(height: 10),
                               Text(
                                 reason,
-                                style: const TextStyle(
+                                style: TextStyle(
                                   color: FoodFlowTheme.ink,
                                   fontSize: 15,
                                   fontWeight: FontWeight.w800,
@@ -520,7 +520,7 @@ class _OrderCancelledSheetState extends State<_OrderCancelledSheet> {
                                     padding: const EdgeInsets.only(bottom: 10),
                                     child: Row(
                                       children: [
-                                        const Icon(
+                                        Icon(
                                           Icons.crop_square_rounded,
                                           color: FoodFlowTheme.success,
                                           size: 14,
@@ -529,7 +529,7 @@ class _OrderCancelledSheetState extends State<_OrderCancelledSheet> {
                                         Expanded(
                                           child: Text(
                                             name,
-                                            style: const TextStyle(
+                                            style: TextStyle(
                                               color: FoodFlowTheme.ink,
                                               fontSize: 14,
                                               fontWeight: FontWeight.w800,
@@ -538,7 +538,7 @@ class _OrderCancelledSheetState extends State<_OrderCancelledSheet> {
                                         ),
                                         Text(
                                           'x$quantity',
-                                          style: const TextStyle(
+                                          style: TextStyle(
                                             color: FoodFlowTheme.ink,
                                             fontWeight: FontWeight.w900,
                                           ),
@@ -547,7 +547,7 @@ class _OrderCancelledSheetState extends State<_OrderCancelledSheet> {
                                           const SizedBox(width: 12),
                                           Text(
                                             _money(lineTotal),
-                                            style: const TextStyle(
+                                            style: TextStyle(
                                               color: FoodFlowTheme.inkSoft,
                                               fontWeight: FontWeight.w800,
                                             ),
@@ -583,7 +583,7 @@ class _OrderCancelledSheetState extends State<_OrderCancelledSheet> {
                               const SizedBox(height: 10),
                               Text(
                                 customerName,
-                                style: const TextStyle(
+                                style: TextStyle(
                                   color: FoodFlowTheme.ink,
                                   fontSize: 16,
                                   fontWeight: FontWeight.w900,
@@ -597,9 +597,9 @@ class _OrderCancelledSheetState extends State<_OrderCancelledSheet> {
                   ),
                 ),
                 Container(
-                  decoration: const BoxDecoration(
-                    color: Colors.white,
-                    boxShadow: [
+                  decoration: BoxDecoration(
+                    color: foodflow.isDark ? foodflow.elevatedSurface : Colors.white,
+                    boxShadow: const [
                       BoxShadow(
                         color: Color(0x14000000),
                         blurRadius: 12,
@@ -619,7 +619,7 @@ class _OrderCancelledSheetState extends State<_OrderCancelledSheet> {
                               onPressed: _close,
                               style: OutlinedButton.styleFrom(
                                 foregroundColor: FoodFlowTheme.ink,
-                                side: const BorderSide(
+                                side: BorderSide(
                                   color: FoodFlowTheme.ink,
                                 ),
                                 shape: RoundedRectangleBorder(
@@ -687,7 +687,7 @@ class _RestaurantIncomingOrderSheet extends StatefulWidget {
   final Map<String, dynamic> order;
   final int durationSeconds;
   final Future<bool> Function(int preparationMinutes) onAccept;
-  final Future<bool> Function() onReject;
+  final Future<bool> Function(String reason) onReject;
   final Future<bool> Function(
     List<int> menuItemIds,
     String availabilityOption,
@@ -775,8 +775,6 @@ class _RestaurantIncomingOrderSheetState
     );
     final subtotal =
         order['subtotal'] ?? order['sub_total'] ?? order['items_total'];
-    final deliveryFee = order['delivery_fee'] ?? order['shipping_fee'];
-    final tax = order['tax'] ?? order['tax_amount'] ?? order['gst_amount'];
     final discount = order['discount'] ?? order['discount_amount'];
     final total = order['total'] ?? order['grand_total'] ?? order['amount'];
     final paymentMethod = _textValue(
@@ -789,7 +787,7 @@ class _RestaurantIncomingOrderSheetState
       child: SafeArea(
         top: true,
         child: Material(
-          color: const Color(0xFFF0F0F4),
+          color: foodflow.canvas,
           child: SizedBox(
             height: MediaQuery.of(context).size.height,
             child: Column(
@@ -797,7 +795,7 @@ class _RestaurantIncomingOrderSheetState
                 Container(
                   constraints: const BoxConstraints(minHeight: 56),
                   padding: const EdgeInsets.fromLTRB(6, 6, 10, 6),
-                  decoration: const BoxDecoration(
+                  decoration: BoxDecoration(
                     color: Colors.white,
                     border: Border(
                       bottom: BorderSide(color: FoodFlowTheme.line),
@@ -818,7 +816,7 @@ class _RestaurantIncomingOrderSheetState
                         tooltip: 'Minimize order',
                         visualDensity: VisualDensity.compact,
                       ),
-                      const Expanded(
+                      Expanded(
                         child: Text(
                           'New order',
                           style: TextStyle(
@@ -878,7 +876,7 @@ class _RestaurantIncomingOrderSheetState
                                     '#$orderNumber',
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
+                                    style: TextStyle(
                                       color: FoodFlowTheme.ink,
                                       fontSize: 18,
                                       fontWeight: FontWeight.w900,
@@ -889,7 +887,7 @@ class _RestaurantIncomingOrderSheetState
                                     restaurantName,
                                     maxLines: 2,
                                     overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
+                                    style: TextStyle(
                                       color: FoodFlowTheme.muted,
                                       fontSize: 12,
                                       fontWeight: FontWeight.w800,
@@ -907,7 +905,7 @@ class _RestaurantIncomingOrderSheetState
                                 color: FoodFlowTheme.success.withOpacity(.12),
                                 borderRadius: BorderRadius.circular(8),
                               ),
-                              child: const Text(
+                              child: Text(
                                 'NEW',
                                 style: TextStyle(
                                   color: FoodFlowTheme.success,
@@ -932,7 +930,7 @@ class _RestaurantIncomingOrderSheetState
                             ),
                             const SizedBox(height: 12),
                             if (items.isEmpty)
-                              const Text(
+                              Text(
                                 'Item details unavailable for this order.',
                                 style: TextStyle(
                                   color: FoodFlowTheme.muted,
@@ -961,7 +959,7 @@ class _RestaurantIncomingOrderSheetState
                                     crossAxisAlignment:
                                         CrossAxisAlignment.start,
                                     children: [
-                                      const Padding(
+                                      Padding(
                                         padding: EdgeInsets.only(top: 3),
                                         child: Icon(
                                           Icons.crop_square_rounded,
@@ -973,7 +971,7 @@ class _RestaurantIncomingOrderSheetState
                                       Expanded(
                                         child: Text(
                                           name,
-                                          style: const TextStyle(
+                                          style: TextStyle(
                                             color: FoodFlowTheme.ink,
                                             fontSize: 15,
                                             fontWeight: FontWeight.w900,
@@ -982,7 +980,7 @@ class _RestaurantIncomingOrderSheetState
                                       ),
                                       Text(
                                         'x$quantity',
-                                        style: const TextStyle(
+                                        style: TextStyle(
                                           color: FoodFlowTheme.ink,
                                           fontWeight: FontWeight.w900,
                                         ),
@@ -990,7 +988,7 @@ class _RestaurantIncomingOrderSheetState
                                       const SizedBox(width: 12),
                                       Text(
                                         _money(lineTotal),
-                                        style: const TextStyle(
+                                        style: TextStyle(
                                           color: FoodFlowTheme.inkSoft,
                                           fontWeight: FontWeight.w800,
                                         ),
@@ -1011,7 +1009,7 @@ class _RestaurantIncomingOrderSheetState
                                 ),
                                 child: Text(
                                   specialInstructions,
-                                  style: const TextStyle(
+                                  style: TextStyle(
                                     color: FoodFlowTheme.inkSoft,
                                     fontWeight: FontWeight.w700,
                                   ),
@@ -1029,9 +1027,6 @@ class _RestaurantIncomingOrderSheetState
                               child: Column(
                                 children: [
                                   _IncomingBillRow('Item total', subtotal),
-                                  _IncomingBillRow(
-                                      'Delivery charges', deliveryFee),
-                                  _IncomingBillRow('Taxes', tax),
                                   _IncomingBillRow('Discount', discount,
                                       isDeduction: true),
                                   const Divider(height: 16),
@@ -1055,7 +1050,7 @@ class _RestaurantIncomingOrderSheetState
                             const SizedBox(height: 10),
                             Text(
                               customerName,
-                              style: const TextStyle(
+                              style: TextStyle(
                                 color: FoodFlowTheme.ink,
                                 fontSize: 17,
                                 fontWeight: FontWeight.w900,
@@ -1096,7 +1091,7 @@ class _RestaurantIncomingOrderSheetState
                             const SizedBox(height: 12),
                             Text(
                               deliveryAddress,
-                              style: const TextStyle(
+                              style: TextStyle(
                                 color: FoodFlowTheme.inkSoft,
                                 fontWeight: FontWeight.w800,
                               ),
@@ -1104,7 +1099,7 @@ class _RestaurantIncomingOrderSheetState
                             const SizedBox(height: 8),
                             Text(
                               paymentMethod,
-                              style: const TextStyle(
+                              style: TextStyle(
                                 color: FoodFlowTheme.muted,
                                 fontSize: 12,
                                 fontWeight: FontWeight.w700,
@@ -1136,7 +1131,7 @@ class _RestaurantIncomingOrderSheetState
                         Container(
                           padding: const EdgeInsets.all(8),
                           decoration: BoxDecoration(
-                            color: const Color(0xFFDFF8EC),
+                            color: foodflow.orange.withOpacity(0.10),
                             borderRadius: BorderRadius.circular(14),
                           ),
                           child: Row(
@@ -1151,15 +1146,15 @@ class _RestaurantIncomingOrderSheetState
                                   children: [
                                     Text(
                                       '$_minutes',
-                                      style: const TextStyle(
-                                        color: FoodFlowTheme.success,
+                                      style: TextStyle(
+                                        color: foodflow.orange,
                                         fontSize: 28,
                                         height: 1,
                                         fontWeight: FontWeight.w900,
                                       ),
                                     ),
                                     const SizedBox(height: 2),
-                                    const Text(
+                                    Text(
                                       'Suggested Prep Time',
                                       style: TextStyle(
                                         color: FoodFlowTheme.ink,
@@ -1188,7 +1183,7 @@ class _RestaurantIncomingOrderSheetState
                                   onPressed: _isBusy ? null : _markOutOfStock,
                                   style: OutlinedButton.styleFrom(
                                     foregroundColor: FoodFlowTheme.ink,
-                                    side: const BorderSide(
+                                    side: BorderSide(
                                       color: FoodFlowTheme.ink,
                                     ),
                                     shape: RoundedRectangleBorder(
@@ -1222,7 +1217,7 @@ class _RestaurantIncomingOrderSheetState
                                 child: FilledButton.icon(
                                   onPressed: _isBusy ? null : _accept,
                                   style: FilledButton.styleFrom(
-                                    backgroundColor: FoodFlowTheme.success,
+                                    backgroundColor: foodflow.orange,
                                     foregroundColor: Colors.white,
                                     shape: RoundedRectangleBorder(
                                       borderRadius: BorderRadius.circular(10),
@@ -1403,7 +1398,9 @@ class _RestaurantIncomingOrderSheetState
   Future<void> _reject(String reason) async {
     _timer?.cancel();
     setState(() => _isRejecting = true);
-    final ok = await widget.onReject();
+    final selectedReason =
+        reason.trim().isEmpty ? 'Rejected by restaurant' : reason.trim();
+    final ok = await widget.onReject(selectedReason);
     if (!mounted) return;
     final messenger = ScaffoldMessenger.of(context);
     setState(() => _isRejecting = false);
@@ -1465,7 +1462,7 @@ class _OutOfStockPickerState extends State<_OutOfStockPicker> {
           children: [
             Row(
               children: [
-                const Expanded(
+                Expanded(
                   child: Text(
                     'Mark item out of stock',
                     style: TextStyle(
@@ -1482,7 +1479,7 @@ class _OutOfStockPickerState extends State<_OutOfStockPicker> {
                 ),
               ],
             ),
-            const Text(
+            Text(
               'Select the unavailable item',
               style: TextStyle(
                 color: FoodFlowTheme.muted,
@@ -1493,7 +1490,7 @@ class _OutOfStockPickerState extends State<_OutOfStockPicker> {
             const SizedBox(height: 8),
             Flexible(child: _buildItemList()),
             const Divider(height: 24),
-            const Text(
+            Text(
               'When will it be available?',
               style: TextStyle(
                 color: FoodFlowTheme.ink,
@@ -1552,7 +1549,7 @@ class _OutOfStockPickerState extends State<_OutOfStockPicker> {
             controlAffinity: ListTileControlAffinity.leading,
             title: Text(
               name,
-              style: const TextStyle(
+              style: TextStyle(
                 color: FoodFlowTheme.ink,
                 fontWeight: FontWeight.w900,
               ),
@@ -1616,9 +1613,9 @@ class _IncomingOrderPanel extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: foodflow.isDark ? foodflow.elevatedSurface : Colors.white,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: FoodFlowTheme.line),
+        border: Border.all(color: foodflow.line),
       ),
       child: child,
     );
@@ -1644,16 +1641,16 @@ class _IncomingSectionTitle extends StatelessWidget {
           width: 32,
           height: 32,
           decoration: BoxDecoration(
-            color: const Color(0xFFF1F1F3),
+            color: foodflow.orange.withOpacity(0.12),
             shape: BoxShape.circle,
           ),
-          child: Icon(icon, size: 17, color: FoodFlowTheme.muted),
+          child: Icon(icon, size: 17, color: foodflow.orange),
         ),
         const SizedBox(width: 10),
         Expanded(
           child: Text(
             title,
-            style: const TextStyle(
+            style: TextStyle(
               color: FoodFlowTheme.muted,
               fontSize: 12,
               fontWeight: FontWeight.w900,
@@ -1664,7 +1661,7 @@ class _IncomingSectionTitle extends StatelessWidget {
         if (trailing != null)
           Text(
             trailing!,
-            style: const TextStyle(
+            style: TextStyle(
               color: FoodFlowTheme.ink,
               fontWeight: FontWeight.w900,
             ),
@@ -1972,7 +1969,7 @@ class _OrderSummary3d extends StatelessWidget {
                   'Order $orderNumber',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
+                  style: TextStyle(
                     color: FoodFlowTheme.ink,
                     fontSize: 17,
                     fontWeight: FontWeight.w900,
@@ -1983,7 +1980,7 @@ class _OrderSummary3d extends StatelessWidget {
                   title,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
+                  style: TextStyle(
                     color: FoodFlowTheme.inkSoft,
                     fontWeight: FontWeight.w800,
                   ),
@@ -1991,7 +1988,7 @@ class _OrderSummary3d extends StatelessWidget {
                 const SizedBox(height: 3),
                 Text(
                   subtitle,
-                  style: const TextStyle(
+                  style: TextStyle(
                     color: FoodFlowTheme.muted,
                     fontWeight: FontWeight.w700,
                   ),
@@ -2100,7 +2097,7 @@ class _AddressPreview3d extends StatelessWidget {
                   value,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
+                  style: TextStyle(
                     color: FoodFlowTheme.ink,
                     fontSize: 14,
                     height: 1.25,
@@ -2248,7 +2245,7 @@ class _ItemsPreview3d extends StatelessWidget {
                         ),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
+                        style: TextStyle(
                           color: FoodFlowTheme.ink,
                           fontWeight: FontWeight.w800,
                         ),
@@ -2292,7 +2289,7 @@ class _PrepSelector3d extends StatelessWidget {
             children: [
               Icon(Icons.timer_outlined, color: FoodFlowTheme.orange, size: 18),
               const SizedBox(width: 8),
-              const Text(
+              Text(
                 'Preparation time',
                 style: TextStyle(
                   color: FoodFlowTheme.ink,
@@ -2314,7 +2311,7 @@ class _PrepSelector3d extends StatelessWidget {
                   children: [
                     Text(
                       '$minutes',
-                      style: const TextStyle(
+                      style: TextStyle(
                         color: FoodFlowTheme.ink,
                         fontSize: 38,
                         height: 1,
@@ -2322,7 +2319,7 @@ class _PrepSelector3d extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(height: 3),
-                    const Text(
+                    Text(
                       'minutes',
                       style: TextStyle(
                         color: FoodFlowTheme.muted,
@@ -2510,7 +2507,7 @@ class _DriverIncomingOrderSheetState extends State<_DriverIncomingOrderSheet> {
                         ),
                         Text(
                           'Order #$orderNumber',
-                          style: const TextStyle(
+                          style: TextStyle(
                             color: FoodFlowTheme.muted,
                             fontWeight: FontWeight.w800,
                           ),

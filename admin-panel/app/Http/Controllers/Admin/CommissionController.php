@@ -5,9 +5,7 @@ namespace App\Http\Controllers\Admin;
 use App\Http\Controllers\Controller;
 use App\Models\CommissionSetting;
 use App\Models\AppSetting;
-use App\Models\PayoutHistory;
 use App\Models\Restaurant;
-use App\Models\User;
 use App\Services\PayoutCalculationService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -34,6 +32,9 @@ class CommissionController extends Controller
             'driver_calculation_type' => ['required', Rule::in(['percentage', 'fixed'])],
             'gst_on_commission_rate' => 'nullable|numeric|min:0|max:100',
             'gateway_fee_rate' => 'required|numeric|min:0|max:100',
+            'delivery_failure_wait_minutes' => 'nullable|numeric|min:1|max:60',
+            'resale_discount_percent' => 'nullable|numeric|min:0|max:90',
+            'resale_window_minutes' => 'nullable|numeric|min:1|max:60',
         ]);
 
         foreach (['restaurant', 'driver'] as $type) {
@@ -57,43 +58,17 @@ class CommissionController extends Controller
 
         CommissionSetting::whereIn('type', ['admin', 'delivery_partner'])->delete();
 
-        AppSetting::setValue('gst_rate', $request->input('gst_on_commission_rate'));
+        // Keep the gst_rate key intact if the field isn't submitted (it is now
+        // surfaced read-only on Settings -> Tax & Charges while GST invoicing is on).
+        if ($request->filled('gst_on_commission_rate') || $request->input('gst_on_commission_rate') === '0') {
+            AppSetting::setValue('gst_rate', $request->input('gst_on_commission_rate'));
+        }
         AppSetting::setValue('gateway_fee_rate', $request->gateway_fee_rate);
-        
+        AppSetting::setValue('delivery_failure_wait_minutes', $request->input('delivery_failure_wait_minutes', 5));
+        AppSetting::setValue('resale_discount_percent', $request->input('resale_discount_percent', 30));
+        AppSetting::setValue('resale_window_minutes', $request->input('resale_window_minutes', 8));
+
         return redirect()->back()->with('success', 'Commission settings updated successfully!');
-    }
-    
-    public function payoutHistory(Request $request)
-    {
-        $query = PayoutHistory::with('payable');
-        
-        if ($request->type === 'restaurant') {
-            $query->where('payable_type', Restaurant::class);
-        } elseif ($request->type === 'driver') {
-            $query->where('payable_type', User::class);
-        }
-        
-        if ($request->restaurant_id) {
-            $query->where('payable_type', Restaurant::class)
-                  ->where('payable_id', $request->restaurant_id);
-        }
-        
-        if ($request->period_type) {
-            $query->where('period_type', $request->period_type);
-        }
-        
-        if ($request->date_from) {
-            $query->where('period_start', '>=', $request->date_from);
-        }
-        
-        if ($request->date_to) {
-            $query->where('period_end', '<=', $request->date_to);
-        }
-        
-        $payouts = $query->orderBy('created_at', 'desc')->paginate(20);
-        $restaurants = Restaurant::orderBy('name')->get();
-        
-        return view('admin.commissions.payout-history', compact('payouts', 'restaurants'));
     }
     
     public function generatePayouts(Request $request, PayoutCalculationService $calculator)
@@ -124,18 +99,5 @@ class CommissionController extends Controller
 
         return redirect()->route('admin.payouts.index')
             ->with('success', "Generated {$created} wallet-backed payouts in batch {$batchId}.");
-    }
-    
-    public function markPayoutCompleted($id)
-    {
-        $payout = PayoutHistory::findOrFail($id);
-        
-        $payout->update([
-            'status' => 'completed',
-            'processed_at' => now(),
-            'transaction_id' => 'TXN_' . strtoupper(uniqid())
-        ]);
-        
-        return redirect()->back()->with('success', 'Payout marked as completed!');
     }
 }

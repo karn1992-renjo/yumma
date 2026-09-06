@@ -24,9 +24,15 @@ class OrderStatusUpdatedEvent implements ShouldBroadcastNow
 
     public function broadcastOn(): array
     {
-        return [
+        $channels = [
             new PrivateChannel('restaurant.' . $this->restaurantId),
         ];
+
+        if ($this->order->driver_id) {
+            $channels[] = new PrivateChannel('driver.' . $this->order->driver_id);
+        }
+
+        return $channels;
     }
 
     public function broadcastAs(): string

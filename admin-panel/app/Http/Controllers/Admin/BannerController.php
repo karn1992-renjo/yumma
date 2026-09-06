@@ -50,7 +50,10 @@ class BannerController extends Controller
     {
         return view('admin.banners.create', array_merge(
             $this->redirectOptions(),
-            ['defaultLayoutMode' => $request->query('layout_mode')],
+            [
+                'defaultLayoutMode' => $request->query('layout_mode'),
+                'displaySurfaceLabels' => Banner::DISPLAY_SURFACE_LABELS,
+            ],
         ));
     }
     
@@ -68,7 +71,8 @@ class BannerController extends Controller
             'redirect_restaurant_id' => ['nullable', 'required_if:redirect_type,restaurant', 'exists:restaurants,id'],
             'redirect_menu_item_id' => ['nullable', 'required_if:redirect_type,menu_item', 'exists:menu_items,id'],
             'display_order' => 'nullable|integer|min:0',
-            'banner_type' => 'required|in:home,search_bar,category,promo',
+            'banner_type' => 'required|in:home,driver,restaurant,search_bar,category,promo',
+            'display_surface' => ['required', Rule::in(Banner::DISPLAY_SURFACES)],
             'layout_mode' => 'required|in:text_image,full_image,promo_card',
             'image_ratio' => 'nullable|integer|min:35|max:70',
             'start_date' => 'nullable|date',
@@ -83,8 +87,8 @@ class BannerController extends Controller
         if ($request->hasFile('badge_image')) {
             $validated['badge_image'] = $request->file('badge_image')->store('banners/badges', 'public');
         }
-        
         $validated['is_active'] = $request->boolean('is_active', true);
+        $validated['display_surface'] = Banner::normalizeDisplaySurface($validated['display_surface'] ?? 'both') ?? 'both';
         $validated['image_ratio'] = (int) ($validated['image_ratio'] ?? 46);
         $validated = $this->normalizeRedirectTarget($validated);
 
@@ -103,7 +107,11 @@ class BannerController extends Controller
     
     public function edit(Banner $banner)
     {
-        return view('admin.banners.edit', array_merge(compact('banner'), $this->redirectOptions()));
+        return view('admin.banners.edit', array_merge(
+            compact('banner'),
+            $this->redirectOptions(),
+            ['displaySurfaceLabels' => Banner::DISPLAY_SURFACE_LABELS]
+        ));
     }
     
     public function update(Request $request, Banner $banner)
@@ -121,7 +129,8 @@ class BannerController extends Controller
             'redirect_restaurant_id' => ['nullable', 'required_if:redirect_type,restaurant', 'exists:restaurants,id'],
             'redirect_menu_item_id' => ['nullable', 'required_if:redirect_type,menu_item', 'exists:menu_items,id'],
             'display_order' => 'nullable|integer|min:0',
-            'banner_type' => 'required|in:home,search_bar,category,promo',
+            'banner_type' => 'required|in:home,driver,restaurant,search_bar,category,promo',
+            'display_surface' => ['required', Rule::in(Banner::DISPLAY_SURFACES)],
             'layout_mode' => 'required|in:text_image,full_image,promo_card',
             'image_ratio' => 'nullable|integer|min:35|max:70',
             'is_active' => 'nullable|boolean',
@@ -149,8 +158,8 @@ class BannerController extends Controller
             $validated['badge_image'] = null;
         }
         unset($validated['remove_badge_image']);
-        
         $validated['is_active'] = $request->boolean('is_active');
+        $validated['display_surface'] = Banner::normalizeDisplaySurface($validated['display_surface'] ?? 'both') ?? 'both';
         $validated['image_ratio'] = (int) ($validated['image_ratio'] ?? 46);
         $validated = $this->normalizeRedirectTarget($validated);
 

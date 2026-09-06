@@ -1,96 +1,152 @@
 import 'package:flutter/material.dart';
 
+/// Thin, stable facade kept for the many call sites that predate the aurora
+/// redesign. New code should prefer [AuroraTokens] via `context`, but these
+/// forwarders stay theme-aware because [foodflow] swaps its palette on
+/// [foodflow.applyBrightness].
 class FoodFlowTheme {
   static const Color fallbackOrange = foodflow.fallbackOrange;
   static const Color fallbackOrangeDark = foodflow.fallbackOrangeDark;
   static Color get orange => foodflow.orange;
   static Color get primaryColor => foodflow.primaryColor;
   static Color get orangeDark => foodflow.orangeDark;
-  static const Color crimson = foodflow.crimson;
-  static const Color ink = foodflow.ink;
-  static const Color inkSoft = foodflow.inkSoft;
-  static const Color muted = foodflow.muted;
-  static const Color faint = foodflow.faint;
-  static const Color line = foodflow.line;
-  static const Color canvas = foodflow.canvas;
-  static const Color warmCanvas = foodflow.warmCanvas;
-  static const Color success = foodflow.success;
-  static const Color danger = foodflow.danger;
+  static Color get crimson => foodflow.crimson;
+  static Color get ink => foodflow.ink;
+  static Color get inkSoft => foodflow.inkSoft;
+  static Color get muted => foodflow.muted;
+  static Color get faint => foodflow.faint;
+  static Color get line => foodflow.line;
+  static Color get canvas => foodflow.canvas;
+  static Color get warmCanvas => foodflow.warmCanvas;
+  static Color get success => foodflow.success;
+  static Color get danger => foodflow.danger;
 
-  static void applyBrandColors({
-    Color? primary,
-    Color? secondary,
-  }) {
+  static void applyBrandColors({Color? primary, Color? secondary}) {
     foodflow.applyBrandColors(primary: primary, secondary: secondary);
   }
 
   static LinearGradient get brandGradient => foodflow.brandGradient;
 
-  static BoxDecoration surface({
-    double radius = 16,
-    Color color = Colors.white,
-  }) {
-    return foodflow.surface(radius: radius, color: color);
-  }
+  static BoxDecoration surface({double radius = 18, Color? color}) =>
+      foodflow.surface(radius: radius, color: color);
 
-  static BoxDecoration softSurface({double radius = 14}) {
-    return foodflow.softSurface(radius: radius);
-  }
+  static BoxDecoration softSurface({double radius = 14}) =>
+      foodflow.softSurface(radius: radius);
 
-  static BoxDecoration orangeBand({double radius = 18}) {
-    return foodflow.orangeBand(radius: radius);
-  }
+  static BoxDecoration orangeBand({double radius = 18}) =>
+      foodflow.orangeBand(radius: radius);
 
-  static Widget vegDot(bool isVeg, {double size = 16}) {
-    return foodflow.vegDot(isVeg, size: size);
-  }
+  static Widget vegDot(bool isVeg, {double size = 16}) =>
+      foodflow.vegDot(isVeg, size: size);
 
-  static Widget ratingBadge(double rating, {bool compact = false}) {
-    return foodflow.ratingBadge(rating, compact: compact);
-  }
+  static Widget ratingBadge(double rating, {bool compact = false}) =>
+      foodflow.ratingBadge(rating, compact: compact);
 
   static Widget emptyState({
     required IconData icon,
     required String title,
     String? subtitle,
-  }) {
-    return foodflow.emptyState(
-      icon: icon,
-      title: title,
-      subtitle: subtitle,
-    );
-  }
+  }) =>
+      foodflow.emptyState(icon: icon, title: title, subtitle: subtitle);
 
-  static Widget sectionTitle(String title, {String? trailing}) {
-    return foodflow.sectionTitle(title, trailing: trailing);
-  }
+  static Widget sectionTitle(String title, {String? trailing}) =>
+      foodflow.sectionTitle(title, trailing: trailing);
 }
 
+/// Global design palette. Colours are mutable so the app can retint on brand
+/// load ([applyBrandColors]) and swap the whole neutral ramp when the effective
+/// brightness changes ([applyBrightness]). Screens read these statics directly,
+/// so flipping them + rebuilding the tree is enough to theme legacy screens.
 // ignore: camel_case_types
 class foodflow {
-  static const Color fallbackOrange = Color(0xFF0E9F6E);
-  static const Color fallbackOrangeDark = Color(0xFFE46D0A);
+  static const Color fallbackOrange = Color(0xFF2563EB);
+  static const Color fallbackOrangeDark = Color(0xFF1D4ED8);
+
   static Color orange = fallbackOrange;
   static Color primaryColor = fallbackOrange;
   static Color orangeDark = fallbackOrangeDark;
-  static const Color crimson = Color(0xFFE23744);
-  static const Color ink = Color(0xFF282C3F);
-  static const Color inkSoft = Color(0xFF3D4152);
-  static const Color muted = Color(0xFF686B78);
-  static const Color faint = Color(0xFF93959F);
-  static const Color line = Color(0xFFE9E9EB);
-  static const Color canvas = Color(0xFFF7F7F8);
-  static const Color warmCanvas = Color(0xFFFFFAF5);
-  static const Color success = Color(0xFF48C479);
-  static const Color danger = Color(0xFFE53935);
 
-  static void applyBrandColors({
-    Color? primary,
-    Color? secondary,
-  }) {
+  static Brightness brightness = Brightness.light;
+
+  // Neutral ramp + status colours — reassigned by [applyBrightness].
+  static Color crimson = const Color(0xFFE8335A);
+  static Color ink = const Color(0xFF1E293B);
+  static Color inkSoft = const Color(0xFF334155);
+  static Color muted = const Color(0xFF7A8798);
+  static Color faint = const Color(0xFFA7B0BE);
+  static Color line = const Color(0xFFE5EAF1);
+  static Color canvas = const Color(0xFFF7F8FC);
+  static Color warmCanvas = const Color(0xFFF7F8FC);
+  static Color success = const Color(0xFF22C97B);
+  static Color danger = const Color(0xFFE8335A);
+
+  // Aurora surface tokens.
+  static Color surfaceColor = Colors.white;
+  static Color elevatedSurface = Colors.white;
+  static Color glassSurface = Colors.white.withOpacity(0.72);
+  static Color glassBorder = Colors.white.withOpacity(0.55);
+  static Color scrim = const Color(0x14000000);
+
+  // Aurora backdrop blobs (behind the frosted glass).
+  static Color auroraA = const Color(0xFFB9D4FF);
+  static Color auroraB = const Color(0xFFFFD9C2);
+  static Color auroraC = const Color(0xFFD8C8FF);
+
+  static bool get isDark => brightness == Brightness.dark;
+
+  static void applyBrandColors({Color? primary, Color? secondary}) {
     orange = primary ?? fallbackOrange;
     primaryColor = orange;
     orangeDark = secondary ?? fallbackOrangeDark;
+  }
+
+  /// Swap the neutral ramp + surface tokens for the given brightness. Call this
+  /// from the top of the widget tree before building [MaterialApp].
+  static void applyBrightness(Brightness value) {
+    brightness = value;
+    if (value == Brightness.dark) {
+      crimson = const Color(0xFFFF5C7A);
+      ink = const Color(0xFFF1F5FB);
+      inkSoft = const Color(0xFFCBD5E5);
+      muted = const Color(0xFF93A1B5);
+      faint = const Color(0xFF6B7688);
+      line = const Color(0xFF283042);
+      canvas = const Color(0xFF0C1017);
+      warmCanvas = const Color(0xFF0C1017);
+      success = const Color(0xFF34D98A);
+      danger = const Color(0xFFFF5C7A);
+
+      surfaceColor = const Color(0xFF141A24);
+      elevatedSurface = const Color(0xFF1B2230);
+      glassSurface = const Color(0xFF1A2230).withOpacity(0.86);
+      glassBorder = Colors.white.withOpacity(0.10);
+      scrim = const Color(0x33000000);
+
+      auroraA = const Color(0xFF1E3A8A);
+      auroraB = const Color(0xFF7C2D12);
+      auroraC = const Color(0xFF4C1D95);
+    } else {
+      crimson = const Color(0xFFE8335A);
+      ink = const Color(0xFF1E293B);
+      inkSoft = const Color(0xFF334155);
+      muted = const Color(0xFF7A8798);
+      faint = const Color(0xFFA7B0BE);
+      line = const Color(0xFFE3E8F0);
+      canvas = const Color(0xFFEEF1F8);
+      warmCanvas = const Color(0xFFEEF1F8);
+      success = const Color(0xFF22C97B);
+      danger = const Color(0xFFE8335A);
+
+      surfaceColor = Colors.white;
+      elevatedSurface = Colors.white;
+      glassSurface = Colors.white.withOpacity(0.72);
+      glassBorder = Colors.white.withOpacity(0.75);
+      scrim = const Color(0x14000000);
+
+      auroraA = const Color(0xFF7FA8FF);
+      auroraB = const Color(0xFFFFB98A);
+      auroraC = const Color(0xFFBFA0FF);
+    }
   }
 
   static LinearGradient get brandGradient => LinearGradient(
@@ -99,15 +155,13 @@ class foodflow {
         colors: [orange, orangeDark],
       );
 
-  static BoxDecoration surface(
-      {double radius = 16, Color color = Colors.white}) {
+  static BoxDecoration surface({double radius = 18, Color? color}) {
     return BoxDecoration(
-      color: color,
+      color: color ?? surfaceColor,
       borderRadius: BorderRadius.circular(radius),
-      border: Border.all(color: line),
       boxShadow: [
         BoxShadow(
-          color: Colors.black.withOpacity(0.045),
+          color: isDark ? Colors.black.withOpacity(0.35) : scrim,
           blurRadius: 18,
           offset: const Offset(0, 8),
         ),
@@ -117,9 +171,9 @@ class foodflow {
 
   static BoxDecoration softSurface({double radius = 14}) {
     return BoxDecoration(
-      color: Colors.white,
+      color: surfaceColor,
       borderRadius: BorderRadius.circular(radius),
-      border: Border.all(color: line),
+      border: Border.all(color: line.withOpacity(0.72)),
     );
   }
 
@@ -143,7 +197,7 @@ class foodflow {
       width: size,
       height: size,
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: surfaceColor,
         border: Border.all(color: color, width: 1.4),
         borderRadius: BorderRadius.circular(3),
       ),
@@ -174,9 +228,9 @@ class foodflow {
         children: [
           Text(
             rating.toStringAsFixed(1),
-            style: TextStyle(
+            style: const TextStyle(
               color: Colors.white,
-              fontSize: compact ? 11 : 12,
+              fontSize: 12,
               fontWeight: FontWeight.w800,
             ),
           ),
@@ -202,8 +256,8 @@ class foodflow {
               width: 82,
               height: 82,
               decoration: BoxDecoration(
-                color: const Color(0xFFFFF3E8),
-                borderRadius: BorderRadius.circular(24),
+                color: orange.withOpacity(0.10),
+                borderRadius: BorderRadius.circular(18),
               ),
               child: Icon(icon, size: 40, color: orange),
             ),
@@ -211,7 +265,7 @@ class foodflow {
             Text(
               title,
               textAlign: TextAlign.center,
-              style: const TextStyle(
+              style: TextStyle(
                 color: ink,
                 fontSize: 18,
                 fontWeight: FontWeight.w800,
@@ -222,7 +276,7 @@ class foodflow {
               Text(
                 subtitle,
                 textAlign: TextAlign.center,
-                style: const TextStyle(
+                style: TextStyle(
                   color: muted,
                   fontSize: 13,
                   fontWeight: FontWeight.w400,
@@ -243,7 +297,7 @@ class foodflow {
           Expanded(
             child: Text(
               title,
-              style: const TextStyle(
+              style: TextStyle(
                 color: ink,
                 fontSize: 18,
                 fontWeight: FontWeight.w800,
@@ -253,7 +307,7 @@ class foodflow {
           if (trailing != null)
             Text(
               trailing,
-              style: const TextStyle(
+              style: TextStyle(
                 color: muted,
                 fontSize: 12,
                 fontWeight: FontWeight.w800,
