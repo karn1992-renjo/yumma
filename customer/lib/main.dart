@@ -345,14 +345,14 @@ class _FoodDeliveryAppState extends State<FoodDeliveryApp> {
         // Smoother, consistent route transitions across the whole app
         // (both the classic screens and V2) — the M3 zoom/fade instead of the
         // plain platform slide.
-        pageTransitionsTheme: PageTransitionsTheme(
+        pageTransitionsTheme: const PageTransitionsTheme(
           builders: {
-            TargetPlatform.android: const ZoomPageTransitionsBuilder(
+            TargetPlatform.android: ZoomPageTransitionsBuilder(
               allowEnterRouteSnapshotting: false,
             ),
-            // Not wrapped in `const`: newer Flutter stable makes
-            // CupertinoPageTransitionsBuilder's constructor non-const.
-            TargetPlatform.iOS: CupertinoPageTransitionsBuilder(),
+            // iOS intentionally omitted: use Flutter's built-in Cupertino
+            // transition. (Newer Flutter stable dropped the public
+            // CupertinoPageTransitionsBuilder name.)
           },
         ),
         splashFactory: InkSparkle.splashFactory,
