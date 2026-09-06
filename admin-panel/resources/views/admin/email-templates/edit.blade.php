@@ -95,7 +95,7 @@
                     <p class="text-muted small">Click to copy. Substituted with real order values at send time.</p>
                     <div class="d-flex flex-wrap gap-2">
                         @foreach($template->placeholders as $placeholder)
-                            <code class="tpl-ph px-2 py-1 bg-light rounded" role="button">{{ '{{' . $placeholder . '}}' }}</code>
+                            <code class="tpl-ph px-2 py-1 bg-light rounded" role="button">{{ '{' . '{' . $placeholder . '}' . '}' }}</code>
                         @endforeach
                     </div>
                 @else
