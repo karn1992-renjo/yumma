@@ -149,25 +149,35 @@ class CallMaskingService
     }
 
     /**
-     * For restaurant/driver click-to-call endpoints. Resolves both real
-     * numbers server-side and asks Exotel to bridge them, masked by the
-     * order's pool Exophone as caller ID. On any Exotel failure or an
-     * exhausted pool, retries once unmasked (real number as CallerId) so
-     * the call still completes -- confirmed acceptable trade-off over
-     * failing the call outright.
+     * For restaurant/driver click-to-call endpoints. In raw mode there is no
+     * bridging at all -- the real target number is handed back so the app
+     * dials it directly through the OS dialer (mirrors numberForDialIn). In
+     * exotel mode it resolves both real numbers server-side and asks Exotel
+     * to bridge them, masked by the order's pool Exophone as caller ID. On
+     * any Exotel failure or an exhausted pool, retries once unmasked (real
+     * number as CallerId) so the call still completes -- confirmed acceptable
+     * trade-off over failing the call outright.
      *
-     * @return array{success: bool, message: ?string}
+     * @return array{success: bool, message: ?string, number?: ?string, provider?: string}
      */
     public function initiateClickToCall(Order $order, string $fromRole, string $toRole, ?int $initiatorUserId): array
     {
         $fromNumber = $this->realNumberFor($order, $fromRole);
         $toNumber = $this->realNumberFor($order, $toRole);
 
+        if (! $this->isMaskingActive()) {
+            if (! $toNumber) {
+                return ['success' => false, 'message' => 'A phone number is not available for this call.'];
+            }
+
+            return ['success' => true, 'message' => null, 'number' => $toNumber, 'provider' => 'raw'];
+        }
+
         if (! $fromNumber || ! $toNumber) {
             return ['success' => false, 'message' => 'A phone number is not available for this call.'];
         }
 
-        $mapping = $this->isMaskingActive() ? $this->ensureMappingForOrder($order) : null;
+        $mapping = $this->ensureMappingForOrder($order);
         $exophone = $mapping?->exophone;
 
         $attempt = $this->attemptConnectCall($order, $fromRole, $toRole, $fromNumber, $toNumber, $exophone ?: $fromNumber);

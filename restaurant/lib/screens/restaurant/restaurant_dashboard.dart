@@ -4,6 +4,7 @@ import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../config/app_config.dart';
 import '../../config/api_constants.dart';
 import '../../providers/auth_provider.dart';
@@ -3646,6 +3647,24 @@ class _OrdersHomeCard extends StatelessWidget {
       if (!context.mounted) return;
       final success = response is Map && response['success'] == true;
       final message = response is Map ? response['message']?.toString() : null;
+      final number =
+          response is Map ? response['number']?.toString().trim() : null;
+
+      if (success && number != null && number.isNotEmpty) {
+        // Raw mode: no Exotel bridge, dial the real number directly.
+        final launched = await launchUrl(
+          Uri(scheme: 'tel', path: number),
+          mode: LaunchMode.externalApplication,
+        );
+        if (!context.mounted) return;
+        if (!launched) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Could not open the phone dialer.')),
+          );
+        }
+        return;
+      }
+
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(

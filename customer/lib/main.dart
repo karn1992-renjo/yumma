@@ -143,6 +143,8 @@ Future<void> _initializeAfterFirstFrame() async {
         (_) => _runStartupStep('sound deferred', SoundService.init),
       ),
     );
+    // On iOS, allow ATT prompt to be handled before requesting push notifications
+    await Future<void>.delayed(const Duration(milliseconds: 1800));
   } else {
     await _runStartupStep('sound', SoundService.init);
   }

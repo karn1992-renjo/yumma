@@ -26,44 +26,70 @@ class TrackingAuthorizationService {
   /// Requests ATT authorization if it has not been determined yet.
   /// Resolves once the user has responded (or immediately on non-iOS / when the
   /// status is already decided). Never throws.
-  Future<void> ensureRequested() {
-    if (_completed) return Future<void>.value();
+  Future<void> ensureRequested({bool force = false}) {
+    if (_completed && !force) return Future<void>.value();
     return _pending ??= _run();
   }
 
   Future<void> _run() async {
     try {
-      if (!Platform.isIOS) return;
+      if (!Platform.isIOS) {
+        _completed = true;
+        return;
+      }
 
+      // Wait until the Flutter app lifecycle is truly resumed.
       await _waitUntilResumed();
-      // iOS silently drops the prompt if asked before the app has fully
-      // finished presenting its first frame.
-      await Future<void>.delayed(const Duration(milliseconds: 600));
+
+      // iOS requires the window and ViewController to be active and frontmost.
+      // Give the active state at least 1000ms to settle.
+      await Future<void>.delayed(const Duration(milliseconds: 1000));
 
       final status = await Permission.appTrackingTransparency.status;
-      if (status.isGranted ||
-          status.isLimited ||
-          status.isRestricted ||
-          status.isPermanentlyDenied) {
-        // Already decided by the user (or unavailable) - nothing to prompt.
+      if (_isDecided(status)) {
+        // Already decided by the user (or restricted by system policy) - nothing to prompt.
+        _completed = true;
         return;
       }
 
       final result = await Permission.appTrackingTransparency.request();
       debugPrint('[ATT] authorization result: $result');
+
+      // In permission_handler_apple:
+      // Authorized -> granted
+      // Restricted -> restricted
+      // Denied -> permanentlyDenied
+      // NotDetermined -> denied
+      // If result is still 'denied' (NotDetermined), the OS dropped the prompt
+      // (e.g. window not active yet). Keep _completed false so the next screen can retry.
+      if (_isDecided(result)) {
+        _completed = true;
+      } else {
+        final recheck = await Permission.appTrackingTransparency.status;
+        if (_isDecided(recheck)) {
+          _completed = true;
+        }
+      }
     } catch (error) {
       debugPrint('[ATT] request skipped: $error');
     } finally {
-      _completed = true;
       _pending = null;
     }
+  }
+
+  bool _isDecided(PermissionStatus status) {
+    return status.isGranted ||
+        status.isLimited ||
+        status.isRestricted ||
+        status.isPermanentlyDenied;
   }
 
   Future<void> _waitUntilResumed() async {
     for (var attempt = 0; attempt < 25; attempt++) {
       final state = WidgetsBinding.instance.lifecycleState;
-      if (state == null || state == AppLifecycleState.resumed) return;
+      if (state == AppLifecycleState.resumed) return;
       await Future<void>.delayed(const Duration(milliseconds: 200));
     }
   }
 }
+

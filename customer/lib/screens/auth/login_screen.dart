@@ -12,6 +12,7 @@ import '../../providers/auth_provider.dart';
 import '../../services/app_branding_service.dart';
 import '../../services/firebase_phone_auth_service.dart';
 import '../../services/social_auth_service.dart';
+import '../../services/tracking_authorization_service.dart';
 import '../../theme/foodflow_theme.dart';
 import '../../utils/phone_number_utils.dart';
 import 'a1paso_auth_widgets.dart';
@@ -57,6 +58,9 @@ class _LoginScreenState extends State<LoginScreen> {
   void initState() {
     super.initState();
     _loadBranding();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      TrackingAuthorizationService.instance.ensureRequested();
+    });
   }
 
   @override
@@ -401,7 +405,7 @@ class _LoginScreenState extends State<LoginScreen> {
                           ),
                           const SizedBox(height: 16),
                           const Text(
-                            'Login to continue your deliveries',
+                            'Login to order delicious food and essentials',
                             textAlign: TextAlign.center,
                             style: TextStyle(
                               color: _subtext,
@@ -613,13 +617,26 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   void _showMessage(String message, {bool isError = false}) {
+    final displayMessage = _cleanErrorMessage(message);
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(appText(message)),
+        content: Text(appText(displayMessage)),
         backgroundColor:
             isError ? Colors.red : FoodFlowTheme.brandPrimary(context),
       ),
     );
+  }
+
+  String _cleanErrorMessage(String message) {
+    var cleaned = message.trim();
+    while (cleaned.startsWith('Exception: ')) {
+      cleaned = cleaned.substring('Exception: '.length).trim();
+    }
+    if (cleaned.toLowerCase() == 'invalid request' ||
+        cleaned.toLowerCase().contains('invalid request')) {
+      return 'Unable to process OTP request. Please check the mobile number or try again.';
+    }
+    return cleaned.isEmpty ? 'Something went wrong. Please try again.' : cleaned;
   }
 }
 

@@ -1,9 +1,9 @@
-﻿name: food_delivery_customer
+name: food_delivery_customer
 description: A complete food delivery application with customer, restaurant, and driver panels
 
 publish_to: 'none'
 
-version: 2.4.19+40
+version: 2.4.21+42
 
 environment:
   sdk: '>=3.0.0 <4.0.0'

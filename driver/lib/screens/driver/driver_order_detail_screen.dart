@@ -568,6 +568,19 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
       );
       final success = response is Map && response['success'] == true;
       final message = response is Map ? response['message']?.toString() : null;
+      final number =
+          response is Map ? response['number']?.toString().trim() : null;
+
+      if (success && number != null && number.isNotEmpty) {
+        // Raw mode: no Exotel bridge, dial the real number directly.
+        final launched = await launchUrl(
+          Uri(scheme: 'tel', path: number),
+          mode: LaunchMode.externalApplication,
+        );
+        if (!launched) _showSnack('Could not open the phone dialer.');
+        return;
+      }
+
       _showSnack(
         success
             ? 'Connecting your call…'

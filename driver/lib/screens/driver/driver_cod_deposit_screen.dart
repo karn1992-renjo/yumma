@@ -37,9 +37,8 @@ class _DriverCodDepositScreenState extends State<DriverCodDepositScreen> {
   void initState() {
     super.initState();
     _amountDue = widget.amountDue;
-    _amountController.text = widget.amountDue > 0
-        ? widget.amountDue.toStringAsFixed(0)
-        : '';
+    _amountController.text =
+        widget.amountDue > 0 ? _formatDue(widget.amountDue) : '';
     _payment = WalletRechargePaymentService(
       onSuccess: () async {
         if (!mounted) return;
@@ -70,6 +69,15 @@ class _DriverCodDepositScreenState extends State<DriverCodDepositScreen> {
     _payment.dispose();
     _amountController.dispose();
     super.dispose();
+  }
+
+  /// Keep paise when the balance has them, otherwise show a clean integer.
+  /// Truncating to a whole number left a few paise stuck on the oldest order,
+  /// so COD reconciliation kept showing a tiny residual after a "full" deposit.
+  String _formatDue(double amount) {
+    return amount == amount.roundToDouble()
+        ? amount.toStringAsFixed(0)
+        : amount.toStringAsFixed(2);
   }
 
   Future<void> _deposit() async {
@@ -183,7 +191,7 @@ class _DriverCodDepositScreenState extends State<DriverCodDepositScreen> {
                 ],
                 decoration: InputDecoration(
                   prefixText: '${getCurrencySymbol(context)} ',
-                  hintText: _amountDue.toStringAsFixed(0),
+                  hintText: _formatDue(_amountDue),
                 ),
               ),
               const SizedBox(height: 16),

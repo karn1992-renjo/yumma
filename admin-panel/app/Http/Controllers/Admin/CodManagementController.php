@@ -23,7 +23,22 @@ class CodManagementController extends Controller
         $search = $request->filled('search') ? trim((string) $request->search) : null;
 
         $drivers = $this->cod->driverSummaries($branchId, $search);
-        $totals = $this->cod->totals($branchId);
+
+        // KPIs summarise the roster shown below rather than a separate query.
+        // driverSummaries() computes each driver's cash-in-hand unscoped (a
+        // driver holds the money regardless of which branch's order it came
+        // from, and many COD orders carry a NULL branch_id) and always keeps
+        // every cash holder in the list. A branch-scoped totals() here counted
+        // only orders tagged with that branch, so the card and the table -- and
+        // the card and what a driver was actually holding after a (cross-branch)
+        // settlement -- disagreed. Summing the visible rows keeps them in step.
+        $cashHolders = $drivers->where('pending_amount', '>', 0);
+        $totals = [
+            'amount' => round((float) $cashHolders->sum('pending_amount'), 2),
+            'orders' => (int) $cashHolders->sum('pending_orders'),
+            'drivers' => $cashHolders->count(),
+        ];
+
         $branches = Branch::orderBy('name')->get();
 
         return view('admin.cod.index', compact('drivers', 'totals', 'branches', 'branchId', 'search'));

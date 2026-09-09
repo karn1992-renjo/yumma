@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../services/tracking_authorization_service.dart';
 import 'home_experience.dart';
 import 'home_screen_production.dart';
 import 'home_v2/home_screen_v2.dart';
@@ -9,6 +10,10 @@ class HomeScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      TrackingAuthorizationService.instance.ensureRequested();
+    });
+
     return ValueListenableBuilder<bool>(
       valueListenable: homeV2Enabled,
       builder: (context, useV2, _) {

@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../config/api_constants.dart';
 import '../../services/api_service.dart';
@@ -343,6 +344,24 @@ class _RestaurantDriverTrackingScreenState
       if (!mounted) return;
       final success = response is Map && response['success'] == true;
       final message = response is Map ? response['message']?.toString() : null;
+      final number =
+          response is Map ? response['number']?.toString().trim() : null;
+
+      if (success && number != null && number.isNotEmpty) {
+        // Raw mode: no Exotel bridge, dial the real number directly.
+        final launched = await launchUrl(
+          Uri(scheme: 'tel', path: number),
+          mode: LaunchMode.externalApplication,
+        );
+        if (!mounted) return;
+        if (!launched) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Could not open the phone dialer.')),
+          );
+        }
+        return;
+      }
+
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(

@@ -240,12 +240,22 @@ class AuthService {
     final responseData = _asMap(response['data']);
     if (responseData['provider'] == 'msg91' &&
         responseData['otp_flow'] == 'widget') {
-      await _sendMsg91WidgetOtp(
-        phone: normalizedPhone,
-        flow: flow,
-        role: role ?? 'customer',
-        config: _asMap(responseData['msg91_widget']),
-      );
+      try {
+        await _sendMsg91WidgetOtp(
+          phone: normalizedPhone,
+          flow: flow,
+          role: role ?? 'customer',
+          config: _asMap(responseData['msg91_widget']),
+        );
+      } catch (error) {
+        if (_isDemoPhone(normalizedPhone)) {
+          debugPrint(
+            '[OTP] Review demo phone detected; bypassing MSG91 widget failure: $error',
+          );
+          return;
+        }
+        rethrow;
+      }
     }
   }
 
@@ -790,6 +800,11 @@ class AuthService {
     final digits = phone.replaceAll(RegExp(r'\D'), '');
     if (digits.length <= 4) return '****';
     return '***${digits.substring(digits.length - 4)}';
+  }
+
+  bool _isDemoPhone(String phone) {
+    final digits = phone.replaceAll(RegExp(r'\D'), '');
+    return digits.endsWith('9279380225');
   }
 
   Future<String> _smsRetrieverSignature() async {

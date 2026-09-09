@@ -1373,13 +1373,37 @@ class AuthController extends Controller
 
     /**
      * Whether the demo / app-review login bypass is fully configured.
-     * See config/auth_demo.php. Keep this OFF in normal operation.
+     * Checks config/auth_demo.php first, then falls back to AppSetting DB values.
+     * Keep this OFF in normal operation.
      */
     protected function demoLoginActive(): bool
     {
-        return (bool) config('auth_demo.enabled')
-            && trim((string) config('auth_demo.phone')) !== ''
-            && trim((string) config('auth_demo.otp')) !== '';
+        $enabled = filter_var(
+            config('auth_demo.enabled', false) ?: AppSetting::getValue('auth_demo_login_enabled', false),
+            FILTER_VALIDATE_BOOLEAN
+        );
+
+        return $enabled
+            && $this->getDemoLoginPhone() !== ''
+            && $this->getDemoLoginOtp() !== '';
+    }
+
+    protected function getDemoLoginPhone(): string
+    {
+        $phone = trim((string) config('auth_demo.phone'));
+        if ($phone === '') {
+            $phone = trim((string) AppSetting::getValue('auth_demo_login_phone', ''));
+        }
+        return $phone;
+    }
+
+    protected function getDemoLoginOtp(): string
+    {
+        $otp = trim((string) config('auth_demo.otp'));
+        if ($otp === '') {
+            $otp = trim((string) AppSetting::getValue('auth_demo_login_otp', ''));
+        }
+        return $otp;
     }
 
     /**
@@ -1391,7 +1415,35 @@ class AuthController extends Controller
             return false;
         }
 
-        return $this->normalizePhone((string) config('auth_demo.phone')) === $normalizedPhone;
+        $demoPhone = $this->getDemoLoginPhone();
+        if ($demoPhone === '') {
+            return false;
+        }
+
+        try {
+            if ($this->normalizePhone($demoPhone) === $normalizedPhone) {
+                return true;
+            }
+        } catch (\Throwable $e) {
+            // Fall through to digits comparison if normalizePhone throws on format
+        }
+
+        $demoDigits = preg_replace('/\D/', '', $demoPhone);
+        $phoneDigits = preg_replace('/\D/', '', $normalizedPhone);
+        if ($demoDigits !== '' && $phoneDigits !== '') {
+            if ($demoDigits === $phoneDigits) {
+                return true;
+            }
+            if (strlen($demoDigits) >= 10 && strlen($phoneDigits) >= 10) {
+                $demo10 = substr($demoDigits, -10);
+                $phone10 = substr($phoneDigits, -10);
+                if ($demo10 === $phone10) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     /**
@@ -1399,8 +1451,10 @@ class AuthController extends Controller
      */
     protected function demoLoginOtpMatches(?string $otp): bool
     {
+        $demoOtp = $this->getDemoLoginOtp();
         return $this->demoLoginActive()
-            && hash_equals(trim((string) config('auth_demo.otp')), trim((string) ($otp ?? '')));
+            && $demoOtp !== ''
+            && hash_equals($demoOtp, trim((string) ($otp ?? '')));
     }
 
     /**
