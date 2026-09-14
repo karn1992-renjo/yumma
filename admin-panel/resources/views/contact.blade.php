@@ -35,7 +35,7 @@
             </div>
 
             <div class="mt-5">
-                <a href="{{ route('support.create') }}" class="btn btn-primary">Submit a Support Ticket</a>
+                <a href="mailto:{{ $contactEmail }}" class="btn btn-primary">Submit a Support Ticket</a>
                 <a href="{{ route('help') }}" class="btn btn-outline-secondary ms-2">Visit Help Center</a>
             </div>
         </div>
