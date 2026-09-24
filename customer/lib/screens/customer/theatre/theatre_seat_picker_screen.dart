@@ -36,15 +36,13 @@ class _TheatreSeatPickerScreenState extends State<TheatreSeatPickerScreen> {
       theatre: widget.theatre,
       screen: widget.screen,
       seatLabel: _selectedSeat!,
+      lat: widget.lat,
+      lng: widget.lng,
     );
 
     Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) => TheatreFoodCourtScreen(
-          cart: cart,
-          lat: widget.lat,
-          lng: widget.lng,
-        ),
+        builder: (_) => TheatreFoodCourtScreen(cart: cart),
       ),
     );
   }

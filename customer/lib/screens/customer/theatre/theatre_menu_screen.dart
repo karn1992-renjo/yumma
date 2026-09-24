@@ -513,11 +513,7 @@ class _TheatreMenuScreenState extends State<TheatreMenuScreen> {
                       onPressed: () {
                         Navigator.of(context).push(
                           MaterialPageRoute(
-                            builder: (_) => TheatreCartScreen(
-                              cart: cart,
-                              lat: cart.theatre?.distanceMeters ?? 0,
-                              lng: 0,
-                            ),
+                            builder: (_) => TheatreCartScreen(cart: cart),
                           ),
                         );
                       },

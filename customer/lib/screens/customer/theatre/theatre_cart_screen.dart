@@ -13,13 +13,12 @@ class TheatreCartScreen extends StatefulWidget {
   const TheatreCartScreen({
     super.key,
     required this.cart,
-    required this.lat,
-    required this.lng,
   });
 
+  /// Carries the whole ordering context, including how presence at the
+  /// seat is proven: coordinates from the manual flow, or the signature
+  /// from a scanned armrest QR. See [TheatreCartProvider.seatToken].
   final TheatreCartProvider cart;
-  final double lat;
-  final double lng;
 
   @override
   State<TheatreCartScreen> createState() => _TheatreCartScreenState();
@@ -60,8 +59,9 @@ class _TheatreCartScreenState extends State<TheatreCartScreen> {
               theatreId: cart.theatre!.id,
               screenId: cart.screen!.id,
               seatLabel: cart.seatLabel!,
-              lat: widget.lat,
-              lng: widget.lng,
+              lat: cart.lat,
+              lng: cart.lng,
+              seatToken: cart.seatToken,
               stalls: cart.toCheckoutStalls(),
               paymentMethod: _paymentMethod,
             );
@@ -122,8 +122,9 @@ class _TheatreCartScreenState extends State<TheatreCartScreen> {
       theatreId: cart.theatre!.id,
       screenId: cart.screen!.id,
       seatLabel: cart.seatLabel!,
-      lat: widget.lat,
-      lng: widget.lng,
+      lat: cart.lat,
+      lng: cart.lng,
+      seatToken: cart.seatToken,
       stalls: cart.toCheckoutStalls(),
       gateway: gateway,
     );
@@ -142,8 +143,9 @@ class _TheatreCartScreenState extends State<TheatreCartScreen> {
       theatreId: cart.theatre!.id,
       screenId: cart.screen!.id,
       seatLabel: cart.seatLabel!,
-      lat: widget.lat,
-      lng: widget.lng,
+      lat: cart.lat,
+      lng: cart.lng,
+      seatToken: cart.seatToken,
       stalls: cart.toCheckoutStalls(),
       paymentMethod: gateway,
       paymentId: proof['payment_id'],

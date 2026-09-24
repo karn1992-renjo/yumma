@@ -11,13 +11,9 @@ class TheatreFoodCourtScreen extends StatefulWidget {
   const TheatreFoodCourtScreen({
     super.key,
     required this.cart,
-    required this.lat,
-    required this.lng,
   });
 
   final TheatreCartProvider cart;
-  final double lat;
-  final double lng;
 
   @override
   State<TheatreFoodCourtScreen> createState() =>
@@ -550,11 +546,7 @@ class _TheatreFoodCourtScreenState extends State<TheatreFoodCourtScreen> {
                       onPressed: () {
                         Navigator.of(context).push(
                           MaterialPageRoute(
-                            builder: (_) => TheatreCartScreen(
-                              cart: cart,
-                              lat: widget.lat,
-                              lng: widget.lng,
-                            ),
+                            builder: (_) => TheatreCartScreen(cart: cart),
                           ),
                         );
                       },

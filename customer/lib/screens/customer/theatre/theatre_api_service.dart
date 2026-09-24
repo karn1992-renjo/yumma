@@ -22,6 +22,21 @@ class TheatreApiService {
     return _listFrom(response, TheatreSummary.fromJson);
   }
 
+  /// One theatre by id, for the QR-scan flow: a scanned sticker already
+  /// names its theatre, and location is often denied inside a cinema --
+  /// which is precisely the case the sticker exists to solve.
+  Future<TheatreSummary?> theatre(int theatreId) async {
+    final response = await _api.get('/theatre/$theatreId');
+    if (response is Map<String, dynamic> &&
+        response['success'] == true &&
+        response['data'] is Map) {
+      return TheatreSummary.fromJson(
+        Map<String, dynamic>.from(response['data'] as Map),
+      );
+    }
+    return null;
+  }
+
   Future<List<TheatreScreenSeatMap>> screens(int theatreId) async {
     final response = await _api.get('/theatre/$theatreId/screens');
     return _listFrom(response, TheatreScreenSeatMap.fromJson);
@@ -55,12 +70,17 @@ class TheatreApiService {
   /// [checkout] with the resulting proof. Throws [TheatreCheckoutException]
   /// with the server's own message (bad geofence/seat/item, or a real
   /// gateway failure) on any rejection.
+  /// Presence is proven by EITHER [seatToken] (the signature off the
+  /// scanned armrest sticker) or [lat]/[lng] — the server requires one of
+  /// the two, so the manual pick-a-seat flow keeps sending coordinates and
+  /// the scan flow sends the signature instead.
   Future<Map<String, dynamic>> paymentSession({
     required int theatreId,
     required int screenId,
     required String seatLabel,
-    required double lat,
-    required double lng,
+    double? lat,
+    double? lng,
+    String? seatToken,
     required List<Map<String, dynamic>> stalls,
     required String gateway,
   }) async {
@@ -69,8 +89,9 @@ class TheatreApiService {
         'theatre_id': theatreId,
         'screen_id': screenId,
         'seat_label': seatLabel,
-        'lat': lat,
-        'lng': lng,
+        if (lat != null) 'lat': lat,
+        if (lng != null) 'lng': lng,
+        if (seatToken != null) 'seat_token': seatToken,
         'stalls': stalls,
         'payment_method': gateway,
       });
@@ -99,8 +120,9 @@ class TheatreApiService {
     required int theatreId,
     required int screenId,
     required String seatLabel,
-    required double lat,
-    required double lng,
+    double? lat,
+    double? lng,
+    String? seatToken,
     required List<Map<String, dynamic>> stalls,
     required String paymentMethod,
     String? paymentId,
@@ -113,8 +135,9 @@ class TheatreApiService {
         'theatre_id': theatreId,
         'screen_id': screenId,
         'seat_label': seatLabel,
-        'lat': lat,
-        'lng': lng,
+        if (lat != null) 'lat': lat,
+        if (lng != null) 'lng': lng,
+        if (seatToken != null) 'seat_token': seatToken,
         'stalls': stalls,
         'payment_method': paymentMethod,
         if (paymentId != null) 'payment_id': paymentId,

@@ -17,6 +17,7 @@ use App\Models\Transaction;
 use App\Services\OrderReleaseService;
 use App\Services\Tax\TaxCalculationService;
 use App\Services\WalletService;
+use App\Support\TheatreSeatToken;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -81,6 +82,33 @@ class TheatreController extends Controller
             ->values();
 
         return response()->json(['success' => true, 'data' => $theatres]);
+    }
+
+    /**
+     * One theatre by id, with no location required. The nearby() listing
+     * cannot serve the QR-scan flow: a scanned sticker already names its
+     * theatre, and the customer's phone may well be refusing location
+     * inside a cinema -- which is exactly the case the QR exists for.
+     */
+    public function show(Theatre $theatre)
+    {
+        abort_unless($theatre->status === 'active', 404);
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'id' => $theatre->id,
+                'name' => $theatre->name,
+                'code' => $theatre->code,
+                'address' => $theatre->address,
+                'city' => $theatre->city,
+                'logo' => $theatre->logo,
+                'distance_meters' => null,
+                'within_geofence' => true,
+                'aisle_handoff_only' => (bool) $theatre->aisle_handoff_only,
+                'tags' => is_array($theatre->tags) ? $theatre->tags : (json_decode($theatre->tags ?? '[]', true) ?: []),
+            ],
+        ]);
     }
 
     public function screens(Theatre $theatre)
@@ -369,8 +397,12 @@ class TheatreController extends Controller
             'theatre_id' => ['required', 'exists:theatres,id'],
             'screen_id' => ['required', 'exists:theatre_screens,id'],
             'seat_label' => ['required', 'string', 'max:20'],
-            'lat' => ['required', 'numeric', 'between:-90,90'],
-            'lng' => ['required', 'numeric', 'between:-180,180'],
+            // Presence is proven EITHER by a scanned seat QR's signature or
+            // by GPS, never by neither -- so each is only required when the
+            // other is absent. See resolveTheatreAndScreen().
+            'seat_token' => ['nullable', 'string', 'max:64', 'required_without:lat'],
+            'lat' => ['required_without:seat_token', 'nullable', 'numeric', 'between:-90,90'],
+            'lng' => ['required_with:lat', 'nullable', 'numeric', 'between:-180,180'],
             'stalls' => ['required', 'array', 'min:1'],
             'stalls.*.restaurant_id' => ['required', 'exists:restaurants,id'],
             'stalls.*.items' => ['required', 'array', 'min:1'],
@@ -398,19 +430,41 @@ class TheatreController extends Controller
             throw new \RuntimeException('This theatre is not accepting orders right now.');
         }
 
-        // The real presence check -- a client-side geofence gate is only
-        // ever a UX convenience; this is the check that actually matters.
-        if (! $theatre->containsPoint((float) $request->lat, (float) $request->lng)) {
-            throw new \RuntimeException('You need to be at ' . $theatre->name . ' to order here.');
-        }
-
         $screen = TheatreScreen::where('theatre_id', $theatre->id)->where('is_active', true)->find($request->screen_id);
         if (! $screen || ! $screen->hasSeatMap()) {
             throw new \RuntimeException('This screen is not available for ordering.');
         }
 
-        if (! $this->isValidSeatLabel($screen->seat_map_config, (string) $request->seat_label)) {
+        if (! $screen->hasSeat((string) $request->seat_label)) {
             throw new \RuntimeException('That seat could not be found on this screen.');
+        }
+
+        // The real presence check. Two ways to pass it, checked only after
+        // the seat itself is known to be real so a forged token can never
+        // reach a seat that doesn't exist:
+        //
+        //  1. A scanned QR's signature. The sticker is physically on that
+        //     armrest, so this is stronger evidence than a coordinate and
+        //     replaces the geofence rather than adding to it -- which also
+        //     means the web flow works for a customer whose browser denies
+        //     location, the common case mid-film.
+        //  2. GPS inside the theatre's own radius, for the app's manual
+        //     pick-a-theatre-and-seat flow where there is no QR.
+        $scanned = TheatreSeatToken::verify(
+            (int) $theatre->id,
+            (int) $screen->id,
+            (string) $request->seat_label,
+            $request->input('seat_token')
+        );
+
+        if (! $scanned) {
+            if ($request->filled('seat_token')) {
+                throw new \RuntimeException('That seat code is not valid for this screen. Please scan the QR on your seat again.');
+            }
+
+            if (! $theatre->containsPoint((float) $request->lat, (float) $request->lng)) {
+                throw new \RuntimeException('You need to be at ' . $theatre->name . ' to order here.');
+            }
         }
 
         return [$theatre, $screen];
@@ -525,33 +579,6 @@ class TheatreController extends Controller
             ->filter(fn ($option) => in_array($option['name'] ?? null, $names, true))
             ->values()
             ->all();
-    }
-
-    /**
-     * Mirrors the JS seat-labeling scheme in theatre/screen-seat-map.blade.php
-     * exactly (a "seat" label numbers only non-gap slots, sequentially, per
-     * row) -- the two implementations are independent code in two different
-     * languages, but MUST agree on this one scheme since it's the shared
-     * contract between the owner's builder and every future seat picker.
-     */
-    private function isValidSeatLabel(array $seatMapConfig, string $seatLabel): bool
-    {
-        foreach ($seatMapConfig['rows'] ?? [] as $row) {
-            $gaps = $row['gaps'] ?? [];
-            $seatNumber = 0;
-            $seatCount = (int) ($row['seat_count'] ?? 0);
-            for ($i = 0; $i < $seatCount; $i++) {
-                if (in_array($i, $gaps, true)) {
-                    continue;
-                }
-                $seatNumber++;
-                if (($row['label'] ?? '') . $seatNumber === $seatLabel) {
-                    return true;
-                }
-            }
-        }
-
-        return false;
     }
 
     private function haversineMeters(float $lat1, float $lng1, float $lat2, float $lng2): float

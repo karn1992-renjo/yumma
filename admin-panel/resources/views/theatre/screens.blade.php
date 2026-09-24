@@ -5,7 +5,7 @@
 @section('content')
 <div class="page-header">
     <h1>Screens</h1>
-    <p>Auditoriums at {{ $theatre->name }}. The visual seat-map builder (rows, curves, aisle gaps, sections) ships in a later phase — for now, name each screen so orders and the builder have something to attach to.</p>
+    <p>Auditoriums at {{ $theatre->name }}. Design each screen's seat map, then print its armrest QR stickers — that is what lets a customer order without installing anything.</p>
 </div>
 
 <div class="row g-4">
@@ -51,6 +51,11 @@
                                         <a href="{{ route('theatre.screens.seat-map.edit', $screen) }}" class="btn btn-sm btn-outline-primary">
                                             <i class="fas fa-chair me-1"></i>{{ $screen->hasSeatMap() ? 'Edit' : 'Design' }} Seat Map
                                         </a>
+                                        @if($screen->hasSeatMap())
+                                            <a href="{{ route('theatre.screens.qr-stickers', $screen) }}" target="_blank" class="btn btn-sm btn-outline-dark ms-1">
+                                                <i class="fas fa-qrcode me-1"></i>QR Stickers
+                                            </a>
+                                        @endif
                                     @endif
                                 </td>
                             </tr>

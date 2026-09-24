@@ -13,6 +13,7 @@ use App\Models\TheatreUser;
 use App\Models\User;
 use App\Rules\UniqueUserContactForRole;
 use App\Services\TheatreManagementService;
+use App\Support\TheatreSeatToken;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
@@ -374,6 +375,37 @@ class TheatreDashboardController extends Controller
         $screen->update(['seat_map_config' => $decoded]);
 
         return redirect()->route('theatre.screens.seat-map.edit', $screen)->with('success', 'Seat map saved.');
+    }
+
+    /**
+     * The printable sticker sheet: one QR per seat, each encoding that
+     * seat's signed ordering URL. This is how a theatre actually switches
+     * the feature on -- print, peel, stick on the armrests.
+     *
+     * Rendered as a plain print stylesheet rather than a generated PDF so
+     * an owner can reprint a single damaged sticker by printing one page
+     * range, and the codes are drawn in the browser (nothing is stored per
+     * seat -- the URLs are signed, not registered).
+     */
+    public function seatQrStickers(Request $request, TheatreScreen $screen)
+    {
+        $theatre = $this->currentTheatre($request);
+        abort_unless((int) $screen->theatre_id === (int) $theatre->id, 404);
+        $this->authorizeTheatre($request, 'theatre.screens.manage');
+
+        abort_unless($screen->hasSeatMap(), 404);
+
+        $rows = collect($screen->seatRows())
+            ->map(fn (array $row) => [
+                'label' => $row['label'],
+                'seats' => collect($row['seats'])->map(fn (string $seat) => [
+                    'label' => $seat,
+                    'url' => TheatreSeatToken::url($theatre->id, $screen->id, $seat),
+                ])->all(),
+            ])
+            ->all();
+
+        return view('theatre.screen-qr-stickers', compact('theatre', 'screen', 'rows'));
     }
 
     public function orders(Request $request)

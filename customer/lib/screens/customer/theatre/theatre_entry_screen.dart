@@ -5,6 +5,7 @@ import '../../../providers/auth_provider.dart';
 import '../../../services/location_service.dart';
 import 'theatre_api_service.dart';
 import 'theatre_models.dart';
+import 'theatre_scan_screen.dart';
 import 'theatre_screen_picker_screen.dart';
 import 'theatre_theme.dart';
 
@@ -127,6 +128,12 @@ class _TheatreEntryScreenState extends State<TheatreEntryScreen> {
     }).toList();
   }
 
+  void _openScanner() {
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const TheatreScanScreen()),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -166,6 +173,20 @@ class _TheatreEntryScreenState extends State<TheatreEntryScreen> {
             ),
           ],
         ),
+        actions: [
+          // The short path: a scanned armrest sticker already knows the
+          // cinema, the screen and the seat, so it skips this whole list
+          // (and the location permission behind it).
+          IconButton(
+            tooltip: 'Scan the QR on your seat',
+            icon: const Icon(
+              Icons.qr_code_scanner_rounded,
+              size: 22,
+              color: Color(0xFF111827),
+            ),
+            onPressed: _openScanner,
+          ),
+        ],
       ),
       body: SafeArea(child: _buildBody()),
     );

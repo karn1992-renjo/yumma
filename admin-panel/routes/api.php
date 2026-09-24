@@ -453,6 +453,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // Movie theatre in-seat ordering (swaad-only)
     Route::get('/theatre/nearby', [TheatreController::class, 'nearby'])->middleware('throttle:30,1');
+    Route::get('/theatre/{theatre}', [TheatreController::class, 'show'])->whereNumber('theatre');
     Route::get('/theatre/{theatre}/screens', [TheatreController::class, 'screens']);
     Route::get('/theatre/{theatre}/restaurants', [TheatreController::class, 'restaurants']);
     Route::post('/theatre/checkout/payment-session', [TheatreController::class, 'paymentSession'])->middleware('throttle:10,1');

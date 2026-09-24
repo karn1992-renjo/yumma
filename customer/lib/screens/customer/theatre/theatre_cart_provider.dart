@@ -12,6 +12,23 @@ class TheatreCartProvider extends ChangeNotifier {
   TheatreScreenSeatMap? screen;
   String? seatLabel;
 
+  /// Set only when the seat came from a scanned armrest QR. It is the
+  /// signature the server accepts in place of a GPS geofence check, which
+  /// is what lets the scan flow work with location switched off.
+  String? seatToken;
+
+  /// Where the customer was when they picked the seat, for the manual
+  /// flow's geofence check. Null on the scan flow, which proves presence
+  /// with [seatToken] instead.
+  ///
+  /// These live on the cart rather than being threaded through each
+  /// screen's constructor because they were previously passed down four
+  /// levels and arrived at checkout wrong (the menu screen had no real
+  /// coordinates to pass, so it sent a distance as the latitude and every
+  /// checkout from that route failed the geofence).
+  double? lat;
+  double? lng;
+
   /// restaurantId -> (restaurant, its cart lines)
   final Map<int, TheatreRestaurant> _stallInfo = {};
   final Map<int, Map<int, TheatreCartLine>> _stallLines = {};
@@ -20,10 +37,16 @@ class TheatreCartProvider extends ChangeNotifier {
     required TheatreSummary theatre,
     required TheatreScreenSeatMap screen,
     required String seatLabel,
+    String? seatToken,
+    double? lat,
+    double? lng,
   }) {
     this.theatre = theatre;
     this.screen = screen;
     this.seatLabel = seatLabel;
+    this.seatToken = seatToken;
+    this.lat = lat;
+    this.lng = lng;
     notifyListeners();
   }
 
@@ -100,6 +123,9 @@ class TheatreCartProvider extends ChangeNotifier {
     theatre = null;
     screen = null;
     seatLabel = null;
+    seatToken = null;
+    lat = null;
+    lng = null;
     _stallInfo.clear();
     _stallLines.clear();
     notifyListeners();
