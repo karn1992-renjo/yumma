@@ -5,9 +5,9 @@ use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
 /**
- * swaad-only feature: in-seat food ordering for movie theatres. Deliberately
- * NOT part of Swado and never synced there — see the
- * movie-theatre-in-seat-ordering project memory. Modeled closely on the
+ * In-seat food ordering for movie theatres. Built here first and since
+ * ported to Swado as well (24 Sep 2026) — the two implementations are kept
+ * deliberately identical so a fix can move either way. Modeled closely on the
  * Branch management module (2026_06_12_000001_create_branch_management_module.php)
  * but Theatre<->Restaurant is many-to-many (a stall can serve more than one
  * theatre, e.g. a mall food-court vendor) rather than the branch's
