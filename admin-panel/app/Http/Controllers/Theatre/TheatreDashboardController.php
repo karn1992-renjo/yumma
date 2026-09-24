@@ -60,22 +60,14 @@ class TheatreDashboardController extends Controller
         $theatre = $this->currentTheatre($request);
         $this->authorizeTheatre($request, 'theatre.restaurants.view');
 
-        $mapped = $theatre->restaurants()->orderBy('name')->get();
-        $mappedIds = $mapped->pluck('id');
-        $allRestaurants = Restaurant::orderBy('name')->get(['id', 'name', 'city', 'is_open']);
+        // Only this theatre's own stalls. The platform-wide restaurant list
+        // is deliberately NOT loaded here: a theatre runs its own
+        // concessions, and an outside tenant has no business browsing every
+        // restaurant on the platform.
+        $stalls = $theatre->restaurants()->orderBy('name')->get();
         $capabilities = $this->theatreCapabilities($request);
 
-        return view('theatre.restaurants', compact('theatre', 'allRestaurants', 'mapped', 'mappedIds', 'capabilities'));
-    }
-
-    public function mapRestaurant(Request $request, Restaurant $restaurant)
-    {
-        $theatre = $this->currentTheatre($request);
-        $this->authorizeTheatre($request, 'theatre.restaurants.manage');
-
-        $this->theatres->mapRestaurant($restaurant, $theatre, $request->user());
-
-        return back()->with('success', "{$restaurant->name} mapped to this theatre.");
+        return view('theatre.restaurants', compact('theatre', 'stalls', 'capabilities'));
     }
 
     public function unmapRestaurant(Request $request, Restaurant $restaurant)
@@ -85,7 +77,7 @@ class TheatreDashboardController extends Controller
 
         $this->theatres->unmapRestaurant($restaurant, $theatre, $request->user());
 
-        return back()->with('success', "{$restaurant->name} unmapped from this theatre.");
+        return back()->with('success', "{$restaurant->name} removed from this theatre's food court.");
     }
 
     /**

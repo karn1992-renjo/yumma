@@ -27,7 +27,7 @@
 </div>
 
 <div class="row g-3 mb-4">
-    @foreach(['Mapped Restaurants' => $theatre->restaurants->count(), 'Screens' => $theatre->screens->count(), 'Runner Roster' => $runners->count(), 'Owner' => $theatre->owner_name] as $label => $value)
+    @foreach(['Stalls' => $theatre->restaurants->count(), 'Screens' => $theatre->screens->count(), 'Runner Roster' => $runners->count(), 'Owner' => $theatre->owner_name] as $label => $value)
         <div class="col-md-3"><div class="card"><div class="card-body"><div class="text-muted small">{{ $label }}</div><h4 class="mb-0">{{ $value }}</h4></div></div></div>
     @endforeach
 </div>
@@ -35,7 +35,7 @@
 <div class="row g-4">
     <div class="col-lg-6">
         <div class="card h-100">
-            <div class="card-header"><h5 class="mb-0">Mapped Restaurants</h5></div>
+            <div class="card-header"><h5 class="mb-0">Stalls</h5></div>
             <div class="table-responsive">
                 <table class="table">
                     <thead><tr><th>Restaurant</th><th>City</th><th>Status</th></tr></thead>
@@ -43,7 +43,7 @@
                         @forelse($theatre->restaurants as $restaurant)
                             <tr><td>{{ $restaurant->name }}</td><td>{{ $restaurant->city }}</td><td>{{ $restaurant->pivot->is_active ? 'Active' : 'Inactive' }}</td></tr>
                         @empty
-                            <tr><td colspan="3" class="text-center py-4">No restaurants mapped yet — use the theatre owner panel or ask the owner to map one.</td></tr>
+                            <tr><td colspan="3" class="text-center py-4">No stalls yet — the theatre owner creates their own concession counters in the theatre panel.</td></tr>
                         @endforelse
                     </tbody>
                 </table>

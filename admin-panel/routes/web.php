@@ -288,7 +288,6 @@ Route::middleware(['auth', 'role:theatre_owner|theatre_manager'])->prefix('theat
     Route::get('/restaurants', [TheatreDashboardController::class, 'restaurants'])->name('restaurants');
     Route::get('/restaurants/create', [TheatreDashboardController::class, 'createRestaurant'])->name('restaurants.create');
     Route::post('/restaurants/create', [TheatreDashboardController::class, 'storeRestaurant'])->name('restaurants.store');
-    Route::post('/restaurants/{restaurant}/map', [TheatreDashboardController::class, 'mapRestaurant'])->name('restaurants.map');
     Route::post('/restaurants/{restaurant}/unmap', [TheatreDashboardController::class, 'unmapRestaurant'])->name('restaurants.unmap');
     Route::get('/runners', [TheatreDashboardController::class, 'runners'])->name('runners');
     Route::post('/runners', [TheatreDashboardController::class, 'storeRunner'])->name('runners.store');

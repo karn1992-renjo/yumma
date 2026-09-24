@@ -140,21 +140,14 @@ class TheatreManagementService
         return $theatre ? $query->where('theatre_id', $theatre->id) : $query->whereRaw('1 = 0');
     }
 
-    public function mapRestaurant(Restaurant $restaurant, Theatre $theatre, ?User $actor = null): void
-    {
-        DB::transaction(function () use ($restaurant, $theatre, $actor) {
-            $theatre->restaurants()->syncWithoutDetaching([
-                $restaurant->id => ['is_active' => true, 'added_by' => $actor?->id],
-            ]);
-
-            $this->audit($theatre, $actor, 'restaurant.mapped', $restaurant, null, ['theatre_id' => $theatre->id]);
-        });
-    }
-
     /**
-     * Attaches a restaurant the theatre owner JUST CREATED (as opposed to
-     * mapRestaurant() above, which links an existing, already-verified one)
-     * -- mirrors branch_restaurants' approval_status/approved_by/approved_at
+     * Attaches a stall the theatre owner just created. This is the ONLY way
+     * a restaurant joins a theatre's food court -- there is deliberately no
+     * "map an existing restaurant" path, because a theatre runs its own
+     * concessions and the platform's restaurant book is not an outside
+     * tenant's to browse.
+     *
+     * Mirrors branch_restaurants' approval_status/approved_by/approved_at
      * exactly (BranchManagementService::assignRestaurant()). A newly-created
      * restaurant is also saved with Restaurant.is_verified = false by the
      * caller, so it surfaces on the EXISTING admin "Pending" restaurant
