@@ -52,15 +52,57 @@ class _SeatMapViewState extends State<SeatMapView> {
     WidgetsBinding.instance.addPostFrameCallback((_) => _initFit());
   }
 
+  /// The smallest gap between neighbouring seats anywhere in this map, in
+  /// canvas units -- horizontally along a row, and vertically between rows.
+  /// This is what decides how far the view has to be zoomed in before a
+  /// fingertip can pick one seat without catching its neighbour.
+  double get _minSeatPitch {
+    var pitch = double.infinity;
+
+    for (final row in widget.rows) {
+      final positions = SeatMapMath.seatPositions(row);
+      for (var i = 1; i < positions.length; i++) {
+        final gap = (positions[i] - positions[i - 1]).distance;
+        if (gap > 0 && gap < pitch) pitch = gap;
+      }
+    }
+
+    final rowYs = widget.rows.map((r) => r.start.y).toList()..sort();
+    for (var i = 1; i < rowYs.length; i++) {
+      final gap = rowYs[i] - rowYs[i - 1];
+      if (gap > 0 && gap < pitch) pitch = gap;
+    }
+
+    return pitch.isFinite && pitch > 0 ? pitch : 50;
+  }
+
+  /// Seats must be at least this many logical pixels apart on screen for a
+  /// fingertip to land on the one the customer is looking at. Below the
+  /// platform's 44pt minimum the nearest seat to a touch is regularly the
+  /// wrong one.
+  static const double _minTouchTargetPx = 44;
+
   void _initFit() {
     if (!mounted) return;
     final box = context.findRenderObject() as RenderBox?;
-    if (box != null && box.hasSize && box.size.width > 0) {
-      final viewW = box.size.width;
-      final targetScale = (viewW / _canvasWidth).clamp(0.4, 1.0);
-      _transformController.value =
-          Matrix4.identity()..scale(targetScale, targetScale);
-    }
+    if (box == null || !box.hasSize || box.size.width <= 0) return;
+
+    final viewW = box.size.width;
+    final fitScale = viewW / _canvasWidth;
+
+    // Fitting the whole canvas into the viewport is what made seats
+    // untappable. Zoom to whatever makes a seat touchable and let the
+    // customer pan; never open zoomed out past the fit.
+    final touchableScale = _minTouchTargetPx / _minSeatPitch;
+    final targetScale = touchableScale.clamp(fitScale, 3.5).toDouble();
+
+    // Anchor on the middle of the map rather than its top-left, so the
+    // opening view is the centre of the auditorium.
+    final focusX = (_canvasWidth * targetScale - viewW) / 2;
+
+    _transformController.value = Matrix4.identity()
+      ..translate(-focusX.clamp(0.0, double.infinity), 0.0)
+      ..scale(targetScale, targetScale);
   }
 
   @override
@@ -110,9 +152,16 @@ class _SeatMapViewState extends State<SeatMapView> {
       }
     }
 
-    // Comfortable tap radius: up to 65 canvas units (~28 screen pixels)
-    // Ensures seats in curved and straight rows are effortlessly selected
-    if (nearest != null && nearestDistance <= 65 * 65) {
+    // Catchment tied to the layout's own spacing rather than a fixed
+    // number. A fixed 65 units was wider than the 50-unit gap between rows
+    // in real layouts, so a tap in the dead space between two rows still
+    // grabbed a seat -- usually not the one under the finger.
+    // Half a pitch is exactly the seat's own cell: the midpoint between two
+    // seats belongs to neither, so a tap that lands there does nothing
+    // instead of guessing. With the opening zoom above that cell is a
+    // 44pt-wide target, which is what makes the guess unnecessary.
+    final radius = _minSeatPitch * 0.5;
+    if (nearest != null && nearestDistance <= radius * radius) {
       widget.onSeatSelected?.call(nearest.label!);
     }
   }
@@ -168,11 +217,9 @@ class _SeatMapViewState extends State<SeatMapView> {
               child: Center(
                 child: GestureDetector(
                   behavior: HitTestBehavior.opaque,
-                  onTapDown: (details) => _handleTap(
-                    details.localPosition,
-                    renderSize,
-                    canvasHeight,
-                  ),
+                  // Tap-up only. Selecting on tap-DOWN as well meant the
+                  // first touch of a pan or a pinch-zoom also picked
+                  // whatever seat happened to be under the finger.
                   onTapUp: (details) => _handleTap(
                     details.localPosition,
                     renderSize,
