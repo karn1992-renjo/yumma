@@ -49,8 +49,9 @@ class _TheatreEntryBubble extends StatefulWidget {
 }
 
 class _TheatreEntryBubbleState extends State<_TheatreEntryBubble>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   bool _isInTheatreRadius = false;
+  bool _checking = false;
   TheatreSummary? _activeTheatre;
   double? _lat;
   double? _lng;
@@ -69,18 +70,45 @@ class _TheatreEntryBubbleState extends State<_TheatreEntryBubble>
       CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
     );
 
+    WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _checkTheatreRadius();
     });
   }
 
+  /// Re-check whenever the app comes back to the foreground.
+  ///
+  /// The first check happens one frame after launch, which is usually
+  /// BEFORE the customer has answered the location permission dialog it
+  /// triggers -- so it resolves to "no location", hides, and without this
+  /// would never look again. Returning from that dialog, from Settings, or
+  /// simply walking into a cinema with the app backgrounded all surface
+  /// here.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _checkTheatreRadius();
+    }
+  }
+
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _pulseController.dispose();
     super.dispose();
   }
 
   Future<void> _checkTheatreRadius() async {
+    if (!mounted || _checking) return;
+    _checking = true;
+    try {
+      await _resolveTheatreRadius();
+    } finally {
+      _checking = false;
+    }
+  }
+
+  Future<void> _resolveTheatreRadius() async {
     if (!mounted) return;
     final authProvider = context.read<AuthProvider>();
     if (!authProvider.isAuthenticated || !authProvider.canUseCurrentApp) {

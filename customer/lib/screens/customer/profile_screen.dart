@@ -8,6 +8,7 @@ import 'package:provider/provider.dart';
 import '../../config/api_constants.dart';
 import '../../models/user.dart';
 import '../../providers/auth_provider.dart';
+import 'theatre/theatre_entry_screen.dart';
 import '../../providers/order_provider.dart';
 import '../../services/api_service.dart';
 import '../../theme/foodflow_theme.dart';
@@ -274,6 +275,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     const SizedBox(height: 10),
                     _ProfileSectionCard(
                       children: [
+                        _ProfileMenuTile(
+                          icon: LucideIcons.popcorn,
+                          title: 'Order at a cinema',
+                          subtitle: 'Food delivered to your seat',
+                          onTap: () => Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) => const TheatreEntryScreen(),
+                            ),
+                          ),
+                        ),
                         _ProfileMenuTile(
                           icon: LucideIcons.map_pin,
                           title: 'My Addresses',
