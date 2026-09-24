@@ -9,9 +9,10 @@ use Illuminate\Support\Facades\Schema;
  * ported to Swado as well (24 Sep 2026) — the two implementations are kept
  * deliberately identical so a fix can move either way. Modeled closely on the
  * Branch management module (2026_06_12_000001_create_branch_management_module.php)
- * but Theatre<->Restaurant is many-to-many (a stall can serve more than one
- * theatre, e.g. a mall food-court vendor) rather than the branch's
- * one-restaurant-belongs-to-one-branch column, and there is deliberately no
+ * but Theatre<->Restaurant lives in its own pivot table rather than the
+ * branch's one-restaurant-belongs-to-one-branch column. One theatre holds
+ * many stalls; a stall belongs to exactly one theatre (enforced by
+ * 2026_09_24_000003_enforce_one_theatre_per_stall). There is deliberately no
  * wallet/settlement/payout module — a theatre owner doesn't earn commission
  * the way a branch does, they just host stalls and runners.
  */
@@ -73,10 +74,11 @@ return new class extends Migration
             $table->unique(['theatre_id', 'name']);
         });
 
-        // Many-to-many: a theatre hosts several stalls, and in principle a
-        // stall (e.g. a mall food-court vendor) could serve more than one
-        // theatre -- unlike Branch<->Restaurant, this is NOT a branch_id-style
-        // column on restaurants.
+        // A theatre hosts many stalls. A stall belongs to exactly one
+        // theatre -- 2026_09_24_000003_enforce_one_theatre_per_stall adds the
+        // unique index that guarantees it. Kept as a pivot table rather than
+        // a branch_id-style column on restaurants so a theatre's concessions
+        // stay their own records with their own approval state.
         Schema::create('theatre_restaurants', function (Blueprint $table) {
             $table->id();
             $table->foreignId('theatre_id')->constrained('theatres')->cascadeOnDelete();
