@@ -284,6 +284,21 @@ class DriverController extends Controller
     public function getMyGigs(Request $request)
     {
         $driverId = auth()->id();
+        // swaad-only: a gig with theatre_id set is a runner shift, not a
+        // delivery-zone gig (see DriverGig::theatre()). A runner must only
+        // ever see their own theatre's shifts, and a road driver must never
+        // see theatre shifts leak into their list -- both share branch_id
+        // null, which DriverGig::isBookableByBranch() alone would treat as
+        // "bookable by anyone", so that scoping alone is not enough here.
+        $isRunner = auth()->user()?->hasRole('theatre_runner') ?? false;
+        $runnerTheatreId = $isRunner ? auth()->user()?->theatre_id : null;
+        $scopeByTheatre = function ($query) use ($isRunner, $runnerTheatreId) {
+            if ($isRunner) {
+                $query->where('theatre_id', $runnerTheatreId);
+            } else {
+                $query->whereNull('theatre_id');
+            }
+        };
         $statuses = $request->filled('status')
             ? collect(explode(',', $request->status))
                 ->map(fn ($status) => trim($status))
@@ -307,6 +322,7 @@ class DriverController extends Controller
             : array_values(array_intersect($statuses, ['booked', 'completed', 'cancelled']));
 
         if ($includeAvailable) {
+            $driverBranchId = auth()->user()?->branch_id;
             $availableGigs = DriverGig::with('area')
                 ->withCount(['activeBookings as active_bookings_count'])
                 ->whereIn('status', ['available', 'booked'])
@@ -315,10 +331,13 @@ class DriverController extends Controller
                         ->whereIn('status', ['booked', 'completed']);
                 })
                 ->where($applyDateFilter)
+                ->where($scopeByTheatre)
                 ->orderBy('date')
                 ->orderBy('start_time')
                 ->get()
-                ->filter(fn (DriverGig $gig) => $gig->available_seats > 0 && $this->gigIsBookable($gig))
+                ->filter(fn (DriverGig $gig) => $gig->available_seats > 0
+                    && $this->gigIsBookable($gig)
+                    && $gig->isBookableByBranch($driverBranchId))
                 ->values()
                 ->map(function (DriverGig $gig) {
                     $gig->setAttribute('status', 'available');
@@ -339,6 +358,7 @@ class DriverController extends Controller
                         ->whereIn('status', $driverBookingStatuses);
                 })
                 ->where($applyDateFilter)
+                ->where($scopeByTheatre)
                 ->orderBy('date')
                 ->orderBy('start_time')
                 ->get()
@@ -386,6 +406,25 @@ class DriverController extends Controller
                     'success' => false,
                     'message' => 'Gig slot has already ended.',
                 ], 400];
+            }
+
+            // swaad-only: a theatre-scoped gig is only bookable by a runner
+            // assigned to that same theatre, and a runner may only ever book
+            // theatre gigs -- never a delivery-zone slot. Everything else
+            // below (conflict check, capacity, booking creation) is shared.
+            $isRunner = auth()->user()?->hasRole('theatre_runner') ?? false;
+            if ($gig->theatre_id || $isRunner) {
+                if (! $isRunner || (int) $gig->theatre_id !== (int) auth()->user()?->theatre_id) {
+                    return [[
+                        'success' => false,
+                        'message' => 'This gig is not available for your account.',
+                    ], 403];
+                }
+            } elseif (! $gig->isBookableByBranch(auth()->user()?->branch_id)) {
+                return [[
+                    'success' => false,
+                    'message' => 'This gig slot is reserved for another branch\'s drivers.',
+                ], 403];
             }
 
             if ($gig->bookings()

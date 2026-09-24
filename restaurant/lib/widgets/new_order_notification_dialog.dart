@@ -177,12 +177,19 @@ class _NewOrderNotificationDialogState extends State<NewOrderNotificationDialog>
                           Row(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Icon(Icons.location_on_outlined,
-                                  size: 16, color: foodflow.muted),
+                              Icon(
+                                o.isTheatreDelivery
+                                    ? Icons.event_seat_outlined
+                                    : Icons.location_on_outlined,
+                                size: 16,
+                                color: foodflow.muted,
+                              ),
                               const SizedBox(width: 7),
                               Expanded(
                                 child: Text(
-                                  o.deliveryAddress,
+                                  o.isTheatreDelivery
+                                      ? o.theatreSeatLabel
+                                      : o.deliveryAddress,
                                   maxLines: 2,
                                   overflow: TextOverflow.ellipsis,
                                   style: TextStyle(
@@ -220,15 +227,31 @@ class _NewOrderNotificationDialogState extends State<NewOrderNotificationDialog>
                                 ),
                                 const SizedBox(width: 8),
                                 Expanded(
-                                  child: Text(
-                                    it.name,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: TextStyle(
-                                      color: foodflow.ink,
-                                      fontSize: 13,
-                                      fontWeight: FontWeight.w700,
-                                    ),
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        it.name,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                          color: foodflow.ink,
+                                          fontSize: 13,
+                                          fontWeight: FontWeight.w700,
+                                        ),
+                                      ),
+                                      if (it.hasCustomizations)
+                                        Text(
+                                          it.customizationSummary,
+                                          maxLines: 2,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: TextStyle(
+                                            color: foodflow.muted,
+                                            fontSize: 11,
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+                                    ],
                                   ),
                                 ),
                                 Text(

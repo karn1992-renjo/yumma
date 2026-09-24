@@ -76,6 +76,9 @@ class _RestaurantDetailScreenState extends State<RestaurantDetailScreen> {
   Restaurant? _restaurant;
   Map<String, List<MenuItem>> _itemsByCategory = <String, List<MenuItem>>{};
   List<Map<String, dynamic>> _restaurantPromos = <Map<String, dynamic>>[];
+  String? _aiComboTitle;
+  List<MenuItem> _aiComboItems = <MenuItem>[];
+  double _aiComboPrice = 0;
   final Map<String, GlobalKey> _categoryKeys = <String, GlobalKey>{};
   final Set<int> _savedMenuItemIds = <int>{};
 
@@ -205,6 +208,7 @@ class _RestaurantDetailScreenState extends State<RestaurantDetailScreen> {
         await _loadDistanceToRestaurant();
         await _loadMenuItems(forceRefresh: forceRefresh);
         unawaited(_loadRestaurantPromos());
+        unawaited(_loadAiCombo());
         if (mounted) {
           unawaited(AppImageCache.precacheVisible(
             context,
@@ -321,6 +325,47 @@ class _RestaurantDetailScreenState extends State<RestaurantDetailScreen> {
       _isLoadingPromos = false;
       if (mounted) setState(() {});
     }
+  }
+
+  /// AI-picked bundle from this restaurant's own menu (e.g. a bread + a curry
+  /// + rice) shown only here on the customer app — needs a logged-in user for
+  /// the "Combo for {name}" title, so a guest simply won't see the section.
+  Future<void> _loadAiCombo() async {
+    try {
+      final response = await _api
+          .get(ApiConstants.customerRestaurantAiCombo(widget.restaurantId))
+          .timeout(const Duration(seconds: 10));
+
+      final data = response['data'];
+      if (response['success'] == true && data is Map<String, dynamic>) {
+        final items = ((data['items'] as List?) ?? [])
+            .whereType<Map<String, dynamic>>()
+            .map((item) => MenuItem.fromJson(item))
+            .toList();
+        if (items.length >= 2) {
+          _aiComboTitle = data['title']?.toString();
+          _aiComboItems = items;
+          _aiComboPrice =
+              double.tryParse(data['price']?.toString() ?? '') ?? 0;
+        }
+      }
+    } catch (_) {
+      // Silent — the combo section just doesn't show.
+    }
+    if (mounted) setState(() {});
+  }
+
+  void _addComboToCart() {
+    if (_restaurant == null || _aiComboItems.length < 2) return;
+    if (!_restaurant!.isOpen) {
+      _showMessage(_restaurantClosedMessage(_restaurant!));
+      return;
+    }
+    final cart = Provider.of<CartProvider>(context, listen: false);
+    for (final item in _aiComboItems) {
+      cart.addItem(item, _restaurant!);
+    }
+    _showMessage('${_aiComboTitle ?? 'Combo'} added to cart');
   }
 
   Future<void> _loadDistanceToRestaurant() async {
@@ -1677,6 +1722,17 @@ class _RestaurantDetailScreenState extends State<RestaurantDetailScreen> {
                     ),
                   ),
                 ),
+              if (_aiComboItems.length >= 2)
+                SliverToBoxAdapter(
+                  child: _RestaurantDetailsSection(
+                    child: _AiComboSection(
+                      title: _aiComboTitle ?? 'Combo for you',
+                      items: _aiComboItems,
+                      price: _aiComboPrice,
+                      onAdd: _addComboToCart,
+                    ),
+                  ),
+                ),
               if (filtered.isEmpty)
                 const SliverFillRemaining(
                   child: Center(
@@ -2230,6 +2286,140 @@ class _RestaurantDetailsSection extends StatelessWidget {
         ),
         child: child,
       ),
+    );
+  }
+}
+
+class _AiComboSection extends StatelessWidget {
+  final String title;
+  final List<MenuItem> items;
+  final double price;
+  final VoidCallback onAdd;
+
+  const _AiComboSection({
+    required this.title,
+    required this.items,
+    required this.price,
+    required this.onAdd,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: FoodFlowTheme.primaryColor.withOpacity(0.12),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Icon(Icons.auto_awesome_rounded,
+                  color: FoodFlowTheme.primaryColor, size: 18),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: const TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w900,
+                      color: FoodFlowTheme.ink,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const Text(
+                    'Picked from this menu, just for you',
+                    style: TextStyle(fontSize: 12, color: Colors.black54),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        SizedBox(
+          height: 76,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            itemCount: items.length,
+            separatorBuilder: (_, __) => const SizedBox(width: 10),
+            itemBuilder: (context, index) {
+              final item = items[index];
+              return Column(
+                children: [
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(14),
+                    child: AppCachedImage(
+                      imageUrl: item.imageUrl,
+                      width: 56,
+                      height: 56,
+                      fit: BoxFit.cover,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  SizedBox(
+                    width: 60,
+                    child: Text(
+                      item.name,
+                      style: const TextStyle(fontSize: 10.5),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+                ],
+              );
+            },
+          ),
+        ),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            Expanded(
+              child: Text.rich(
+                TextSpan(
+                  children: [
+                    const TextSpan(
+                      text: 'Bundle price  ',
+                      style: TextStyle(fontSize: 12, color: Colors.black54),
+                    ),
+                    TextSpan(
+                      text: formatCurrency(context, price),
+                      style: const TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w900,
+                        color: FoodFlowTheme.ink,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            ElevatedButton(
+              onPressed: onAdd,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: FoodFlowTheme.primaryColor,
+                foregroundColor: Colors.white,
+                elevation: 0,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+              child: const Text('Add Combo',
+                  style: TextStyle(fontWeight: FontWeight.w800)),
+            ),
+          ],
+        ),
+      ],
     );
   }
 }

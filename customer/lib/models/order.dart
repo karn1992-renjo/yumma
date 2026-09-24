@@ -85,6 +85,12 @@ class Order {
   final Restaurant? restaurant;
   final User? driver;
   final String? deliveryOtp;
+  // swaad-only: movie-theatre in-seat orders. `deliveryAddress` above is a
+  // human-readable placeholder ("Theatre — Screen X — Seat Y") for these --
+  // the UI shows the seat instead, see isTheatreDelivery.
+  final int? theatreId;
+  final int? screenId;
+  final String? seatLabel;
 
   Order({
     required this.id,
@@ -161,6 +167,9 @@ class Order {
     this.restaurant,
     this.driver,
     this.deliveryOtp,
+    this.theatreId,
+    this.screenId,
+    this.seatLabel,
   });
 
   factory Order.fromJson(Map<String, dynamic> json) {
@@ -205,6 +214,9 @@ class Order {
       customerName: json['customer_name'] ?? '',
       customerPhone: json['customer_phone'] ?? '',
       deliveryAddress: json['delivery_address'] ?? '',
+      theatreId: parseNullableInt(json['theatre_id']),
+      screenId: parseNullableInt(json['screen_id']),
+      seatLabel: json['seat_label']?.toString(),
       deliveryLat: parseNullableDouble(json['delivery_lat']),
       deliveryLng: parseNullableDouble(json['delivery_lng']),
       deliveryDistanceKm: parseNullableDouble(
@@ -368,6 +380,8 @@ class Order {
   bool get isDelivered => status == 'delivered';
   bool get isCancelled => status == 'cancelled';
   bool get isTakeaway => orderType == 'takeaway';
+  bool get isTheatreDelivery => orderType == 'theatre_delivery';
+  String get theatreSeatLabel => 'Screen ${screenId ?? '-'} · Seat ${seatLabel ?? '-'}';
   bool get hasLiveDriverLocation =>
       driverLat != null &&
       driverLat != 0.0 &&
@@ -584,6 +598,9 @@ class OrderItem {
   final double price; // Non-nullable, defaults to unitPrice
   final String imageUrl;
   final int? rating;
+  final String? selectedVariant;
+  final List<String> selectedAddOns;
+  final String? specialInstructions;
 
   OrderItem({
     this.menuItemId,
@@ -594,7 +611,46 @@ class OrderItem {
     double? price,
     this.imageUrl = '',
     this.rating,
+    this.selectedVariant,
+    this.selectedAddOns = const [],
+    this.specialInstructions,
   }) : price = price ?? unitPrice;
+
+  /// "Large • Extra cheese • Roti" — variant plus add-ons the customer picked.
+  String get customizationSummary {
+    final parts = <String>[
+      if (selectedVariant != null && selectedVariant!.trim().isNotEmpty)
+        selectedVariant!.trim(),
+      ...selectedAddOns,
+    ];
+    return parts.join(' • ');
+  }
+
+  bool get hasCustomizations => customizationSummary.isNotEmpty;
+
+  static String? _optionName(dynamic option) {
+    if (option is Map) {
+      final name = (option['name'] ?? option['label'] ?? option['title'] ?? '')
+          .toString()
+          .trim();
+      return name.isEmpty ? null : name;
+    }
+    if (option is String) {
+      final name = option.trim();
+      return name.isEmpty ? null : name;
+    }
+    return null;
+  }
+
+  static List<String> _parseAddOns(dynamic value) {
+    if (value is! List) return const [];
+    final names = <String>[];
+    for (final entry in value) {
+      final name = _optionName(entry);
+      if (name != null) names.add(name);
+    }
+    return names;
+  }
 
   factory OrderItem.fromJson(Map<String, dynamic> json) {
     final unitPrice = parseDoubleValue(json['price'] ?? json['unit_price']);
@@ -627,6 +683,10 @@ class OrderItem {
       'product_image_url',
       'dish_image_url',
     ]);
+    final variantName = _optionName(
+      json['selected_variant'] ?? json['variant'],
+    );
+
     return OrderItem(
       menuItemId: parseNullableInt(json['menu_item_id'] ?? json['id']),
       name: json['name'] ?? json['item_name'] ?? '',
@@ -636,6 +696,14 @@ class OrderItem {
       price: unitPrice,
       imageUrl: imageUrl.isNotEmpty ? imageUrl : nestedImageUrl,
       rating: parseNullableInt(json['rating']),
+      selectedVariant:
+          (variantName != null && variantName.toLowerCase() != 'promotion info')
+              ? variantName
+              : null,
+      selectedAddOns: _parseAddOns(
+        json['selected_add_ons'] ?? json['selected_addons'] ?? json['add_ons'],
+      ),
+      specialInstructions: json['special_instructions']?.toString().trim(),
     );
   }
 

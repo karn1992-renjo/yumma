@@ -2750,7 +2750,11 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen>
                 _buildRoutePointText(
                     title: _order!.restaurant?.name ?? 'Store',
                     subtitle: _order!.restaurant?.address ?? 'Pickup location'),
-                if (!isTakeaway)
+                if (_order!.isTheatreDelivery)
+                  _buildRoutePointText(
+                      title: 'Your seat',
+                      subtitle: _order!.theatreSeatLabel)
+                else if (!isTakeaway)
                   _buildRoutePointText(
                       title: 'Delivery address',
                       subtitle: _order!.deliveryAddress)
@@ -4021,6 +4025,16 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen>
               Text('Qty ${item.quantity}',
                   style: const TextStyle(
                       fontSize: 11.5, color: Color(0xFF666666))),
+              if (item.hasCustomizations) ...[
+                const SizedBox(height: 2),
+                Text(item.customizationSummary,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                        fontSize: 11.5,
+                        color: Color(0xFF666666),
+                        fontWeight: FontWeight.w600)),
+              ],
             ],
           ),
         ),
@@ -4450,8 +4464,9 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen>
 
     final name = order.customerName.trim();
     final phone = order.customerPhone.trim();
-    final address = order.deliveryAddress.trim();
-    const label = 'Home';
+    final address =
+        order.isTheatreDelivery ? order.theatreSeatLabel : order.deliveryAddress.trim();
+    final label = order.isTheatreDelivery ? 'Seat' : 'Home';
 
     final instructions = order.deliveryInstructions?.trim() ?? '';
     final canEdit = !order.isDelivered && !order.isCancelled;
@@ -4465,8 +4480,10 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen>
         subtitle: 'Delivery partner may call this number',
       ),
       _zRow(
-        icon: _addressIcon(label),
-        title: 'Delivery at $label',
+        icon: order.isTheatreDelivery
+            ? Icons.event_seat_outlined
+            : _addressIcon(label),
+        title: order.isTheatreDelivery ? label : 'Delivery at $label',
         subtitle: address.isEmpty ? 'Address details unavailable' : address,
       ),
       _zRow(
@@ -4754,9 +4771,11 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen>
   Widget _buildDeliveryAddressCard() {
     final order = _order!;
     final isTakeaway = order.isTakeaway;
-    final address = (isTakeaway
-            ? (order.restaurant?.address ?? 'Pickup location unavailable')
-            : order.deliveryAddress)
+    final address = (order.isTheatreDelivery
+            ? order.theatreSeatLabel
+            : (isTakeaway
+                ? (order.restaurant?.address ?? 'Pickup location unavailable')
+                : order.deliveryAddress))
         .trim();
     final phone =
         (isTakeaway ? order.restaurant?.phone : order.customerPhone)?.trim() ??
@@ -4884,6 +4903,7 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen>
   }
 
   String _deliveryShortLabel() {
+    if (_order?.isTheatreDelivery ?? false) return _order!.theatreSeatLabel;
     final value = _order?.deliveryAddress.trim() ?? '';
     if (value.isEmpty) return 'Delivery address';
     final parts = value

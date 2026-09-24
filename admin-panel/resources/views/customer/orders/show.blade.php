@@ -315,16 +315,23 @@
             <div class="card border-0 shadow-sm mb-4">
                 <div class="card-body p-4">
                     <h5 class="fw-bold mb-3">
-                        <i class="fas fa-location-dot me-2 text-primary"></i> Delivery Address
+                        <i class="fas fa-{{ $order->order_type === 'theatre_delivery' ? 'chair' : 'location-dot' }} me-2 text-primary"></i>
+                        {{ $order->order_type === 'theatre_delivery' ? 'Your Seat' : 'Delivery Address' }}
                     </h5>
                     <div class="bg-light rounded p-3">
                         <p class="mb-1 fw-semibold">{{ $order->customer_name ?? 'Customer' }}</p>
-                        <p class="mb-0 text-muted small">{{ $order->delivery_address }}</p>
+                        @if($order->order_type === 'theatre_delivery')
+                            <p class="mb-0 text-muted small">Screen {{ $order->screen_id ?? '-' }} · Seat {{ $order->seat_label ?? '-' }}</p>
+                        @else
+                            <p class="mb-0 text-muted small">{{ $order->delivery_address }}</p>
+                        @endif
                         <p class="mb-0 text-muted small">{{ $order->customer_phone ?? '' }}</p>
                     </div>
-                    <button class="btn btn-outline-primary w-100 mt-3 rounded-pill" onclick="openInMaps()">
-                        <i class="fas fa-map-marker-alt me-2"></i> View in Maps
-                    </button>
+                    @if($order->order_type !== 'theatre_delivery')
+                        <button class="btn btn-outline-primary w-100 mt-3 rounded-pill" onclick="openInMaps()">
+                            <i class="fas fa-map-marker-alt me-2"></i> View in Maps
+                        </button>
+                    @endif
                 </div>
             </div>
             

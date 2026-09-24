@@ -482,8 +482,20 @@ class _OrderTrackingV2State extends State<OrderTrackingV2> {
                                       fontWeight: FontWeight.w800)),
                               const SizedBox(width: 8),
                               Expanded(
-                                child: Text(it.name,
-                                    style: TextStyle(color: p.ink)),
+                                child: Column(
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.start,
+                                  children: [
+                                    Text(it.name,
+                                        style: TextStyle(color: p.ink)),
+                                    if (it.hasCustomizations)
+                                      Text(it.customizationSummary,
+                                          style: TextStyle(
+                                              color: p.inkSoft,
+                                              fontSize: 11.5,
+                                              fontWeight: FontWeight.w600)),
+                                  ],
+                                ),
                               ),
                               Text(
                                   formatCurrency(

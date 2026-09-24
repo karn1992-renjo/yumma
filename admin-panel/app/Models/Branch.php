@@ -21,6 +21,7 @@ class Branch extends Model
         'owner_phone',
         'owner_user_id',
         'country',
+        'country_code',
         'state',
         'city',
         'address',
@@ -72,6 +73,29 @@ class Branch extends Model
     public function drivers(): HasMany
     {
         return $this->hasMany(User::class);
+    }
+
+    public function gigs(): HasMany
+    {
+        return $this->hasMany(DriverGig::class);
+    }
+
+    /**
+     * Delivery-area ids this branch actually covers, derived from its active
+     * zones. Shared by the branch dashboard (restaurant/driver scoping) and
+     * the branch fleet/gig controller (which area a branch-created gig may
+     * use) so both stay in agreement about "what this branch covers".
+     */
+    public function deliveryAreaIds(): \Illuminate\Support\Collection
+    {
+        return $this->zones()
+            ->with('deliveryArea')
+            ->where('is_active', true)
+            ->whereNotNull('delivery_area_id')
+            ->get()
+            ->pluck('deliveryArea.id')
+            ->filter()
+            ->values();
     }
 
     public function orders(): HasMany

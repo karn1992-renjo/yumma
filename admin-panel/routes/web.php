@@ -9,6 +9,7 @@ use App\Models\AppSetting;
 use App\Http\Controllers\Admin\DashboardController;
 use App\Http\Controllers\Admin\RestaurantController;
 use App\Http\Controllers\Admin\BranchController;
+use App\Http\Controllers\Admin\TheatreController;
 use App\Http\Controllers\Admin\OrderController;
 use App\Http\Controllers\Admin\RefundPolicyController;
 use App\Http\Controllers\Admin\UserController;
@@ -19,6 +20,9 @@ use App\Http\Controllers\Admin\DriverController;
 use App\Http\Controllers\Admin\CodManagementController;
 use App\Http\Controllers\Admin\DeliveryAreaController;
 use App\Http\Controllers\Admin\GigController;
+use App\Http\Controllers\Branch\BranchFleetController;
+use App\Http\Controllers\Branch\BranchGigController;
+use App\Http\Controllers\Admin\CountryTaxController;
 use App\Http\Controllers\Admin\FleetController;
 use App\Http\Controllers\Admin\HomeSectionController;
 use App\Http\Controllers\Admin\PayoutController;
@@ -70,6 +74,7 @@ use App\Http\Controllers\WebVisitTrackController;
 use App\Http\Controllers\InstallController;
 use App\Http\Controllers\DirectChatController;
 use App\Http\Controllers\Branch\BranchDashboardController;
+use App\Http\Controllers\Theatre\TheatreDashboardController;
 use App\Services\HomeSectionService;
 
 // Public routes
@@ -203,6 +208,10 @@ Route::middleware(['auth'])->get('/dashboard', function () {
         return redirect()->route('branch.dashboard');
     }
 
+    if ($user->hasAnyRole(['theatre_owner', 'theatre_manager'])) {
+        return redirect()->route('theatre.dashboard');
+    }
+
     return redirect()->route('home');
 })->name('dashboard');
 
@@ -210,9 +219,14 @@ Route::middleware(['auth', 'role:branch_owner|branch_manager|branch_staff'])->pr
     Route::get('/dashboard', [BranchDashboardController::class, 'index'])->name('dashboard');
     Route::get('/orders', [BranchDashboardController::class, 'orders'])->name('orders');
     Route::get('/orders/export', [BranchDashboardController::class, 'exportOrders'])->name('orders.export');
+    Route::get('/orders/live', [BranchDashboardController::class, 'ordersLive'])->name('orders.live');
+    Route::get('/orders/live-data', [BranchDashboardController::class, 'ordersLiveData'])->name('orders.live-data');
+    Route::get('/orders/check-new', [BranchDashboardController::class, 'ordersCheckNew'])->name('orders.check-new');
+    Route::get('/orders/notification-counts', [BranchDashboardController::class, 'ordersNotificationCounts'])->name('orders.notification-counts');
     Route::get('/orders/{order}', [BranchDashboardController::class, 'showOrder'])->name('orders.show');
     Route::put('/orders/{order}/status', [BranchDashboardController::class, 'updateOrderStatus'])->name('orders.update-status');
     Route::post('/orders/{order}/assign-driver', [BranchDashboardController::class, 'assignOrderDriver'])->name('orders.assign-driver');
+    Route::get('/orders/{order}/available-drivers', [BranchDashboardController::class, 'availableDriversForOrder'])->name('orders.available-drivers');
     Route::get('/restaurants/create', [BranchDashboardController::class, 'createRestaurant'])->name('restaurants.create');
     Route::post('/restaurants', [BranchDashboardController::class, 'storeRestaurant'])->name('restaurants.store');
     Route::get('/restaurants/{restaurant}', [BranchDashboardController::class, 'showRestaurant'])->name('restaurants.show');
@@ -225,6 +239,7 @@ Route::middleware(['auth', 'role:branch_owner|branch_manager|branch_staff'])->pr
     Route::post('/drivers', [BranchDashboardController::class, 'storeDriver'])->name('drivers.store');
     Route::get('/drivers/{driver}/edit', [BranchDashboardController::class, 'editDriver'])->name('drivers.edit');
     Route::put('/drivers/{driver}', [BranchDashboardController::class, 'updateDriver'])->name('drivers.update');
+    Route::post('/drivers/{driver}/toggle-status', [BranchDashboardController::class, 'toggleDriverStatus'])->name('drivers.toggle-status');
     Route::get('/drivers', [BranchDashboardController::class, 'drivers'])->name('drivers');
     Route::get('/cod', [BranchDashboardController::class, 'cod'])->name('cod');
     Route::post('/cod/settle', [BranchDashboardController::class, 'codSettle'])->name('cod.settle');
@@ -245,6 +260,42 @@ Route::middleware(['auth', 'role:branch_owner|branch_manager|branch_staff'])->pr
     Route::put('/settings/staff/{staff}', [BranchDashboardController::class, 'updateStaff'])->name('settings.staff.update');
     Route::get('/tickets', [BranchDashboardController::class, 'tickets'])->name('tickets');
     Route::post('/tickets', [BranchDashboardController::class, 'storeTicket'])->name('tickets.store');
+
+    Route::prefix('fleet-map')->name('fleet.')->group(function () {
+        Route::get('/', [BranchFleetController::class, 'dashboard'])->name('dashboard');
+        Route::get('/markers', [BranchFleetController::class, 'markers'])->name('markers');
+    });
+
+    Route::prefix('fleet')->name('gigs.')->group(function () {
+        Route::get('/', [BranchGigController::class, 'index'])->name('index');
+        Route::get('/create', [BranchGigController::class, 'create'])->name('create');
+        Route::post('/', [BranchGigController::class, 'store'])->name('store');
+        Route::post('/bulk', [BranchGigController::class, 'bulkCreate'])->name('bulk-create');
+        Route::get('/payout-approvals', [BranchGigController::class, 'payoutApprovals'])->name('payout-approvals');
+        Route::post('/payout-approvals/{approval}', [BranchGigController::class, 'approvePayout'])->name('payout-approvals.action');
+        Route::get('/{gig}/edit', [BranchGigController::class, 'edit'])->name('edit');
+        Route::put('/{gig}', [BranchGigController::class, 'update'])->name('update');
+        Route::delete('/{gig}', [BranchGigController::class, 'destroy'])->name('destroy');
+        Route::post('/{gig}/status', [BranchGigController::class, 'updateStatus'])->name('update-status');
+    });
+});
+
+// Theatre panel (swaad-only: movie-theatre in-seat food ordering)
+Route::middleware(['auth', 'role:theatre_owner|theatre_manager'])->prefix('theatre-panel')->name('theatre.')->group(function () {
+    Route::get('/dashboard', [TheatreDashboardController::class, 'index'])->name('dashboard');
+    Route::get('/restaurants', [TheatreDashboardController::class, 'restaurants'])->name('restaurants');
+    Route::get('/restaurants/create', [TheatreDashboardController::class, 'createRestaurant'])->name('restaurants.create');
+    Route::post('/restaurants/create', [TheatreDashboardController::class, 'storeRestaurant'])->name('restaurants.store');
+    Route::post('/restaurants/{restaurant}/map', [TheatreDashboardController::class, 'mapRestaurant'])->name('restaurants.map');
+    Route::post('/restaurants/{restaurant}/unmap', [TheatreDashboardController::class, 'unmapRestaurant'])->name('restaurants.unmap');
+    Route::get('/runners', [TheatreDashboardController::class, 'runners'])->name('runners');
+    Route::post('/runners', [TheatreDashboardController::class, 'storeRunner'])->name('runners.store');
+    Route::post('/runners/{runner}/remove', [TheatreDashboardController::class, 'removeRunner'])->name('runners.remove');
+    Route::get('/screens', [TheatreDashboardController::class, 'screens'])->name('screens');
+    Route::post('/screens', [TheatreDashboardController::class, 'storeScreen'])->name('screens.store');
+    Route::get('/screens/{screen}/seat-map', [TheatreDashboardController::class, 'editSeatMap'])->name('screens.seat-map.edit');
+    Route::put('/screens/{screen}/seat-map', [TheatreDashboardController::class, 'updateSeatMap'])->name('screens.seat-map.update');
+    Route::get('/orders', [TheatreDashboardController::class, 'orders'])->name('orders');
 });
 
 // Customer routes
@@ -307,8 +358,13 @@ Route::middleware(['auth', 'role:super_admin|admin'])->prefix('admin')->name('ad
     Route::post('/branches/transfer', [BranchController::class, 'transfer'])->name('branches.transfer');
     Route::get('/branches/tickets', [BranchController::class, 'tickets'])->name('branches.tickets');
     Route::post('/branches/tickets', [BranchController::class, 'storeTicket'])->name('branches.tickets.store');
+    Route::post('/branches/{branch}/resync-owner-permissions', [BranchController::class, 'resyncOwnerPermissions'])->name('branches.resync-owner-permissions');
     Route::resource('branches', BranchController::class);
-    
+
+    // Theatre Management (swaad-only: movie-theatre in-seat food ordering)
+    Route::post('/theatres/{theatre}/resync-owner-permissions', [TheatreController::class, 'resyncOwnerPermissions'])->name('theatres.resync-owner-permissions');
+    Route::resource('theatres', TheatreController::class);
+
     // Restaurants Management
     Route::get('/restaurants/template', [RestaurantController::class, 'downloadTemplate'])->name('restaurants.template');
     Route::post('/restaurants/bulk-upload', [RestaurantController::class, 'bulkUpload'])->name('restaurants.bulk-upload');
@@ -692,6 +748,13 @@ Route::middleware(['auth', 'role:super_admin|admin'])->prefix('admin')->name('ad
     Route::post('/settings/integrations/sync/{target}', [SettingController::class, 'integrationsSync'])->name('settings.integrations.sync');
     Route::get('/settings/taxation-setup', [SettingController::class, 'taxationSetup'])->name('settings.taxation-setup');
     Route::post('/settings/taxation-setup', [SettingController::class, 'saveTaxationSetup'])->name('settings.taxation-setup.save');
+    Route::get('/settings/country-tax', [CountryTaxController::class, 'index'])->name('settings.country-tax');
+    Route::post('/settings/country-tax/platform-default', [CountryTaxController::class, 'updatePlatformDefault'])->name('settings.country-tax.platform-default');
+    Route::post('/settings/country-tax/profiles', [CountryTaxController::class, 'storeProfile'])->name('settings.country-tax.profiles.store');
+    Route::put('/settings/country-tax/profiles/{profile}', [CountryTaxController::class, 'updateProfile'])->name('settings.country-tax.profiles.update');
+    Route::post('/settings/country-tax/profiles/{profile}/toggle', [CountryTaxController::class, 'toggleProfile'])->name('settings.country-tax.profiles.toggle');
+    Route::get('/settings/us-sales-tax', [CountryTaxController::class, 'usSalesTax'])->name('settings.us-sales-tax');
+    Route::post('/settings/us-sales-tax', [CountryTaxController::class, 'updateUsSalesTax'])->name('settings.us-sales-tax.update');
     Route::get('/settings/notifications', [SettingController::class, 'notifications'])->name('settings.notifications');
     Route::get('/settings/map', [SettingController::class, 'map'])->name('settings.map');
     Route::get('/settings/voice-ai', [VoiceAiSettingsController::class, 'edit'])->name('settings.voice-ai');

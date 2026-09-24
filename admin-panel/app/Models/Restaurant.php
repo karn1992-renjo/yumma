@@ -22,6 +22,9 @@ class Restaurant extends Model
         'city', 
         'state',
         'state_code',
+        'country_code',
+        'is_vat_registered',
+        'vat_number',
         'pincode',
         'is_gst_registered',
         'gstin',
@@ -72,6 +75,7 @@ class Restaurant extends Model
         'is_pure_veg' => 'boolean',
         'is_verified' => 'boolean',
         'is_gst_registered' => 'boolean',
+        'is_vat_registered' => 'boolean',
         'tds_pan_verified' => 'boolean',
         'dining_charge' => 'decimal:2',
         'min_order_amount' => 'decimal:2',
@@ -207,6 +211,29 @@ class Restaurant extends Model
     public function branch()
     {
         return $this->belongsTo(Branch::class);
+    }
+
+    /**
+     * Theatres this stall serves (many-to-many -- unlike Branch, a
+     * restaurant can be mapped into more than one theatre). swaad-only.
+     */
+    public function theatres()
+    {
+        return $this->belongsToMany(Theatre::class, 'theatre_restaurants')
+            ->withPivot(['is_active', 'added_by'])
+            ->withTimestamps();
+    }
+
+    /**
+     * Own country_code if set, else the parent branch's, else null (caller
+     * falls back to the platform-wide default). Used by CountryTaxRegistry to
+     * pick which country's tax/compliance strategy applies to this restaurant.
+     */
+    public function resolvedCountryCode(): ?string
+    {
+        $code = $this->country_code ?: $this->branch?->country_code;
+
+        return $code ? strtoupper($code) : null;
     }
 
     public function restaurantOnboarding()

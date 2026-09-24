@@ -1,0 +1,123 @@
+@php
+    $gigTitle = old('title', $gig?->title);
+    $gigDescription = old('description', $gig?->description);
+    $gigAreaId = old('area_id', $gig?->area_id);
+    $gigCapacity = old('capacity', $gig?->capacity ?? 1);
+    $gigDate = old('date', $gig?->date?->format('Y-m-d'));
+    $gigStart = old('start_time', optional($gig?->start_time)->format('H:i'));
+    $gigEnd = old('end_time', optional($gig?->end_time)->format('H:i'));
+    $gigStatus = old('status', $gig?->status ?? 'available');
+    $gigOpenToPool = old('open_to_pool', $gig?->open_to_pool ?? false);
+@endphp
+
+@if ($errors->any())
+    <div class="alert alert-danger">
+        <ul class="mb-0">
+            @foreach ($errors->all() as $error)
+                <li>{{ $error }}</li>
+            @endforeach
+        </ul>
+    </div>
+@endif
+
+<div class="row g-4">
+    <div class="col-md-6">
+        <label class="form-label">Slot Title</label>
+        <input type="text" name="title" class="form-control" value="{{ $gigTitle }}" placeholder="Dinner Peak Slot" required>
+    </div>
+    <div class="col-md-6">
+        <label class="form-label">Delivery Area</label>
+        <select name="area_id" class="form-select" required>
+            <option value="">Select area</option>
+            @foreach($deliveryAreas as $area)
+                <option value="{{ $area->id }}" @selected((string) $gigAreaId === (string) $area->id)>{{ $area->name }}</option>
+            @endforeach
+        </select>
+        <div class="form-text">Only your branch's own delivery zones are shown.</div>
+    </div>
+    <div class="col-12">
+        <label class="form-label">Description</label>
+        <textarea name="description" class="form-control" rows="3" placeholder="Describe the slot, expected demand, or area notes">{{ $gigDescription }}</textarea>
+    </div>
+    <div class="col-md-3">
+        <label class="form-label">Date</label>
+        <input type="date" name="date" class="form-control" value="{{ $gigDate }}" required>
+    </div>
+    <div class="col-md-3">
+        <label class="form-label">Start Time</label>
+        <input type="time" name="start_time" class="form-control" value="{{ $gigStart }}" required>
+    </div>
+    <div class="col-md-3">
+        <label class="form-label">End Time</label>
+        <input type="time" name="end_time" class="form-control" value="{{ $gigEnd }}" required>
+    </div>
+    <div class="col-md-3">
+        <label class="form-label">Driver Capacity</label>
+        <input type="number" min="1" name="capacity" class="form-control" value="{{ $gigCapacity }}" required>
+        @if($gig)
+            <div class="form-text">{{ $gig->booked_count }} active booking(s)</div>
+        @endif
+    </div>
+
+    @if($gig)
+        <div class="col-md-4">
+            <label class="form-label">Status</label>
+            <select name="status" class="form-select" required>
+                @foreach(['available', 'booked', 'completed', 'cancelled'] as $status)
+                    <option value="{{ $status }}" @selected($gigStatus === $status)>{{ ucfirst($status) }}</option>
+                @endforeach
+            </select>
+        </div>
+    @endif
+
+    <div class="col-md-4">
+        <label class="form-label">Base Pay</label>
+        <input type="number" step="0.01" min="0" name="base_pay" class="form-control" value="{{ old('base_pay', $gig?->base_pay ?? 0) }}">
+    </div>
+    <div class="col-md-4">
+        <label class="form-label">Order Incentive</label>
+        <input type="number" step="0.01" min="0" name="order_incentive" class="form-control" value="{{ old('order_incentive', $gig?->order_incentive ?? 0) }}">
+    </div>
+    <div class="col-md-4">
+        <label class="form-label">Login Incentive</label>
+        <input type="number" step="0.01" min="0" name="login_incentive" class="form-control" value="{{ old('login_incentive', $gig?->login_incentive ?? 0) }}">
+    </div>
+    <div class="col-md-4">
+        <label class="form-label">Minimum Login Minutes</label>
+        <input type="number" min="0" name="min_login_minutes" class="form-control" value="{{ old('min_login_minutes', $gig?->min_login_minutes ?? 0) }}">
+    </div>
+    <div class="col-md-4">
+        <label class="form-label">Minimum Orders Delivered</label>
+        <input type="number" min="0" name="min_orders_required" class="form-control" value="{{ old('min_orders_required', $gig?->min_orders_required ?? 0) }}">
+    </div>
+    <div class="col-md-4">
+        <label class="form-label">Max Cancellations Allowed</label>
+        <input type="number" min="0" name="max_cancellations_allowed" class="form-control" value="{{ old('max_cancellations_allowed', $gig?->max_cancellations_allowed ?? 0) }}">
+    </div>
+    <div class="col-md-4">
+        <label class="form-label">Auto Pricing</label>
+        <select name="auto_pricing_enabled" class="form-select">
+            <option value="1" @selected((string) old('auto_pricing_enabled', $gig?->auto_pricing_enabled ?? 1) === '1')>Enabled</option>
+            <option value="0" @selected((string) old('auto_pricing_enabled', $gig?->auto_pricing_enabled ?? 1) === '0')>Disabled</option>
+        </select>
+    </div>
+    <div class="col-md-4">
+        <label class="form-label">Surge Multiplier</label>
+        <input type="number" step="0.01" min="1" max="10" name="surge_multiplier" class="form-control" value="{{ old('surge_multiplier', $gig?->surge_multiplier ?? 1) }}">
+    </div>
+    <div class="col-12">
+        <div class="form-check form-switch">
+            <input class="form-check-input" type="checkbox" role="switch" name="open_to_pool" id="open_to_pool" value="1" @checked($gigOpenToPool)>
+            <label class="form-check-label" for="open_to_pool">Open to the general driver pool</label>
+        </div>
+        <div class="form-text">Off (default): only your branch's own drivers can book this slot. On: any platform driver can book it too — useful when you're short-staffed.</div>
+    </div>
+    <div class="col-12">
+        <label class="form-label">Terms & Conditions</label>
+        <textarea name="terms_conditions" class="form-control" rows="4" placeholder="Explain the payout condition, login requirement, order target, and cancellation rules">{{ old('terms_conditions', $gig?->terms_conditions) }}</textarea>
+    </div>
+    <div class="col-12 d-flex gap-2">
+        <button type="submit" class="btn btn-primary">{{ $gig ? 'Update Gig Slot' : 'Create Gig Slot' }}</button>
+        <a href="{{ route('branch.gigs.index') }}" class="btn btn-light border">Cancel</a>
+    </div>
+</div>

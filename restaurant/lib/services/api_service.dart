@@ -102,18 +102,48 @@ class ApiService {
         error is http.ClientException;
   }
 
+  /// Bounds every request below. Without this, a stalled request (poor
+  /// connectivity, a dropped connection) never resolves, and the
+  /// non-dismissible incoming-order overlay (accept/reject cancel its own
+  /// countdown timer before awaiting the API call) has no way back to an
+  /// interactive state — the app appears to hang until force-closed.
+  /// Admin-tunable via Settings → Branding → "Mobile App Network Behavior"
+  /// (`api_request_timeout_seconds`, served on `/app/branding`) — see
+  /// [configureRequestTimeout], applied by AppBrandingService on every
+  /// branding load. Falls back to this default until that first resolves.
+  static const Duration _defaultRequestTimeout = Duration(seconds: 20);
+  static const int _minRequestTimeoutSeconds = 5;
+  static const int _maxRequestTimeoutSeconds = 120;
+  static Duration _requestTimeout = _defaultRequestTimeout;
+
+  /// Applies an admin-configured timeout (in seconds) fetched from the
+  /// server. Clamped defensively so a bad/missing admin value can never make
+  /// every request time out instantly or effectively never time out.
+  static void configureRequestTimeout(int? seconds) {
+    if (seconds == null) return;
+    final clamped = seconds.clamp(
+      _minRequestTimeoutSeconds,
+      _maxRequestTimeoutSeconds,
+    );
+    _requestTimeout = Duration(seconds: clamped);
+  }
+
+  static Never _throwTimeout() {
+    throw ApiException('Request timed out. Check your connection and try again.');
+  }
+
   Future<http.Response> _sendWithRetry(
     Future<http.Response> Function() request,
   ) async {
     try {
-      return await request();
+      return await request().timeout(_requestTimeout, onTimeout: _throwTimeout);
     } catch (error) {
       if (!_shouldRetryNetworkError(error)) {
         rethrow;
       }
 
       await Future.delayed(const Duration(milliseconds: 350));
-      return request();
+      return request().timeout(_requestTimeout, onTimeout: _throwTimeout);
     }
   }
 
@@ -382,7 +412,10 @@ class ApiService {
         }
       }
 
-      final streamed = await request.send();
+      final streamed = await request.send().timeout(
+            _requestTimeout,
+            onTimeout: _throwTimeout,
+          );
       final response = await http.Response.fromStream(streamed);
       return _handleResponse(response, endpoint);
     } catch (e) {

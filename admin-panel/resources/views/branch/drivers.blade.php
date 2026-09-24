@@ -49,9 +49,18 @@
                     <td><span class="badge bg-{{ $driver->is_active ? 'success' : 'secondary' }}">{{ $driver->is_active ? 'Active' : 'Inactive' }}</span></td>
                     <td class="text-end">
                         @if($capabilities['drivers_edit'] ?? false)
-                            <a href="{{ route('branch.drivers.edit', $driver) }}" class="btn btn-sm btn-light">
-                                <i class="fas fa-pen"></i>
-                            </a>
+                            <div class="d-flex justify-content-end gap-2">
+                                <a href="{{ route('branch.drivers.edit', $driver) }}" class="btn btn-sm btn-light">
+                                    <i class="fas fa-pen"></i>
+                                </a>
+                                <form action="{{ route('branch.drivers.toggle-status', $driver) }}" method="POST" class="d-flex" onsubmit="var r=this.querySelector('[name=reason]'); r.value = prompt('{{ $driver->is_active ? 'Reason for suspending' : 'Reason for reactivating' }} {{ $driver->name }}? (optional)') || ''; return true;">
+                                    @csrf
+                                    <input type="hidden" name="reason">
+                                    <button type="submit" class="btn btn-sm btn-outline-{{ $driver->is_active ? 'danger' : 'success' }}">
+                                        {{ $driver->is_active ? 'Suspend' : 'Reactivate' }}
+                                    </button>
+                                </form>
+                            </div>
                         @endif
                     </td>
                 </tr>

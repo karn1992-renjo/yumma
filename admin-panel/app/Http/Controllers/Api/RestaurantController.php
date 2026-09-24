@@ -1116,6 +1116,10 @@ class RestaurantController extends Controller
 
             DB::commit();
 
+            if ($order->status === 'ready_for_pickup' && $order->order_type === 'theatre_delivery' && ! $order->driver_id) {
+                app(\App\Services\TheatreManagementService::class)->notifyRunnersOrderReady($order);
+            }
+
             if ($order->status === 'confirmed') {
                 $this->issueScratchCardsForOrderEvent($order, 'restaurant_accepts');
             }
@@ -1192,6 +1196,10 @@ class RestaurantController extends Controller
             }
 
             DB::commit();
+
+            if ($order->order_type === 'theatre_delivery' && ! $order->driver_id) {
+                app(\App\Services\TheatreManagementService::class)->notifyRunnersOrderReady($order);
+            }
 
             broadcast(new OrderStatusUpdatedEvent($order, $restaurant->id));
             app(OrderStatusPushService::class)->notifyParticipants(
@@ -4161,6 +4169,10 @@ class RestaurantController extends Controller
             'customer_name' => $order->customer_name ?? 'Guest',
             'customer_phone' => $callMasking->redactPhone($order->customer_phone) ?? '',
             'delivery_address' => $order->delivery_address ?? '',
+            // swaad-only: movie-theatre in-seat orders.
+            'theatre_id' => $order->theatre_id,
+            'screen_id' => $order->screen_id,
+            'seat_label' => $order->seat_label,
             'total' => (float) ($order->total ?? 0),
             'subtotal' => (float) ($order->subtotal ?? 0),
             'delivery_fee' => (float) ($order->delivery_fee ?? 0),

@@ -327,6 +327,7 @@ class OrderController extends Controller
                 'platform_fee' => $platformFee,
                 'tax' => $tax,
                 'tax_breakdown' => $pricing['gst_breakdown'] ?? null,
+                'currency_code' => $pricing['currency_code'] ?? null,
                 'cgst_amount' => data_get($pricing, 'gst_breakdown.restaurant.cgst'),
                 'sgst_amount' => data_get($pricing, 'gst_breakdown.restaurant.sgst'),
                 'igst_amount' => data_get($pricing, 'gst_breakdown.igst_total'),
@@ -1454,18 +1455,12 @@ class OrderController extends Controller
         );
         $platformFee = round(max(0, (float) DeliveryChargeSetting::getPlatformFee()), 2);
 
+        $taxCalc = app(\App\Services\Tax\TaxCalculationService::class)->baseline($subtotal, $originalDeliveryFee);
+        $tax = $taxCalc['tax'];
+        $taxRate = $taxCalc['tax_rate'];
+        $taxLabel = $taxCalc['tax_label'];
+        $taxBreakdown = $taxCalc['tax_breakdown'];
         $activeTaxes = TaxSetting::getActiveTaxes();
-        if ($activeTaxes->isEmpty()) {
-            $tax = 0.0;
-            $taxRate = 0.0;
-            $taxLabel = 'Taxes & charges';
-            $taxBreakdown = [];
-        } else {
-            $taxRate = (float) $activeTaxes->sum('rate');
-            $taxBreakdown = TaxSetting::calculateBreakdown($subtotal, $originalDeliveryFee);
-            $tax = round((float) collect($taxBreakdown)->sum('amount'), 2);
-            $taxLabel = 'Taxes & charges';
-        }
         $baseTax = $tax;
         $baseTaxBreakdown = $taxBreakdown;
         $packagingFee = round((float) collect($taxBreakdown)
@@ -1586,33 +1581,36 @@ class OrderController extends Controller
                 $taxBreakdown = $baseTaxBreakdown;
             }
         }
-        // GST mode (Settings -> Business): per-line CGST/SGST replaces the
-        // TaxSetting `gst`/charge rows when the supplier restaurant is
-        // GST-registered. Returns null otherwise -> keep the path above.
-        $gstService = app(\App\Services\Gst\GstTaxService::class);
-        $gstBreakdown = null;
-        if ($gstService->appliesTo($restaurant)) {
-            $rawLines = $gstService->linesFromRequestItems($items);
-            $grossItems = array_sum(array_column($rawLines, 'line_total'));
-            $netItems = max(0.0, $billableSubtotal - $orderDiscount);
-            $scale = $grossItems > 0 ? $netItems / $grossItems : 1.0;
-            foreach ($rawLines as &$rl) {
-                $rl['line_total'] = round($rl['line_total'] * $scale, AppSetting::currencyDecimals());
-            }
-            unset($rl);
+        // Country tax-strategy override (Settings -> Business) -- see
+        // App\Services\Tax\CountryTaxRegistry. India resolves to the same
+        // GstTaxService this used to call directly; other countries resolve
+        // to their own strategy (or none yet, in which case the baseline
+        // TaxSetting result above stands, exactly as before).
+        $taxService = app(\App\Services\Gst\GstTaxService::class);
+        $rawLines = $taxService->linesFromRequestItems($items);
+        $grossItems = array_sum(array_column($rawLines, 'line_total'));
+        $netItems = max(0.0, $billableSubtotal - $orderDiscount);
+        $scale = $grossItems > 0 ? $netItems / $grossItems : 1.0;
+        foreach ($rawLines as &$rl) {
+            $rl['line_total'] = round($rl['line_total'] * $scale, AppSetting::currencyDecimals());
+        }
+        unset($rl);
 
-            $gstBreakdown = $gstService->computeForOrder($restaurant, $rawLines, [
-                'delivery_fee' => $payableDeliveryFee,
-                'platform_fee' => $platformFee,
-                'packaging_charge' => $packagingFee,
-            ]);
+        $taxOverride = app(\App\Services\Tax\TaxCalculationService::class)->override($restaurant, $rawLines, [
+            'delivery_fee' => $payableDeliveryFee,
+            'platform_fee' => $platformFee,
+            'packaging_charge' => $packagingFee,
+        ]);
 
-            if ($gstBreakdown) {
-                $tax = $gstBreakdown->taxAdded;
-                $taxBreakdown = $gstBreakdown->rateSummary;
-                $taxLabel = 'GST';
-                $taxRate = (float) collect($gstBreakdown->rateSummary)->max('rate');
-            }
+        $currencyCode = null;
+        if ($taxOverride) {
+            $tax = $taxOverride->tax;
+            $taxBreakdown = $taxOverride->taxBreakdown;
+            $taxLabel = $taxOverride->taxLabel;
+            $taxRate = $taxOverride->taxRate;
+            // Snapshot the order's own currency from the country strategy that
+            // actually applied -- see the `orders.currency_code` migration.
+            $currencyCode = \App\Models\CountryTaxProfile::where('country_code', $taxOverride->detailed['country_code'] ?? '')->value('currency_code');
         }
 
         $promo = $promotionResult['promo'] ?? null;
@@ -1643,8 +1641,9 @@ class OrderController extends Controller
             'tax_rate' => $taxRate,
             'tax_label' => $taxLabel,
             'tax_breakdown' => $taxBreakdown,
-            'gst_breakdown' => $gstBreakdown?->toArray(),
-            'sec_9_5_note' => ($gstBreakdown && ($gstBreakdown->ecoFoodCgst + $gstBreakdown->ecoFoodSgst) > 0)
+            'gst_breakdown' => $taxOverride?->detailed,
+            'currency_code' => $currencyCode,
+            'sec_9_5_note' => (data_get($taxOverride?->detailed, 'eco_food.cgst', 0) + data_get($taxOverride?->detailed, 'eco_food.sgst', 0)) > 0
                 ? 'GST on restaurant food is collected and paid by the platform as the e-commerce operator under Section 9(5) of the CGST Act. The restaurant neither collects nor remits this GST.'
                 : null,
             'discount' => $displayDiscount,

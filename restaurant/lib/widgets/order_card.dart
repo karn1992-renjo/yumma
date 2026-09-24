@@ -345,12 +345,20 @@ class OrderCard extends StatelessWidget {
                     const SizedBox(height: 8),
                     Row(
                       children: [
-                        const Icon(Icons.location_on,
-                            size: 20, color: Colors.grey),
+                        Icon(
+                          order['order_type'] == 'theatre_delivery'
+                              ? Icons.event_seat
+                              : Icons.location_on,
+                          size: 20,
+                          color: Colors.grey,
+                        ),
                         const SizedBox(width: 8),
                         Expanded(
                           child: Text(
-                            order['delivery_address'] ?? 'No address provided',
+                            order['order_type'] == 'theatre_delivery'
+                                ? 'Screen ${order['screen_id'] ?? '-'} · Seat ${order['seat_label'] ?? '-'}'
+                                : (order['delivery_address'] ??
+                                    'No address provided'),
                             style: const TextStyle(fontSize: 13),
                           ),
                         ),

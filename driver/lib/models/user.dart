@@ -117,6 +117,11 @@ class User {
 
   bool get isDriver => _hasRole('delivery') || _hasRole('driver');
 
+  /// swaad-only: a movie-theatre runner reuses this same driver app shell
+  /// but never holds the delivery_partner role -- see
+  /// AuthController::matchesAuthRole on the backend.
+  bool get isTheatreRunner => _hasRole('theatre_runner');
+
   bool _hasRole(String fragment) {
     if (role != null && role!.toLowerCase().contains(fragment)) return true;
     return allRoles.any((r) => r.contains(fragment));

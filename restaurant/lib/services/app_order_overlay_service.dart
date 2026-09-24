@@ -516,24 +516,46 @@ class _OrderCancelledSheetState extends State<_OrderCancelledSheet> {
                                       item['total_price'] ??
                                       item['subtotal'] ??
                                       item['price'];
+                                  final customization =
+                                      _itemCustomizationSummary(item);
                                   return Padding(
                                     padding: const EdgeInsets.only(bottom: 10),
                                     child: Row(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
                                       children: [
-                                        Icon(
-                                          Icons.crop_square_rounded,
-                                          color: FoodFlowTheme.success,
-                                          size: 14,
+                                        Padding(
+                                          padding: const EdgeInsets.only(top: 3),
+                                          child: Icon(
+                                            Icons.crop_square_rounded,
+                                            color: FoodFlowTheme.success,
+                                            size: 14,
+                                          ),
                                         ),
                                         const SizedBox(width: 8),
                                         Expanded(
-                                          child: Text(
-                                            name,
-                                            style: TextStyle(
-                                              color: FoodFlowTheme.ink,
-                                              fontSize: 14,
-                                              fontWeight: FontWeight.w800,
-                                            ),
+                                          child: Column(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
+                                            children: [
+                                              Text(
+                                                name,
+                                                style: TextStyle(
+                                                  color: FoodFlowTheme.ink,
+                                                  fontSize: 14,
+                                                  fontWeight: FontWeight.w800,
+                                                ),
+                                              ),
+                                              if (customization.isNotEmpty)
+                                                Text(
+                                                  customization,
+                                                  style: TextStyle(
+                                                    color: FoodFlowTheme.muted,
+                                                    fontSize: 11.5,
+                                                    fontWeight: FontWeight.w600,
+                                                  ),
+                                                ),
+                                            ],
                                           ),
                                         ),
                                         Text(
@@ -755,12 +777,15 @@ class _RestaurantIncomingOrderSheetState
           (customerMap is Map ? customerMap['phone'] : null),
       fallback: '',
     );
-    final deliveryAddress = _textValue(
-      order['delivery_address'] ?? order['address'],
-      fallback: order['order_type']?.toString() == 'takeaway'
-          ? 'Takeaway order'
-          : 'Delivery address unavailable',
-    );
+    final isTheatreDelivery = order['order_type']?.toString() == 'theatre_delivery';
+    final deliveryAddress = isTheatreDelivery
+        ? 'Screen ${order['screen_id'] ?? '-'} · Seat ${order['seat_label'] ?? '-'}'
+        : _textValue(
+            order['delivery_address'] ?? order['address'],
+            fallback: order['order_type']?.toString() == 'takeaway'
+                ? 'Takeaway order'
+                : 'Delivery address unavailable',
+          );
     final deliveryOtp = _textValue(
       order['delivery_otp'] ?? order['otp'] ?? order['delivery_code'],
       fallback: '',
@@ -953,6 +978,8 @@ class _RestaurantIncomingOrderSheetState
                                     item['total_price'] ??
                                     item['subtotal'] ??
                                     item['price'];
+                                final customization =
+                                    _itemCustomizationSummary(item);
                                 return Padding(
                                   padding: const EdgeInsets.only(bottom: 10),
                                   child: Row(
@@ -969,13 +996,28 @@ class _RestaurantIncomingOrderSheetState
                                       ),
                                       const SizedBox(width: 8),
                                       Expanded(
-                                        child: Text(
-                                          name,
-                                          style: TextStyle(
-                                            color: FoodFlowTheme.ink,
-                                            fontSize: 15,
-                                            fontWeight: FontWeight.w900,
-                                          ),
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            Text(
+                                              name,
+                                              style: TextStyle(
+                                                color: FoodFlowTheme.ink,
+                                                fontSize: 15,
+                                                fontWeight: FontWeight.w900,
+                                              ),
+                                            ),
+                                            if (customization.isNotEmpty)
+                                              Text(
+                                                customization,
+                                                style: TextStyle(
+                                                  color: FoodFlowTheme.muted,
+                                                  fontSize: 11.5,
+                                                  fontWeight: FontWeight.w600,
+                                                ),
+                                              ),
+                                          ],
                                         ),
                                       ),
                                       Text(
@@ -1082,8 +1124,12 @@ class _RestaurantIncomingOrderSheetState
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             _IncomingSectionTitle(
-                              icon: Icons.delivery_dining_outlined,
-                              title: 'DELIVERY DETAILS',
+                              icon: isTheatreDelivery
+                                  ? Icons.event_seat_outlined
+                                  : Icons.delivery_dining_outlined,
+                              title: isTheatreDelivery
+                                  ? 'SEAT DETAILS'
+                                  : 'DELIVERY DETAILS',
                               trailing: deliveryOtp.isEmpty
                                   ? null
                                   : 'Passcode $deliveryOtp',
@@ -2737,6 +2783,42 @@ List<Map<String, dynamic>> _itemsFrom(dynamic raw) {
         .toList();
   }
   return const [];
+}
+
+/// Human-readable list of the variant + add-ons a customer picked for an item,
+/// e.g. "Large • Extra cheese • Roti". Empty when nothing was customised.
+String _itemCustomizationSummary(Map<String, dynamic> item) {
+  final parts = <String>[];
+
+  String? optionName(dynamic option) {
+    if (option is Map) {
+      final name = (option['name'] ?? option['label'] ?? option['title'] ?? '')
+          .toString()
+          .trim();
+      return name.isEmpty ? null : name;
+    }
+    if (option is String) {
+      final name = option.trim();
+      return name.isEmpty ? null : name;
+    }
+    return null;
+  }
+
+  final variantName = optionName(item['selected_variant'] ?? item['variant']);
+  if (variantName != null &&
+      variantName.toLowerCase() != 'promotion info') {
+    parts.add(variantName);
+  }
+
+  final addOns = item['selected_add_ons'] ?? item['add_ons'] ?? item['addons'];
+  if (addOns is List) {
+    for (final addOn in addOns) {
+      final name = optionName(addOn);
+      if (name != null) parts.add(name);
+    }
+  }
+
+  return parts.join(' • ');
 }
 
 String _money(dynamic value) {

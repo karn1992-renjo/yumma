@@ -19,6 +19,10 @@ class Order extends Model
         'customer_id',
         'restaurant_id',
         'branch_id',
+        'theatre_id',
+        'screen_id',
+        'seat_label',
+        'order_group_id',
         'driver_id',
         'order_type',
         'items',
@@ -40,6 +44,7 @@ class Order extends Model
         'platform_fee',
         'tax',
         'tax_breakdown',
+        'currency_code',
         'cgst_amount',
         'sgst_amount',
         'igst_amount',
@@ -370,6 +375,21 @@ class Order extends Model
     public function branch(): BelongsTo
     {
         return $this->belongsTo(Branch::class);
+    }
+
+    public function theatre(): BelongsTo
+    {
+        return $this->belongsTo(Theatre::class);
+    }
+
+    public function screen(): BelongsTo
+    {
+        return $this->belongsTo(TheatreScreen::class, 'screen_id');
+    }
+
+    public function orderGroup(): BelongsTo
+    {
+        return $this->belongsTo(OrderGroup::class);
     }
 
     public function restaurantPayout(): BelongsTo

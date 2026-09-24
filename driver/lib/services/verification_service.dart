@@ -23,25 +23,52 @@ class VerificationService {
   static final VerificationService instance = VerificationService._();
   final ApiService _api = ApiService();
 
+  String _friendlyMessage(String? raw) {
+    if (raw == null || raw.trim().isEmpty) {
+      return 'Not verified. It will be verified manually.';
+    }
+    final lower = raw.toLowerCase();
+    if (lower.contains('ip') ||
+        lower.contains('whitelist') ||
+        lower.contains('cashfree') ||
+        lower.contains('http') ||
+        lower.contains('exception') ||
+        lower.contains('socket') ||
+        lower.contains('server') ||
+        lower.contains('gateway') ||
+        lower.contains('timeout') ||
+        lower.contains('unauthorized') ||
+        lower.contains('forbidden') ||
+        lower.contains('failed') ||
+        lower.contains('connection') ||
+        lower.contains('credentials') ||
+        lower.contains('vrs')) {
+      return 'Not verified. It will be verified manually.';
+    }
+    return raw;
+  }
+
   DocVerifyResult _fromResponse(dynamic response) {
     final status = response is Map ? response['status']?.toString() : null;
     final message = response is Map ? response['message']?.toString() : null;
     switch (status) {
       case 'verified':
       case 'checked':
-        return DocVerifyResult(DocVerifyStatus.verified, message);
+        return DocVerifyResult(DocVerifyStatus.verified, message ?? 'Verified');
       case 'invalid':
-        return DocVerifyResult(DocVerifyStatus.invalid, message);
+        return DocVerifyResult(DocVerifyStatus.invalid, _friendlyMessage(message));
       case 'not_configured':
         return DocVerifyResult(DocVerifyStatus.unconfigured, message);
       default:
-        return DocVerifyResult(DocVerifyStatus.unknown, message);
+        return DocVerifyResult(DocVerifyStatus.unknown, _friendlyMessage(message));
     }
   }
 
   DocVerifyResult _fromError(Object error) {
-    final message = error.toString().replaceFirst('Exception: ', '');
-    return DocVerifyResult(DocVerifyStatus.unknown, message);
+    return const DocVerifyResult(
+      DocVerifyStatus.unknown,
+      'Not verified. It will be verified manually.',
+    );
   }
 
   Future<DocVerifyResult> verifyVehicleRc(String vehicleNumber) async {

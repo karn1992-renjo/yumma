@@ -103,7 +103,11 @@
             <p>
                 <strong>Name:</strong> {{ $order->customer_name }}<br>
                 <strong>Phone:</strong> {{ $order->customer_phone }}<br>
-                <strong>Delivery Address:</strong> {{ $order->delivery_address }}
+                @if($order->order_type === 'theatre_delivery')
+                    <strong>Seat:</strong> Screen {{ $order->screen_id ?? '-' }} · Seat {{ $order->seat_label ?? '-' }}
+                @else
+                    <strong>Delivery Address:</strong> {{ $order->delivery_address }}
+                @endif
             </p>
         </div>
         

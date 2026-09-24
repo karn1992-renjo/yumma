@@ -3,6 +3,7 @@
         ['route' => 'admin.settings.index', 'icon' => 'fas fa-sliders-h', 'label' => 'General'],
         ['route' => 'admin.settings.business', 'icon' => 'fas fa-building', 'label' => 'Business'],
         ['route' => 'admin.settings.tax-charges', 'icon' => 'fas fa-receipt', 'label' => 'Tax & Charges'],
+        ['route' => 'admin.settings.country-tax', 'icon' => 'fas fa-globe', 'label' => 'Country & Tax'],
         ['route' => 'admin.settings.integrations', 'icon' => 'fas fa-plug', 'label' => 'Integrations'],
         ['route' => 'admin.settings.branding', 'icon' => 'fas fa-palette', 'label' => 'Branding'],
         ['route' => 'admin.settings.payment', 'icon' => 'fas fa-credit-card', 'label' => 'Payment'],

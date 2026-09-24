@@ -214,6 +214,18 @@
                         </div>
                     </div>
                     <hr class="my-4">
+                    <div class="mb-4">
+                        <h6 class="fw-bold mb-1">Mobile App Network Behavior</h6>
+                        <p class="text-muted small mb-3">How long the driver and restaurant apps wait for a server response (e.g. accepting/rejecting an incoming order) before giving up and letting the user retry. Too low and slow connections fail unnecessarily; too high and a stalled request can leave the app looking stuck.</p>
+                        <div class="row g-3">
+                            <div class="col-md-4">
+                                <label class="form-label fw-semibold">Request Timeout (seconds)</label>
+                                <input type="number" name="api_request_timeout_seconds" class="form-control" min="5" max="120" value="{{ $settings['api_request_timeout_seconds'] ?? 20 }}">
+                                <small class="text-muted">Applies on the next app launch or branding refresh. Range 5–120 seconds.</small>
+                            </div>
+                        </div>
+                    </div>
+                    <hr class="my-4">
                     <h6 class="fw-bold mb-3">Onboarding Content</h6>
                     <div class="mb-3">
                         <label class="form-label fw-semibold">Intro Title</label>

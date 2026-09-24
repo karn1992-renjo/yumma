@@ -211,6 +211,17 @@ class User extends Authenticatable
         return $this->hasOne(BranchUser::class);
     }
 
+    /** swaad-only: movie-theatre in-seat ordering module. */
+    public function theatre()
+    {
+        return $this->belongsTo(Theatre::class);
+    }
+
+    public function theatreMembership()
+    {
+        return $this->hasOne(TheatreUser::class);
+    }
+
     public function referrer()
     {
         return $this->belongsTo(User::class, 'referred_by_user_id');

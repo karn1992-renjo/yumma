@@ -56,6 +56,15 @@
                         ['label' => 'Audit Logs', 'url' => route('admin.branches.audit-logs'), 'active' => ['admin.branches.audit-logs']],
                     ],
                 ],
+                [
+                    'label' => 'Theatre Management',
+                    'icon' => 'film',
+                    'active' => ['admin.theatres*'],
+                    'children' => [
+                        ['label' => 'All Theatres', 'url' => route('admin.theatres.index'), 'active' => ['admin.theatres.index']],
+                        ['label' => 'Create Theatre', 'url' => route('admin.theatres.create'), 'active' => ['admin.theatres.create']],
+                    ],
+                ],
                 ['label' => 'Restaurants', 'icon' => 'store', 'url' => route('admin.restaurants.index'), 'active' => ['admin.restaurants.*']],
                 ['label' => 'Delivery Areas', 'icon' => 'map-location-dot', 'url' => route('admin.delivery-areas.index'), 'active' => ['admin.delivery-areas.*']],
                 ['label' => 'Live Orders', 'icon' => 'bolt', 'url' => route('admin.orders.live'), 'active' => request()->routeIs('admin.orders.live')],

@@ -191,7 +191,7 @@ class CashfreeVerificationService
             $response = $this->http()->{$method}($this->baseUrl() . $path, $payload);
         } catch (\Throwable $e) {
             \Log::error('Cashfree verification request failed: ' . $e->getMessage(), ['path' => $path]);
-            return $this->result('error', null, $e->getMessage());
+            return $this->result('manual_review', null, 'Not verified. It will be verified manually.');
         }
 
         return $this->normalizeResponse($response);
@@ -224,7 +224,7 @@ class CashfreeVerificationService
             $response = $http->post($this->baseUrl() . $path, $fields);
         } catch (\Throwable $e) {
             \Log::error('Cashfree document verification request failed: ' . $e->getMessage(), ['path' => $path]);
-            return $this->result('error', null, $e->getMessage());
+            return $this->result('manual_review', null, 'Not verified. It will be verified manually.');
         }
 
         return $this->normalizeResponse($response);
@@ -235,7 +235,8 @@ class CashfreeVerificationService
         $data = $response->json() ?? [];
 
         if (! $response->successful()) {
-            return $this->result('error', $data, $data['message'] ?? ('HTTP ' . $response->status()));
+            \Log::warning('Cashfree verification unsuccessful: ' . ($data['message'] ?? ('HTTP ' . $response->status())));
+            return $this->result('manual_review', $data, 'Not verified. It will be verified manually.');
         }
 
         $valid = $data['valid'] ?? null;
@@ -250,7 +251,37 @@ class CashfreeVerificationService
             default => 'checked',
         };
 
-        return $this->result($status, $data, $data['message'] ?? null);
+        $message = $data['message'] ?? null;
+        if ($status !== 'verified' && $this->isTechnicalErrorMessage($message)) {
+            $message = 'Not verified. It will be verified manually.';
+        }
+
+        return $this->result($status, $data, $message);
+    }
+
+    private function isTechnicalErrorMessage(?string $message): bool
+    {
+        if (! $message) {
+            return false;
+        }
+
+        $lower = Str::lower($message);
+        return Str::contains($lower, [
+            'ip',
+            'whitelist',
+            'cashfree',
+            'http',
+            'exception',
+            'socket',
+            'server',
+            'gateway',
+            'timeout',
+            'unauthorized',
+            'forbidden',
+            'credentials',
+            'vrs',
+            'failed to connect',
+        ]);
     }
 
     private function result(string $status, ?array $data, ?string $message = null): array

@@ -29,7 +29,7 @@ class VendorBankController extends Controller
             return response()->json(['success' => true, 'data' => $accounts]);
         }
 
-        return view('admin.vendor.bank-details', compact('vendorType', 'vendorId', 'vendorName', 'user', 'accounts'));
+        return view('admin.vendor-accounts.bank-details', compact('vendorType', 'vendorId', 'vendorName', 'user', 'accounts'));
     }
 
     public function store(Request $request, string $vendorType, int $vendorId)

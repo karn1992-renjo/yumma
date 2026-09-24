@@ -162,12 +162,24 @@
                     <input type="text" name="pincode" class="form-control @error('pincode') is-invalid @enderror" value="{{ $field('pincode') }}" required>
                     @error('pincode') <div class="invalid-feedback">{{ $message }}</div> @enderror
                 </div>
+                <div class="col-lg-4 col-md-6">
+                    <label class="form-label fw-bold">Country</label>
+                    @php $countryRegistrationMap = $countryRegistrationMap ?? []; $selectedCountry = strtoupper((string) $field('country_code', '')); @endphp
+                    <select name="country_code" id="restaurantCountryCode" class="form-select">
+                        <option value="" @selected($selectedCountry === '')>Platform Default</option>
+                        @foreach($countryRegistrationMap as $code => $info)
+                            <option value="{{ $code }}" @selected($selectedCountry === $code)>{{ $info['name'] }} ({{ $info['tax_name'] }})</option>
+                        @endforeach
+                    </select>
+                    <div class="small text-muted mt-1">Which country's tax rules apply to this restaurant's orders. Leave as "Platform Default" to follow the platform's default country.</div>
+                </div>
             </div>
 
             <hr class="my-3">
-            <h3 class="h6 fw-bold mb-2">GST / Tax Invoice</h3>
-            <p class="text-muted small">Applies only when GST invoicing is enabled in Settings &rarr; Business. A GST-registered restaurant is the supplier of record on its customer invoices.</p>
-            <div class="row g-3">
+            <h3 class="h6 fw-bold mb-2">Tax Registration</h3>
+            <p class="text-muted small" id="taxRegHint">Applies only when GST invoicing is enabled in Settings &rarr; Business. A GST-registered restaurant is the supplier of record on its customer invoices.</p>
+
+            <div class="row g-3" data-country-kind-block="india">
                 <div class="col-lg-3 col-md-6">
                     <div class="form-check form-switch mt-2">
                         <input type="hidden" name="is_gst_registered" value="0">
@@ -186,11 +198,6 @@
                     @error('pan') <div class="invalid-feedback">{{ $message }}</div> @enderror
                 </div>
                 <div class="col-lg-3 col-md-6">
-                    <label class="form-label fw-bold">GST State Code</label>
-                    <input type="text" name="state_code" class="form-control @error('state_code') is-invalid @enderror" maxlength="2" placeholder="e.g. 27" value="{{ $field('state_code') }}">
-                    @error('state_code') <div class="invalid-feedback">{{ $message }}</div> @enderror
-                </div>
-                <div class="col-lg-3 col-md-6">
                     <label class="form-label fw-bold">Deductee Type (TDS 194-O)</label>
                     <select name="tax_deductee_type" class="form-select">
                         <option value="individual" @selected($field('tax_deductee_type', 'individual') === 'individual')>Individual / HUF</option>
@@ -205,8 +212,84 @@
                     </div>
                 </div>
             </div>
+
+            <div class="row g-3" data-country-kind-block="vat" style="display:none;">
+                <div class="col-lg-4 col-md-6">
+                    <div class="form-check form-switch mt-2">
+                        <input type="hidden" name="is_vat_registered" value="0">
+                        <input class="form-check-input" type="checkbox" role="switch" id="is_vat_registered" name="is_vat_registered" value="1" @checked((bool) $field('is_vat_registered'))>
+                        <label class="form-check-label fw-semibold" for="is_vat_registered"><span id="vatRegisteredLabel">VAT registered</span></label>
+                    </div>
+                    <div class="small text-muted mt-1">An unregistered restaurant cannot legally charge this tax -- its orders fall back to the flat platform tax rate.</div>
+                </div>
+                <div class="col-lg-8 col-md-6">
+                    <label class="form-label fw-bold" id="vatNumberLabel">VAT Registration Number</label>
+                    <input type="text" name="vat_number" class="form-control @error('vat_number') is-invalid @enderror" maxlength="40" value="{{ $field('vat_number') }}">
+                    @error('vat_number') <div class="invalid-feedback">{{ $message }}</div> @enderror
+                </div>
+            </div>
+
+            <div class="row g-3" data-country-kind-block="us" style="display:none;">
+                <div class="col-lg-8 col-md-6">
+                    <div class="small text-muted mt-1">US sales tax applies under marketplace-facilitator law regardless of this restaurant's own registration -- only the state (below) matters for the rate.</div>
+                </div>
+            </div>
+
+            <div class="row g-3" id="stateCodeSharedBlock">
+                <div class="col-lg-3 col-md-6">
+                    <label class="form-label fw-bold" id="stateCodeLabel">GST State Code</label>
+                    <input type="text" name="state_code" id="stateCodeShared" class="form-control @error('state_code') is-invalid @enderror" maxlength="2" placeholder="e.g. 27" value="{{ $field('state_code') }}">
+                    @error('state_code') <div class="invalid-feedback">{{ $message }}</div> @enderror
+                </div>
+            </div>
         </div>
     </section>
+
+    <script>
+        (function () {
+            var countryMap = @json(collect($countryRegistrationMap)->map(fn ($i) => ['kind' => $i['kind'], 'tax_name' => $i['tax_name'], 'label' => $i['label']]));
+            var select = document.getElementById('restaurantCountryCode');
+            var hint = document.getElementById('taxRegHint');
+            if (!select) return;
+
+            var stateBlock = document.getElementById('stateCodeSharedBlock');
+            var stateLabel = document.getElementById('stateCodeLabel');
+            var stateInput = document.getElementById('stateCodeShared');
+
+            function applyKind() {
+                var code = select.value;
+                var info = countryMap[code] || { kind: 'india', tax_name: 'GST', label: null };
+                document.querySelectorAll('[data-country-kind-block]').forEach(function (el) {
+                    el.style.display = (el.getAttribute('data-country-kind-block') === info.kind) ? '' : 'none';
+                });
+                if (info.kind === 'vat') {
+                    document.getElementById('vatRegisteredLabel').textContent = info.tax_name + ' registered';
+                    document.getElementById('vatNumberLabel').textContent = info.label || (info.tax_name + ' Registration Number');
+                }
+                // state_code is shared by India (GST state code) and US (sales-tax
+                // state) -- ONE input, relabeled, so only one value is ever
+                // actually submitted (two same-named inputs would silently
+                // collide on submit).
+                if (info.kind === 'us') {
+                    stateBlock.style.display = '';
+                    stateLabel.textContent = 'State';
+                    stateInput.placeholder = 'e.g. CA';
+                } else if (info.kind === 'india') {
+                    stateBlock.style.display = '';
+                    stateLabel.textContent = 'GST State Code';
+                    stateInput.placeholder = 'e.g. 27';
+                } else {
+                    stateBlock.style.display = 'none';
+                }
+                hint.textContent = code === '' || info.kind === 'india'
+                    ? 'Applies only when GST invoicing is enabled in Settings → Business. A GST-registered restaurant is the supplier of record on its customer invoices.'
+                    : (info.tax_name + ' rules for this restaurant’s selected country -- configured platform-wide on Settings → Country & Tax.');
+            }
+
+            select.addEventListener('change', applyKind);
+            applyKind();
+        })();
+    </script>
 
     <section class="restaurant-form-panel span-12">
         <div class="restaurant-form-panel-header">

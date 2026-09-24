@@ -632,6 +632,81 @@ extension FlexibleOrderPaymentCheckout on FlexibleOrderPaymentService {
   }
 }
 
+/// swaad-only: movie-theatre in-seat ordering. Runs the SAME gateway SDK
+/// flows above (razorpay/stripe/cashfree) but against a theatre payment
+/// session created BEFORE any order exists (TheatreApiService.paymentSession,
+/// which hits Api\TheatreController::paymentSession on the backend) instead
+/// of an existing single-restaurant order -- theatre checkout can span
+/// several restaurants under one payment, so it never fits the one-order
+/// assumption every method above is built around. Lives in this file (not
+/// theatre_api_service.dart) specifically to reach the private
+/// _openRazorpayPayment/_payStripe/_payCashfree/_completion members above,
+/// which only same-file code can see in Dart.
+extension FlexibleOrderPaymentTheatreCheckout on FlexibleOrderPaymentService {
+  /// Returns the gateway proof fields TheatreApiService.checkout() expects
+  /// (payment_id / razorpay_order_id / razorpay_signature /
+  /// stripe_payment_intent_id), or null if the customer cancelled or the
+  /// gateway itself failed.
+  Future<Map<String, String>?> payForTheatreCheckout({
+    required Map<String, dynamic> session,
+    required String gateway,
+    String paymentMode = 'upi',
+    String? cashfreeUpiAppId,
+    String? customerName,
+    String? customerEmail,
+    String? customerPhone,
+  }) async {
+    final resolved = gateway.trim().toLowerCase();
+    _completion = Completer<_GatewayPaymentResult>();
+    try {
+      if (resolved == 'razorpay') {
+        _openRazorpayPayment(
+          session,
+          paymentMode: paymentMode,
+          customerName: customerName,
+          customerEmail: customerEmail,
+          customerPhone: customerPhone,
+        );
+      } else if (resolved == 'stripe') {
+        await _payStripe(session, paymentMode: paymentMode);
+      } else if (resolved == 'cashfree') {
+        _payCashfree(
+          session,
+          paymentMode: paymentMode,
+          cashfreeUpiAppId: cashfreeUpiAppId,
+        );
+      } else {
+        throw StateError('Unsupported payment gateway: $resolved');
+      }
+
+      final result = await _completion!.future;
+      if (!result.success) return null;
+
+      return switch (resolved) {
+        'razorpay' => {
+            'payment_id': result.data['payment_id']?.toString() ?? '',
+            'razorpay_order_id':
+                result.data['razorpay_order_id']?.toString() ?? '',
+            'razorpay_signature':
+                result.data['razorpay_signature']?.toString() ?? '',
+          },
+        'cashfree' => {
+            'payment_id': result.data['payment_id']?.toString() ?? '',
+          },
+        'stripe' => {
+            'stripe_payment_intent_id':
+                result.data['stripe_payment_intent_id']?.toString() ??
+                    result.data['payment_id']?.toString() ??
+                    '',
+          },
+        _ => <String, String>{},
+      };
+    } finally {
+      _completion = null;
+    }
+  }
+}
+
 class _GatewayPaymentResult {
   const _GatewayPaymentResult._({
     required this.success,

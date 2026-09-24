@@ -104,8 +104,9 @@ class RestaurantController extends Controller
             ->active()
             ->orderBy('name')
             ->get(['id', 'name', 'area_type', 'description', 'latitude', 'longitude', 'radius_km', 'polygon_coordinates']);
+        $countryRegistrationMap = app(\App\Services\Tax\CountryTaxRegistry::class)->registrationUiMap();
 
-        return view('admin.restaurants.create', compact('cuisines', 'deliveryAreas'));
+        return view('admin.restaurants.create', compact('cuisines', 'deliveryAreas', 'countryRegistrationMap'));
     }
     
     /**
@@ -119,12 +120,15 @@ class RestaurantController extends Controller
             'email' => 'required|email|unique:restaurants,email',
             'phone' => 'required|string|max:20',
             'fssai_license_number' => 'nullable|string|max:64',
+            'country_code' => 'nullable|string|size:2',
             'is_gst_registered' => 'nullable|boolean',
             'gstin' => 'nullable|string|max:20',
             'pan' => 'nullable|string|max:15',
             'state_code' => 'nullable|string|max:2',
             'tax_deductee_type' => 'nullable|in:individual,company',
             'tds_pan_verified' => 'nullable|boolean',
+            'is_vat_registered' => 'nullable|boolean',
+            'vat_number' => 'nullable|string|max:40',
             'description' => 'nullable|string',
             'address' => 'required|string',
             'city' => 'required|string|max:100',
@@ -207,12 +211,15 @@ class RestaurantController extends Controller
                 'email' => $request->email,
                 'phone' => $request->phone,
                 'fssai_license_number' => $request->fssai_license_number,
+                'country_code' => $request->country_code ? strtoupper($request->country_code) : null,
                 'is_gst_registered' => $request->boolean('is_gst_registered'),
                 'gstin' => $request->gstin,
                 'pan' => $request->pan,
                 'state_code' => $request->state_code,
                 'tax_deductee_type' => $request->input('tax_deductee_type', 'individual'),
                 'tds_pan_verified' => $request->boolean('tds_pan_verified'),
+                'is_vat_registered' => $request->boolean('is_vat_registered'),
+                'vat_number' => $request->vat_number,
                 'description' => $request->description,
                 'address' => $request->address,
                 'city' => $request->city,
@@ -357,8 +364,9 @@ class RestaurantController extends Controller
             ->active()
             ->orderBy('name')
             ->get(['id', 'name', 'area_type', 'description', 'latitude', 'longitude', 'radius_km', 'polygon_coordinates']);
+        $countryRegistrationMap = app(\App\Services\Tax\CountryTaxRegistry::class)->registrationUiMap();
 
-        return view('admin.restaurants.edit', compact('restaurant', 'cuisines', 'deliveryAreas'));
+        return view('admin.restaurants.edit', compact('restaurant', 'cuisines', 'deliveryAreas', 'countryRegistrationMap'));
     }
 
     public function downloadTemplate()
@@ -533,12 +541,15 @@ class RestaurantController extends Controller
             'email' => 'required|email|unique:restaurants,email,' . $restaurant->id,
             'phone' => 'required|string|max:20',
             'fssai_license_number' => 'nullable|string|max:64',
+            'country_code' => 'nullable|string|size:2',
             'is_gst_registered' => 'nullable|boolean',
             'gstin' => 'nullable|string|max:20',
             'pan' => 'nullable|string|max:15',
             'state_code' => 'nullable|string|max:2',
             'tax_deductee_type' => 'nullable|in:individual,company',
             'tds_pan_verified' => 'nullable|boolean',
+            'is_vat_registered' => 'nullable|boolean',
+            'vat_number' => 'nullable|string|max:40',
             'description' => 'nullable|string',
             'address' => 'required|string',
             'city' => 'required|string|max:100',
@@ -593,8 +604,10 @@ class RestaurantController extends Controller
             // Update restaurant
             $restaurant->update(array_merge($validated, [
                 'restaurant_type' => $request->restaurant_type,
+                'country_code' => $request->country_code ? strtoupper($request->country_code) : null,
                 'is_gst_registered' => $request->boolean('is_gst_registered'),
                 'tds_pan_verified' => $request->boolean('tds_pan_verified'),
+                'is_vat_registered' => $request->boolean('is_vat_registered'),
                 'dining_charge' => $request->dining_charge ?? 0,
                 'commission_rate' => $request->commission_calculation_type === 'global' ? null : $request->commission_rate,
                 'commission_calculation_type' => $request->commission_calculation_type,

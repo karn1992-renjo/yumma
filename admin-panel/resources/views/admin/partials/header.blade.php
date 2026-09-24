@@ -10,37 +10,76 @@
         </div>
     </div>
     
+    @php
+        $isBranchCtx = auth()->check() && request()->routeIs('branch.*') && auth()->user()->hasAnyRole(['branch_owner', 'branch_manager', 'branch_staff']);
+        // swaad-only: movie-theatre in-seat ordering module. Deliberately
+        // only fixes the role label here for now -- the notification
+        // bell/settings-link branches below stay admin-default for theatre
+        // context since there's no theatre notification/settings system to
+        // point them at yet (see the movie-theatre-in-seat-ordering plan's
+        // phasing). A theatre user clicking those gets the same imperfect-
+        // but-not-broken admin fallback branch users had before that was
+        // fixed, which is an accepted, documented Phase 1 gap.
+        $isTheatreCtx = auth()->check() && request()->routeIs('theatre.*') && auth()->user()->hasAnyRole(['theatre_owner', 'theatre_manager']);
+        $roleLabel = match (true) {
+            $isBranchCtx => ucwords(str_replace('_', ' ', auth()->user()->getRoleNames()->first() ?? 'branch_staff')),
+            $isTheatreCtx => ucwords(str_replace('_', ' ', auth()->user()->getRoleNames()->first() ?? 'theatre_manager')),
+            default => 'Super Admin',
+        };
+    @endphp
     <div class="header-right">
         <div class="header-actions">
             <button type="button" class="header-icon-btn" id="themeToggleBtn" title="Toggle dark / light mode" aria-label="Toggle dark mode">
                 <i class="fas fa-moon"></i>
             </button>
-            <a href="{{ route('admin.orders.index', ['status' => 'action_required']) }}" class="header-icon-btn" id="pendingOrdersBtn">
-                <i class="fas fa-bell"></i>
+            @if($isBranchCtx)
+                @php
+                    $branchForHeader = app(\App\Services\BranchManagementService::class)->branchForUser(auth()->user());
+                    $pendingOrdersCount = 0;
+                    if ($branchForHeader) {
+                        $branchRestaurantIds = \App\Models\Restaurant::where('branch_id', $branchForHeader->id)->pluck('id');
+                        $pendingOrdersCount = \App\Models\Order::whereIn('status', ['pending', 'confirmed'])
+                            ->where(function ($q) use ($branchForHeader, $branchRestaurantIds) {
+                                $q->where('branch_id', $branchForHeader->id)
+                                    ->when($branchRestaurantIds->isNotEmpty(), fn ($b) => $b->orWhereIn('restaurant_id', $branchRestaurantIds));
+                            })->count();
+                    }
+                @endphp
+                <a href="{{ route('branch.orders.live') }}" class="header-icon-btn" id="pendingOrdersBtn">
+                    <i class="fas fa-bell"></i>
+                    <span class="badge-notification {{ $pendingOrdersCount > 0 ? '' : 'd-none' }}" id="adminPendingOrdersBadge">{{ $pendingOrdersCount > 99 ? '99+' : $pendingOrdersCount }}</span>
+                </a>
+                <a href="{{ route('branch.tickets') }}" class="header-icon-btn" id="supportInboxBtn" title="Support tickets">
+                    <i class="fas fa-comments"></i>
+                </a>
+            @else
                 @php
                     $pendingOrdersCount = \App\Models\Order::whereIn('status', ['pending', 'confirmed'])->count();
                 @endphp
-                <span class="badge-notification {{ $pendingOrdersCount > 0 ? '' : 'd-none' }}" id="adminPendingOrdersBadge">{{ $pendingOrdersCount > 99 ? '99+' : $pendingOrdersCount }}</span>
-            </a>
-            <a href="{{ route('admin.support.index') }}" class="header-icon-btn" id="supportInboxBtn" title="Live chat inbox">
-                <i class="fas fa-comments"></i>
-                <span class="badge-notification d-none" id="supportInboxBadge">0</span>
-            </a>
+                <a href="{{ route('admin.orders.index', ['status' => 'action_required']) }}" class="header-icon-btn" id="pendingOrdersBtn">
+                    <i class="fas fa-bell"></i>
+                    <span class="badge-notification {{ $pendingOrdersCount > 0 ? '' : 'd-none' }}" id="adminPendingOrdersBadge">{{ $pendingOrdersCount > 99 ? '99+' : $pendingOrdersCount }}</span>
+                </a>
+                <a href="{{ route('admin.support.index') }}" class="header-icon-btn" id="supportInboxBtn" title="Live chat inbox">
+                    <i class="fas fa-comments"></i>
+                    <span class="badge-notification d-none" id="supportInboxBadge">0</span>
+                </a>
+            @endif
         </div>
-        
+
         <div class="header-divider"></div>
-        
+
         <div class="user-profile-wrapper" id="userProfileButton" onclick="toggleUserDropdown()">
             <div class="user-avatar-lg">
                 {{ substr(auth()->user()->name, 0, 2) }}
             </div>
             <div class="user-info-text d-none d-sm-block">
                 <span class="user-name">{{ auth()->user()->name }}</span>
-                <span class="user-role">Super Admin</span>
+                <span class="user-role">{{ $roleLabel }}</span>
             </div>
             <i class="fas fa-chevron-down user-dropdown-arrow"></i>
         </div>
-        
+
         <div class="profile-dropdown-menu" id="userDropdownMenu">
             <div class="dropdown-user-header">
                 <div class="d-flex align-items-center gap-3">
@@ -53,7 +92,7 @@
                     </div>
                 </div>
             </div>
-            <a href="{{ route('admin.settings.index') }}" class="dropdown-menu-item">
+            <a href="{{ $isBranchCtx ? route('branch.settings') : route('admin.settings.index') }}" class="dropdown-menu-item">
                 <i class="fas fa-cog"></i>
                 <span>Settings</span>
             </a>
@@ -158,15 +197,27 @@
 </style>
 
 <script>
-    const adminOrderNotificationRoutes = {
+    @php $isBranchCtxJs = $isBranchCtx ?? false; @endphp
+    const adminOrderNotificationRoutes = @if($isBranchCtxJs) {
+        checkNew: @json(route('branch.orders.check-new')),
+        counts: @json(route('branch.orders.notification-counts')),
+        queue: @json(route('branch.orders.live')),
+        statusBase: @json(url('/branch-panel/orders')),
+        favicon: @json(App\Models\AppSetting::getValue('app_favicon') ? \Illuminate\Support\Facades\Storage::disk('public')->url(App\Models\AppSetting::getValue('app_favicon')) : asset('favicon.ico')),
+    }
+    @else {
         checkNew: @json(route('admin.orders.check-new')),
         counts: @json(route('admin.orders.notification-counts')),
         queue: @json(route('admin.orders.index', ['status' => 'action_required'])),
         statusBase: @json(url('/admin/orders')),
         favicon: @json(App\Models\AppSetting::getValue('app_favicon') ? \Illuminate\Support\Facades\Storage::disk('public')->url(App\Models\AppSetting::getValue('app_favicon')) : asset('favicon.ico')),
-    };
+    }
+    @endif;
 
     async function refreshSupportInboxBadge() {
+        @if($isBranchCtxJs)
+            return; // branch has no unread-ticket-count endpoint yet -- badge stays hidden rather than polling a 404
+        @endif
         try {
             const response = await fetch(`{{ route('admin.support.notification-summary') }}`, {
                 headers: { 'X-Requested-With': 'XMLHttpRequest' }
@@ -186,8 +237,17 @@
     function handleHeaderSearch(event) {
         if (event.key === 'Enter') {
             const searchTerm = event.target.value.trim();
-            if (searchTerm) {
-                const currentPath = window.location.pathname;
+            if (!searchTerm) return;
+            const currentPath = window.location.pathname;
+            @if($isBranchCtxJs)
+                if (currentPath.includes('/branch-panel/restaurants')) {
+                    window.location.href = `{{ route('branch.restaurants') }}?search=${encodeURIComponent(searchTerm)}`;
+                } else if (currentPath.includes('/branch-panel/drivers')) {
+                    window.location.href = `{{ route('branch.drivers') }}?search=${encodeURIComponent(searchTerm)}`;
+                } else {
+                    window.location.href = `{{ route('branch.orders') }}?search=${encodeURIComponent(searchTerm)}`;
+                }
+            @else
                 if (currentPath.includes('/admin/orders')) {
                     window.location.href = `{{ route('admin.orders.index') }}?search=${encodeURIComponent(searchTerm)}`;
                 } else if (currentPath.includes('/admin/restaurants')) {
@@ -199,7 +259,7 @@
                 } else {
                     window.location.href = `{{ route('admin.orders.index') }}?search=${encodeURIComponent(searchTerm)}`;
                 }
-            }
+            @endif
         }
     }
 

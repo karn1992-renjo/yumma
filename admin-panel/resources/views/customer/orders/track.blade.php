@@ -65,6 +65,8 @@
                         <div class="small text-muted mb-3">
                             @if($isTakeaway)
                                 Pickup from {{ $order->restaurant->address ?? 'restaurant counter' }}
+                            @elseif($order->order_type === 'theatre_delivery')
+                                Screen {{ $order->screen_id ?? '-' }} · Seat {{ $order->seat_label ?? '-' }}
                             @else
                                 {{ $order->delivery_address }}
                             @endif

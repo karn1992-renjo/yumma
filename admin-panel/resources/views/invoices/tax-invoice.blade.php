@@ -81,7 +81,7 @@
                     @if($meta['place_of_supply'])<tr><td>Place of supply</td><td>{{ $meta['place_of_supply'] }}</td></tr>@endif
                 </table>
                 @if($section95)
-                    <div class="small muted" style="margin-top:5px;">Invoiced by <span class="b">{{ $company['name'] }}</span> as Electronic Commerce Operator@if($company['gstin']) &middot; GSTIN {{ $company['gstin'] }}@endif</div>
+                    <div class="small muted" style="margin-top:5px;">Invoiced by <span class="b">{{ $company['name'] }}</span> as Electronic Commerce Operator @if($company['gstin']) &middot; GSTIN {{ $company['gstin'] }}@endif</div>
                 @else
                     <div class="small muted" style="margin-top:5px;">Sold through {{ $company['name'] }}@if($company['gstin']) &middot; GSTIN {{ $company['gstin'] }}@endif</div>
                 @endif

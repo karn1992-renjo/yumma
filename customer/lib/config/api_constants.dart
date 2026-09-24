@@ -154,6 +154,8 @@ class ApiConstants {
   static const String restaurantPromos = '/restaurant/promos';
   static String customerRestaurantPromos(int restaurantId) =>
       '/restaurants/$restaurantId/promos';
+  static String customerRestaurantAiCombo(int restaurantId) =>
+      '/restaurants/$restaurantId/ai-combo';
   static const String restaurantPrinters = '/restaurant/printers';
   static String restaurantOrderDetails(int orderId) =>
       '$restaurantOrders/$orderId';

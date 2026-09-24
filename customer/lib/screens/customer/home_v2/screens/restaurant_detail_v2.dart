@@ -82,6 +82,9 @@ class _RestaurantDetailV2State extends State<RestaurantDetailV2> {
   Map<String, dynamic> _restaurant = const {};
   List<Map<String, dynamic>> _menu = const [];
   List<Map<String, dynamic>> _promos = const [];
+  Map<String, dynamic> _aiCombo = const {};
+  List<Map<String, dynamic>> get _aiComboItems =>
+      v2MapList(_aiCombo['items']);
 
   @override
   void dispose() {
@@ -113,6 +116,9 @@ class _RestaurantDetailV2State extends State<RestaurantDetailV2> {
       });
       _repo.restaurantPromos(widget.restaurantId).then((v) {
         if (mounted && v.isNotEmpty) setState(() => _promos = v);
+      });
+      _repo.restaurantAiCombo(widget.restaurantId).then((v) {
+        if (mounted && v.isNotEmpty) setState(() => _aiCombo = v);
       });
     } catch (_) {
       if (mounted) {
@@ -200,6 +206,25 @@ class _RestaurantDetailV2State extends State<RestaurantDetailV2> {
     if (id > 0) context.read<CartProvider>().decrementQuantity(id);
   }
 
+  /// Adds every item in the AI combo at once. Runs the single-restaurant
+  /// "replace cart?" check only once (via [v2AddToCart] on the first item) —
+  /// if the user declines it, the rest of the combo is not added either.
+  Future<void> _addCombo() async {
+    final raw = _aiComboItems;
+    if (raw.length < 2) return;
+    final restaurant =
+        Restaurant.fromJson({..._restaurant, 'id': widget.restaurantId});
+    final items = raw.map((m) => MenuItem.fromJson(m)).toList();
+    final cart = context.read<CartProvider>();
+
+    await v2AddToCart(context, items.first, restaurant);
+    if (!mounted || cart.quantityFor(items.first.id) <= 0) return;
+
+    for (final item in items.skip(1)) {
+      cart.addItem(item, restaurant);
+    }
+  }
+
   void _openReviews() {
     Navigator.of(context).push(MaterialPageRoute(
       builder: (_) => RestaurantReviewsV2(restaurant: _restaurant),
@@ -228,6 +253,142 @@ class _RestaurantDetailV2State extends State<RestaurantDetailV2> {
             child: _RestaurantOfferCarousel(offers: _promos),
           ),
         ],
+      ),
+    );
+  }
+
+  /// AI-picked bundle from this restaurant's own menu, personalized with the
+  /// logged-in customer's name server-side ("Combo for Karn"). Shown only
+  /// here on the customer app; no admin/restaurant approval involved.
+  Widget _comboStrip() {
+    final p = V2Theme.of(context);
+    final items = _aiComboItems;
+    final title = (_aiCombo['title'] ?? '').toString();
+    final price = v2Double(_aiCombo['price']);
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 16),
+      child: Container(
+        margin: const EdgeInsets.symmetric(horizontal: 16),
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: p.isDark ? const Color(0xFF161C2C) : Colors.white,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: p.glassBorder),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: p.accent.withOpacity(0.14),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Icon(Icons.auto_awesome_rounded,
+                      color: p.accent, size: 18),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    title.isNotEmpty ? title : 'Combo for you',
+                    style: TextStyle(
+                      color: p.ink,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w900,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            SizedBox(
+              height: 76,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                itemCount: items.length,
+                separatorBuilder: (_, __) => const SizedBox(width: 10),
+                itemBuilder: (context, index) {
+                  final item = items[index];
+                  final img = (item['image_url'] ?? item['image'] ?? '')
+                      .toString();
+                  return Column(
+                    children: [
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(14),
+                        child: AppCachedImage(
+                          imageUrl: img,
+                          width: 56,
+                          height: 56,
+                          fit: BoxFit.cover,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      SizedBox(
+                        width: 60,
+                        child: Text(
+                          (item['name'] ?? '').toString(),
+                          style: TextStyle(fontSize: 10.5, color: p.ink),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          textAlign: TextAlign.center,
+                        ),
+                      ),
+                    ],
+                  );
+                },
+              ),
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: Text.rich(
+                    TextSpan(
+                      children: [
+                        TextSpan(
+                          text: 'Bundle price  ',
+                          style: TextStyle(fontSize: 12, color: p.inkSoft),
+                        ),
+                        TextSpan(
+                          text: formatCurrency(context, price),
+                          style: TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w900,
+                            color: p.ink,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                V2Tappable(
+                  onTap: _addCombo,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 18, vertical: 11),
+                    decoration: BoxDecoration(
+                      color: p.accent,
+                      borderRadius: BorderRadius.circular(13),
+                    ),
+                    child: const Text(
+                      'Add Combo',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w900,
+                        fontSize: 13.5,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -305,6 +466,8 @@ class _RestaurantDetailV2State extends State<RestaurantDetailV2> {
                       SliverToBoxAdapter(child: _hero()),
                       if (_promos.isNotEmpty)
                         SliverToBoxAdapter(child: _offerStrip()),
+                      if (_aiComboItems.length >= 2)
+                        SliverToBoxAdapter(child: _comboStrip()),
                       SliverToBoxAdapter(child: _menuTitle()),
                       SliverPersistentHeader(
                         pinned: true,

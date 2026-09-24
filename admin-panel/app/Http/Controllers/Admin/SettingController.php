@@ -54,7 +54,16 @@ class SettingController extends Controller
     {
         $settings = AppSetting::all()->pluck('value', 'key')->toArray();
 
-        return view('admin.settings.business', compact('settings'));
+        // The GST/Sec-9(5)/TCS/TDS/gig-cess sections below are India-specific
+        // obligations tied to orders actually placed in India -- hide them
+        // once India is no longer an active country on the platform (see
+        // admin.settings.country-tax), rather than showing India-only tax
+        // workflow toggles on a platform that no longer serves India at all.
+        $inActive = \App\Models\CountryTaxProfile::where('country_code', 'IN')->where('is_active', true)->exists();
+        $platformCountryCode = strtoupper((string) AppSetting::getValue('platform_country_code', 'IN'));
+        $platformCountryName = \App\Support\CountryTaxDefaults::nameFor($platformCountryCode);
+
+        return view('admin.settings.business', compact('settings', 'inActive', 'platformCountryCode', 'platformCountryName'));
     }
 
     /**
@@ -828,6 +837,7 @@ class SettingController extends Controller
             'onboarding_slide_3_description' => 'nullable|string|max:500',
             'onboarding_slide_3_image' => 'nullable|image|mimes:png,jpg,jpeg,webp|max:2048',
             'ai_feature_enabled' => 'nullable|in:0,1',
+            'api_request_timeout_seconds' => 'nullable|integer|min:5|max:120',
         ]);
 
         // The master AI on/off switch lives in App\Models\AiSetting (via
@@ -889,6 +899,7 @@ class SettingController extends Controller
         AppSetting::updateOrCreate(['key' => 'customer_order_deeplink_template'], ['value' => $request->customer_order_deeplink_template ?? 'foodflow://orders/{order_id}', 'type' => 'string']);
         AppSetting::updateOrCreate(['key' => 'customer_restaurant_deeplink_template'], ['value' => $request->customer_restaurant_deeplink_template ?? 'foodflow://restaurants/{restaurant_id}', 'type' => 'string']);
         AppSetting::updateOrCreate(['key' => 'customer_wallet_deeplink_template'], ['value' => $request->customer_wallet_deeplink_template ?? 'foodflow://wallet', 'type' => 'string']);
+        AppSetting::updateOrCreate(['key' => 'api_request_timeout_seconds'], ['value' => $request->input('api_request_timeout_seconds', 20), 'type' => 'number']);
         AppSetting::updateOrCreate(['key' => 'onboarding_intro_title'], ['value' => $request->onboarding_intro_title ?? '', 'type' => 'string']);
         AppSetting::updateOrCreate(['key' => 'onboarding_intro_subtitle'], ['value' => $request->onboarding_intro_subtitle ?? '', 'type' => 'string']);
 

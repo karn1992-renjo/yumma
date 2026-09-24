@@ -84,7 +84,13 @@
             <div class="card-body">
                 <div class="fw-bold">{{ $order->customer_name ?? $order->customer?->name ?? 'Guest' }}</div>
                 <div class="small">{{ $order->customer_phone ?? $order->customer?->phone }}</div>
-                <div class="text-muted small mt-2">{{ $order->delivery_address ?? $order->customer_address }}</div>
+                <div class="text-muted small mt-2">
+                    @if($order->order_type === 'theatre_delivery')
+                        Screen {{ $order->screen_id ?? '-' }} · Seat {{ $order->seat_label ?? '-' }}
+                    @else
+                        {{ $order->delivery_address ?? $order->customer_address }}
+                    @endif
+                </div>
             </div>
         </div>
 

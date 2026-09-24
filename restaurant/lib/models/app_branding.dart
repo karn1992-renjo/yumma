@@ -15,6 +15,7 @@ class AppBranding {
   final String pusherAppKey;
   final String pusherAppCluster;
   final String otpServiceProvider;
+  final int? apiRequestTimeoutSeconds;
 
   const AppBranding({
     required this.appName,
@@ -31,6 +32,7 @@ class AppBranding {
     this.pusherAppKey = '',
     this.pusherAppCluster = 'mt1',
     this.otpServiceProvider = 'log',
+    this.apiRequestTimeoutSeconds,
   });
 
   factory AppBranding.fromJson(Map<String, dynamic> json) {
@@ -61,6 +63,8 @@ class AppBranding {
       pusherAppCluster: (json['pusher_app_cluster'] ?? 'mt1').toString().trim(),
       otpServiceProvider:
           (json['otp_service_provider'] ?? 'log').toString().trim(),
+      apiRequestTimeoutSeconds:
+          int.tryParse(json['api_request_timeout_seconds']?.toString() ?? ''),
     );
   }
 
@@ -90,6 +94,8 @@ class AppBranding {
       'pusher_app_key': pusherAppKey,
       'pusher_app_cluster': pusherAppCluster,
       'otp_service_provider': otpServiceProvider,
+      if (apiRequestTimeoutSeconds != null)
+        'api_request_timeout_seconds': apiRequestTimeoutSeconds,
     };
   }
 

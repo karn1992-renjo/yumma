@@ -77,8 +77,14 @@
                         <div class="fw-semibold">{{ $order->customer_name ?? 'N/A' }}</div>
                     </div>
                     <div class="col-md-12">
-                        <label class="form-label fw-semibold text-muted small">Delivery Address</label>
-                        <div class="fw-semibold">{{ is_array($order->customer_address) ? ($order->customer_address['address'] ?? json_encode($order->customer_address)) : ($order->delivery_address ?? 'N/A') }}</div>
+                        <label class="form-label fw-semibold text-muted small">{{ $order->order_type === 'theatre_delivery' ? 'Seat' : 'Delivery Address' }}</label>
+                        <div class="fw-semibold">
+                            @if($order->order_type === 'theatre_delivery')
+                                Screen {{ $order->screen_id ?? '-' }} · Seat {{ $order->seat_label ?? '-' }}
+                            @else
+                                {{ is_array($order->customer_address) ? ($order->customer_address['address'] ?? json_encode($order->customer_address)) : ($order->delivery_address ?? 'N/A') }}
+                            @endif
+                        </div>
                     </div>
                 </div>
             </div>

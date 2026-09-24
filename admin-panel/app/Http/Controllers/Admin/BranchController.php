@@ -118,10 +118,32 @@ class BranchController extends Controller
 
     public function edit(Branch $branch)
     {
+        $ownerMembership = $branch->owner_user_id
+            ? BranchUser::where('branch_id', $branch->id)->where('user_id', $branch->owner_user_id)->first()
+            : null;
+
         return view('admin.branches.edit', array_merge(
-            ['branch' => $branch],
+            ['branch' => $branch, 'ownerMembership' => $ownerMembership],
             $this->branchZoneFormData($branch)
         ));
+    }
+
+    /**
+     * One-click fix for the exact class of bug where a branch owner can't use
+     * a feature added after their BranchUser row was created (its stored
+     * `permissions` predates the new permission key, or the row is missing
+     * entirely) — resets it to the current owner-role default. For anything
+     * more specific than "reset to default", use the full permission editor
+     * at admin.branches.users (filtered to this branch).
+     */
+    public function resyncOwnerPermissions(Branch $branch)
+    {
+        abort_unless($branch->owner_user_id, 404, 'This branch has no owner account yet.');
+        $owner = User::findOrFail($branch->owner_user_id);
+
+        $this->branches->resyncPermissions($branch, $owner, BranchManagementService::OWNER_ROLE);
+
+        return redirect()->route('admin.branches.edit', $branch)->with('success', "{$owner->name}'s permissions were reset to the default owner set (includes Fleet/Drivers/Orders/etc.).");
     }
 
     public function update(Request $request, Branch $branch)
@@ -218,7 +240,7 @@ class BranchController extends Controller
             ->paginate(20)
             ->withQueryString();
         $branches = Branch::orderBy('name')->get();
-        $permissionCatalog = $this->branchPermissionCatalog();
+        $permissionCatalog = $this->branches->fullPermissionCatalog();
 
         return view('admin.branches.users', compact('users', 'branches', 'permissionCatalog'));
     }
@@ -233,7 +255,7 @@ class BranchController extends Controller
             'password' => ['nullable', 'string', 'min:8'],
             'role' => ['required', Rule::in([BranchManagementService::OWNER_ROLE, BranchManagementService::MANAGER_ROLE, BranchManagementService::STAFF_ROLE])],
             'permissions' => ['nullable', 'array'],
-            'permissions.*' => ['string', Rule::in(array_keys($this->branchPermissionCatalog()))],
+            'permissions.*' => ['string', Rule::in(array_keys($this->branches->fullPermissionCatalog()))],
         ]);
 
         $this->branches->ensureBranchRoles();
@@ -265,7 +287,7 @@ class BranchController extends Controller
         $data = $request->validate([
             'role' => ['required', Rule::in([BranchManagementService::OWNER_ROLE, BranchManagementService::MANAGER_ROLE, BranchManagementService::STAFF_ROLE])],
             'permissions' => ['nullable', 'array'],
-            'permissions.*' => ['string', Rule::in(array_keys($this->branchPermissionCatalog()))],
+            'permissions.*' => ['string', Rule::in(array_keys($this->branches->fullPermissionCatalog()))],
             'is_active' => ['nullable', 'boolean'],
         ]);
 
@@ -611,34 +633,4 @@ class BranchController extends Controller
         ];
     }
 
-    private function branchPermissionCatalog(): array
-    {
-        return [
-            'branch.orders.view' => 'View Orders',
-            'branch.orders.assign_driver' => 'Assign Order Drivers',
-            'branch.orders.export' => 'Export Orders',
-            'branch.restaurants.view' => 'View Restaurants',
-            'branch.restaurants.create' => 'Create Restaurants',
-            'branch.restaurants.edit' => 'Edit Restaurants',
-            'branch.drivers.view' => 'View Drivers',
-            'branch.drivers.create' => 'Create Drivers',
-            'branch.drivers.edit' => 'Edit Drivers',
-            'branch.cod.view' => 'View COD Management',
-            'branch.cod.settle' => 'Settle Driver COD Cash',
-            'branch.zones.view' => 'View Territories',
-            'branch.wallet.view' => 'View Wallet',
-            'branch.wallet.export' => 'Export Wallet',
-            'branch.withdrawals.create' => 'Request Withdrawals',
-            'branch.settlements.view' => 'View Settlements',
-            'branch.settlements.create' => 'Request Settlements',
-            'branch.reports.view' => 'View Reports',
-            'branch.reports.export' => 'Export Reports',
-            'branch.settings.view' => 'View Settings',
-            'branch.settings.update' => 'Update Settings',
-            'branch.staff.create' => 'Create Staff',
-            'branch.staff.edit' => 'Edit Staff',
-            'branch.tickets.view' => 'View Support Tickets',
-            'branch.tickets.create' => 'Create Support Tickets',
-        ];
-    }
 }

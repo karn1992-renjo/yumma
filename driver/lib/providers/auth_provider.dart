@@ -25,11 +25,14 @@ class AuthProvider extends ChangeNotifier {
   bool get isRestaurantOwner => _currentUser?.isRestaurantOwner ?? false;
   bool get isDriver => _currentUser?.isDriver ?? false;
   bool get isAdmin => _currentUser?.isAdmin ?? false;
+  bool get isTheatreRunner => _currentUser?.isTheatreRunner ?? false;
   bool get canUseCurrentApp {
     final user = _currentUser;
     if (user == null) return false;
     if (!AppConfig.isRoleLocked) return true;
-    if (AppConfig.isDriverApp) return user.isDriver;
+    // swaad-only: a theatre_runner is allowed onto the driver-role-locked
+    // build too -- it reuses this app's shell instead of a separate app.
+    if (AppConfig.isDriverApp) return user.isDriver || user.isTheatreRunner;
     if (AppConfig.isRestaurantApp) return user.isRestaurantOwner;
     return user.isCustomer;
   }

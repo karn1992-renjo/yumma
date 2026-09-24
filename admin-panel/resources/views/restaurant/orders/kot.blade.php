@@ -14,6 +14,38 @@
     if (empty($orderItems) && method_exists($order, 'orderItems')) {
         $orderItems = $order->orderItems?->toArray() ?? [];
     }
+
+    $formatOption = function ($option) use ($currencySymbol, $decimals) {
+        if (is_string($option)) {
+            return trim($option) ?: null;
+        }
+        if (!is_array($option)) {
+            return null;
+        }
+        $name = trim((string) ($option['name'] ?? $option['label'] ?? $option['title'] ?? ''));
+        if ($name === '') {
+            return null;
+        }
+        $price = (float) ($option['price'] ?? $option['additional_price'] ?? $option['amount'] ?? 0);
+        return $price > 0
+            ? $name . ' (+' . $currencySymbol . number_format($price, $decimals) . ')'
+            : $name;
+    };
+
+    $itemCustomizations = function ($item) use ($formatOption) {
+        $parts = [];
+        $variant = data_get($item, 'selected_variant');
+        $variantName = is_array($variant) ? trim((string) ($variant['name'] ?? '')) : '';
+        if (strcasecmp($variantName, 'Promotion info') !== 0 && ($label = $formatOption($variant))) {
+            $parts[] = $label;
+        }
+        foreach ((array) (data_get($item, 'selected_add_ons') ?? data_get($item, 'add_ons') ?? data_get($item, 'addons')) as $addOn) {
+            if ($label = $formatOption($addOn)) {
+                $parts[] = $label;
+            }
+        }
+        return $parts;
+    };
 @endphp
 <!doctype html>
 <html lang="en">
@@ -82,6 +114,12 @@
                     <span class="item-name">{{ $qty }} x {{ $name }}</span>
                     <span>{{ $currencySymbol }}{{ number_format($total, $decimals) }}</span>
                 </div>
+                @foreach($itemCustomizations($item) as $customization)
+                    <div class="small">+ {{ $customization }}</div>
+                @endforeach
+                @if(!empty($item['special_instructions']) || !empty($item['notes']))
+                    <div class="small">Note: {{ $item['special_instructions'] ?? $item['notes'] }}</div>
+                @endif
                 <div class="muted">{{ $currencySymbol }}{{ number_format($price, $decimals) }} each</div>
             </div>
         @empty

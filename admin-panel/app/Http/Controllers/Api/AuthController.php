@@ -1037,7 +1037,7 @@ class AuthController extends Controller
         // requested, surface a staff/partner role first — otherwise a driver or
         // restaurant owner hitting /user gets `role: customer` and their app
         // (which is role-locked) logs them straight back out.
-        $rolePriority = ['delivery_partner', 'restaurant_owner', 'restaurant_staff', 'branch_owner', 'branch_manager', 'admin', 'super_admin'];
+        $rolePriority = ['delivery_partner', 'theatre_runner', 'restaurant_owner', 'restaurant_staff', 'branch_owner', 'branch_manager', 'theatre_owner', 'theatre_manager', 'admin', 'super_admin'];
         $prioritisedRole = collect($rolePriority)->first(fn ($r) => $roleNames->contains($r));
         $primaryRole = $preferredRole && $roleNames->contains($preferredRole)
             ? $preferredRole
@@ -1140,6 +1140,12 @@ class AuthController extends Controller
                     'google_maps_api_key',
                     AppSetting::getValue('google_maps_key', '')
                 )),
+                // Read by ApiService in the driver/restaurant apps to bound
+                // every HTTP request — admin-tunable so a stalled request
+                // (e.g. while the non-dismissible incoming-order overlay is
+                // up) can't leave the app looking hung indefinitely. Clamped
+                // again on the client side; this is just the source value.
+                'api_request_timeout_seconds' => (int) AppSetting::getValue('api_request_timeout_seconds', 20),
             ],
         ]);
     }
@@ -1331,6 +1337,13 @@ class AuthController extends Controller
 
         if ($role === 'restaurant_owner') {
             return $user->hasAnyRole(['restaurant_owner', 'restaurant_staff']) || $user->restaurantStaff()->exists();
+        }
+
+        // swaad-only: a theatre_runner logs into the same driver app under the
+        // same 'driver' role param (see AppConfig.appRole) but never holds the
+        // delivery_partner Spatie role itself.
+        if ($role === 'delivery_partner') {
+            return $user->hasAnyRole(['delivery_partner', 'theatre_runner']);
         }
 
         return $user->hasRole($role);
@@ -1973,7 +1986,7 @@ class AuthController extends Controller
             return 'restaurant';
         }
 
-        if (str_contains($role, 'driver') || str_contains($role, 'delivery')) {
+        if (str_contains($role, 'driver') || str_contains($role, 'delivery') || str_contains($role, 'runner')) {
             return 'driver';
         }
 

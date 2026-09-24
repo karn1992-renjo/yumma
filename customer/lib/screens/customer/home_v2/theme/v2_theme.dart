@@ -13,15 +13,15 @@ enum V2Mode { dark, light }
 const String kV2ModePrefsKey = 'customer_home_v2_mode';
 
 /// Global, persisted light/dark selection for the whole V2 experience.
-final ValueNotifier<V2Mode> v2ModeNotifier = ValueNotifier<V2Mode>(V2Mode.dark);
+final ValueNotifier<V2Mode> v2ModeNotifier = ValueNotifier<V2Mode>(V2Mode.light);
 
 Future<void> loadV2Mode() async {
   try {
     final prefs = await SharedPreferences.getInstance();
     final raw = prefs.getString(kV2ModePrefsKey);
-    v2ModeNotifier.value = raw == 'light' ? V2Mode.light : V2Mode.dark;
+    v2ModeNotifier.value = raw == 'dark' ? V2Mode.dark : V2Mode.light;
   } catch (_) {
-    v2ModeNotifier.value = V2Mode.dark;
+    v2ModeNotifier.value = V2Mode.light;
   }
 }
 

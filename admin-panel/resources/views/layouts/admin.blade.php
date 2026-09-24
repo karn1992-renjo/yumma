@@ -2386,6 +2386,8 @@
     <!-- Sidebar -->
     @if(auth()->check() && request()->routeIs('branch.*') && auth()->user()->hasAnyRole(['branch_owner', 'branch_manager', 'branch_staff']))
         @include('branch._sidebar')
+    @elseif(auth()->check() && request()->routeIs('theatre.*') && auth()->user()->hasAnyRole(['theatre_owner', 'theatre_manager']))
+        @include('theatre._sidebar')
     @else
         @include('admin.partials.sidebar')
     @endif

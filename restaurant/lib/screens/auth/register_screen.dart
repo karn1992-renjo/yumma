@@ -95,6 +95,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   Set<String> selectedCuisines = {};
   Set<String> serviceTypes = {'Dine-in', 'Delivery'};
   int step = 0;
+  bool _isForward = true;
   int? matchedAreaId;
   double? latitude;
   double? longitude;
@@ -145,10 +146,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
   bool checkingPanDoc = false;
 
   final steps = const [
-    'Basic Info',
-    'Business Info',
-    'Bank Details',
-    'Preview',
+    'Mobile',
+    'Restaurant',
+    'Business',
+    'Bank',
+    'Review',
   ];
 
   @override
@@ -355,7 +357,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       if (serviceData is List) {
         serviceTypes = serviceData.map((e) => e.toString()).toSet();
       }
-      step = (data['step'] as num?)?.toInt().clamp(0, 3) ?? step;
+      step = (data['step'] as num?)?.toInt().clamp(0, steps.length - 1) ?? step;
       businessType = data['business_type']?.toString() ?? businessType;
       gstStatus = data['gst_status']?.toString() ?? gstStatus;
       fssaiStatus = data['fssai_status']?.toString() ?? fssaiStatus;
@@ -572,7 +574,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
               child: CircularProgressIndicator(strokeWidth: 2, color: orange),
             ),
             const SizedBox(width: 8),
-            Text('Verifying with Cashfree...', style: t(12.5, color: muted)),
+            Text('Verifying document details...', style: t(12.5, color: muted)),
           ],
         ),
       );
@@ -583,21 +585,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
     final IconData icon;
     final Color color;
     final String text;
-    switch (result.status) {
-      case DocVerifyStatus.verified:
-        icon = Icons.verified_rounded;
-        color = green;
-        text = 'Verified';
-        break;
-      case DocVerifyStatus.invalid:
-        icon = Icons.error_rounded;
-        color = red;
-        text = result.message ?? 'Could not verify. Please check and retry.';
-        break;
-      default:
-        icon = Icons.info_rounded;
-        color = muted;
-        text = result.message ?? 'Could not verify right now.';
+    if (result.status == DocVerifyStatus.verified) {
+      icon = Icons.verified_rounded;
+      color = green;
+      text = 'Verified';
+    } else {
+      icon = Icons.info_outline_rounded;
+      color = const Color(0xFFD97706);
+      text = 'Not verified. It will be verified manually.';
     }
     return Padding(
       padding: const EdgeInsets.only(top: 6),
@@ -850,58 +845,89 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   bool _validate(int s) {
     if (s == 0) {
-      if (restaurantName.text.trim().length < 2)
-        return _fail('Enter a valid restaurant name.');
-      if (selectedCuisines.isEmpty)
-        return _fail('Select at least one cuisine.');
-      if (description.text.trim().isEmpty || description.text.length > 160)
-        return _fail('Write a short description within 160 characters.');
-      if (logoFile == null) return _fail('Upload your restaurant logo.');
-      if (coverFile == null)
-        return _fail('Upload your restaurant cover image.');
-      if (ownerName.text.trim().length < 2)
-        return _fail('Enter owner or manager name.');
-      if (!phoneVerified) return _fail('Verify your phone number.');
-      if (!emailVerified) return _fail('Verify your email address.');
-      if (!_validPassword(password.text))
-        return _fail('Create a stronger password.');
-      if (password.text != confirmPassword.text)
-        return _fail('The passwords do not match.');
+      if (phone.text.trim().isEmpty) {
+        return _fail('Enter your mobile number.');
+      }
+      if (!phoneVerified) {
+        return _fail('Please verify your mobile number with OTP.');
+      }
     }
     if (s == 1) {
-      final y = int.tryParse(year.text.trim());
-      if (legalName.text.trim().length < 2)
-        return _fail('Enter registered business name.');
-      if (y == null || y < 1900 || y > DateTime.now().year)
-        return _fail('Select a valid established year.');
-      if (gstStatus == 'GST Registered' && gstNumber.text.trim().length < 10)
-        return _fail('Enter a valid GST number.');
-      if (fssaiStatus == 'Licence Available' && fssaiNumber.text.trim().isEmpty)
-        return _fail('Enter FSSAI licence number.');
-      if (serviceTypes.isEmpty)
+      if (restaurantName.text.trim().length < 2) {
+        return _fail('Enter a valid restaurant name.');
+      }
+      if (selectedCuisines.isEmpty) {
+        return _fail('Select at least one cuisine.');
+      }
+      if (description.text.trim().isEmpty || description.text.length > 160) {
+        return _fail('Write a short description within 160 characters.');
+      }
+      if (logoFile == null) return _fail('Upload your restaurant logo.');
+      if (coverFile == null) {
+        return _fail('Upload your restaurant cover image.');
+      }
+      if (serviceTypes.isEmpty) {
         return _fail('Select at least one service type.');
-      if (address1.text.trim().isEmpty ||
-          city.text.trim().isEmpty ||
-          postcode.text.trim().isEmpty)
-        return _fail('Complete the restaurant address.');
-      if (latitude == null || longitude == null)
-        return _fail('Confirm your restaurant location on the map.');
+      }
     }
     if (s == 2) {
-      if (holder.text.trim().length < 2)
+      if (ownerName.text.trim().length < 2) {
+        return _fail('Enter owner or manager name.');
+      }
+      if (email.text.trim().isEmpty ||
+          !RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$').hasMatch(email.text.trim())) {
+        return _fail('Enter a valid email address.');
+      }
+      if (!emailVerified) {
+        return _fail('Verify your email address.');
+      }
+      if (!_validPassword(password.text)) {
+        return _fail('Create a stronger password.');
+      }
+      if (password.text != confirmPassword.text) {
+        return _fail('The passwords do not match.');
+      }
+      final y = int.tryParse(year.text.trim());
+      if (legalName.text.trim().length < 2) {
+        return _fail('Enter registered business name.');
+      }
+      if (y == null || y < 1900 || y > DateTime.now().year) {
+        return _fail('Select a valid established year.');
+      }
+      if (gstStatus == 'GST Registered' && gstNumber.text.trim().length < 10) {
+        return _fail('Enter a valid GST number.');
+      }
+      if (fssaiStatus == 'Licence Available' && fssaiNumber.text.trim().isEmpty) {
+        return _fail('Enter FSSAI licence number.');
+      }
+      if (address1.text.trim().isEmpty ||
+          city.text.trim().isEmpty ||
+          postcode.text.trim().isEmpty) {
+        return _fail('Complete the restaurant address.');
+      }
+      if (latitude == null || longitude == null) {
+        return _fail('Confirm your restaurant location on the map.');
+      }
+    }
+    if (s == 3) {
+      if (holder.text.trim().length < 2) {
         return _fail('Enter account holder name.');
+      }
       if (bankName.text.trim().isEmpty) return _fail('Select your bank.');
-      if (account.text.trim().length < 6)
+      if (account.text.trim().length < 6) {
         return _fail('Enter a valid account number.');
-      if (account.text.trim() != accountConfirm.text.trim())
+      }
+      if (account.text.trim() != accountConfirm.text.trim()) {
         return _fail('The account numbers do not match.');
+      }
       if (ifsc.text.trim().length < 8) return _fail('Enter a valid IFSC code.');
       if (branch.text.trim().isEmpty) return _fail('Enter branch name.');
       if (bankProofFile == null) return _fail('Upload bank proof.');
-      if (!bankConsent)
+      if (!bankConsent) {
         return _fail('Confirm this bank account belongs to you.');
+      }
     }
-    if (s == 3 && (!declaration || !agreement)) {
+    if (s == 4 && (!declaration || !agreement)) {
       return _fail('Accept the declarations before submitting.');
     }
     return true;
@@ -915,22 +941,33 @@ class _RegisterScreenState extends State<RegisterScreen> {
   Future<void> _next() async {
     if (!_validate(step)) return;
     await _saveDraft();
-    if (step == 3) return _submit();
-    setState(() => step++);
+    if (step == steps.length - 1) return _submit();
+    setState(() {
+      _isForward = true;
+      step++;
+    });
   }
 
   void _back() {
     if (step == 0) {
       Navigator.maybePop(context);
     } else {
-      setState(() => step--);
+      setState(() {
+        _isForward = false;
+        step--;
+      });
       _queueSave();
     }
   }
 
   Future<void> _submit() async {
-    if (!_validate(0) || !_validate(1) || !_validate(2) || !_validate(3))
+    if (!_validate(0) ||
+        !_validate(1) ||
+        !_validate(2) ||
+        !_validate(3) ||
+        !_validate(4)) {
       return;
+    }
     _detectZone();
     setState(() => submitting = true);
     try {
@@ -1071,257 +1108,442 @@ class _RegisterScreenState extends State<RegisterScreen> {
         height: 1.28,
       );
 
+  Widget _buildStepTransition({
+    required Widget child,
+    required int currentStep,
+  }) {
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 320),
+      switchInCurve: Curves.easeOutCubic,
+      switchOutCurve: Curves.easeInCubic,
+      layoutBuilder: (currentChild, previousChildren) {
+        return Stack(
+          alignment: Alignment.topCenter,
+          children: <Widget>[
+            ...previousChildren,
+            if (currentChild != null) currentChild,
+          ],
+        );
+      },
+      transitionBuilder: (Widget child, Animation<double> animation) {
+        final isIncoming = (child.key as ValueKey<int>?)?.value == currentStep;
+        final beginOffset = _isForward
+            ? (isIncoming ? const Offset(0.24, 0.0) : const Offset(-0.24, 0.0))
+            : (isIncoming ? const Offset(-0.24, 0.0) : const Offset(0.24, 0.0));
+        return SlideTransition(
+          position: Tween<Offset>(
+            begin: beginOffset,
+            end: Offset.zero,
+          ).animate(animation),
+          child: FadeTransition(
+            opacity: animation,
+            child: child,
+          ),
+        );
+      },
+      child: KeyedSubtree(
+        key: ValueKey<int>(currentStep),
+        child: child,
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (loading) {
-      return Scaffold(
-        backgroundColor: foodflow.canvas,
-        body: Stack(children: [
-          ...AuroraTheme.auroraBlobs(),
-          const Center(child: CircularProgressIndicator(color: orange)),
-        ]),
+      return const Scaffold(
+        backgroundColor: Colors.white,
+        body: Center(child: CircularProgressIndicator(color: orange)),
       );
     }
-    final names = ['Restaurant', 'Business', 'Bank', 'Review'];
+    final busy = submitting || sendingOtp;
+
     return Scaffold(
-      backgroundColor: foodflow.canvas,
+      backgroundColor: Colors.white,
       resizeToAvoidBottomInset: true,
-      body: Stack(
-        children: [
-          ...AuroraTheme.auroraBlobs(),
-          SafeArea(
-            child: Column(
-              children: [
-                _header(names[step.clamp(0, names.length - 1)]),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(18, 4, 18, 10),
-                  child: _stepper(),
-                ),
-                Expanded(
-                  child: SingleChildScrollView(
-                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 18),
-                    child: _card(),
-                  ),
-                ),
-                _stickyActions(),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _header(String stepName) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(6, 10, 6, 4),
-      child: Row(
-        children: [
-          IconButton(
-            onPressed: _back,
-            icon: Icon(Icons.arrow_back_rounded, size: 26, color: foodflow.ink),
-          ),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Register your restaurant',
-                  style: t(17, weight: FontWeight.w900, color: foodflow.ink),
-                ),
-                Text(
-                  'Step ${step + 1} of ${steps.length} · $stepName'
-                  '${saveStatus.isNotEmpty ? '  ·  $saveStatus' : ''}',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: t(
-                    12,
-                    weight: FontWeight.w700,
-                    color: saveStatus.startsWith('Save failed')
-                        ? red
-                        : foodflow.muted,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          IconButton(
-            onPressed: () => _toast(
-              'Support will help you complete registration.',
-              false,
-            ),
-            icon: Icon(Icons.help_outline_rounded,
-                size: 24, color: foodflow.muted),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _stepper() {
-    return Row(
-      children: List.generate(steps.length, (index) {
-        final done = index <= step;
-        return Expanded(
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 220),
-            margin: EdgeInsets.only(right: index == steps.length - 1 ? 0 : 6),
-            height: 5,
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(4),
-              gradient: done ? foodflow.brandGradient : null,
-              color: done ? null : foodflow.line,
-            ),
-          ),
-        );
-      }),
-    );
-  }
-
-  Widget _stickyActions() {
-    final last = step == 3;
-    return Container(
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 14),
-      decoration: BoxDecoration(
-        color: foodflow.surfaceColor,
-        border: Border(top: BorderSide(color: foodflow.line)),
-      ),
-      child: Row(
-        children: [
-          if (step > 0) ...[
-            SizedBox(
-              height: 50,
-              child: OutlinedButton(
-                onPressed: submitting ? null : _back,
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: foodflow.ink,
-                  side: BorderSide(color: foodflow.line),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(14),
-                  ),
-                ),
-                child: const Text('Back'),
-              ),
-            ),
-            const SizedBox(width: 10),
-          ],
-          Expanded(
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                gradient: foodflow.brandGradient,
-                borderRadius: BorderRadius.circular(14),
-              ),
-              child: ElevatedButton(
-                onPressed: submitting ? null : _next,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.transparent,
-                  shadowColor: Colors.transparent,
-                  foregroundColor: Colors.white,
-                  minimumSize: const Size.fromHeight(50),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(14),
-                  ),
-                  textStyle:
-                      const TextStyle(fontWeight: FontWeight.w900, fontSize: 15),
-                ),
-                child: submitting
-                    ? const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(
-                            strokeWidth: 2, color: Colors.white),
-                      )
-                    : Text(last ? 'Submit application' : 'Continue  →'),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _card() {
-    final heads = [
-      (
-        'Restaurant Information',
-        "Let's start with some basic information about your restaurant.",
-      ),
-      (
-        'Business Information',
-        'Tell us more about your business, location and operations.',
-      ),
-      ('Bank Details', 'Add your bank details to receive payments securely.'),
-      (
-        'Review & Confirm',
-        'Please review your details and confirm to submit your application.',
-      ),
-    ];
-    return Container(
-      constraints: const BoxConstraints(maxWidth: 900),
-      padding: const EdgeInsets.fromLTRB(18, 18, 18, 18),
-      decoration: BoxDecoration(
-        color: foodflow.surfaceColor,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: foodflow.line),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Container(
-                padding: const EdgeInsets.all(9),
-                decoration: BoxDecoration(
-                  color: (step == 2 ? green : foodflow.orange).withOpacity(0.10),
-                  borderRadius: BorderRadius.circular(11),
-                ),
-                child: Icon(
-                  step == 2
-                      ? Icons.account_balance_rounded
-                      : Icons.storefront_rounded,
-                  color: step == 2 ? green : foodflow.orange,
-                  size: 18,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
+      body: SafeArea(
+        child: Column(
+          children: [
+            _topNav(),
+            _thinProgressBar(),
+            Expanded(
+              child: SingleChildScrollView(
+                physics: const BouncingScrollPhysics(),
+                padding: const EdgeInsets.fromLTRB(24, 20, 24, 20),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      heads[step].$1,
-                      style: t(17, weight: FontWeight.w900, color: foodflow.ink),
+                    _buildStepHeader(),
+                    const SizedBox(height: 24),
+                    _buildStepTransition(
+                      currentStep: step,
+                      child: _buildCurrentStep(),
                     ),
-                    const SizedBox(height: 3),
-                    Text(heads[step].$2,
-                        style: t(12.5, color: foodflow.muted)),
                   ],
+                ),
+              ),
+            ),
+            _bottomActionArea(busy),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _topNav() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(8, 4, 16, 4),
+      child: Row(
+        children: [
+          IconButton(
+            onPressed: submitting ? null : _back,
+            icon: Icon(
+              step == 0
+                  ? Icons.close_rounded
+                  : Icons.arrow_back_rounded,
+              color: const Color(0xFF111827),
+              size: 24,
+            ),
+          ),
+          const Spacer(),
+          TextButton(
+            onPressed: submitting
+                ? null
+                : () => Navigator.pushNamed(context, '/application-status'),
+            style: TextButton.styleFrom(
+              foregroundColor: const Color(0xFF6B7280),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            ),
+            child: Text(
+              'Track Status',
+              style: GoogleFonts.inter(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: const Color(0xFF6B7280),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _thinProgressBar() {
+    return Container(
+      height: 3,
+      margin: const EdgeInsets.symmetric(horizontal: 24),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(2),
+        child: LinearProgressIndicator(
+          value: (step + 1) / steps.length,
+          backgroundColor: const Color(0xFFF3F4F6),
+          valueColor: const AlwaysStoppedAnimation<Color>(orange),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildStepHeader() {
+    final (String title, String subtitle) = switch (step) {
+      0 => (
+          'Enter your mobile\nnumber',
+          '10-Digit mobile number',
+        ),
+      1 => (
+          'Restaurant\ninformation',
+          'Set up your restaurant brand, cuisines and store images',
+        ),
+      2 => (
+          'Business &\nlocation details',
+          'Legal registrations, tax compliance and delivery coverage',
+        ),
+      3 => (
+          'Bank account\n& settlements',
+          'Set up payout bank details to receive regular earnings',
+        ),
+      _ => (
+          'Review &\nsubmit application',
+          'Check your details carefully before final submission',
+        ),
+    };
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          title,
+          style: GoogleFonts.inter(
+            fontSize: 28,
+            fontWeight: FontWeight.w800,
+            color: const Color(0xFF111827),
+            height: 1.18,
+            letterSpacing: -0.6,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          subtitle,
+          style: GoogleFonts.inter(
+            fontSize: 13.5,
+            fontWeight: FontWeight.w500,
+            color: const Color(0xFF6B7280),
+            height: 1.4,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildCurrentStep() {
+    switch (step) {
+      case 0:
+        return _mobileStep();
+      case 1:
+        return _basic();
+      case 2:
+        return _business();
+      case 3:
+        return _bank();
+      default:
+        return _preview();
+    }
+  }
+
+  Widget _mobileStep() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          padding: const EdgeInsets.symmetric(vertical: 6),
+          decoration: const BoxDecoration(
+            border: Border(
+              bottom: BorderSide(color: Color(0xFFE5E7EB), width: 1.5),
+            ),
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Row(
+                children: [
+                  Text(
+                    '+${branding.defaultMobileCountryCode.replaceAll('+', '')}',
+                    style: GoogleFonts.inter(
+                      fontSize: 20,
+                      fontWeight: FontWeight.w700,
+                      color: const Color(0xFF111827),
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  const Icon(
+                    Icons.arrow_drop_down_rounded,
+                    size: 22,
+                    color: Color(0xFF6B7280),
+                  ),
+                ],
+              ),
+              const SizedBox(width: 14),
+              Container(width: 1, height: 26, color: const Color(0xFFE5E7EB)),
+              const SizedBox(width: 14),
+              Expanded(
+                child: TextFormField(
+                  controller: phone,
+                  readOnly: phoneVerified,
+                  keyboardType: TextInputType.phone,
+                  style: GoogleFonts.inter(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w700,
+                    color: const Color(0xFF111827),
+                    letterSpacing: 0.5,
+                  ),
+                  onChanged: (_) {
+                    if (phoneVerified) return;
+                    if (verifiedPhoneToken != null) {
+                      setState(() {
+                        verifiedPhoneToken = null;
+                        verifiedPhoneNumber = null;
+                      });
+                    }
+                  },
+                  decoration: InputDecoration(
+                    hintText: 'Enter your phone number',
+                    hintStyle: GoogleFonts.inter(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w400,
+                      color: const Color(0xFF9CA3AF),
+                    ),
+                    border: InputBorder.none,
+                    isDense: true,
+                    contentPadding: EdgeInsets.zero,
+                  ),
+                ),
+              ),
+              if (phoneVerified)
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFDCFCE7),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.check_circle_rounded, size: 14, color: Color(0xFF16A34A)),
+                      const SizedBox(width: 4),
+                      Text(
+                        'Verified',
+                        style: GoogleFonts.inter(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          color: const Color(0xFF16A34A),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+            ],
+          ),
+        ),
+        if (phoneVerified) ...[
+          const SizedBox(height: 12),
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton(
+              onPressed: () {
+                setState(() {
+                  phoneVerified = false;
+                  verifiedPhoneToken = null;
+                  verifiedPhoneNumber = null;
+                });
+              },
+              child: Text(
+                'Change Number',
+                style: GoogleFonts.inter(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: orange,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _bottomActionArea(bool busy) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(24, 8, 24, 16),
+      color: Colors.white,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (step == 0) ...[
+            Padding(
+              padding: const EdgeInsets.only(bottom: 14),
+              child: RichText(
+                textAlign: TextAlign.center,
+                text: TextSpan(
+                  style: GoogleFonts.inter(
+                    fontSize: 12,
+                    color: const Color(0xFF6B7280),
+                    height: 1.45,
+                  ),
+                  children: [
+                    TextSpan(
+                      text: 'By proceeding, you agree with ${branding.displayName}\'s ',
+                    ),
+                    TextSpan(
+                      text: 'terms and conditions',
+                      style: GoogleFonts.inter(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        color: const Color(0xFF111827),
+                      ),
+                    ),
+                    const TextSpan(text: ' and '),
+                    TextSpan(
+                      text: 'privacy policy',
+                      style: GoogleFonts.inter(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        color: const Color(0xFF111827),
+                      ),
+                    ),
+                    const TextSpan(text: '.'),
+                  ],
+                ),
+              ),
+            ),
+          ],
+          SizedBox(
+            width: double.infinity,
+            height: 52,
+            child: ElevatedButton(
+              onPressed: busy ? null : _handleContinue,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: orange,
+                disabledBackgroundColor: orange.withOpacity(0.35),
+                foregroundColor: Colors.white,
+                elevation: 0,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(28),
+                ),
+              ),
+              child: busy
+                  ? const SizedBox(
+                      width: 22,
+                      height: 22,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2.2,
+                        color: Colors.white,
+                      ),
+                    )
+                  : Text(
+                      _ctaLabel(),
+                      style: GoogleFonts.inter(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
+                        color: Colors.white,
+                      ),
+                    ),
+            ),
+          ),
+          const SizedBox(height: 14),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(Icons.shield_outlined, size: 17, color: Color(0xFF16A34A)),
+              const SizedBox(width: 6),
+              Text(
+                'Trusted by Top Restaurant Partners',
+                style: GoogleFonts.inter(
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w600,
+                  color: const Color(0xFF374151),
                 ),
               ),
             ],
           ),
-          Divider(height: 26, color: foodflow.line),
-          if (step == 0) _basic(),
-          if (step == 1) _business(),
-          if (step == 2) _bank(),
-          if (step == 3) _preview(),
         ],
       ),
     );
   }
 
-  Widget _miniIllustration(IconData icon, Color color) {
-    return Container(
-      width: 88,
-      height: 62,
-      alignment: Alignment.center,
-      decoration: BoxDecoration(
-        color: color.withOpacity(.09),
-        borderRadius: BorderRadius.circular(16),
-      ),
-      child: Icon(icon, color: color, size: 38),
-    );
+  String _ctaLabel() {
+    if (submitting) return 'Submitting application...';
+    if (sendingOtp) return 'Sending OTP...';
+    if (step == 0) return phoneVerified ? 'Continue' : 'Get OTP';
+    if (step == steps.length - 1) return 'Submit Application';
+    return 'Continue';
+  }
+
+  Future<void> _handleContinue() async {
+    if (submitting || sendingOtp) return;
+    if (step == 0 && !phoneVerified) {
+      await _verifyPhone();
+      if (!phoneVerified) return;
+    }
+    await _next();
   }
 
   Widget _basic() {
@@ -1352,7 +1574,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
             description,
             'Write a short description about your restaurant',
             Icons.description_outlined,
-            maxLines: 4,
+            maxLines: 3,
             maxLength: 160,
           ),
         ),
@@ -1395,6 +1617,196 @@ class _RegisterScreenState extends State<RegisterScreen> {
           ),
         ),
         gap(),
+        sectionLabel('Service Types', true),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: ['Dine-in', 'Delivery', 'Takeaway'].map((type) {
+            final isSelected = serviceTypes.contains(type);
+            final icon = type == 'Delivery'
+                ? Icons.delivery_dining_rounded
+                : type == 'Takeaway'
+                    ? Icons.shopping_bag_outlined
+                    : Icons.table_restaurant_outlined;
+            return FilterChip(
+              avatar: Icon(
+                icon,
+                size: 16,
+                color: isSelected ? orange : const Color(0xFF6B7280),
+              ),
+              label: Text(type),
+              selected: isSelected,
+              selectedColor: orange.withOpacity(0.12),
+              backgroundColor: Colors.white,
+              side: BorderSide(
+                color: isSelected ? orange : const Color(0xFFE5E7EB),
+                width: isSelected ? 1.5 : 1,
+              ),
+              labelStyle: GoogleFonts.inter(
+                fontSize: 13,
+                fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+                color: isSelected ? orange : const Color(0xFF111827),
+              ),
+              onSelected: (_) {
+                setState(
+                  () => serviceTypes.contains(type)
+                      ? serviceTypes.remove(type)
+                      : serviceTypes.add(type),
+                );
+                _queueSave();
+              },
+            );
+          }).toList(),
+        ),
+        gap(),
+        wrapFields([
+          label(
+            'Average Preparation Time',
+            req: true,
+            child: dropdown(
+              prepTime,
+              'Select time',
+              Icons.schedule_outlined,
+              const [
+                '10-15 minutes',
+                '15-20 minutes',
+                '20-25 minutes',
+                '25-30 minutes',
+                '30-45 minutes',
+                '45-60 minutes',
+              ],
+              (v) => setState(() => prepTime = v ?? prepTime),
+            ),
+          ),
+          label(
+            'Minimum Order Amount',
+            child: input(
+              minOrder,
+              'Enter amount (INR)',
+              Icons.shopping_bag_outlined,
+              keyboard: TextInputType.number,
+            ),
+          ),
+        ]),
+        gap(),
+        label(
+          'Restaurant Timings',
+          req: true,
+          child: Row(
+            children: [
+              Expanded(
+                child: timeChip('Opens', opening, () => _pickTime(true)),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: timeChip('Closes', closing, () => _pickTime(false)),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _cuisineChecklist() {
+    if (loadingCuisines) {
+      return const SizedBox(
+        height: 56,
+        child: Center(
+          child: CircularProgressIndicator(strokeWidth: 2.2, color: orange),
+        ),
+      );
+    }
+
+    if (cuisineLoadError != null) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: red.withOpacity(.05),
+          border: Border.all(color: red.withOpacity(.28)),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            const Icon(Icons.error_outline_rounded, color: red, size: 20),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                cuisineLoadError!,
+                style: t(12, weight: FontWeight.w600, color: body),
+              ),
+            ),
+            TextButton(
+              onPressed: _loadCuisines,
+              child: const Text('Retry'),
+            ),
+          ],
+        ),
+      );
+    }
+
+    if (cuisines.isEmpty) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: const Color(0xFFF9FAFB),
+          border: Border.all(color: const Color(0xFFE5E7EB)),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Text(
+          'No cuisines available for selection. You may continue to the next step or update cuisines later in your merchant dashboard.',
+          style: t(13, weight: FontWeight.w500, color: muted),
+        ),
+      );
+    }
+
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: cuisines.map((cuisine) {
+        final selected = selectedCuisines.contains(cuisine);
+        return FilterChip(
+          label: Text(cuisine),
+          selected: selected,
+          onSelected: (checked) {
+            setState(() {
+              if (checked) {
+                selectedCuisines.add(cuisine);
+              } else {
+                selectedCuisines.remove(cuisine);
+              }
+            });
+            _queueSave();
+          },
+          selectedColor: orange.withOpacity(0.12),
+          checkmarkColor: orange,
+          backgroundColor: Colors.white,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+            side: BorderSide(
+              color: selected ? orange : const Color(0xFFE5E7EB),
+              width: selected ? 1.4 : 1.0,
+            ),
+          ),
+          labelStyle: t(
+            13,
+            weight: selected ? FontWeight.w700 : FontWeight.w500,
+            color: selected ? orange : const Color(0xFF374151),
+          ),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        );
+      }).toList(),
+    );
+  }
+
+  Widget _business() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
         wrapFields([
           label(
             'Owner / Manager Name',
@@ -1403,18 +1815,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
               ownerName,
               'Enter owner or manager name',
               Icons.person_outline_rounded,
-            ),
-          ),
-          label(
-            'Phone Number',
-            req: true,
-            child: input(
-              phone,
-              'Enter phone number',
-              Icons.phone_outlined,
-              keyboard: TextInputType.phone,
-              prefix: '+91  ',
-              suffix: verifyButton(phoneVerified, sendingOtp, _verifyPhone),
             ),
           ),
           label(
@@ -1468,155 +1868,47 @@ class _RegisterScreenState extends State<RegisterScreen> {
             ),
           ),
         ]),
-        notice(
-          Icons.verified_user_outlined,
-          'Secure & Safe',
-          'Your information is safe with us and will never be shared.',
-          orange,
-        ),
-      ],
-    );
-  }
-
-  Widget _cuisineChecklist() {
-    if (loadingCuisines) {
-      return const SizedBox(
-        height: 76,
-        child: Center(
-          child: CircularProgressIndicator(strokeWidth: 2.4),
-        ),
-      );
-    }
-
-    if (cuisineLoadError != null) {
-      return Container(
-        width: double.infinity,
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          color: red.withOpacity(.05),
-          border: Border.all(color: red.withOpacity(.28)),
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: [
-            const Icon(Icons.error_outline_rounded, color: red, size: 20),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Text(
-                cuisineLoadError!,
-                style: t(12, weight: FontWeight.w600, color: body),
-              ),
-            ),
-            TextButton(
-              onPressed: _loadCuisines,
-              child: const Text('Retry'),
-            ),
-          ],
-        ),
-      );
-    }
-
-    if (cuisines.isEmpty) {
-      return Container(
-        width: double.infinity,
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: bg,
-          border: Border.all(color: border),
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Text(
-          'No active cuisines are available. Ask the administrator to add or enable cuisines.',
-          style: t(13, weight: FontWeight.w600, color: muted),
-        ),
-      );
-    }
-
-    return Container(
-      clipBehavior: Clip.antiAlias,
-      decoration: BoxDecoration(
-        color: Colors.white,
-        border: Border.all(color: border),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Column(
-        children: List.generate(cuisines.length, (index) {
-          final cuisine = cuisines[index];
-          final selected = selectedCuisines.contains(cuisine);
-          return Column(
-            children: [
-              CheckboxListTile(
-                value: selected,
-                onChanged: (checked) {
-                  setState(() {
-                    if (checked == true) {
-                      selectedCuisines.add(cuisine);
-                    } else {
-                      selectedCuisines.remove(cuisine);
-                    }
-                  });
-                  _queueSave();
-                },
-                activeColor: orange,
-                checkColor: Colors.white,
-                controlAffinity: ListTileControlAffinity.leading,
-                contentPadding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
-                visualDensity: const VisualDensity(
-                  horizontal: -2,
-                  vertical: -2,
-                ),
-                title: Text(
-                  cuisine,
-                  style: t(
-                    13,
-                    weight: selected ? FontWeight.w700 : FontWeight.w600,
-                    color: selected ? ink : body,
-                  ),
-                ),
-              ),
-              if (index < cuisines.length - 1)
-                const Divider(height: 1, color: border),
-            ],
-          );
-        }),
-      ),
-    );
-  }
-
-  Widget _business() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
+        gap(),
         sectionLabel('Business Type', true),
-        const SizedBox(height: 10),
-        cards([
-          option(
-            'Restaurant',
-            'Food delivered to customers',
-            Icons.storefront_outlined,
-            businessType == 'Restaurant',
-            orange,
-            () => setState(() => businessType = 'Restaurant'),
-          ),
-          option(
-            'Cloud Kitchen',
-            'Delivery only, no dine-in',
-            Icons.shopping_bag_outlined,
-            businessType == 'Cloud Kitchen',
-            orange,
-            () => setState(() => businessType = 'Cloud Kitchen'),
-          ),
-          option(
-            'Cafe / Bakery',
-            'Cafe, bakery or beverage store',
-            Icons.room_service_outlined,
-            businessType == 'Cafe / Bakery',
-            green,
-            () => setState(() => businessType = 'Cafe / Bakery'),
-          ),
-        ]),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: ['Restaurant', 'Cloud Kitchen', 'Cafe / Bakery'].map((type) {
+            final isSelected = businessType == type;
+            final icon = type == 'Restaurant'
+                ? Icons.storefront_outlined
+                : type == 'Cloud Kitchen'
+                    ? Icons.shopping_bag_outlined
+                    : Icons.room_service_outlined;
+            return ChoiceChip(
+              avatar: Icon(
+                icon,
+                size: 16,
+                color: isSelected ? orange : const Color(0xFF6B7280),
+              ),
+              label: Text(type),
+              selected: isSelected,
+              selectedColor: orange.withOpacity(0.12),
+              backgroundColor: Colors.white,
+              side: BorderSide(
+                color: isSelected ? orange : const Color(0xFFE5E7EB),
+                width: isSelected ? 1.5 : 1,
+              ),
+              labelStyle: GoogleFonts.inter(
+                fontSize: 13,
+                fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+                color: isSelected ? orange : const Color(0xFF111827),
+              ),
+              onSelected: (selected) {
+                if (selected) {
+                  setState(() => businessType = type);
+                  _queueSave();
+                }
+              },
+            );
+          }).toList(),
+        ),
         gap(),
         wrapFields([
           label(
@@ -1768,68 +2060,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
             () => setState(() => fssaiFile = null),
           ),
         ],
-        gap(),
-        sectionLabel('Service Type', true),
-        const SizedBox(height: 10),
-        cards(
-          ['Dine-in', 'Delivery', 'Takeaway'].map((type) {
-            final icon = type == 'Delivery'
-                ? Icons.delivery_dining_rounded
-                : type == 'Takeaway'
-                    ? Icons.shopping_bag_outlined
-                    : Icons.table_restaurant_outlined;
-            final desc = type == 'Delivery'
-                ? 'Online delivery orders enabled'
-                : type == 'Takeaway'
-                    ? 'Pickup orders from the store'
-                    : 'Customers can dine in at restaurant';
-            return option(
-              type,
-              desc,
-              icon,
-              serviceTypes.contains(type),
-              type == 'Delivery' ? green : orange,
-              () {
-                setState(
-                  () => serviceTypes.contains(type)
-                      ? serviceTypes.remove(type)
-                      : serviceTypes.add(type),
-                );
-                _queueSave();
-              },
-            );
-          }).toList(),
-        ),
-        gap(),
-        wrapFields([
-          label(
-            'Average Preparation Time',
-            req: true,
-            child: dropdown(
-              prepTime,
-              'Select time',
-              Icons.schedule_outlined,
-              const [
-                '10-15 minutes',
-                '15-20 minutes',
-                '20-25 minutes',
-                '25-30 minutes',
-                '30-45 minutes',
-                '45-60 minutes',
-              ],
-              (v) => setState(() => prepTime = v ?? prepTime),
-            ),
-          ),
-          label(
-            'Minimum Order Amount',
-            child: input(
-              minOrder,
-              'Enter amount (INR)',
-              Icons.shopping_bag_outlined,
-              keyboard: TextInputType.number,
-            ),
-          ),
-        ]),
         gap(),
         label(
           'Search Address',
@@ -1986,22 +2216,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
             green,
           ),
         ],
-        gap(),
-        label(
-          'Restaurant Timings',
-          req: true,
-          child: Row(
-            children: [
-              Expanded(
-                child: timeChip('Opens', opening, () => _pickTime(true)),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: timeChip('Closes', closing, () => _pickTime(false)),
-              ),
-            ],
-          ),
-        ),
       ],
     );
   }
@@ -2147,13 +2361,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
             style: t(14, weight: FontWeight.w500),
           ),
         ),
-        const SizedBox(height: 10),
-        notice(
-          Icons.lock_outline_rounded,
-          'Your Information is Safe',
-          'We use bank-level security to protect your information.\nYour details will never be shared with anyone.',
-          amber,
-        ),
       ],
     );
   }
@@ -2163,29 +2370,35 @@ class _RegisterScreenState extends State<RegisterScreen> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         review(
-          'Basic Information',
+          'Restaurant Information',
           Icons.storefront_outlined,
           orange,
-          () => setState(() => step = 0),
+          () => setState(() => step = 1),
           {
             'Restaurant Name': restaurantName.text,
             'Cuisine Type': selectedCuisines.join(', '),
-            'Owner / Manager': ownerName.text,
-            'Phone Number':
-                '${phone.text} ${phoneVerified ? '(Verified)' : ''}',
-            'Email Address':
-                '${email.text} ${emailVerified ? '(Verified)' : ''}',
             'Short Description': description.text,
+            'Service Type': serviceTypes.join(', '),
+            'Preparation Time': prepTime,
+            'Minimum Order': minOrder.text.isEmpty
+                ? 'Not configured'
+                : 'INR ${minOrder.text}',
+            'Timings': '$opening - $closing',
             'Logo': _fileLabel(logoFile),
             'Cover Image': _fileLabel(coverFile),
           },
         ),
         review(
-          'Business Information',
+          'Owner & Business',
           Icons.business_center_outlined,
           const Color(0xFF2E90FA),
-          () => setState(() => step = 1),
+          () => setState(() => step = 2),
           {
+            'Owner / Manager': ownerName.text,
+            'Phone Number':
+                '${phone.text} ${phoneVerified ? '(Verified)' : ''}',
+            'Email Address':
+                '${email.text} ${emailVerified ? '(Verified)' : ''}',
             'Business Type': businessType,
             'Legal Business Name': legalName.text,
             'Established Year': year.text,
@@ -2196,19 +2409,13 @@ class _RegisterScreenState extends State<RegisterScreen> {
             'PAN Number': panNumber.text.isEmpty
                 ? 'Not provided'
                 : '******${panNumber.text.length >= 4 ? panNumber.text.substring(panNumber.text.length - 4).toUpperCase() : panNumber.text}',
-            'Service Type': serviceTypes.join(', '),
-            'Preparation Time': prepTime,
-            'Minimum Order': minOrder.text.isEmpty
-                ? 'Not configured'
-                : 'INR ${minOrder.text}',
-            'Timings': '$opening - $closing',
           },
         ),
         review(
           'Location & Delivery',
           Icons.location_on_outlined,
           green,
-          () => setState(() => step = 1),
+          () => setState(() => step = 2),
           {
             'Restaurant Address': formattedAddress,
             'Locality': locality.text,
@@ -2220,16 +2427,13 @@ class _RegisterScreenState extends State<RegisterScreen> {
             'Delivery Zone': matchedZoneName ?? 'Pending check',
             'Delivery Availability':
                 matchedZoneName == null ? 'Pending' : 'Service Available',
-            'Delivery Model': serviceTypes.contains('Delivery')
-                ? 'Platform Delivery and Self-Delivery'
-                : 'Pickup / Dine-in',
           },
         ),
         review(
           'Bank Details',
           Icons.account_balance_outlined,
           green,
-          () => setState(() => step = 2),
+          () => setState(() => step = 3),
           {
             'Account Holder Name': holder.text,
             'Bank Name': bankName.text,
@@ -2241,12 +2445,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
             'Bank Proof': _fileLabel(bankProofFile),
           },
         ),
-        notice(
-          Icons.verified_user_outlined,
-          'Almost Done!',
-          'Please review all the details carefully. Once submitted, our team will verify your information and get back to you within 24-48 hours.',
-          green,
-        ),
+        const SizedBox(height: 8),
         CheckboxListTile(
           value: declaration,
           onChanged: (v) {
@@ -2258,7 +2457,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
           controlAffinity: ListTileControlAffinity.leading,
           title: Text(
             'I hereby confirm that all the information provided is correct and true to the best of my knowledge.',
-            style: t(14, weight: FontWeight.w500),
+            style: t(13.5, weight: FontWeight.w500, color: const Color(0xFF374151)),
           ),
         ),
         CheckboxListTile(
@@ -2272,41 +2471,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
           controlAffinity: ListTileControlAffinity.leading,
           title: Text(
             'I agree to the Restaurant Partner Terms and Conditions, Privacy Policy, Settlement Policy and Commission Agreement.',
-            style: t(14, weight: FontWeight.w500),
-          ),
-        ),
-        Center(
-          child: Text(
-            'Your information is secure and encrypted',
-            style: t(13, weight: FontWeight.w600, color: muted),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _actions() {
-    final last = step == 3;
-    return Row(
-      children: [
-        if (step > 0) ...[
-          Expanded(
-            child: action(
-              'Back',
-              Icons.arrow_back_rounded,
-              false,
-              submitting ? null : _back,
-            ),
-          ),
-          const SizedBox(width: 14),
-        ],
-        Expanded(
-          child: action(
-            last ? 'Submit Application' : 'Continue',
-            Icons.arrow_forward_rounded,
-            true,
-            submitting ? null : _next,
-            loading: submitting,
+            style: t(13.5, weight: FontWeight.w500, color: const Color(0xFF374151)),
           ),
         ),
       ],
@@ -2326,10 +2491,17 @@ class _RegisterScreenState extends State<RegisterScreen> {
       children: [
         sectionLabel(labelText, req),
         if (helper != null) ...[
-          const SizedBox(height: 4),
-          Text(helper, style: t(13, color: muted)),
+          const SizedBox(height: 3),
+          Text(
+            helper,
+            style: GoogleFonts.inter(
+              fontSize: 12.5,
+              fontWeight: FontWeight.w400,
+              color: const Color(0xFF6B7280),
+            ),
+          ),
         ],
-        const SizedBox(height: 10),
+        const SizedBox(height: 2),
         child,
       ],
     );
@@ -2338,7 +2510,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
   Widget sectionLabel(String text, bool req) => RichText(
         text: TextSpan(
           text: text,
-          style: t(15, weight: FontWeight.w700, color: Colors.black),
+          style: GoogleFonts.inter(
+            fontSize: 13.5,
+            fontWeight: FontWeight.w600,
+            color: const Color(0xFF374151),
+          ),
           children: [
             if (req)
               const TextSpan(
@@ -2370,31 +2546,43 @@ class _RegisterScreenState extends State<RegisterScreen> {
       obscureText: obscure,
       onChanged: onChanged,
       textCapitalization: caps,
-      style: t(15, weight: FontWeight.w500, color: ink),
+      style: GoogleFonts.inter(
+        fontSize: 15,
+        fontWeight: FontWeight.w600,
+        color: const Color(0xFF111827),
+      ),
       decoration: InputDecoration(
-        counterStyle: t(12, weight: FontWeight.w600, color: muted),
-        prefixIcon: Icon(icon, color: muted, size: 22),
+        counterStyle: GoogleFonts.inter(
+          fontSize: 12,
+          fontWeight: FontWeight.w500,
+          color: muted,
+        ),
+        prefixIcon: Padding(
+          padding: const EdgeInsets.only(right: 10),
+          child: Icon(icon, color: const Color(0xFF9CA3AF), size: 20),
+        ),
+        prefixIconConstraints: const BoxConstraints(minWidth: 32),
         prefixText: prefix,
         suffixIcon: suffix,
         hintText: hint,
-        hintStyle: t(
-          15,
-          weight: FontWeight.w500,
-          color: const Color(0xFF98A2B3),
+        hintStyle: GoogleFonts.inter(
+          fontSize: 14.5,
+          fontWeight: FontWeight.w400,
+          color: const Color(0xFF9CA3AF),
         ),
-        filled: true,
-        fillColor: Colors.white,
-        contentPadding: const EdgeInsets.symmetric(
-          horizontal: 18,
-          vertical: 18,
+        filled: false,
+        contentPadding: const EdgeInsets.symmetric(vertical: 12),
+        enabledBorder: const UnderlineInputBorder(
+          borderSide: BorderSide(color: Color(0xFFE5E7EB), width: 1.4),
         ),
-        enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(13),
-          borderSide: const BorderSide(color: border),
+        focusedBorder: const UnderlineInputBorder(
+          borderSide: BorderSide(color: orange, width: 2.0),
         ),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(13),
-          borderSide: const BorderSide(color: orange, width: 1.2),
+        errorBorder: const UnderlineInputBorder(
+          borderSide: BorderSide(color: red, width: 1.4),
+        ),
+        focusedErrorBorder: const UnderlineInputBorder(
+          borderSide: BorderSide(color: red, width: 2.0),
         ),
       ),
     );
@@ -2415,34 +2603,36 @@ class _RegisterScreenState extends State<RegisterScreen> {
               value: e,
               child: Text(
                 e,
-                style: t(15, weight: FontWeight.w500, color: ink),
+                style: GoogleFonts.inter(
+                  fontSize: 14.5,
+                  fontWeight: FontWeight.w600,
+                  color: const Color(0xFF111827),
+                ),
               ),
             ),
           )
           .toList(),
       onChanged: onChanged,
-      icon: const Icon(Icons.keyboard_arrow_down_rounded, color: muted),
+      icon: const Icon(Icons.keyboard_arrow_down_rounded, color: Color(0xFF6B7280)),
       decoration: InputDecoration(
-        prefixIcon: Icon(icon, color: muted, size: 22),
+        prefixIcon: Padding(
+          padding: const EdgeInsets.only(right: 10),
+          child: Icon(icon, color: const Color(0xFF9CA3AF), size: 20),
+        ),
+        prefixIconConstraints: const BoxConstraints(minWidth: 32),
         hintText: hint,
-        hintStyle: t(
-          15,
-          weight: FontWeight.w500,
-          color: const Color(0xFF98A2B3),
+        hintStyle: GoogleFonts.inter(
+          fontSize: 14.5,
+          fontWeight: FontWeight.w400,
+          color: const Color(0xFF9CA3AF),
         ),
-        filled: true,
-        fillColor: Colors.white,
-        contentPadding: const EdgeInsets.symmetric(
-          horizontal: 18,
-          vertical: 18,
+        filled: false,
+        contentPadding: const EdgeInsets.symmetric(vertical: 12),
+        enabledBorder: const UnderlineInputBorder(
+          borderSide: BorderSide(color: Color(0xFFE5E7EB), width: 1.4),
         ),
-        enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(13),
-          borderSide: const BorderSide(color: border),
-        ),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(13),
-          borderSide: const BorderSide(color: orange, width: 1.2),
+        focusedBorder: const UnderlineInputBorder(
+          borderSide: BorderSide(color: orange, width: 2.0),
         ),
       ),
     );
@@ -2450,7 +2640,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   Widget verifyButton(bool verified, bool busy, VoidCallback onTap) {
     if (verified) return const Icon(Icons.verified_rounded, color: green);
-    if (busy)
+    if (busy) {
       return const Padding(
         padding: EdgeInsets.all(14),
         child: SizedBox(
@@ -2459,11 +2649,16 @@ class _RegisterScreenState extends State<RegisterScreen> {
           child: CircularProgressIndicator(strokeWidth: 2, color: orange),
         ),
       );
+    }
     return TextButton(
       onPressed: onTap,
       child: Text(
         'Verify',
-        style: t(13, weight: FontWeight.w700, color: orange),
+        style: GoogleFonts.inter(
+          fontSize: 13,
+          fontWeight: FontWeight.w700,
+          color: orange,
+        ),
       ),
     );
   }
@@ -2479,75 +2674,109 @@ class _RegisterScreenState extends State<RegisterScreen> {
   }) {
     final name =
         file?.path.split(RegExp(r'[\\/]')).where((e) => e.isNotEmpty).last;
-    return InkWell(
-      borderRadius: BorderRadius.circular(13),
-      onTap: onTap,
-      child: Container(
-        constraints: BoxConstraints(minHeight: compact ? 64 : 92),
-        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(13),
-          border: Border.all(color: border, style: BorderStyle.solid),
-        ),
-        child: Row(
-          children: [
-            Container(
-              width: compact ? 44 : 58,
-              height: compact ? 44 : 58,
-              decoration: BoxDecoration(
-                color: orange.withOpacity(.09),
-                shape: BoxShape.circle,
-              ),
-              child: Icon(icon, color: orange, size: compact ? 22 : 28),
+    final isUploaded = name != null;
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          constraints: BoxConstraints(minHeight: compact ? 56 : 72),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          decoration: BoxDecoration(
+            color: isUploaded ? const Color(0xFFF0FDF4) : Colors.white,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color: isUploaded ? const Color(0xFF86EFAC) : const Color(0xFFE5E7EB),
+              width: 1.2,
             ),
-            const SizedBox(width: 18),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Text(
-                    name ?? title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: t(
-                      compact ? 14 : 16,
-                      weight: FontWeight.w700,
-                      color: ink,
-                    ),
-                  ),
-                  const SizedBox(height: 5),
-                  Text(
-                    name == null ? subtitle : 'Ready to upload',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: t(13, weight: FontWeight.w500, color: muted),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(width: 12),
-            if (name != null)
-              IconButton(
-                onPressed: onRemove,
-                icon: const Icon(Icons.close_rounded, color: muted),
-              )
-            else
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 11,
-                ),
+          ),
+          child: Row(
+            children: [
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                width: compact ? 36 : 42,
+                height: compact ? 36 : 42,
                 decoration: BoxDecoration(
-                  color: orange.withOpacity(.08),
+                  color: isUploaded
+                      ? const Color(0xFFDCFCE7)
+                      : orange.withOpacity(0.08),
                   borderRadius: BorderRadius.circular(10),
                 ),
-                child: Text(
-                  'Upload',
-                  style: t(14, weight: FontWeight.w700, color: orange),
+                child: Icon(
+                  isUploaded ? Icons.check_circle_rounded : icon,
+                  color: isUploaded ? green : orange,
+                  size: compact ? 18 : 22,
                 ),
               ),
-          ],
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text(
+                      name ?? title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: GoogleFonts.inter(
+                        fontSize: compact ? 13 : 14.5,
+                        fontWeight: FontWeight.w600,
+                        color: const Color(0xFF111827),
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      name == null ? subtitle : 'Document attached',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: GoogleFonts.inter(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w500,
+                        color: isUploaded ? green : muted,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 10),
+              if (isUploaded)
+                IconButton(
+                  tooltip: 'Remove file',
+                  onPressed: onRemove,
+                  icon: const Icon(Icons.close_rounded, color: Color(0xFF9CA3AF), size: 18),
+                )
+              else
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 7,
+                  ),
+                  decoration: BoxDecoration(
+                    color: orange.withOpacity(0.08),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: orange.withOpacity(0.2)),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.file_upload_outlined, size: 15, color: orange),
+                      const SizedBox(width: 4),
+                      Text(
+                        'Upload',
+                        style: GoogleFonts.inter(
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w700,
+                          color: orange,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+            ],
+          ),
         ),
       ),
     );
@@ -2726,17 +2955,17 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   Widget timeChip(String label, String value, VoidCallback onTap) {
     return InkWell(
-      borderRadius: BorderRadius.circular(13),
       onTap: onTap,
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(13),
-          border: Border.all(color: border),
+        padding: const EdgeInsets.symmetric(vertical: 10),
+        decoration: const BoxDecoration(
+          border: Border(
+            bottom: BorderSide(color: Color(0xFFE5E7EB), width: 1.4),
+          ),
         ),
         child: Row(
           children: [
-            const Icon(Icons.schedule_outlined, color: muted, size: 20),
+            const Icon(Icons.schedule_outlined, color: Color(0xFF9CA3AF), size: 20),
             const SizedBox(width: 10),
             Expanded(
               child: Column(
@@ -2744,16 +2973,25 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 children: [
                   Text(
                     label,
-                    style: t(12, weight: FontWeight.w600, color: muted),
+                    style: GoogleFonts.inter(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
+                      color: const Color(0xFF6B7280),
+                    ),
                   ),
-                  const SizedBox(height: 3),
+                  const SizedBox(height: 2),
                   Text(
                     value,
-                    style: t(15, weight: FontWeight.w700, color: ink),
+                    style: GoogleFonts.inter(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700,
+                      color: const Color(0xFF111827),
+                    ),
                   ),
                 ],
               ),
             ),
+            const Icon(Icons.edit_outlined, size: 16, color: Color(0xFF9CA3AF)),
           ],
         ),
       ),
@@ -2768,39 +3006,44 @@ class _RegisterScreenState extends State<RegisterScreen> {
     Map<String, String> rows,
   ) {
     return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        border: Border.all(color: border),
-        borderRadius: BorderRadius.circular(13),
+      margin: const EdgeInsets.only(bottom: 20),
+      padding: const EdgeInsets.only(bottom: 16),
+      decoration: const BoxDecoration(
+        border: Border(
+          bottom: BorderSide(color: Color(0xFFE5E7EB), width: 1.2),
+        ),
       ),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              Container(
-                width: 46,
-                height: 46,
-                decoration: BoxDecoration(
-                  color: color.withOpacity(.12),
-                  shape: BoxShape.circle,
-                ),
-                child: Icon(icon, color: color, size: 24),
-              ),
-              const SizedBox(width: 14),
+              Icon(icon, color: color, size: 20),
+              const SizedBox(width: 10),
               Expanded(
                 child: Text(
                   title,
-                  style: t(18, weight: FontWeight.w700, color: ink),
+                  style: GoogleFonts.inter(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                    color: const Color(0xFF111827),
+                  ),
                 ),
               ),
-              TextButton.icon(
+              TextButton(
                 onPressed: onEdit,
-                icon: const Icon(Icons.edit_outlined, size: 18),
-                label: const Text('Edit'),
                 style: TextButton.styleFrom(
-                  foregroundColor: orange,
-                  textStyle: t(14, weight: FontWeight.w700, color: orange),
+                  padding: EdgeInsets.zero,
+                  minimumSize: Size.zero,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+                child: Text(
+                  'Edit',
+                  style: GoogleFonts.inter(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: orange,
+                  ),
                 ),
               ),
             ],
@@ -2935,3 +3178,63 @@ class _RegisterScreenState extends State<RegisterScreen> {
     );
   }
 }
+
+class _AnimatedPressButton extends StatefulWidget {
+  const _AnimatedPressButton({
+    required this.child,
+    required this.onPressed,
+    required this.gradient,
+  });
+
+  final Widget child;
+  final VoidCallback? onPressed;
+  final Gradient gradient;
+
+  @override
+  State<_AnimatedPressButton> createState() => _AnimatedPressButtonState();
+}
+
+class _AnimatedPressButtonState extends State<_AnimatedPressButton> {
+  bool _isPressed = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final enabled = widget.onPressed != null;
+    return GestureDetector(
+      onTapDown: enabled ? (_) => setState(() => _isPressed = true) : null,
+      onTapUp: enabled
+          ? (_) {
+              setState(() => _isPressed = false);
+              widget.onPressed?.call();
+            }
+          : null,
+      onTapCancel: enabled ? () => setState(() => _isPressed = false) : null,
+      child: AnimatedScale(
+        scale: _isPressed ? 0.975 : 1.0,
+        duration: const Duration(milliseconds: 120),
+        curve: Curves.easeOutCubic,
+        child: Container(
+          decoration: BoxDecoration(
+            gradient: enabled
+                ? widget.gradient
+                : LinearGradient(
+                    colors: [Colors.grey.shade400, Colors.grey.shade400],
+                  ),
+            borderRadius: BorderRadius.circular(14),
+            boxShadow: enabled
+                ? [
+                    BoxShadow(
+                      color: const Color(0xFFFF6B00).withOpacity(_isPressed ? 0.18 : 0.32),
+                      blurRadius: _isPressed ? 6 : 14,
+                      offset: Offset(0, _isPressed ? 2 : 6),
+                    ),
+                  ]
+                : null,
+          ),
+          child: widget.child,
+        ),
+      ),
+    );
+  }
+}
+

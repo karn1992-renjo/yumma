@@ -10,6 +10,7 @@ use App\Models\BranchPayout;
 use App\Models\BranchTicket;
 use App\Models\BranchUser;
 use App\Models\BranchWalletTransaction;
+use App\Models\BranchAuditLog;
 use App\Models\BranchZone;
 use App\Models\Cuisine;
 use App\Models\Order;
@@ -62,7 +63,11 @@ class BranchDashboardController extends Controller
         $stats = [
             'orders' => (clone $branchOrders)->count(),
             'completed' => (clone $branchOrders)->where('status', 'delivered')->count(),
+            'cancelled' => (clone $branchOrders)->whereIn('status', ['cancelled', 'refunded'])->count(),
+            'active' => (clone $branchOrders)->whereNotIn('status', ['delivered', 'cancelled', 'refunded'])->count(),
             'revenue' => (clone $branchOrders)->where('status', 'delivered')->sum('total'),
+            'today_revenue' => (clone $branchOrders)->where('status', 'delivered')->whereDate('created_at', today())->sum('total'),
+            'today_orders' => (clone $branchOrders)->whereDate('created_at', today())->count(),
             'commission' => (clone $creditedOrders)->sum('branch_commission'),
             'wallet' => (float) ($branch->wallet?->balance ?? 0),
             'restaurants' => Restaurant::where(function ($query) use ($branch, $restaurantIds) {
@@ -72,6 +77,8 @@ class BranchDashboardController extends Controller
             'drivers' => User::role('delivery_partner')->where('branch_id', $branch->id)->count(),
             'zones' => $branch->zones()->count(),
         ];
+        $stats['success_rate'] = $stats['orders'] > 0 ? round(($stats['completed'] / $stats['orders']) * 100, 1) : 0;
+        $stats['cancellation_rate'] = $stats['orders'] > 0 ? round(($stats['cancelled'] / $stats['orders']) * 100, 1) : 0;
 
         $dailyRevenue = $this->branchOrderQuery($branch, $restaurantIds)
             ->where('status', 'delivered')
@@ -204,11 +211,11 @@ class BranchDashboardController extends Controller
         abort_unless($order->isVisibleToRestaurant(), 404);
 
         if (($order->order_type ?? 'delivery') === 'takeaway') {
-            return back()->withErrors(['driver_id' => 'Takeaway orders do not need a delivery driver.']);
+            return $this->orderActionResponse($request, false, 'Takeaway orders do not need a delivery driver.', 422, [], 'driver_id');
         }
 
         if (! in_array($order->status, ['confirmed', 'preparing', 'ready_for_pickup'], true)) {
-            return back()->withErrors(['driver_id' => 'Driver can only be assigned or reassigned before pickup starts.']);
+            return $this->orderActionResponse($request, false, 'Driver can only be assigned or reassigned before pickup starts.', 422, [], 'driver_id');
         }
 
         $data = $request->validate([
@@ -221,12 +228,12 @@ class BranchDashboardController extends Controller
         $oldDriver = $order->driver;
 
         if ($oldDriver && (int) $oldDriver->id === (int) $driver->id) {
-            return back()->with('success', "Driver {$driver->name} is already assigned to this order.");
+            return $this->orderActionResponse($request, true, "Driver {$driver->name} is already assigned to this order.");
         }
 
         $eligibility = $autoAssignService->assignmentEligibility($driver, $order, $order->id);
         if (!($eligibility['eligible'] ?? false)) {
-            return back()->withErrors(['driver_id' => $eligibility['reason'] ?? 'Selected driver is not available for this order.']);
+            return $this->orderActionResponse($request, false, $eligibility['reason'] ?? 'Selected driver is not available for this order.', 422, [], 'driver_id');
         }
 
         $rejectedDriverIds = $order->rejected_driver_ids ?? [];
@@ -269,6 +276,10 @@ class BranchDashboardController extends Controller
             ? "Driver reassigned from {$oldDriver->name} to {$driver->name}."
             : "Driver {$driver->name} assigned to order.";
 
+        if ($request->expectsJson()) {
+            return $this->orderActionResponse($request, true, $message);
+        }
+
         return redirect()->route('branch.orders.show', $order)->with('success', $message);
     }
 
@@ -286,7 +297,7 @@ class BranchDashboardController extends Controller
 
         $oldStatus = $order->status;
         if ($oldStatus === $data['status']) {
-            return back()->with('success', 'Order status is already up to date.');
+            return $this->orderActionResponse($request, true, 'Order status is already up to date.');
         }
 
         DB::beginTransaction();
@@ -319,7 +330,7 @@ class BranchDashboardController extends Controller
         } catch (\Throwable $exception) {
             DB::rollBack();
 
-            return back()->withErrors(['status' => 'Failed to update order status: ' . $exception->getMessage()]);
+            return $this->orderActionResponse($request, false, 'Failed to update order status: ' . $exception->getMessage(), 422);
         }
 
         $freshOrder = $order->fresh(['customer', 'restaurant']);
@@ -341,7 +352,193 @@ class BranchDashboardController extends Controller
             'order_id' => $order->id,
         ]);
 
-        return back()->with('success', 'Order status updated.');
+        return $this->orderActionResponse($request, true, 'Order status updated.');
+    }
+
+    /**
+     * The branch-panel counterpart of Admin\OrderController's live order
+     * board (admin/orders/live) -- same Kanban-by-status board, scoped to
+     * only this branch's own mapped restaurants/orders via
+     * LiveOrderScope(), via the shared LiveOrderBoardService so the
+     * grouping/formatting logic isn't duplicated.
+     */
+    public function ordersLive(Request $request)
+    {
+        $branch = $this->currentBranch($request);
+        $this->authorizeBranch($request, 'branch.orders.view', ['view_orders', 'manage_orders']);
+        $restaurantIds = $this->restaurantIdsForBranchZones($branch);
+
+        $restaurants = Restaurant::where(function ($query) use ($branch, $restaurantIds) {
+            $query->where('branch_id', $branch->id)
+                ->when($restaurantIds->isNotEmpty(), fn ($b) => $b->orWhereIn('id', $restaurantIds));
+        })->orderBy('name')->get(['id', 'name']);
+
+        $liveStatuses = app(\App\Services\LiveOrderBoardService::class)->liveStatuses();
+
+        return view('branch.orders-live', compact('branch', 'restaurants', 'liveStatuses'));
+    }
+
+    public function ordersLiveData(Request $request)
+    {
+        $branch = $this->currentBranch($request);
+        $this->authorizeBranch($request, 'branch.orders.view', ['view_orders', 'manage_orders']);
+        $restaurantIds = $this->restaurantIdsForBranchZones($branch);
+        $board = app(\App\Services\LiveOrderBoardService::class);
+        $scope = $this->liveOrderScope($branch, $restaurantIds);
+
+        $columnStatuses = $board->liveStatuses();
+        $selectedStatus = $request->input('status_group', 'active');
+        if (in_array($selectedStatus, ['delivered', 'cancelled'], true)) {
+            $columnStatuses = [$selectedStatus => $board->statusMeta($selectedStatus)];
+        }
+
+        $query = Order::query()->with(['customer', 'restaurant', 'driver', 'orderItems.menuItem'])->withCount('orderItems');
+        $board->applyFilters($query, $request, true, $scope);
+
+        if ($selectedStatus === 'active' || $selectedStatus === null || $selectedStatus === '') {
+            $query->whereIn('status', array_keys($board->liveStatuses()));
+        }
+
+        $orders = $query
+            ->orderByRaw("CASE status WHEN 'pending' THEN 0 WHEN 'confirmed' THEN 1 WHEN 'preparing' THEN 2 WHEN 'ready_for_pickup' THEN 3 WHEN 'picked_up' THEN 4 WHEN 'on_the_way' THEN 5 WHEN 'delivery_failed' THEN 6 ELSE 7 END")
+            ->latest()
+            ->limit(180)
+            ->get();
+
+        $routeNames = [
+            'show' => 'branch.orders.show',
+            'status' => 'branch.orders.update-status',
+            'available_drivers' => 'branch.orders.available-drivers',
+            'assign_driver' => 'branch.orders.assign-driver',
+        ];
+        $formattedOrders = $board->formatForLive($orders, $routeNames);
+        $ordersByStatus = $formattedOrders->groupBy('status');
+
+        $columns = collect($columnStatuses)->map(function (array $meta, string $status) use ($ordersByStatus) {
+            $columnOrders = $ordersByStatus->get($status, collect())->values();
+
+            return [
+                'key' => $status,
+                'label' => $meta['label'],
+                'icon' => $meta['icon'],
+                'tone' => $meta['tone'],
+                'count' => $columnOrders->count(),
+                'orders' => $columnOrders,
+            ];
+        })->values();
+
+        return response()->json([
+            'success' => true,
+            'server_time' => now()->toIso8601String(),
+            'counts' => $board->counts($request, $scope),
+            'columns' => $columns,
+            'orders' => $formattedOrders->values(),
+        ]);
+    }
+
+    /**
+     * Polled by the branch header's notification widget (mirrors admin's
+     * checkNewOrders) -- scoped to only this branch's own pending orders.
+     */
+    public function ordersCheckNew(Request $request)
+    {
+        $branch = $this->currentBranch($request);
+        if (! $this->branchCan($request, 'branch.orders.view', ['view_orders', 'manage_orders'])) {
+            return response()->json(['success' => false, 'new_orders' => [], 'pending_count' => 0, 'server_time' => now()->toIso8601String()], 403);
+        }
+
+        $restaurantIds = $this->restaurantIdsForBranchZones($branch);
+        $board = app(\App\Services\LiveOrderBoardService::class);
+        $scope = $this->liveOrderScope($branch, $restaurantIds);
+
+        try {
+            $lastCheck = $request->input('last_check');
+            try {
+                $lastCheckTime = $lastCheck ? \Carbon\Carbon::parse($lastCheck) : \Carbon\Carbon::now()->subMinutes(5);
+            } catch (\Throwable $e) {
+                $lastCheckTime = \Carbon\Carbon::now()->subMinutes(5);
+            }
+
+            $newOrdersQuery = Order::query()->where('status', 'pending')->where('created_at', '>', $lastCheckTime);
+            $scope($newOrdersQuery);
+            $newOrders = $newOrdersQuery->with(['customer', 'restaurant', 'orderItems.menuItem'])->withCount('orderItems')->latest()->limit(20)->get();
+
+            return response()->json([
+                'success' => true,
+                'new_orders' => $board->formatForNotification($newOrders, [
+                    'show' => 'branch.orders.show',
+                    'queue_url' => route('branch.orders.live'),
+                ]),
+                'pending_count' => $board->actionRequiredCount($scope),
+                'server_time' => now()->toIso8601String(),
+            ]);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'success' => false,
+                'error' => $e->getMessage(),
+                'new_orders' => [],
+                'pending_count' => $board->actionRequiredCount($scope),
+                'server_time' => now()->toIso8601String(),
+            ], 500);
+        }
+    }
+
+    public function ordersNotificationCounts(Request $request)
+    {
+        $branch = $this->currentBranch($request);
+        if (! $this->branchCan($request, 'branch.orders.view', ['view_orders', 'manage_orders'])) {
+            return response()->json(['success' => false, 'pending_count' => 0], 403);
+        }
+
+        $restaurantIds = $this->restaurantIdsForBranchZones($branch);
+        $board = app(\App\Services\LiveOrderBoardService::class);
+        $scope = $this->liveOrderScope($branch, $restaurantIds);
+
+        $pendingQuery = Order::where('status', 'pending');
+        $scope($pendingQuery);
+        $confirmedQuery = Order::where('status', 'confirmed');
+        $scope($confirmedQuery);
+        $todayQuery = Order::whereDate('created_at', today());
+        $scope($todayQuery);
+
+        return response()->json([
+            'success' => true,
+            'pending_count' => $board->actionRequiredCount($scope),
+            'pending' => $pendingQuery->count(),
+            'confirmed' => $confirmedQuery->count(),
+            'total_today' => $todayQuery->count(),
+        ]);
+    }
+
+    /**
+     * Available drivers for one order's assign/reassign modal on the live
+     * board -- strictly this branch's OWN drivers (branch_id match), not
+     * "or unassigned" like admin's version, since branch users should only
+     * ever be offered drivers that are actually theirs to manage.
+     */
+    public function availableDriversForOrder(Request $request, Order $order)
+    {
+        $branch = $this->currentBranch($request);
+        $this->authorizeBranch($request, 'branch.orders.assign_driver', ['manage_orders', 'manage_drivers']);
+        abort_unless($this->orderBelongsToBranch($order, $branch), 404);
+
+        $autoAssignService = app(AutoAssignDriverService::class);
+
+        $availableDrivers = User::role('delivery_partner')
+            ->where('is_active', true)
+            ->where('branch_id', $branch->id)
+            ->get(['id', 'name', 'phone', 'max_active_orders'])
+            ->map(function ($driver) use ($autoAssignService, $order) {
+                $eligibility = $autoAssignService->assignmentEligibility($driver, $order, $order->id);
+                $driver->assignment_eligible = $eligibility['eligible'] ?? false;
+                $driver->assignment_reason = $eligibility['reason'] ?? null;
+
+                return $driver;
+            })
+            ->filter(fn ($driver) => $driver->assignment_eligible)
+            ->values();
+
+        return response()->json(['success' => true, 'drivers' => $availableDrivers]);
     }
 
     public function restaurants(Request $request)
@@ -384,8 +581,9 @@ class BranchDashboardController extends Controller
 
         $cuisines = Cuisine::where('is_active', true)->orderBy('display_order')->get();
         $deliveryAreas = $this->branchDeliveryAreas($branch);
+        $countryRegistrationMap = app(\App\Services\Tax\CountryTaxRegistry::class)->registrationUiMap();
 
-        return view('branch.restaurants-create', compact('branch', 'cuisines', 'deliveryAreas'));
+        return view('branch.restaurants-create', compact('branch', 'cuisines', 'deliveryAreas', 'countryRegistrationMap'));
     }
 
     public function storeRestaurant(Request $request)
@@ -423,6 +621,15 @@ class BranchDashboardController extends Controller
                 'email' => $data['email'],
                 'phone' => $data['phone'],
                 'fssai_license_number' => $data['fssai_license_number'] ?? null,
+                'country_code' => ! empty($data['country_code']) ? strtoupper($data['country_code']) : null,
+                'is_gst_registered' => $request->boolean('is_gst_registered'),
+                'gstin' => $data['gstin'] ?? null,
+                'pan' => $data['pan'] ?? null,
+                'state_code' => $data['state_code'] ?? null,
+                'tax_deductee_type' => $data['tax_deductee_type'] ?? 'individual',
+                'tds_pan_verified' => $request->boolean('tds_pan_verified'),
+                'is_vat_registered' => $request->boolean('is_vat_registered'),
+                'vat_number' => $data['vat_number'] ?? null,
                 'description' => $data['description'] ?? null,
                 'address' => $data['address'],
                 'city' => $data['city'],
@@ -493,8 +700,9 @@ class BranchDashboardController extends Controller
         $restaurant->load('owner');
         $cuisines = Cuisine::where('is_active', true)->orderBy('display_order')->get();
         $deliveryAreas = $this->branchDeliveryAreas($branch);
+        $countryRegistrationMap = app(\App\Services\Tax\CountryTaxRegistry::class)->registrationUiMap();
 
-        return view('branch.restaurants-edit', compact('branch', 'restaurant', 'cuisines', 'deliveryAreas'));
+        return view('branch.restaurants-edit', compact('branch', 'restaurant', 'cuisines', 'deliveryAreas', 'countryRegistrationMap'));
     }
 
     public function updateRestaurant(Request $request, Restaurant $restaurant)
@@ -516,6 +724,15 @@ class BranchDashboardController extends Controller
             'email' => $data['email'],
             'phone' => $data['phone'],
             'fssai_license_number' => $data['fssai_license_number'] ?? null,
+            'country_code' => ! empty($data['country_code']) ? strtoupper($data['country_code']) : null,
+            'is_gst_registered' => $request->boolean('is_gst_registered'),
+            'gstin' => $data['gstin'] ?? null,
+            'pan' => $data['pan'] ?? null,
+            'state_code' => $data['state_code'] ?? null,
+            'tax_deductee_type' => $data['tax_deductee_type'] ?? 'individual',
+            'tds_pan_verified' => $request->boolean('tds_pan_verified'),
+            'is_vat_registered' => $request->boolean('is_vat_registered'),
+            'vat_number' => $data['vat_number'] ?? null,
             'description' => $data['description'] ?? null,
             'address' => $data['address'],
             'city' => $data['city'],
@@ -818,6 +1035,40 @@ class BranchDashboardController extends Controller
         $this->branches->assignDriver($driver, $branch, $request->user());
 
         return redirect()->route('branch.drivers')->with('success', "Driver {$driver->name} updated.");
+    }
+
+    /**
+     * Quick suspend/reactivate action separate from the full edit form, so a
+     * branch can act fast on a problem driver with a reason on record instead
+     * of quietly flipping the "Active" toggle inside the edit screen.
+     */
+    public function toggleDriverStatus(Request $request, User $driver)
+    {
+        $branch = $this->currentBranch($request);
+        $this->authorizeBranch($request, 'branch.drivers.edit', ['manage_drivers']);
+        abort_unless($driver->hasRole('delivery_partner') && (int) $driver->branch_id === (int) $branch->id, 404);
+
+        $validated = $request->validate([
+            'reason' => ['nullable', 'string', 'max:500'],
+        ]);
+
+        $wasActive = (bool) $driver->is_active;
+        $driver->update(['is_active' => ! $wasActive]);
+
+        BranchAuditLog::create([
+            'branch_id' => $branch->id,
+            'user_id' => $request->user()->id,
+            'action' => $wasActive ? 'driver_suspended' : 'driver_reactivated',
+            'entity_type' => User::class,
+            'entity_id' => $driver->id,
+            'old_values' => ['is_active' => $wasActive],
+            'new_values' => ['is_active' => ! $wasActive, 'reason' => $validated['reason'] ?? null],
+            'ip_address' => $request->ip(),
+        ]);
+
+        return redirect()->back()->with('success', $wasActive
+            ? "Driver {$driver->name} suspended."
+            : "Driver {$driver->name} reactivated.");
     }
 
     public function zones(Request $request)
@@ -1324,6 +1575,10 @@ class BranchDashboardController extends Controller
             'branch.staff.edit' => 'Edit Staff',
             'branch.tickets.view' => 'View Support Tickets',
             'branch.tickets.create' => 'Create Support Tickets',
+            'branch.gigs.view' => 'View Fleet / Gig Slots',
+            'branch.gigs.create' => 'Create Fleet / Gig Slots',
+            'branch.gigs.edit' => 'Edit Fleet / Gig Slots',
+            'branch.gigs.payouts' => 'Approve Fleet / Gig Payouts',
         ];
     }
 
@@ -1354,6 +1609,37 @@ class BranchDashboardController extends Controller
                         ->orWhere('customer_phone', 'like', "%{$search}%");
                 });
             });
+    }
+
+    /**
+     * Same response shape admin's OrderController uses for its live board's
+     * fetch-based actions -- JSON when the caller asked for it (the live
+     * board's JS always sends Accept: application/json), otherwise the
+     * existing redirect-back behavior every form-based caller already
+     * depends on is completely unchanged.
+     */
+    private function orderActionResponse(Request $request, bool $success, string $message, int $status = 200, array $payload = [], string $errorKey = 'status')
+    {
+        if ($request->expectsJson()) {
+            return response()->json(array_merge([
+                'success' => $success,
+                'message' => $message,
+            ], $payload), $status);
+        }
+
+        return $success
+            ? back()->with('success', $message)
+            : back()->withErrors([$errorKey => $message]);
+    }
+
+    private function liveOrderScope(\App\Models\Branch $branch, $restaurantIds): \Closure
+    {
+        return function ($query) use ($branch, $restaurantIds) {
+            $query->where(function ($builder) use ($branch, $restaurantIds) {
+                $builder->where('branch_id', $branch->id)
+                    ->when($restaurantIds->isNotEmpty(), fn ($b) => $b->orWhereIn('restaurant_id', $restaurantIds));
+            })->visibleToRestaurant();
+        };
     }
 
     private function branchCan(Request $request, string $permission, array $legacyPermissions = []): bool
@@ -1456,6 +1742,15 @@ class BranchDashboardController extends Controller
             'email' => ['required', 'email', Rule::unique('restaurants', 'email')->ignore($restaurant?->id)],
             'phone' => ['required', 'string', 'max:20'],
             'fssai_license_number' => ['nullable', 'string', 'max:64'],
+            'country_code' => ['nullable', 'string', 'size:2'],
+            'is_gst_registered' => ['nullable', 'boolean'],
+            'gstin' => ['nullable', 'string', 'max:20'],
+            'pan' => ['nullable', 'string', 'max:15'],
+            'state_code' => ['nullable', 'string', 'max:2'],
+            'tax_deductee_type' => ['nullable', Rule::in(['individual', 'company'])],
+            'tds_pan_verified' => ['nullable', 'boolean'],
+            'is_vat_registered' => ['nullable', 'boolean'],
+            'vat_number' => ['nullable', 'string', 'max:40'],
             'description' => ['nullable', 'string'],
             'address' => ['required', 'string'],
             'city' => ['required', 'string', 'max:100'],

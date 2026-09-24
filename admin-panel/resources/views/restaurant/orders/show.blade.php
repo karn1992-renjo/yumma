@@ -37,6 +37,49 @@
             : \Illuminate\Support\Facades\Storage::disk('public')->url($image);
     };
 
+    $formatOptionLabel = function ($option) use ($currencySymbol, $currencyDecimals) {
+        if (is_string($option)) {
+            $name = trim($option);
+            return $name === '' ? null : $name;
+        }
+
+        if (!is_array($option)) {
+            return null;
+        }
+
+        $name = trim((string) ($option['name'] ?? $option['label'] ?? $option['title'] ?? ''));
+        if ($name === '') {
+            return null;
+        }
+
+        $price = (float) ($option['price'] ?? $option['additional_price'] ?? $option['amount'] ?? 0);
+
+        return $price > 0
+            ? $name . ' (+' . $currencySymbol . number_format($price, $currencyDecimals) . ')'
+            : $name;
+    };
+
+    $collectCustomizations = function ($variant, $addOns) use ($formatOptionLabel) {
+        $parts = [];
+
+        $variantName = is_array($variant) ? trim((string) ($variant['name'] ?? '')) : '';
+        if (strcasecmp($variantName, 'Promotion info') !== 0) {
+            $variantLabel = $formatOptionLabel($variant);
+            if ($variantLabel) {
+                $parts[] = $variantLabel;
+            }
+        }
+
+        foreach ((array) $addOns as $addOn) {
+            $label = $formatOptionLabel($addOn);
+            if ($label) {
+                $parts[] = $label;
+            }
+        }
+
+        return $parts;
+    };
+
     $rawItems = [];
 
     if ($order->relationLoaded('orderItems') && $order->orderItems && $order->orderItems->count() > 0) {
@@ -46,7 +89,7 @@
     }
 
     $rawItems = is_array($rawItems) ? $rawItems : [];
-    $orderItems = collect($rawItems)->map(function ($item) use ($itemImageUrl) {
+    $orderItems = collect($rawItems)->map(function ($item) use ($itemImageUrl, $collectCustomizations) {
         $itemName = data_get($item, 'name')
             ?? data_get($item, 'item_name')
             ?? data_get($item, 'menu_item.name')
@@ -94,6 +137,10 @@
                     ?? data_get($item, 'menu_item.images')
             ),
             'notes' => $notes,
+            'customizations' => $collectCustomizations(
+                data_get($item, 'selected_variant'),
+                data_get($item, 'selected_add_ons') ?? data_get($item, 'add_ons') ?? data_get($item, 'addons')
+            ),
             'is_promotion_reward' => $isPromotionReward,
             'promotion_title' => $promotionTitle,
             'promotion_free_quantity' => $promotionFreeQuantity,
@@ -101,13 +148,21 @@
         ];
     })->values();
 
-    $deliveryAddress = $order->delivery_address;
+    $isTheatreDelivery = $order->order_type === 'theatre_delivery';
 
-    if (!$deliveryAddress && is_array($order->customer_address)) {
-        $deliveryAddress = collect($order->customer_address)->filter()->implode(', ');
+    if ($isTheatreDelivery) {
+        // swaad-only: in-seat order -- there is no real delivery address,
+        // show where the runner is taking it instead.
+        $deliveryAddress = 'Screen ' . ($order->screen_id ?? '-') . ' · Seat ' . ($order->seat_label ?? '-');
+    } else {
+        $deliveryAddress = $order->delivery_address;
+
+        if (!$deliveryAddress && is_array($order->customer_address)) {
+            $deliveryAddress = collect($order->customer_address)->filter()->implode(', ');
+        }
+
+        $deliveryAddress = $deliveryAddress ?: 'Address not provided';
     }
-
-    $deliveryAddress = $deliveryAddress ?: 'Address not provided';
     $paymentStatus = (string) ($order->payment_status ?: 'pending');
     $paymentTone = in_array($paymentStatus, ['success', 'paid', 'completed'], true)
         ? 'success'
@@ -724,6 +779,11 @@
                                     <div class="item-meta">
                                         Qty {{ $item['qty'] }} x {{ $item['is_promotion_reward'] ? 'FREE' : $currencySymbol . number_format($item['price'], $currencyDecimals) }}
                                     </div>
+                                    @if(!empty($item['customizations']))
+                                        <div class="muted-line">
+                                            <i class="fas fa-plus-circle me-1"></i>{{ implode(', ', $item['customizations']) }}
+                                        </div>
+                                    @endif
                                     @if($item['promotion_free_quantity'] > 0)
                                         <div class="muted-line text-success fw-bold">
                                             <i class="fas fa-gift me-1"></i>
@@ -782,7 +842,7 @@
                                 </div>
                             @endif
                             <div class="info-line">
-                                <span class="info-label">Delivery Address</span>
+                                <span class="info-label">{{ $isTheatreDelivery ? 'Seat' : 'Delivery Address' }}</span>
                                 <span class="info-value">{{ $deliveryAddress }}</span>
                             </div>
                             @if($order->scheduled_time)

@@ -28,6 +28,9 @@ class AppBrandingService {
         final decoded = jsonDecode(cachedJson);
         if (decoded is Map<String, dynamic>) {
           _memoryCache = AppBranding.fromJson(decoded);
+          ApiService.configureRequestTimeout(
+            _memoryCache!.apiRequestTimeoutSeconds,
+          );
         }
       } catch (_) {
         // Ignore cache decode issues and refetch.
@@ -43,6 +46,7 @@ class AppBrandingService {
           Map<String, dynamic>.from(response['data'] as Map),
         );
         _memoryCache = branding;
+        ApiService.configureRequestTimeout(branding.apiRequestTimeoutSeconds);
         await prefs.setString(_cacheKey, jsonEncode(branding.toJson()));
         return branding;
       }

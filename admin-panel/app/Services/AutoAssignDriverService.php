@@ -157,6 +157,15 @@ class AutoAssignDriverService
             return null;
         }
 
+        // swaad-only: a theatre order is fulfilled by a theatre_runner who
+        // explicitly claims it from Api\TheatreRunnerController's queue --
+        // never by GPS-radius matching against the road-delivery driver
+        // pool (see TheatreManagementService::RUNNER_ROLE for why runners
+        // deliberately don't hold the delivery_partner role at all).
+        if (($order->order_type ?? 'delivery') === 'theatre_delivery') {
+            return null;
+        }
+
         if ($order->driver_id) {
             return User::find($order->driver_id);
         }

@@ -59,6 +59,92 @@ class BranchManagementService
         });
     }
 
+    /**
+     * Every permission string the branch-panel authorization checks
+     * (`branchCan()` in BranchDashboardController/BranchGigController and the
+     * sidebar) actually accept — both the older broad flags a role's default
+     * permission set is seeded with (`permissionsFor()`) and the newer
+     * per-feature dotted keys used to grant a STAFF member fine-grained
+     * access. Shown together so an admin fixing a branch owner's permissions
+     * (or a branch owner editing a staff member's) sees the complete,
+     * real picture rather than only half of it.
+     *
+     * @return array<string, string> permission key => human label
+     */
+    public function fullPermissionCatalog(): array
+    {
+        return array_merge([
+            'manage_restaurants' => 'Manage Restaurants (legacy)',
+            'manage_drivers' => 'Manage Drivers & Fleet (legacy)',
+            'manage_zones' => 'Manage Territories (legacy)',
+            'manage_staff' => 'Manage Staff & Settings (legacy)',
+            'manage_orders' => 'Manage Orders (legacy)',
+            'manage_support_tickets' => 'Manage Support Tickets (legacy)',
+            'view_orders' => 'View Orders (legacy)',
+            'view_earnings' => 'View Earnings (legacy)',
+            'view_wallet' => 'View Wallet (legacy)',
+            'view_reports' => 'View Reports (legacy)',
+            'view_assigned_tasks' => 'View Assigned Tasks (legacy)',
+            'create_promotions' => 'Create Promotions (legacy)',
+            'submit_settlement_requests' => 'Submit Settlement Requests (legacy)',
+        ], $this->dottedPermissionCatalog());
+    }
+
+    /**
+     * @return array<string, string> permission key => human label
+     */
+    public function dottedPermissionCatalog(): array
+    {
+        return [
+            'branch.orders.view' => 'View Orders',
+            'branch.orders.assign_driver' => 'Assign Order Drivers',
+            'branch.orders.update_status' => 'Update Order Status',
+            'branch.orders.export' => 'Export Orders',
+            'branch.restaurants.view' => 'View Restaurants',
+            'branch.restaurants.create' => 'Create Restaurants',
+            'branch.restaurants.edit' => 'Edit Restaurants',
+            'branch.restaurants.update_status' => 'Update Restaurant Online Status',
+            'branch.drivers.view' => 'View Drivers',
+            'branch.drivers.create' => 'Create Drivers',
+            'branch.drivers.edit' => 'Edit Drivers',
+            'branch.cod.view' => 'View COD Management',
+            'branch.cod.settle' => 'Settle Driver COD Cash',
+            'branch.zones.view' => 'View Territories',
+            'branch.wallet.view' => 'View Wallet',
+            'branch.wallet.export' => 'Export Wallet',
+            'branch.withdrawals.create' => 'Request Withdrawals',
+            'branch.settlements.view' => 'View Settlements',
+            'branch.settlements.create' => 'Request Settlements',
+            'branch.reports.view' => 'View Reports',
+            'branch.reports.export' => 'Export Reports',
+            'branch.settings.view' => 'View Settings',
+            'branch.settings.update' => 'Update Settings',
+            'branch.staff.create' => 'Create Staff',
+            'branch.staff.edit' => 'Edit Staff',
+            'branch.tickets.view' => 'View Support Tickets',
+            'branch.tickets.create' => 'Create Support Tickets',
+            'branch.gigs.view' => 'View Fleet / Gig Slots',
+            'branch.gigs.create' => 'Create Fleet / Gig Slots',
+            'branch.gigs.edit' => 'Edit Fleet / Gig Slots',
+            'branch.gigs.payouts' => 'Approve Fleet / Gig Payouts',
+            'branch.fleet.track' => 'Track Fleet on Live Map',
+        ];
+    }
+
+    /**
+     * Restore a branch member's permissions to the current role default —
+     * fixes an owner/staff row whose stored `permissions` predates a feature
+     * (like Fleet) that was added after their BranchUser row was created, or
+     * creates the row from scratch if it's missing entirely.
+     */
+    public function resyncPermissions(Branch $branch, User $user, string $role): BranchUser
+    {
+        return BranchUser::updateOrCreate(
+            ['branch_id' => $branch->id, 'user_id' => $user->id],
+            ['role' => $role, 'permissions' => $this->permissionsFor($role), 'is_active' => true]
+        );
+    }
+
     public function ensureBranchRoles(): void
     {
         foreach ([self::OWNER_ROLE, self::MANAGER_ROLE, self::STAFF_ROLE] as $role) {
@@ -70,6 +156,7 @@ class BranchManagementService
     {
         return match ($role) {
             self::OWNER_ROLE => [
+                'manage_orders',
                 'manage_restaurants',
                 'manage_drivers',
                 'manage_zones',

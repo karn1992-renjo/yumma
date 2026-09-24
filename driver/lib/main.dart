@@ -40,6 +40,7 @@ import 'screens/driver/driver_notifications_screen.dart';
 import 'screens/driver/privacy_legal_screen.dart';
 import 'screens/driver/driver_support_screen.dart';
 import 'screens/driver/driver_cod_deposit_screen.dart';
+import 'screens/runner/runner_dashboard.dart';
 import 'widgets/common/network_image_loader.dart';
 
 void main() {
@@ -277,10 +278,16 @@ class _FoodDeliveryAppState extends State<FoodDeliveryApp>
       home: AppSplashScreen(
         branding: _branding,
         startupFuture: widget.startupFuture,
-        builder: (_) =>
-            authProvider.isAuthenticated && authProvider.canUseCurrentApp
-                ? const DriverDashboard()
-                : const LoginScreen(),
+        builder: (_) {
+          if (!authProvider.isAuthenticated || !authProvider.canUseCurrentApp) {
+            return const LoginScreen();
+          }
+          // swaad-only: a theatre_runner gets its own lean queue screen
+          // instead of the road-driver dashboard.
+          return authProvider.isTheatreRunner
+              ? const RunnerDashboard()
+              : const DriverDashboard();
+        },
       ),
       onGenerateRoute: _generateRoute,
       builder: (context, child) {

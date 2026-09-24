@@ -9,6 +9,8 @@ use App\Http\Controllers\Api\RestaurantMenuController;
 use App\Http\Controllers\Api\MenuController;
 use App\Http\Controllers\Api\NotificationController;
 use App\Http\Controllers\Api\OrderController;
+use App\Http\Controllers\Api\TheatreController;
+use App\Http\Controllers\Api\TheatreRunnerController;
 use App\Http\Controllers\Api\CartController;
 use App\Http\Controllers\Api\OrderChatController;
 use App\Http\Controllers\Api\DriverController;
@@ -169,7 +171,7 @@ Route::middleware('auth:sanctum')->group(function () {
             $isAuthorized = $order
                 && (
                     (int) $order->customer_id === (int) $user->id
-                    || ((int) $order->driver_id === (int) $user->id && $user->hasRole('delivery_partner'))
+                    || ((int) $order->driver_id === (int) $user->id && $user->hasAnyRole(['delivery_partner', 'theatre_runner']))
                     || $user->restaurants()->whereKey($order->restaurant_id)->exists()
                 );
         } elseif (preg_match('/^private-restaurant\.(\d+)$/', $channelName, $matches)) {
@@ -179,7 +181,7 @@ Route::middleware('auth:sanctum')->group(function () {
         } elseif (preg_match('/^private-driver\.(\d+)$/', $channelName, $matches)) {
             $driverId = (int) $matches[1];
             $isAuthorized = (int) $user->id === $driverId
-                && $user->hasRole('delivery_partner');
+                && $user->hasAnyRole(['delivery_partner', 'theatre_runner']);
         } elseif (preg_match('/^private-user\.(\d+)$/', $channelName, $matches)) {
             $isAuthorized = (int) $user->id === (int) $matches[1];
         }
@@ -265,6 +267,29 @@ Route::middleware('auth:sanctum')->group(function () {
             ]),
         ]);
     });
+    // AI-picked "Combo for {name}" bundle shown only on the customer app's restaurant-detail
+    // screen — a read-only suggestion (no admin/restaurant approval, not a Promotion row).
+    Route::get('/restaurants/{restaurant}/ai-combo', function (Request $request, Restaurant $restaurant, \App\Services\Ai\MenuComboSuggestionService $comboService) {
+        $suggestion = $comboService->suggest($restaurant);
+        if (! $suggestion) {
+            return response()->json(['success' => true, 'data' => null]);
+        }
+
+        $firstName = trim(strtok(trim((string) $request->user()?->name), ' ') ?: '');
+        $title = $firstName !== '' ? "Combo for {$firstName}" : 'Combo Just For You';
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'title' => $title,
+                'combo_name' => $suggestion['combo_name'],
+                'source' => $suggestion['source'],
+                'actual_price' => $suggestion['actual_price'],
+                'price' => $suggestion['price'],
+                'items' => \App\Http\Resources\MenuItemResource::collection($suggestion['items'])->resolve(),
+            ],
+        ]);
+    });
     Route::get('/favorites/restaurants', function (Request $request) {
         return response()->json([
             'success' => true,
@@ -312,6 +337,8 @@ Route::middleware('auth:sanctum')->group(function () {
             ->middleware(['restaurant.permission:view_dashboard', 'throttle:20,1']);
         Route::post('/assistant/action', [RestaurantAssistantController::class, 'action'])
             ->middleware(['restaurant.permission:view_dashboard', 'throttle:30,1']);
+        Route::get('/assistant/proposals', [RestaurantAssistantController::class, 'proposals'])
+            ->middleware(['restaurant.permission:view_dashboard', 'throttle:12,1']);
 
         Route::get('/menu/analytics', [MenuAnalyticsController::class, 'index'])
             ->middleware('restaurant.permission:view_menu_items,manage_menu');
@@ -423,6 +450,14 @@ Route::middleware('auth:sanctum')->group(function () {
     // Orders (Customer)
     Route::post('/orders/summary', [OrderController::class, 'summary'])->middleware('throttle:20,1');
     Route::post('/orders', [OrderController::class, 'store'])->middleware('throttle:10,1');
+
+    // Movie theatre in-seat ordering (swaad-only)
+    Route::get('/theatre/nearby', [TheatreController::class, 'nearby'])->middleware('throttle:30,1');
+    Route::get('/theatre/{theatre}/screens', [TheatreController::class, 'screens']);
+    Route::get('/theatre/{theatre}/restaurants', [TheatreController::class, 'restaurants']);
+    Route::post('/theatre/checkout/payment-session', [TheatreController::class, 'paymentSession'])->middleware('throttle:10,1');
+    Route::post('/theatre/checkout', [TheatreController::class, 'checkout'])->middleware('throttle:10,1');
+    Route::get('/theatre/order-groups/{orderGroup}', [TheatreController::class, 'showOrderGroup']);
     Route::post('/cart/sync', [CartController::class, 'sync'])->middleware('throttle:30,1');
     Route::post('/coupons/validate', [PromotionController::class, 'validateCoupon']);
     Route::post('/promotions/calculate', [PromotionController::class, 'calculate']);
@@ -499,8 +534,13 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/ads/impressions', [AdTrackingController::class, 'trackImpression']);
     Route::post('/ads/clicks', [AdTrackingController::class, 'trackClick'])->middleware('throttle:30,1');
     
-    // Driver specific routes
-    Route::middleware('role:delivery_partner')->prefix('driver')->group(function () {
+    // Driver specific routes. swaad-only: theatre_runner also authenticates
+    // here (see AuthController::matchesAuthRole) so the runner reuses this
+    // same app shell -- order-status/gig endpoints below are role-agnostic
+    // (scoped by driver_id = auth()->id()), only order *assignment* differs
+    // (see the theatre-runner group further down, which replaces auto-assign
+    // accept/reject with an explicit claim from a theatre-scoped queue).
+    Route::middleware('role:delivery_partner|theatre_runner')->prefix('driver')->group(function () {
         Route::get('/restaurant-onboardings/summary', [DriverRestaurantOnboardingController::class, 'summary']);
         Route::get('/restaurant-onboardings', [DriverRestaurantOnboardingController::class, 'index']);
         Route::post('/restaurant-onboardings', [DriverRestaurantOnboardingController::class, 'store']);
@@ -535,6 +575,16 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/stats', [DriverController::class, 'stats']);
         Route::get('/status', [DriverController::class, 'status']);
         Route::post('/toggle-status', [DriverController::class, 'toggleStatus']);
+    });
+
+    // swaad-only: movie-theatre runner claim queue. Runners never go through
+    // AutoAssignDriverService (GPS-radius matching makes no sense indoors) --
+    // they browse a shared per-theatre queue and explicitly claim a ticket,
+    // then finish it through the same /driver/orders/{id}/status and
+    // /delivery/verify-otp endpoints above (both already role-agnostic).
+    Route::middleware('role:theatre_runner')->prefix('theatre-runner')->group(function () {
+        Route::get('/queue', [TheatreRunnerController::class, 'queue']);
+        Route::post('/orders/{orderId}/claim', [TheatreRunnerController::class, 'claim']);
     });
 });
 

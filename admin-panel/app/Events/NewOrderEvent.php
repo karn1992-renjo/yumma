@@ -62,6 +62,12 @@ class NewOrderEvent implements ShouldBroadcastNow
             'customer_name' => $this->order->customer_name ?? $this->order->customer?->name ?? 'Guest',
             'customer_phone' => $this->order->customer_phone ?? '',
             'delivery_address' => $this->order->delivery_address ?? '',
+            // swaad-only: movie-theatre in-seat orders -- the restaurant app's
+            // incoming-order overlay shows the seat instead of an address.
+            'order_type' => $this->order->order_type ?? 'delivery',
+            'theatre_id' => $this->order->theatre_id,
+            'screen_id' => $this->order->screen_id,
+            'seat_label' => $this->order->seat_label,
             'pickup_lat' => $this->order->restaurant?->latitude !== null ? (float) $this->order->restaurant->latitude : null,
             'pickup_lng' => $this->order->restaurant?->longitude !== null ? (float) $this->order->restaurant->longitude : null,
             'restaurant_lat' => $this->order->restaurant?->latitude !== null ? (float) $this->order->restaurant->latitude : null,

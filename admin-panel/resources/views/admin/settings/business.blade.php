@@ -45,6 +45,7 @@
                         <label class="form-label">Trade Name (as displayed)</label>
                         <input type="text" name="business_trade_name" class="form-control" value="{{ $settings['business_trade_name'] ?? '' }}">
                     </div>
+                    @if($inActive)
                     <div class="settings-field settings-span-4">
                         <label class="form-label">GSTIN</label>
                         <input type="text" name="business_gstin" class="form-control" maxlength="20" value="{{ $settings['business_gstin'] ?? ($settings['invoice_company_tax_id'] ?? '') }}">
@@ -57,6 +58,7 @@
                         <label class="form-label">CIN / Registration No</label>
                         <input type="text" name="business_cin" class="form-control" value="{{ $settings['business_cin'] ?? '' }}">
                     </div>
+                    @endif
                     <div class="settings-field settings-span-12">
                         <label class="form-label">Registered Address</label>
                         <textarea name="business_reg_address" class="form-control" rows="2">{{ $settings['business_reg_address'] ?? ($settings['invoice_company_address'] ?? '') }}</textarea>
@@ -69,17 +71,22 @@
                         <label class="form-label">State</label>
                         <input type="text" name="business_state" class="form-control" value="{{ $settings['business_state'] ?? '' }}">
                     </div>
+                    @if($inActive)
                     <div class="settings-field settings-span-3">
                         <label class="form-label">GST State Code</label>
                         <input type="text" name="business_state_code" class="form-control" maxlength="2" placeholder="e.g. 27" value="{{ $settings['business_state_code'] ?? '' }}">
                     </div>
+                    @endif
                     <div class="settings-field settings-span-3">
                         <label class="form-label">PIN Code</label>
                         <input type="text" name="business_pincode" class="form-control" value="{{ $settings['business_pincode'] ?? '' }}">
                     </div>
                     <div class="settings-field settings-span-3">
-                        <label class="form-label">Country</label>
-                        <input type="text" name="business_country" class="form-control" value="{{ $settings['business_country'] ?? 'India' }}">
+                        <label class="form-label">Platform Country</label>
+                        <input type="text" class="form-control" value="{{ $platformCountryName }}" disabled>
+                        <div class="small text-muted mt-1">
+                            <a href="{{ route('admin.settings.country-tax') }}">Change on Country &amp; Tax &rarr;</a>
+                        </div>
                     </div>
                 </div>
 
@@ -140,7 +147,8 @@
                     </div>
                 </div>
 
-                <div class="settings-section-title mt-4">Entity &amp; Compliance Profile</div>
+                @if($inActive)
+                <div class="settings-section-title mt-4">Entity &amp; Compliance Profile <span class="badge bg-light text-dark fw-normal">India</span></div>
                 <div class="settings-grid">
                     <div class="settings-field settings-span-4">
                         <label class="form-label">Entity Type</label>
@@ -361,6 +369,7 @@
                         <input type="text" name="gig_welfare_cess_state" class="form-control" placeholder="e.g. Karnataka" value="{{ $settings['gig_welfare_cess_state'] ?? '' }}">
                     </div>
                 </div>
+                @endif
 
                 <div class="settings-section-title mt-4">Double-Entry Ledger</div>
                 <div class="settings-grid">
@@ -378,7 +387,8 @@
                     </div>
                 </div>
 
-                <div class="settings-section-title mt-4">E-Invoicing (IRN / QR)</div>
+                @if($inActive)
+                <div class="settings-section-title mt-4">E-Invoicing (IRN / QR) <span class="badge bg-light text-dark fw-normal">India</span></div>
                 <div class="settings-grid">
                     <div class="settings-field settings-span-12">
                         <input type="hidden" name="einvoice_enabled" value="0">
@@ -415,6 +425,16 @@
                         <input type="password" name="einvoice_password" class="form-control" placeholder="Leave blank to keep the saved secret">
                     </div>
                 </div>
+                @endif
+
+                @unless($inActive)
+                <div class="settings-section-title mt-4">Country &amp; Tax</div>
+                <div class="small text-muted mb-2">
+                    India-specific GST/Sec 9(5)/TCS/TDS/e-invoicing/gig-cess settings are hidden because India is not
+                    currently an active country. Manage per-country tax rules (including re-activating India, or any
+                    other country) on the <a href="{{ route('admin.settings.country-tax') }}">Country &amp; Tax</a> page.
+                </div>
+                @endunless
 
                 <div class="mt-4">
                     <button type="submit" class="btn btn-primary">Save Business Settings</button>

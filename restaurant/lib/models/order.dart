@@ -69,6 +69,12 @@ class Order {
   final Restaurant? restaurant;
   final User? driver;
   final String? deliveryOtp;
+  // swaad-only: movie-theatre in-seat orders. `deliveryAddress` above is a
+  // human-readable placeholder ("Theatre") for these -- the UI shows the
+  // seat instead, see isTheatreDelivery.
+  final int? theatreId;
+  final int? screenId;
+  final String? seatLabel;
 
   Order({
     required this.id,
@@ -130,6 +136,9 @@ class Order {
     this.restaurant,
     this.driver,
     this.deliveryOtp,
+    this.theatreId,
+    this.screenId,
+    this.seatLabel,
   });
 
   factory Order.fromJson(Map<String, dynamic> json) {
@@ -276,6 +285,9 @@ class Order {
         source['delivery_code'],
         source['verification_code'],
       ]),
+      theatreId: parseNullableInt(source['theatre_id']),
+      screenId: parseNullableInt(source['screen_id']),
+      seatLabel: _firstNonEmptyString([source['seat_label']]),
     );
   }
 
@@ -289,6 +301,8 @@ class Order {
   bool get isDelivered => status == 'delivered';
   bool get isCancelled => status == 'cancelled';
   bool get isTakeaway => orderType == 'takeaway';
+  bool get isTheatreDelivery => orderType == 'theatre_delivery';
+  String get theatreSeatLabel => 'Screen ${screenId ?? '-'} · Seat ${seatLabel ?? '-'}';
 
   bool get canRestaurantAccept => isPending;
   bool get canRestaurantReject => isPending;
@@ -479,6 +493,9 @@ class Order {
       restaurant: restaurant,
       driver: driver,
       deliveryOtp: deliveryOtp,
+      theatreId: theatreId,
+      screenId: screenId,
+      seatLabel: seatLabel,
     );
   }
 

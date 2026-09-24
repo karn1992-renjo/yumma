@@ -118,6 +118,17 @@ class V2Repository {
     return v2MapList(list);
   }
 
+  /// AI-picked combo bundle from the restaurant's own menu (authed — the
+  /// title is personalized with the logged-in customer's name). Returns an
+  /// empty map when there's no logged-in user or no combo is available.
+  Future<Map<String, dynamic>> restaurantAiCombo(int id) async {
+    final res = await _api
+        .get(ApiConstants.customerRestaurantAiCombo(id))
+        .catchError((_) => null);
+    if (res is Map && res['data'] == null) return const <String, dynamic>{};
+    return v2ExtractMap(res);
+  }
+
   Future<List<Map<String, dynamic>>> restaurantMenu(int id) async {
     // Same endpoint the production detail screen uses.
     final res = await _get('${ApiConstants.restaurantDetails}/$id/menu');

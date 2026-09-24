@@ -27,8 +27,10 @@
     $items = [
         ['route' => 'branch.dashboard', 'label' => 'Dashboard', 'icon' => 'fas fa-chart-line', 'permissions' => []],
         ['route' => 'branch.orders', 'label' => 'Orders', 'icon' => 'fas fa-box', 'permissions' => ['branch.orders.view', 'view_orders', 'manage_orders']],
+        ['route' => 'branch.orders.live', 'label' => 'Live Orders', 'icon' => 'fas fa-bolt', 'permissions' => ['branch.orders.view', 'view_orders', 'manage_orders']],
         ['route' => 'branch.restaurants', 'label' => 'Restaurants', 'icon' => 'fas fa-store', 'permissions' => ['branch.restaurants.view', 'manage_restaurants']],
         ['route' => 'branch.drivers', 'label' => 'Drivers', 'icon' => 'fas fa-truck', 'permissions' => ['branch.drivers.view', 'manage_drivers']],
+        ['route' => 'branch.gigs.index', 'label' => 'Fleet', 'icon' => 'fas fa-people-carry-box', 'permissions' => ['branch.gigs.view', 'manage_drivers']],
         ['route' => 'branch.cod', 'label' => 'COD Management', 'icon' => 'fas fa-hand-holding-dollar', 'permissions' => ['branch.cod.view', 'view_wallet', 'manage_drivers']],
         ['route' => 'branch.zones', 'label' => 'Territories', 'icon' => 'fas fa-map-location-dot', 'permissions' => ['branch.zones.view', 'manage_zones']],
         ['route' => 'branch.wallet', 'label' => 'Wallet', 'icon' => 'fas fa-wallet', 'permissions' => ['branch.wallet.view', 'view_wallet', 'view_earnings']],

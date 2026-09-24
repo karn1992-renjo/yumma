@@ -26,6 +26,32 @@ class ApiService {
     'token',
   ];
 
+  /// Bounds every raw `http.*` call below. Without this, a stalled request
+  /// (poor driver connectivity, a dropped connection) never resolves, and the
+  /// non-dismissible incoming-order overlay (accept/reject cancel its own
+  /// countdown timer before awaiting the API call) has no way back to an
+  /// interactive state — the app appears to hang until force-closed.
+  /// Admin-tunable via Settings → Branding → "Mobile App Network Behavior"
+  /// (`api_request_timeout_seconds`, served on `/app/branding`) — see
+  /// [configureRequestTimeout], applied by AppBrandingService on every
+  /// branding load. Falls back to this default until that first resolves.
+  static const Duration _defaultRequestTimeout = Duration(seconds: 20);
+  static const int _minRequestTimeoutSeconds = 5;
+  static const int _maxRequestTimeoutSeconds = 120;
+  static Duration _requestTimeout = _defaultRequestTimeout;
+
+  /// Applies an admin-configured timeout (in seconds) fetched from the
+  /// server. Clamped defensively so a bad/missing admin value can never make
+  /// every request time out instantly or effectively never time out.
+  static void configureRequestTimeout(int? seconds) {
+    if (seconds == null) return;
+    final clamped = seconds.clamp(
+      _minRequestTimeoutSeconds,
+      _maxRequestTimeoutSeconds,
+    );
+    _requestTimeout = Duration(seconds: clamped);
+  }
+
   String? _authToken;
 
   /// Whether the most recent request actually carried a bearer token.
@@ -72,6 +98,10 @@ class ApiService {
     await LocalCacheService.clear();
   }
 
+  static Never _throwTimeout() {
+    throw ApiException('Request timed out. Check your connection and try again.');
+  }
+
   Future<Map<String, String>> _getHeaders() async {
     final token = await getToken();
     _lastRequestHadToken = token != null && token.isNotEmpty;
@@ -93,7 +123,9 @@ class ApiService {
 
       if (kDebugMode) print('📍 GET: $uri');
 
-      final response = await http.get(uri, headers: await _getHeaders());
+      final response = await http
+          .get(uri, headers: await _getHeaders())
+          .timeout(_requestTimeout, onTimeout: _throwTimeout);
 
       final result = await _handleResponse(response);
       await LocalCacheService.put(uri.toString(), result);
@@ -125,11 +157,13 @@ class ApiService {
         print('📤 Body: $data');
       }
 
-      final response = await http.post(
-        uri,
-        headers: await _getHeaders(),
-        body: data != null ? jsonEncode(data) : null,
-      );
+      final response = await http
+          .post(
+            uri,
+            headers: await _getHeaders(),
+            body: data != null ? jsonEncode(data) : null,
+          )
+          .timeout(_requestTimeout, onTimeout: _throwTimeout);
 
       return await _handleResponse(
         response,
@@ -145,11 +179,13 @@ class ApiService {
     try {
       final uri = Uri.parse('${AppConfig.apiBaseUrl}$endpoint');
 
-      final response = await http.put(
-        uri,
-        headers: await _getHeaders(),
-        body: jsonEncode(data),
-      );
+      final response = await http
+          .put(
+            uri,
+            headers: await _getHeaders(),
+            body: jsonEncode(data),
+          )
+          .timeout(_requestTimeout, onTimeout: _throwTimeout);
 
       return await _handleResponse(response);
     } catch (e) {
@@ -162,7 +198,9 @@ class ApiService {
     try {
       final uri = Uri.parse('${AppConfig.apiBaseUrl}$endpoint');
 
-      final response = await http.delete(uri, headers: await _getHeaders());
+      final response = await http
+          .delete(uri, headers: await _getHeaders())
+          .timeout(_requestTimeout, onTimeout: _throwTimeout);
 
       return await _handleResponse(response);
     } catch (e) {
@@ -290,7 +328,10 @@ class ApiService {
         }
       }
 
-      final streamed = await request.send();
+      final streamed = await request.send().timeout(
+            _requestTimeout,
+            onTimeout: _throwTimeout,
+          );
       final response = await http.Response.fromStream(streamed);
       return await _handleResponse(response);
     } catch (e) {

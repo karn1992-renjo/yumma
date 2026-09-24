@@ -49,6 +49,8 @@ class RestaurantAssistantController extends Controller
         'reviews_summary'  => 'Average rating, rating spread, and the most recent low (<=3) reviews with text. args: {days:int=60}',
         'promotions_active'=> 'This restaurant\'s current promotions and coupon codes with usage counts. args: {}',
         'cancellations'    => 'Cancelled-order count, cancel rate, and the top cancellation reasons. args: {days:int=30}',
+        'search_demand'    => 'What customers are searching for on the platform: this restaurant\'s dish/cuisine keywords with search volume + how many searches returned nothing (unmet demand), searches that clicked through to THIS restaurant, and the overall trending keywords. Use to spot demand this restaurant could capture. args: {days:int=45}',
+        'demand_forecast'  => 'Forward demand forecast for THIS restaurant built from its own order history: projected orders for the next 7 days (by weekday), recent trend, peak hours, and a breakdown of which delivery areas its orders come from with each area\'s upcoming platform demand forecast. Use before proposing coupons / price changes / timing. args: {}',
     ];
 
     public function __construct(
@@ -314,6 +316,110 @@ class RestaurantAssistantController extends Controller
         ]);
     }
 
+    /**
+     * Proactive, on-demand growth proposals for the dashboard popup.
+     *
+     *   GET /api/restaurant/assistant/proposals
+     *   -> { data: { proposals: [{ id, tool, args, summary, risk, status }], reply } }
+     *
+     * The app shows these as a popup on the business dashboard; each is a
+     * coupon or single-dish price change the owner taps to run. Reuses the exact
+     * PLAN -> FETCH -> ANSWER -> propose pipeline as {@see message()} with a
+     * synthetic "review my numbers" prompt. Idempotent per day: a second call
+     * the same day returns the still-pending rows without a fresh model call.
+     */
+    public function proposals(Request $request): \Illuminate\Http\JsonResponse
+    {
+        $user = $request->user();
+        $restaurant = $this->resolveSingleRestaurant($request, $user);
+
+        if (! $restaurant) {
+            return response()->json(['success' => false, 'message' => 'No restaurant found.'], 404);
+        }
+
+        $empty = response()->json(['success' => true, 'data' => ['proposals' => [], 'reply' => '']]);
+
+        if (! $this->settings->bool('ai_enabled') || ! Schema::hasTable('restaurant_ai_actions')) {
+            return $empty;
+        }
+
+        $conversationId = 'proposals:' . $restaurant->id . ':' . now()->toDateString();
+
+        // Already generated today — return whatever the owner hasn't acted on yet.
+        $existing = DB::table('restaurant_ai_actions')
+            ->where('restaurant_id', $restaurant->id)
+            ->where('conversation_id', $conversationId)
+            ->orderBy('id')
+            ->get();
+
+        if ($existing->isNotEmpty()) {
+            $pending = $existing->where('status', 'proposed')->map(fn ($a) => [
+                'id' => (int) $a->id,
+                'tool' => (string) $a->tool,
+                'args' => json_decode($a->args ?? '[]', true) ?: [],
+                'summary' => (string) $a->summary,
+                'risk' => (string) ($a->risk ?? 'low'),
+                'status' => 'proposed',
+            ])->values()->all();
+
+            return response()->json(['success' => true, 'data' => ['proposals' => $pending, 'reply' => '']]);
+        }
+
+        $message = 'SYSTEM TASK (not a chat message): first ANALYSE this restaurant\'s demand, then decide. '
+            . 'Read the sales trend and peak hours, the forward demand forecast and which delivery areas the orders come from (with those areas\' upcoming forecast), '
+            . 'and what customers are searching for that this restaurant does or could serve (unmet search demand, trending keywords). '
+            . 'THEN, if — and only if — that analysis clearly supports it, output 1 or 2 concrete actions in the "actions" array: '
+            . 'a discount coupon (create_coupon) and/or a single dish price change (update_menu_item), each with a complete "args" object and a one-line "summary" that names the demand signal it responds to. '
+            . 'Ground every number in the data. Do NOT ask me to confirm and do NOT describe the actions in "reply" — the app shows its own confirm button; just put them in "actions". '
+            . 'If the analysis does not clearly justify an action, return "actions": []. '
+            . 'Keep "reply" to one short plain sentence stating what the demand analysis showed, and set "plan" to [].';
+
+        // Proposals always run the same demand-analysis set — don't leave the
+        // fetch choice to the planner.
+        $analysisFetch = [
+            ['tool' => 'sales_overview', 'args' => ['days' => 30]],
+            ['tool' => 'sales_by_hour', 'args' => ['days' => 45]],
+            ['tool' => 'item_performance', 'args' => ['days' => 30, 'limit' => 15]],
+            ['tool' => 'demand_forecast', 'args' => []],
+            ['tool' => 'search_demand', 'args' => ['days' => 45]],
+            ['tool' => 'promotions_active', 'args' => []],
+        ];
+
+        try {
+            $facts = [];
+            foreach ($analysisFetch as $call) {
+                $facts[$call['tool']] = $this->runTool($restaurant, $call['tool'], $call['args']);
+            }
+
+            $answer = $this->composeAnswer($restaurant, $message, [], 'proactively analyse demand and forecast, then propose coupon / price actions if justified', $facts);
+        } catch (\Throwable $e) {
+            report($e);
+            $answer = null;
+        }
+
+        if ($answer === null) {
+            return $empty;
+        }
+
+        // Keep only the two proposal types the dashboard popup is for.
+        $actions = array_values(array_filter(
+            $answer['actions'] ?? [],
+            fn ($a) => in_array($a['tool'] ?? null, ['create_coupon', 'update_menu_item'], true),
+        ));
+
+        $proposed = $actions
+            ? $this->actions->propose($restaurant, $conversationId, $user?->id, array_slice($actions, 0, 2))
+            : [];
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'proposals' => $proposed,
+                'reply' => $proposed ? (string) ($answer['reply'] ?? '') : '',
+            ],
+        ]);
+    }
+
     // ------------------------------------------------------------- AI: planning
 
     private function planFetches(Restaurant $restaurant, string $message, array $recent): array
@@ -525,6 +631,8 @@ PROMPT;
                 'reviews_summary'   => $this->toolReviewsSummary($rid, (int) max(7, min((int) ($args['days'] ?? 60), 365))),
                 'promotions_active' => $this->toolPromotionsActive($rid),
                 'cancellations'     => $this->toolCancellations($rid, $since, $days),
+                'search_demand'     => $this->toolSearchDemand($restaurant, (int) max(7, min((int) ($args['days'] ?? 45), 180))),
+                'demand_forecast'   => $this->toolDemandForecast($restaurant),
                 default             => ['error' => 'unknown tool'],
             };
         } catch (\Throwable $e) {
@@ -864,6 +972,223 @@ PROMPT;
             'cancel_rate_pct' => $all > 0 ? round($cancelled * 100 / $all, 1) : 0.0,
             'top_reasons' => $reasons->map(fn ($r) => ['reason' => $r->cancellation_reason, 'count' => (int) $r->c])->all(),
         ];
+    }
+
+    /**
+     * Customer search signals relevant to this restaurant — demand it could
+     * capture. Degrades to empty structures when search logging has little data.
+     */
+    private function toolSearchDemand(Restaurant $restaurant, int $days): array
+    {
+        if (! Schema::hasTable('search_logs')) {
+            return ['note' => 'Search analytics are not available.', 'restaurant_keyword_demand' => [], 'searches_reaching_you' => [], 'trending_keywords' => []];
+        }
+
+        $rid = $restaurant->id;
+        $since = now()->subDays($days);
+
+        // Keywords this restaurant "owns": its name words + top dish names + tags.
+        $keywords = collect([$restaurant->name])
+            ->merge(DB::table('menu_items')->where('restaurant_id', $rid)->orderByDesc('total_orders')->limit(12)->pluck('name'))
+            ->flatMap(fn ($v) => preg_split('/[\s,\/&()-]+/', mb_strtolower((string) $v)))
+            ->map(fn ($w) => trim($w))
+            ->filter(fn ($w) => mb_strlen($w) >= 3)
+            ->unique()->take(24)->values();
+
+        $tagWords = DB::table('menu_items')->where('restaurant_id', $rid)->whereNotNull('tags')->pluck('tags')
+            ->flatMap(fn ($t) => (array) json_decode((string) $t, true))
+            ->map(fn ($t) => trim(mb_strtolower((string) $t)))
+            ->filter(fn ($t) => mb_strlen($t) >= 3);
+        $keywords = $keywords->merge($tagWords)->unique()->take(30)->values();
+
+        $keywordDemand = [];
+        foreach ($keywords as $kw) {
+            $rows = DB::table('search_logs')
+                ->where('created_at', '>=', $since)
+                ->where('keyword', 'like', '%' . $kw . '%')
+                ->selectRaw('COUNT(*) searches, SUM(CASE WHEN results_count = 0 THEN 1 ELSE 0 END) zero_result, COUNT(DISTINCT user_id) people')
+                ->first();
+            if ($rows && (int) $rows->searches > 0) {
+                $keywordDemand[] = [
+                    'keyword' => $kw,
+                    'searches' => (int) $rows->searches,
+                    'people' => (int) $rows->people,
+                    'searches_with_no_results' => (int) $rows->zero_result,
+                ];
+            }
+        }
+        usort($keywordDemand, fn ($a, $b) => $b['searches'] <=> $a['searches']);
+
+        // Searches that clicked through to this restaurant or one of its dishes.
+        $itemIds = DB::table('menu_items')->where('restaurant_id', $rid)->pluck('id')->all();
+        $reaching = DB::table('search_logs')
+            ->where('created_at', '>=', $since)
+            ->where(function ($q) use ($rid, $itemIds) {
+                $q->where(fn ($x) => $x->whereIn('result_type', ['restaurant', 'store'])->where('result_id', $rid));
+                if ($itemIds) {
+                    $q->orWhere(fn ($x) => $x->whereIn('result_type', ['menu_item', 'item', 'dish', 'product'])->whereIn('result_id', $itemIds));
+                }
+            })
+            ->selectRaw('keyword, COUNT(*) c')
+            ->groupBy('keyword')->orderByDesc('c')->limit(10)->get();
+
+        $trending = Schema::hasTable('trending_searches')
+            ? DB::table('trending_searches')->orderByDesc('total_searches')->limit(12)->get()
+                ->map(fn ($t) => ['keyword' => $t->keyword, 'total_searches' => (int) $t->total_searches])->all()
+            : [];
+
+        return [
+            'period_days' => $days,
+            'restaurant_keyword_demand' => array_slice($keywordDemand, 0, 15),
+            'searches_reaching_you' => $reaching->map(fn ($r) => ['keyword' => $r->keyword, 'count' => (int) $r->c])->all(),
+            'trending_keywords' => $trending,
+            'hint' => 'A high "searches_with_no_results" or a trending keyword you match but few "searches_reaching_you" = demand you are missing; a coupon, better dish photos/names, or availability can capture it.',
+        ];
+    }
+
+    /**
+     * Forward demand forecast for this restaurant from its own order history,
+     * plus which delivery areas its orders land in and those areas' upcoming
+     * platform demand forecast (when available).
+     */
+    private function toolDemandForecast(Restaurant $restaurant): array
+    {
+        $rid = $restaurant->id;
+        $since = now()->subDays(56);
+
+        $daily = (clone $this->paidOrders($rid))
+            ->where('orders.created_at', '>=', $since)
+            ->selectRaw('DATE(orders.created_at) d, DAYOFWEEK(orders.created_at) dow, COUNT(*) c')
+            ->groupBy('d', 'dow')->get();
+
+        $names = [1 => 'Sunday', 2 => 'Monday', 3 => 'Tuesday', 4 => 'Wednesday', 5 => 'Thursday', 6 => 'Friday', 7 => 'Saturday'];
+        $byDow = [];
+        foreach ($daily as $r) {
+            $byDow[(int) $r->dow][] = (int) $r->c;
+        }
+        $dowAvg = [];
+        foreach ($names as $n => $label) {
+            $vals = $byDow[$n] ?? [];
+            $dowAvg[$n] = $vals ? array_sum($vals) / count($vals) : 0.0;
+        }
+
+        // Recent trend: last 14 days vs the 14 before.
+        $win = fn ($from, $to) => (int) (clone $this->paidOrders($rid))
+            ->whereBetween('orders.created_at', [$from, $to])->count();
+        $now = now();
+        $last14 = $win($now->copy()->subDays(14), $now);
+        $prev14 = $win($now->copy()->subDays(28), $now->copy()->subDays(14));
+        $trendMult = $prev14 > 0 ? max(0.5, min(1.8, $last14 / $prev14)) : 1.0;
+
+        $projection = [];
+        for ($i = 1; $i <= 7; $i++) {
+            $day = $now->copy()->addDays($i);
+            $base = $dowAvg[(int) $day->format('w') + 1] ?? 0.0;
+            $projection[] = [
+                'date' => $day->toDateString(),
+                'weekday' => $names[(int) $day->format('w') + 1],
+                'expected_orders' => (int) round($base * $trendMult),
+            ];
+        }
+
+        $peakHours = (clone $this->paidOrders($rid))
+            ->where('orders.created_at', '>=', $since)
+            ->selectRaw('HOUR(orders.created_at) h, COUNT(*) c')
+            ->groupBy('h')->orderByDesc('c')->limit(3)->pluck('c', 'h')
+            ->map(fn ($c, $h) => ['hour' => (int) $h, 'orders' => (int) $c])->values()->all();
+
+        return [
+            'window' => 'last 56 days of orders -> next 7 days',
+            'recent_trend_pct' => $this->pct($prev14, $last14),
+            'next_7_days' => $projection,
+            'peak_hours' => $peakHours,
+            'delivery_areas' => $this->orderAreaBreakdown($rid, $restaurant),
+        ];
+    }
+
+    /**
+     * Approx which active delivery areas this restaurant's recent orders fall in
+     * (nearest area centre by haversine, within 2x its radius), with each area's
+     * next upcoming demand forecast row when one exists.
+     */
+    private function orderAreaBreakdown(int $rid, Restaurant $restaurant): array
+    {
+        if (! Schema::hasTable('delivery_areas')) {
+            return [];
+        }
+        $areas = DB::table('delivery_areas')
+            ->where('is_active', 1)
+            ->whereNotNull('latitude')->whereNotNull('longitude')
+            ->get(['id', 'name', 'latitude', 'longitude', 'radius_km']);
+        if ($areas->isEmpty()) {
+            return [];
+        }
+
+        $orders = (clone $this->paidOrders($rid))
+            ->where('orders.created_at', '>=', now()->subDays(45))
+            ->whereNotNull('orders.delivery_lat')->whereNotNull('orders.delivery_lng')
+            ->get(['orders.delivery_lat as lat', 'orders.delivery_lng as lng', 'orders.total']);
+
+        $hav = function ($lat1, $lon1, $lat2, $lon2) {
+            $r = 6371.0;
+            $dLat = deg2rad($lat2 - $lat1);
+            $dLon = deg2rad($lon2 - $lon1);
+            $a = sin($dLat / 2) ** 2 + cos(deg2rad($lat1)) * cos(deg2rad($lat2)) * sin($dLon / 2) ** 2;
+            return $r * 2 * atan2(sqrt($a), sqrt(1 - $a));
+        };
+
+        $buckets = [];
+        $unmapped = 0;
+        foreach ($orders as $o) {
+            $best = null;
+            $bestDist = INF;
+            foreach ($areas as $area) {
+                $d = $hav((float) $o->lat, (float) $o->lng, (float) $area->latitude, (float) $area->longitude);
+                $limit = max(3.0, ((float) ($area->radius_km ?: 3)) * 2);
+                if ($d < $bestDist && $d <= $limit) {
+                    $bestDist = $d;
+                    $best = $area;
+                }
+            }
+            if (! $best) {
+                $unmapped++;
+                continue;
+            }
+            $buckets[$best->id] ??= ['name' => $best->name, 'orders' => 0, 'revenue' => 0.0];
+            $buckets[$best->id]['orders']++;
+            $buckets[$best->id]['revenue'] += (float) $o->total;
+        }
+
+        $forecasts = Schema::hasTable('ai_forecasts')
+            ? DB::table('ai_forecasts')
+                ->whereIn('area_id', array_keys($buckets))
+                ->where('forecast_type', 'demand')
+                ->where('window_start', '>=', now())
+                ->orderBy('window_start')
+                ->get()->groupBy('area_id')
+            : collect();
+
+        $out = [];
+        foreach ($buckets as $areaId => $b) {
+            $fc = $forecasts->get($areaId)?->first();
+            $out[] = [
+                'area' => $b['name'],
+                'orders_last_45d' => $b['orders'],
+                'revenue_last_45d' => round($b['revenue'], 2),
+                'upcoming_forecast' => $fc ? [
+                    'window_start' => $fc->window_start,
+                    'expected_orders' => (int) $fc->expected_orders,
+                    'driver_shortage' => (int) ($fc->shortage ?? 0),
+                ] : null,
+            ];
+        }
+        usort($out, fn ($a, $b) => $b['orders_last_45d'] <=> $a['orders_last_45d']);
+
+        if ($unmapped > 0) {
+            $out[] = ['area' => 'Outside mapped delivery areas', 'orders_last_45d' => $unmapped, 'revenue_last_45d' => null, 'upcoming_forecast' => null];
+        }
+
+        return $out;
     }
 
     // --------------------------------------------------------------- utilities

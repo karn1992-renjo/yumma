@@ -1196,6 +1196,23 @@ class _KotTicket extends StatelessWidget {
                 fontFeatures: const [FontFeature.tabularFigures()],
               ),
             ),
+            if (order.isTheatreDelivery) ...[
+              const SizedBox(height: 6),
+              Row(
+                children: [
+                  Icon(Icons.event_seat_rounded, size: 15, color: foodflow.orange),
+                  const SizedBox(width: 6),
+                  Text(
+                    order.theatreSeatLabel,
+                    style: TextStyle(
+                      color: foodflow.orange,
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                ],
+              ),
+            ],
             const SizedBox(height: 12),
             const _DashRule(),
             const SizedBox(height: 12),
@@ -1253,6 +1270,18 @@ class _KotTicket extends StatelessWidget {
                             ),
                           ],
                         ),
+                        if (it.hasCustomizations)
+                          Padding(
+                            padding: const EdgeInsets.only(left: 34, top: 3),
+                            child: Text(
+                              it.customizationSummary,
+                              style: TextStyle(
+                                color: foodflow.inkSoft,
+                                fontSize: 11.5,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
                         if (it.hasPromotionFreeUnits)
                           Padding(
                             padding: const EdgeInsets.only(left: 34, top: 3),
@@ -1422,9 +1451,15 @@ class _OrderMetaStripState extends State<_OrderMetaStrip> {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   _metaLine(
-                    Icons.location_on_outlined,
-                    order.isTakeaway ? 'Pickup' : 'Deliver to',
-                    order.deliveryAddress,
+                    order.isTheatreDelivery
+                        ? Icons.event_seat_outlined
+                        : Icons.location_on_outlined,
+                    order.isTakeaway
+                        ? 'Pickup'
+                        : (order.isTheatreDelivery ? 'Deliver to seat' : 'Deliver to'),
+                    order.isTheatreDelivery
+                        ? order.theatreSeatLabel
+                        : order.deliveryAddress,
                   ),
                   if (order.scheduledTime != null)
                     _metaLine(

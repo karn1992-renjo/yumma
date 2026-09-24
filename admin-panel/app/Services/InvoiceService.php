@@ -3,8 +3,13 @@
 namespace App\Services;
 
 use App\Models\AppSetting;
+use App\Models\CountryTaxProfile;
 use App\Models\Order;
+use App\Services\Tax\CountryTaxRegistry;
+use App\Services\Tax\Contracts\TaxStrategy;
+use App\Services\Tax\Strategies\GenericTaxStrategy;
 use App\Support\AmountInWords;
+use App\Support\CurrencyFormatter;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
@@ -12,11 +17,17 @@ use Illuminate\Support\Facades\Storage;
 /**
  * Builds the customer order invoice (HTML view + dompdf PDF).
  *
- * Three shapes, decided by {@see invoiceType()}:
- *  - `tax_invoice`     GST on, supplier restaurant GST-registered -> CGST/SGST
- *                      split, HSN column, rate-wise summary (invoices.tax-invoice)
- *  - `bill_of_supply`  GST on, supplier not registered -> no tax lines
- *  - `receipt`         GST off -> the original simple invoice (invoices.order)
+ * Four shapes, decided by {@see invoiceType()}:
+ *  - `tax_invoice`         India GST on, supplier restaurant GST-registered ->
+ *                          CGST/SGST split, HSN column, rate-wise summary
+ *                          (invoices.tax-invoice)
+ *  - `bill_of_supply`      India GST on, supplier not registered -> no tax lines
+ *  - `country_tax_invoice` A non-India country tax strategy (UK/GCC/EU/US/
+ *                          AU-SG/generic) actually applied -> one normalized
+ *                          tax-name-agnostic shape via TaxStrategy::invoiceSummary()
+ *                          (invoices.country-tax-invoice)
+ *  - `receipt`             No tax strategy applied at all -> the original
+ *                          simple invoice (invoices.order)
  *
  * Money is always read from the stored order columns / persisted
  * `tax_breakdown` so the document matches exactly what was charged.
@@ -26,7 +37,11 @@ class InvoiceService
     public function pdf(Order $order)
     {
         $data = $this->data($order);
-        $view = $data['meta']['invoice_type'] === 'receipt' ? 'invoices.order' : 'invoices.tax-invoice';
+        $view = match ($data['meta']['invoice_type']) {
+            'receipt' => 'invoices.order',
+            'country_tax_invoice' => 'invoices.country-tax-invoice',
+            default => 'invoices.tax-invoice',
+        };
 
         return Pdf::loadView($view, $data)->setPaper('a4', 'portrait');
     }
@@ -43,6 +58,21 @@ class InvoiceService
 
     public function invoiceType(Order $order): string
     {
+        // Order creation persists `invoice_type = 'tax_invoice'` whenever ANY
+        // tax strategy applied, India or not (CheckoutController/Api\OrderController
+        // both do `isset($pricing['gst_breakdown']) ? 'tax_invoice' : null`), so
+        // that persisted value can't be trusted to distinguish India from a
+        // country-strategy order. `tax_breakdown['country_code']` can: it's only
+        // ever set by a TaxStrategy's own `detailed` array, and India's
+        // GstBreakdown::toArray() never sets it -- so its presence (and being
+        // non-'IN') is an exact signal a country strategy computed this order's
+        // tax, checked BEFORE trusting the persisted column.
+        $gst = is_array($order->tax_breakdown) ? $order->tax_breakdown : null;
+        $countryCode = strtoupper((string) ($gst['country_code'] ?? ''));
+        if ($countryCode !== '' && $countryCode !== 'IN') {
+            return 'country_tax_invoice';
+        }
+
         if (in_array($order->invoice_type, ['tax_invoice', 'bill_of_supply', 'receipt'], true)) {
             return $order->invoice_type;
         }
@@ -59,16 +89,38 @@ class InvoiceService
     {
         $order->loadMissing('customer', 'restaurant');
 
-        $symbol = AppSetting::sanitizedCurrencySymbol();
-        $decimals = AppSetting::currencyDecimals();
-        $money = static fn ($value) => $symbol . number_format((float) $value, $decimals);
-
         $type = $this->invoiceType($order);
         $isTax = $type === 'tax_invoice';
+        $isCountryTax = $type === 'country_tax_invoice';
 
         $lines = is_array($order->items) ? $order->items : (json_decode((string) $order->items, true) ?: []);
         $gst = is_array($order->tax_breakdown) ? $order->tax_breakdown : null;
         $section95 = (bool) data_get($gst, 'section_9_5', false);
+
+        // Country-tax orders: normalize the strategy's own persisted shape
+        // (UK/GCC/EU/AU-SG/US/generic all differ slightly) into the one
+        // generic shape the country-tax-invoice template renders, and display
+        // amounts in the order's OWN currency (its persisted `currency_code`
+        // snapshot, falling back to the country's current CountryTaxProfile
+        // for an order placed before that column existed) rather than the
+        // platform's single global AppSetting currency -- an admin whose
+        // global currency is INR must still see a UK order's invoice in GBP.
+        $countryTax = null;
+        $countryCurrency = null;
+        if ($isCountryTax && $gst) {
+            $countryCode = strtoupper((string) ($gst['country_code'] ?? ''));
+            $strategy = $this->resolveTaxStrategy($countryCode);
+            $countryTax = $strategy?->invoiceSummary($gst);
+            $countryCurrency = $order->currency_code ?: CountryTaxProfile::where('country_code', $countryCode)->value('currency_code');
+        }
+
+        $symbol = $isCountryTax && $countryCurrency
+            ? CurrencyFormatter::symbolFor($countryCurrency)
+            : AppSetting::sanitizedCurrencySymbol();
+        $decimals = $isCountryTax && $countryCurrency
+            ? CurrencyFormatter::decimalsFor($countryCurrency)
+            : AppSetting::currencyDecimals();
+        $money = static fn ($value) => $symbol . number_format((float) $value, $decimals);
 
         // Index the persisted per-line GST rows by name so the printed item
         // table can show taxable value + rate without recomputing.
@@ -117,7 +169,12 @@ class InvoiceService
             $rows[] = ['label' => 'Platform fee', 'value' => (float) $order->platform_fee, 'negative' => false];
         }
         if ((float) ($order->tax ?? 0) > 0) {
-            $rows[] = ['label' => $isTax ? 'GST' : 'Taxes & charges', 'value' => (float) $order->tax, 'negative' => false];
+            $taxRowLabel = match (true) {
+                $isTax => 'GST',
+                $isCountryTax => $countryTax['tax_name'] ?? 'Tax',
+                default => 'Taxes & charges',
+            };
+            $rows[] = ['label' => $taxRowLabel, 'value' => (float) $order->tax, 'negative' => false];
         }
         if ((float) ($order->tip_amount ?? 0) > 0) {
             $rows[] = ['label' => 'Delivery tip', 'value' => (float) $order->tip_amount, 'negative' => false];
@@ -136,10 +193,13 @@ class InvoiceService
             'items' => $items,
             'feeRows' => $rows,
             'gst' => $gst,
+            'countryTax' => $countryTax,
             'company' => $this->company(),
             'logo' => $this->logoDataUri(),
             'signature' => $this->assetDataUri((string) AppSetting::getValue('invoice_signature_image')),
-            'amountInWords' => AmountInWords::inr((float) $order->total, ucfirst(strtolower(AppSetting::getValue('currency_name', 'Rupees')))),
+            'amountInWords' => $isCountryTax
+                ? AmountInWords::generic((float) $order->total, $countryCurrency ?: strtoupper(AppSetting::getValue('currency_code', 'units')))
+                : AmountInWords::inr((float) $order->total, ucfirst(strtolower(AppSetting::getValue('currency_name', 'Rupees')))),
             'section95' => $section95,
             'eco95' => $section95 ? [
                 'cgst' => (float) ($order->eco_gst_food_cgst ?? data_get($gst, 'eco_food.cgst', 0)),
@@ -151,6 +211,7 @@ class InvoiceService
                 'title' => match ($type) {
                     'tax_invoice' => 'TAX INVOICE',
                     'bill_of_supply' => 'BILL OF SUPPLY',
+                    'country_tax_invoice' => strtoupper($countryTax['tax_name'] ?? 'Tax') . ' INVOICE',
                     default => 'INVOICE',
                 },
                 'invoice_no' => $order->invoice_number ?: ('INV-' . $order->order_number),
@@ -205,6 +266,34 @@ class InvoiceService
                 'gstin' => $order->restaurant?->fssai_license_number ?: '',
             ],
         ];
+    }
+
+    /**
+     * Resolves the SAME strategy shape that computed this persisted
+     * `tax_breakdown`, by country code rather than by the restaurant's
+     * CURRENT config -- an order's own invoice must reflect what it was
+     * actually charged, even if the restaurant's country/registration has
+     * since changed. Dedicated countries resolve via the registry; a
+     * generic-fallback country re-hydrates a GenericTaxStrategy against its
+     * CountryTaxProfile row (or, in the unlikely case that row was deleted
+     * since the order was placed, an unsaved placeholder -- invoiceSummary()
+     * only reads the passed-in $detailed array, never the profile itself).
+     */
+    private function resolveTaxStrategy(string $countryCode): ?TaxStrategy
+    {
+        if ($countryCode === '') {
+            return null;
+        }
+
+        $strategy = app(CountryTaxRegistry::class)->strategyForCode($countryCode);
+        if ($strategy) {
+            return $strategy;
+        }
+
+        $profile = CountryTaxProfile::where('country_code', $countryCode)->first()
+            ?? new CountryTaxProfile(['country_code' => $countryCode]);
+
+        return new GenericTaxStrategy($profile);
     }
 
     private function company(): array

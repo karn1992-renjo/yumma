@@ -69,8 +69,37 @@
         return \Illuminate\Support\Facades\Storage::disk('public')->url($image);
     };
 
+    $formatCustomizations = function ($variant, $addOns) use ($money) {
+        $label = function ($option) use ($money) {
+            if (is_string($option)) {
+                return trim($option) ?: null;
+            }
+            if (!is_array($option)) {
+                return null;
+            }
+            $name = trim((string) ($option['name'] ?? $option['label'] ?? $option['title'] ?? ''));
+            if ($name === '') {
+                return null;
+            }
+            $price = (float) ($option['price'] ?? $option['additional_price'] ?? $option['amount'] ?? 0);
+            return $price > 0 ? $name . ' (+' . $money($price) . ')' : $name;
+        };
+
+        $parts = [];
+        $variantName = is_array($variant) ? trim((string) ($variant['name'] ?? '')) : '';
+        if (strcasecmp($variantName, 'Promotion info') !== 0 && ($variantLabel = $label($variant))) {
+            $parts[] = $variantLabel;
+        }
+        foreach ((array) $addOns as $addOn) {
+            if ($addOnLabel = $label($addOn)) {
+                $parts[] = $addOnLabel;
+            }
+        }
+        return $parts;
+    };
+
     if ($order->orderItems && $order->orderItems->count() > 0) {
-        $orderItems = $order->orderItems->map(function ($item) use ($itemImageUrl) {
+        $orderItems = $order->orderItems->map(function ($item) use ($itemImageUrl, $formatCustomizations) {
             $qty = max(1, (int) ($item->quantity ?? 1));
             $unitPrice = (float) ($item->unit_price ?? $item->price ?? 0);
             $totalPrice = (float) ($item->total_price ?? ($unitPrice * $qty));
@@ -88,11 +117,12 @@
                 'notes' => $item->special_instructions,
                 'variant' => $item->selected_variant,
                 'addons' => $item->selected_add_ons,
+                'customizations' => $formatCustomizations($item->selected_variant, $item->selected_add_ons),
             ];
         })->values();
     } else {
         $rawItems = is_array($order->items) ? $order->items : [];
-        $orderItems = collect($rawItems)->map(function ($item) use ($itemImageUrl) {
+        $orderItems = collect($rawItems)->map(function ($item) use ($itemImageUrl, $formatCustomizations) {
             if (!is_array($item)) {
                 return null;
             }
@@ -121,17 +151,27 @@
                 'notes' => $item['special_instructions'] ?? $item['notes'] ?? null,
                 'variant' => $item['selected_variant'] ?? $item['variant'] ?? null,
                 'addons' => $item['selected_add_ons'] ?? $item['addons'] ?? null,
+                'customizations' => $formatCustomizations(
+                    $item['selected_variant'] ?? $item['variant'] ?? null,
+                    $item['selected_add_ons'] ?? $item['addons'] ?? null
+                ),
             ];
         })->filter()->values();
     }
 
-    $deliveryAddress = $order->delivery_address;
+    $isTheatreDelivery = $order->order_type === 'theatre_delivery';
 
-    if (!$deliveryAddress && is_array($order->customer_address)) {
-        $deliveryAddress = collect($order->customer_address)->filter()->implode(', ');
+    if ($isTheatreDelivery) {
+        $deliveryAddress = 'Screen ' . ($order->screen_id ?? '-') . ' · Seat ' . ($order->seat_label ?? '-');
+    } else {
+        $deliveryAddress = $order->delivery_address;
+
+        if (!$deliveryAddress && is_array($order->customer_address)) {
+            $deliveryAddress = collect($order->customer_address)->filter()->implode(', ');
+        }
+
+        $deliveryAddress = $deliveryAddress ?: 'Address not provided';
     }
-
-    $deliveryAddress = $deliveryAddress ?: 'Address not provided';
     $orderType = ucfirst(str_replace('_', ' ', $order->order_type ?: 'delivery'));
     $serviceType = ucfirst(str_replace('_', ' ', $order->service_type ?: 'food'));
 
@@ -142,19 +182,6 @@
         ['label' => 'Delivery KM', 'value' => $deliveryDistanceKm !== null ? number_format($deliveryDistanceKm, 2) . ' km' : 'N/A', 'icon' => 'route', 'tone' => '#8b5cf6'],
     ];
 
-    $formatChoiceList = function ($value) {
-        if (!is_array($value)) {
-            return $value;
-        }
-
-        return collect($value)->map(function ($entry, $key) {
-            if (is_array($entry)) {
-                return collect($entry)->filter()->implode(' ');
-            }
-
-            return is_string($key) ? $key . ': ' . $entry : $entry;
-        })->filter()->implode(', ');
-    };
 @endphp
 
 @section('styles')
@@ -760,8 +787,8 @@
                                 @if($item['notes'])
                                     <div class="admin-muted text-truncate">{{ $item['notes'] }}</div>
                                 @endif
-                                @if($formatChoiceList($item['variant']))
-                                    <div class="admin-muted text-truncate">Variant: {{ $formatChoiceList($item['variant']) }}</div>
+                                @if(!empty($item['customizations']))
+                                    <div class="admin-muted">Add-ons: {{ implode(', ', $item['customizations']) }}</div>
                                 @endif
                             </div>
 
@@ -798,7 +825,7 @@
                             <span class="admin-line-value">{{ $order->customer_email ?: optional($order->customer)->email ?: 'N/A' }}</span>
                         </div>
                         <div class="admin-line">
-                            <span class="admin-line-label">Delivery Address</span>
+                            <span class="admin-line-label">{{ $isTheatreDelivery ? 'Seat' : 'Delivery Address' }}</span>
                             <span class="admin-line-value">{{ $deliveryAddress }}</span>
                         </div>
                         @if($order->scheduled_time)

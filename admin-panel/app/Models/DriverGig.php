@@ -25,6 +25,9 @@ class DriverGig extends Model
         'description',
         'driver_id',
         'area_id',
+        'branch_id',
+        'theatre_id',
+        'open_to_pool',
         'capacity',
         'date',
         'start_time',
@@ -56,6 +59,7 @@ class DriverGig extends Model
         'orders_count' => 'integer',
         'recommended_capacity' => 'integer',
         'auto_pricing_enabled' => 'boolean',
+        'open_to_pool' => 'boolean',
         'forecast_meta' => 'array',
         'forecasted_orders' => 'integer',
         'surge_multiplier' => 'decimal:2',
@@ -78,6 +82,35 @@ class DriverGig extends Model
     public function area(): BelongsTo
     {
         return $this->belongsTo(DeliveryArea::class, 'area_id');
+    }
+
+    public function branch(): BelongsTo
+    {
+        return $this->belongsTo(Branch::class);
+    }
+
+    /**
+     * swaad-only: a gig with theatre_id set is a runner shift for that
+     * theatre instead of a delivery-zone gig -- same booking/capacity/
+     * payout-approval machinery, just scoped to a venue instead of an area.
+     */
+    public function theatre(): BelongsTo
+    {
+        return $this->belongsTo(Theatre::class);
+    }
+
+    /**
+     * Whether a driver from outside this gig's own branch may book it. A
+     * platform-wide (admin-created, branch_id null) gig is always bookable by
+     * anyone; a branch-created gig only opens up when it explicitly opts in.
+     */
+    public function isBookableByBranch(?int $driverBranchId): bool
+    {
+        if (! $this->branch_id) {
+            return true;
+        }
+
+        return $this->open_to_pool || (int) $this->branch_id === (int) $driverBranchId;
     }
 
     public function bookings(): HasMany

@@ -606,12 +606,25 @@ class PromotionEngineController extends Controller
 
         $ownerType = $validated['owner_type'] ?? 'admin';
         $validated['promotion_type'] = PromotionTypeRegistry::normalize($validated['promotion_type'] ?? null);
+
+        // A restaurant-only type (e.g. Combo Deal, Meal Deal, Item/Category Discount) picked
+        // while Owner Type is still "Admin" (the form's default) is a mismatch the UI is
+        // supposed to auto-correct client-side; if the client didn't do that but a restaurant
+        // was still selected, promote the owner here instead of hard-failing the submit.
+        if (! in_array($ownerType, ['restaurant', 'branch'], true)
+            && array_key_exists($validated['promotion_type'], PromotionTypeRegistry::RESTAURANT_TYPES)
+            && ! array_key_exists($validated['promotion_type'], PromotionTypeRegistry::ADMIN_TYPES)
+            && ! empty($validated['restaurant_id'])) {
+            $ownerType = 'restaurant';
+            $validated['owner_type'] = 'restaurant';
+        }
+
         $allowedTypes = PromotionTypeRegistry::typesForOwner($ownerType);
         if (! array_key_exists($validated['promotion_type'], $allowedTypes)) {
             throw ValidationException::withMessages([
                 'promotion_type' => in_array($ownerType, ['restaurant', 'branch'], true)
                     ? 'Restaurant-owned promotions can use only restaurant menu promotion types.'
-                    : 'Admin promotions can use only platform promotion types.',
+                    : 'This promotion type belongs to a specific restaurant\'s menu — set Owner Type to Restaurant and select a restaurant, or choose a platform-wide offer type instead.',
             ]);
         }
         $validated['reward_type'] = $allowedTypes[$validated['promotion_type']]['reward_type'] ?? $validated['reward_type'];

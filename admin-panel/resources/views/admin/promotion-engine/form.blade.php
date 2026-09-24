@@ -1519,7 +1519,8 @@ document.addEventListener('DOMContentLoaded', function () {
         const bucket = typeBucketByPromotion[promotionType.value];
         if (!bucket) return;
         const nextOwner = bucket === 'restaurant' ? 'restaurant' : 'admin';
-        if (owner && owner.value !== nextOwner) {
+        const ownerChanged = owner && owner.value !== nextOwner;
+        if (ownerChanged) {
             owner.value = nextOwner;
         }
         if (restaurant) {
@@ -1528,6 +1529,18 @@ document.addEventListener('DOMContentLoaded', function () {
         form.querySelectorAll('[data-restaurant-required-dot]').forEach(dot => {
             dot.classList.toggle('d-none', nextOwner !== 'restaurant');
         });
+        // owner.value is set as a raw property above, which does not fire owner's own
+        // 'change' handler (updateOwner) — so replicate the rest of its side effects here
+        // instead of relying on the caller to do it, and flag the restaurant picker so a
+        // user who hasn't chosen one yet notices it's now required.
+        updateScopedOptions();
+        syncFundingSettings();
+        if (ownerChanged && nextOwner === 'restaurant' && restaurant && !restaurant.value) {
+            const scope = form.querySelector('[data-restaurant-scope]');
+            scope?.classList.add('border', 'border-warning', 'rounded', 'p-2');
+            restaurant.focus({ preventScroll: false });
+            scope?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
     }
 
     function currentTypeCatalog() {
