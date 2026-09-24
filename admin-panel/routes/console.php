@@ -59,10 +59,23 @@ Schedule::call(function () {
         ->where('status', 'pending')
         ->where('created_at', '<=', $now->copy()->subSeconds($delay))
         ->where('created_at', '>=', $now->copy()->subMinutes(15))
+        // swaad-only: a theatre interval order is placed now but withheld
+        // from the counter until just before the interval, so chasing the
+        // restaurant for "not accepting" it would be calling them about an
+        // order they have deliberately not been shown yet.
+        ->whereNull('scheduled_for')
         ->limit(50)
         ->pluck('id')
         ->each(fn ($id) => \App\Jobs\OrderAcceptanceAlertCallJob::dispatchSync((int) $id, 'restaurant'));
 })->when(fn () => $cronTaskEnabled('exotel_order_acceptance_alert_calls'))->everyMinute();
+
+// swaad-only: hand movie-theatre interval orders to the kitchen a
+// prep-time before the interval (they are placed held so they are not
+// cooked an hour early).
+Schedule::command('theatre:release-held-orders')
+    ->when(fn () => $cronTaskEnabled('release_held_theatre_orders'))
+    ->everyMinute()
+    ->withoutOverlapping();
 
 // Move accepted orders to preparing after the 2-minute customer grace window.
 Schedule::call(function () {

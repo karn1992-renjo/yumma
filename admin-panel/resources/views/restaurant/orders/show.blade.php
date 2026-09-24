@@ -152,8 +152,15 @@
 
     if ($isTheatreDelivery) {
         // swaad-only: in-seat order -- there is no real delivery address,
-        // show where the runner is taking it instead.
-        $deliveryAddress = 'Screen ' . ($order->screen_id ?? '-') . ' · Seat ' . ($order->seat_label ?? '-');
+        // show where the runner is taking it instead. The screen's NAME,
+        // not its id: the kitchen knows "Audi 3", not "screen 7".
+        $deliveryAddress = ($order->screen?->name ?? 'Screen ?') . ' · Seat ' . ($order->seat_label ?? '-');
+
+        // An interval order is cooked to land with the lights, so the time
+        // matters more to the counter than anything else on this page.
+        if ($order->delivery_timing === 'interval' && $order->scheduled_for) {
+            $deliveryAddress .= ' · INTERVAL ' . $order->scheduled_for->format('g:i A');
+        }
     } else {
         $deliveryAddress = $order->delivery_address;
 

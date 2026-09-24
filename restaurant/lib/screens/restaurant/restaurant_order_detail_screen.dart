@@ -1212,6 +1212,26 @@ class _KotTicket extends StatelessWidget {
                   ),
                 ],
               ),
+              // An interval order only reaches the counter a prep-time
+              // before the interval, so by the time this is on screen it
+              // needs making now — for that moment, not sooner.
+              if (order.intervalLabel != null) ...[
+                const SizedBox(height: 6),
+                Row(
+                  children: [
+                    Icon(Icons.schedule_rounded, size: 15, color: foodflow.orange),
+                    const SizedBox(width: 6),
+                    Text(
+                      order.intervalLabel!,
+                      style: TextStyle(
+                        color: foodflow.orange,
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
             ],
             const SizedBox(height: 12),
             const _DashRule(),

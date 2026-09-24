@@ -247,3 +247,50 @@ class TheatreOrderGroupResult {
     );
   }
 }
+
+/// swaad-only: a screening currently playing on a screen, offered at
+/// checkout so the customer can choose "now" or "at the interval".
+///
+/// Scheduling only — swaad never sells tickets, so there is no seat
+/// inventory attached to a show. It exists to answer when the interval is
+/// and when ordering closes.
+class TheatreShowOption {
+  final int id;
+  final String movieTitle;
+  final String? language;
+  final DateTime? intervalAt;
+
+  /// False once the interval is too close for the kitchen to make the food
+  /// in time — the server decides this, never the app.
+  final bool intervalAvailable;
+
+  const TheatreShowOption({
+    required this.id,
+    required this.movieTitle,
+    this.language,
+    this.intervalAt,
+    required this.intervalAvailable,
+  });
+
+  factory TheatreShowOption.fromJson(Map<String, dynamic> json) {
+    return TheatreShowOption(
+      id: (json['id'] as num).toInt(),
+      movieTitle: (json['movie_title'] ?? '').toString(),
+      language: json['language']?.toString(),
+      intervalAt: json['interval_at'] != null
+          ? DateTime.tryParse(json['interval_at'].toString())?.toLocal()
+          : null,
+      intervalAvailable: json['interval_available'] == true,
+    );
+  }
+
+  bool get canDeliverAtInterval => intervalAvailable && intervalAt != null;
+
+  String get intervalLabel {
+    final at = intervalAt;
+    if (at == null) return '';
+    final hour = at.hour % 12 == 0 ? 12 : at.hour % 12;
+    final minute = at.minute.toString().padLeft(2, '0');
+    return '$hour:$minute ${at.hour < 12 ? 'AM' : 'PM'}';
+  }
+}

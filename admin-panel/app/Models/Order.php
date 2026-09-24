@@ -21,7 +21,11 @@ class Order extends Model
         'branch_id',
         'theatre_id',
         'screen_id',
+        'show_id',
         'seat_label',
+        'delivery_timing',
+        'scheduled_for',
+        'released_at',
         'order_group_id',
         'driver_id',
         'order_type',
@@ -177,6 +181,8 @@ class Order extends Model
     
     protected $casts = [
         'items' => 'array',
+        'scheduled_for' => 'datetime',
+        'released_at' => 'datetime',
         'customer_address' => 'array',
         'scheduled_time' => 'datetime',
         'confirmed_at' => 'datetime',
@@ -385,6 +391,24 @@ class Order extends Model
     public function screen(): BelongsTo
     {
         return $this->belongsTo(TheatreScreen::class, 'screen_id');
+    }
+
+    public function show(): BelongsTo
+    {
+        return $this->belongsTo(TheatreShow::class, 'show_id');
+    }
+
+    /**
+     * True while an interval order is paid for and real but deliberately
+     * not yet shown to the kitchen -- see the
+     * 2026_09_24_000002_create_theatre_shows_and_interval_delivery
+     * migration. A scheduled scan releases it a prep-time before the
+     * interval; until then nothing should ring, print or chase the
+     * restaurant about it.
+     */
+    public function isHeldForInterval(): bool
+    {
+        return $this->released_at === null && $this->scheduled_for !== null;
     }
 
     public function orderGroup(): BelongsTo
@@ -887,6 +911,19 @@ class Order extends Model
     public function scopeVisibleToRestaurant($query)
     {
         $cashMethods = ['cod', 'cash', 'cash_on_delivery'];
+
+        // swaad-only: a movie-theatre interval order is paid for and real
+        // from the moment it is placed, but must stay invisible to the
+        // counter until a prep-time before the interval -- otherwise a
+        // dozen of them are cooked an hour early and arrive cold.
+        // ReleaseHeldTheatreOrders stamps released_at when it hands the
+        // order over, at which point it appears here like any other new
+        // order. Every pre-existing order was backfilled with a
+        // released_at, so this excludes nothing that existed before.
+        $query->where(function ($visible) {
+            $visible->whereNotNull('released_at')
+                ->orWhereNull('scheduled_for');
+        });
 
         return $query->where(function ($builder) use ($cashMethods) {
             $builder->where('payment_status', 'success')

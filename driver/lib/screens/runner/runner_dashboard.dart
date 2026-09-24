@@ -196,6 +196,25 @@ class _RunnerDashboardState extends State<RunnerDashboard> {
   }
 }
 
+/// Where the runner is actually taking this order: the auditorium by name
+/// ("Audi 3"), then the seat. An interval order also carries the time it
+/// has to land, which is the whole point of it — it is timed to arrive
+/// with the house lights, not as soon as it is ready.
+String _seatLine(Map<String, dynamic> order) {
+  final screen = (order['screen_name'] ?? '').toString();
+  final seat = (order['seat_label'] ?? '-').toString();
+  final line = screen.isEmpty ? 'Seat $seat' : '$screen · Seat $seat';
+
+  if (order['delivery_timing'] != 'interval') return line;
+
+  final at = DateTime.tryParse((order['scheduled_for'] ?? '').toString())?.toLocal();
+  if (at == null) return '$line · INTERVAL';
+
+  final hour = at.hour % 12 == 0 ? 12 : at.hour % 12;
+  final minute = at.minute.toString().padLeft(2, '0');
+  return '$line · INTERVAL $hour:$minute ${at.hour < 12 ? 'AM' : 'PM'}';
+}
+
 class _ClaimableCard extends StatelessWidget {
   const _ClaimableCard({
     required this.order,
@@ -230,7 +249,7 @@ class _ClaimableCard extends StatelessWidget {
                     Icon(Icons.event_seat_rounded, size: 14, color: FoodFlowTheme.muted),
                     const SizedBox(width: 4),
                     Text(
-                      'Seat ${order['seat_label'] ?? '-'}',
+                      _seatLine(order),
                       style: TextStyle(fontSize: 12, color: FoodFlowTheme.muted),
                     ),
                   ],
@@ -300,7 +319,7 @@ class _OrderCard extends StatelessWidget {
               Icon(Icons.event_seat_rounded, size: 14, color: FoodFlowTheme.muted),
               const SizedBox(width: 4),
               Text(
-                'Seat ${order['seat_label'] ?? '-'} · #${order['order_number']}',
+                '${_seatLine(order)} · #${order['order_number']}',
                 style: TextStyle(fontSize: 12, color: FoodFlowTheme.muted),
               ),
             ],

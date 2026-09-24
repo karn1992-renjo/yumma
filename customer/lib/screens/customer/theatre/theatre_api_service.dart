@@ -42,6 +42,14 @@ class TheatreApiService {
     return _listFrom(response, TheatreScreenSeatMap.fromJson);
   }
 
+  /// What is playing on this screen right now, for the timing choice at
+  /// checkout. An empty list simply means no schedule has been loaded and
+  /// only deliver-now is offered.
+  Future<List<TheatreShowOption>> shows(int screenId) async {
+    final response = await _api.get('/theatre/screens/$screenId/shows');
+    return _listFrom(response, TheatreShowOption.fromJson);
+  }
+
   Future<List<TheatreRestaurant>> restaurants(int theatreId) async {
     final response = await _api.get('/theatre/$theatreId/restaurants');
     return _listFrom(response, TheatreRestaurant.fromJson);
@@ -81,6 +89,8 @@ class TheatreApiService {
     double? lat,
     double? lng,
     String? seatToken,
+    int? showId,
+    String? deliveryTiming,
     required List<Map<String, dynamic>> stalls,
     required String gateway,
   }) async {
@@ -92,6 +102,8 @@ class TheatreApiService {
         if (lat != null) 'lat': lat,
         if (lng != null) 'lng': lng,
         if (seatToken != null) 'seat_token': seatToken,
+        if (showId != null) 'show_id': showId,
+        if (deliveryTiming != null) 'delivery_timing': deliveryTiming,
         'stalls': stalls,
         'payment_method': gateway,
       });
@@ -123,6 +135,8 @@ class TheatreApiService {
     double? lat,
     double? lng,
     String? seatToken,
+    int? showId,
+    String? deliveryTiming,
     required List<Map<String, dynamic>> stalls,
     required String paymentMethod,
     String? paymentId,
@@ -138,6 +152,8 @@ class TheatreApiService {
         if (lat != null) 'lat': lat,
         if (lng != null) 'lng': lng,
         if (seatToken != null) 'seat_token': seatToken,
+        if (showId != null) 'show_id': showId,
+        if (deliveryTiming != null) 'delivery_timing': deliveryTiming,
         'stalls': stalls,
         'payment_method': paymentMethod,
         if (paymentId != null) 'payment_id': paymentId,

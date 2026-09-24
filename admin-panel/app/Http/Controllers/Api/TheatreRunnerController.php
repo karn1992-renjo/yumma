@@ -25,7 +25,7 @@ class TheatreRunnerController extends Controller
         $theatreId = auth()->user()->theatre_id;
         abort_if(!$theatreId, 422, 'Your account is not assigned to a theatre.');
 
-        $claimable = Order::with(['restaurant:id,name'])
+        $claimable = Order::with(['restaurant:id,name', 'screen:id,name'])
             ->where('theatre_id', $theatreId)
             ->where('status', 'ready_for_pickup')
             ->whereNull('driver_id')
@@ -33,7 +33,7 @@ class TheatreRunnerController extends Controller
             ->get()
             ->map(fn (Order $order) => $this->format($order));
 
-        $mine = Order::with(['restaurant:id,name'])
+        $mine = Order::with(['restaurant:id,name', 'screen:id,name'])
             ->where('theatre_id', $theatreId)
             ->where('driver_id', auth()->id())
             ->whereNotIn('status', ['delivered', 'cancelled'])
@@ -73,7 +73,7 @@ class TheatreRunnerController extends Controller
             $order->driver_accepted_at = now();
             $order->save();
 
-            return [['success' => true, 'message' => 'Order claimed.', 'data' => $this->format($order->fresh(['restaurant']))], 200];
+            return [['success' => true, 'message' => 'Order claimed.', 'data' => $this->format($order->fresh(['restaurant', 'screen']))], 200];
         });
 
         return response()->json($payload, $statusCode);
@@ -87,6 +87,11 @@ class TheatreRunnerController extends Controller
             'status' => $order->status,
             'seat_label' => $order->seat_label,
             'screen_id' => $order->screen_id,
+            // The runner walks to an auditorium by NAME ("Audi 3"), never
+            // by a row id, so send the name alongside it.
+            'screen_name' => $order->screen?->name,
+            'delivery_timing' => $order->delivery_timing,
+            'scheduled_for' => $order->scheduled_for?->toIso8601String(),
             'order_group_id' => $order->order_group_id,
             'total' => $order->total,
             'payment_method' => $order->payment_method,

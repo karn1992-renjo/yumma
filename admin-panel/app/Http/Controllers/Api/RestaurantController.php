@@ -488,7 +488,7 @@ class RestaurantController extends Controller
 
             $query = Order::whereIn('restaurant_id', $restaurants->pluck('id'))
                 ->visibleToRestaurant()
-                ->with(['restaurant', 'driver']);
+                ->with(['restaurant', 'driver', 'screen:id,name']);
 
             // Filter by status
             if ($request->status && $request->status != 'all') {

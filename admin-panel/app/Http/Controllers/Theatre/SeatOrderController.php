@@ -10,6 +10,7 @@ use App\Models\MenuItem;
 use App\Models\Restaurant;
 use App\Models\Theatre;
 use App\Models\TheatreScreen;
+use App\Models\TheatreShow;
 use App\Support\CurrencyFormatter;
 use App\Support\TheatreSeatToken;
 use Illuminate\Http\JsonResponse;
@@ -78,6 +79,34 @@ class SeatOrderController extends Controller
         $this->resolveSeat($theatre, $screen, $seat, $sig);
 
         return response()->json(['success' => true, 'data' => $this->stallsFor($theatre)]);
+    }
+
+    /**
+     * What is playing on this seat's screen, so the page can offer "bring
+     * it now" or "bring it at the interval". Empty when no schedule has
+     * been loaded, in which case the page quietly offers deliver-now only
+     * -- exactly how every theatre behaved before show times existed.
+     */
+    public function shows(Request $request, Theatre $theatre, TheatreScreen $screen, string $seat, string $sig): JsonResponse
+    {
+        $this->resolveSeat($theatre, $screen, $seat, $sig);
+
+        $shows = $screen->shows()
+            ->live()
+            ->orderBy('starts_at')
+            ->get()
+            ->filter(fn (TheatreShow $show) => $show->isAcceptingOrders())
+            ->map(fn (TheatreShow $show) => [
+                'id' => $show->id,
+                'movie_title' => $show->movie_title,
+                'language' => $show->language,
+                'interval_at' => $show->interval_at?->toIso8601String(),
+                'interval_label' => $show->interval_at?->timezone(config('app.timezone'))->format('g:i A'),
+                'interval_available' => $show->canDeliverAtInterval(TheatreShow::RELEASE_LEAD_MINUTES),
+            ])
+            ->values();
+
+        return response()->json(['success' => true, 'data' => $shows]);
     }
 
     /**

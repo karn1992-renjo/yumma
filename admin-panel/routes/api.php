@@ -455,6 +455,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/theatre/nearby', [TheatreController::class, 'nearby'])->middleware('throttle:30,1');
     Route::get('/theatre/{theatre}', [TheatreController::class, 'show'])->whereNumber('theatre');
     Route::get('/theatre/{theatre}/screens', [TheatreController::class, 'screens']);
+    Route::get('/theatre/screens/{screen}/shows', [TheatreController::class, 'shows']);
     Route::get('/theatre/{theatre}/restaurants', [TheatreController::class, 'restaurants']);
     Route::post('/theatre/checkout/payment-session', [TheatreController::class, 'paymentSession'])->middleware('throttle:10,1');
     Route::post('/theatre/checkout', [TheatreController::class, 'checkout'])->middleware('throttle:10,1');

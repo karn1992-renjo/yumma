@@ -13,6 +13,7 @@ use App\Models\Restaurant;
 use App\Models\TaxSetting;
 use App\Models\Theatre;
 use App\Models\TheatreScreen;
+use App\Models\TheatreShow;
 use App\Models\Transaction;
 use App\Services\OrderReleaseService;
 use App\Services\Tax\TaxCalculationService;
@@ -124,6 +125,41 @@ class TheatreController extends Controller
         return response()->json(['success' => true, 'data' => $screens]);
     }
 
+    /**
+     * What is playing on this screen, for the timing choice at checkout.
+     * Only screenings that are still accepting orders are returned -- a
+     * show the customer can no longer order for is noise on a phone held
+     * in a dark auditorium.
+     */
+    public function shows(TheatreScreen $screen)
+    {
+        abort_unless($screen->is_active, 404);
+
+        $shows = $screen->shows()
+            ->live()
+            ->orderBy('starts_at')
+            ->get()
+            ->filter(fn (TheatreShow $show) => $show->isAcceptingOrders())
+            ->map(fn (TheatreShow $show) => $this->showPayload($show))
+            ->values();
+
+        return response()->json(['success' => true, 'data' => $shows]);
+    }
+
+    private function showPayload(TheatreShow $show): array
+    {
+        return [
+            'id' => $show->id,
+            'movie_title' => $show->movie_title,
+            'language' => $show->language,
+            'starts_at' => $show->starts_at?->toIso8601String(),
+            'interval_at' => $show->interval_at?->toIso8601String(),
+            'ends_at' => $show->ends_at?->toIso8601String(),
+            'interval_available' => $show->canDeliverAtInterval(TheatreShow::RELEASE_LEAD_MINUTES),
+            'order_cutoff_at' => $show->orderCutoffAt()->toIso8601String(),
+        ];
+    }
+
     public function restaurants(Theatre $theatre)
     {
         abort_unless($theatre->status === 'active', 404);
@@ -159,6 +195,7 @@ class TheatreController extends Controller
 
         try {
             [$theatre, $screen] = $this->resolveTheatreAndScreen($request);
+            $this->resolveShowAndTiming($request, $screen);
             [, $groupTotal] = $this->priceStalls($theatre, $request->stalls);
         } catch (\RuntimeException $e) {
             return response()->json(['success' => false, 'message' => $e->getMessage()], 422);
@@ -206,6 +243,7 @@ class TheatreController extends Controller
 
         try {
             [$theatre, $screen] = $this->resolveTheatreAndScreen($request);
+            [$show, $timing, $scheduledFor] = $this->resolveShowAndTiming($request, $screen);
         } catch (\RuntimeException $e) {
             return response()->json(['success' => false, 'message' => $e->getMessage()], 422);
         }
@@ -239,7 +277,10 @@ class TheatreController extends Controller
                 'user_id' => $user->id,
                 'theatre_id' => $theatre->id,
                 'screen_id' => $screen->id,
+                'show_id' => $show?->id,
                 'seat_label' => $request->seat_label,
+                'delivery_timing' => $timing,
+                'scheduled_for' => $scheduledFor,
                 'total_amount' => $groupTotal,
                 'payment_status' => 'pending',
             ]);
@@ -254,7 +295,10 @@ class TheatreController extends Controller
                     'restaurant_id' => $stall['restaurant']->id,
                     'theatre_id' => $theatre->id,
                     'screen_id' => $screen->id,
+                    'show_id' => $show?->id,
                     'seat_label' => $request->seat_label,
+                    'delivery_timing' => $timing,
+                    'scheduled_for' => $scheduledFor,
                     'order_group_id' => $orderGroup->id,
                     'order_type' => 'theatre_delivery',
                     'items' => $stall['lines'],
@@ -336,24 +380,37 @@ class TheatreController extends Controller
             // place: after commit, outside the transaction, non-fatal on
             // failure). Each restaurant only ever sees its own order, never
             // its sibling stalls' orders in the same group.
-            foreach ($orders as $order) {
-                try {
-                    app(OrderReleaseService::class)->releaseToRestaurant($order);
-                } catch (\Throwable $e) {
-                    Log::warning('Theatre order restaurant release failed after placement.', [
-                        'order_id' => $order->id,
-                        'message' => $e->getMessage(),
-                    ]);
+            //
+            // An interval order is the exception: it is paid for and real,
+            // but the kitchen must not see it yet or a dozen of them get
+            // cooked an hour early and arrive cold. It stays held
+            // (released_at null) until ReleaseHeldTheatreOrders hands it
+            // over a prep-time before the interval.
+            if ($timing !== 'interval') {
+                foreach ($orders as $order) {
+                    try {
+                        app(OrderReleaseService::class)->releaseToRestaurant($order);
+                        $order->forceFill(['released_at' => now()])->save();
+                    } catch (\Throwable $e) {
+                        Log::warning('Theatre order restaurant release failed after placement.', [
+                            'order_id' => $order->id,
+                            'message' => $e->getMessage(),
+                        ]);
+                    }
                 }
             }
 
             return response()->json([
                 'success' => true,
-                'message' => 'Order placed.',
+                'message' => $timing === 'interval'
+                    ? 'Order placed. It will be made fresh and brought to you at the interval.'
+                    : 'Order placed.',
                 'data' => [
                     'order_group_id' => $orderGroup->id,
                     'group_number' => $orderGroup->group_number,
                     'total' => $groupTotal,
+                    'delivery_timing' => $timing,
+                    'scheduled_for' => $scheduledFor?->toIso8601String(),
                     'order_ids' => collect($orders)->pluck('id'),
                 ],
             ]);
@@ -403,6 +460,11 @@ class TheatreController extends Controller
             'seat_token' => ['nullable', 'string', 'max:64', 'required_without:lat'],
             'lat' => ['required_without:seat_token', 'nullable', 'numeric', 'between:-90,90'],
             'lng' => ['required_with:lat', 'nullable', 'numeric', 'between:-180,180'],
+            // Show times are optional everywhere: a screen with no
+            // schedule loaded still takes deliver-now orders, which is the
+            // behaviour every theatre had before shows existed.
+            'show_id' => ['nullable', 'integer', 'exists:theatre_shows,id'],
+            'delivery_timing' => ['nullable', 'in:asap,interval'],
             'stalls' => ['required', 'array', 'min:1'],
             'stalls.*.restaurant_id' => ['required', 'exists:restaurants,id'],
             'stalls.*.items' => ['required', 'array', 'min:1'],
@@ -468,6 +530,48 @@ class TheatreController extends Controller
         }
 
         return [$theatre, $screen];
+    }
+
+    /**
+     * Resolves the screening this order belongs to and when the food is
+     * wanted. Returns [show|null, timing, scheduledFor|null].
+     *
+     * Ordering closes shortly before the credits so nothing is cooked for
+     * an auditorium that is emptying, and "at the interval" is only
+     * allowed while there is still time to actually make the food -- both
+     * checked here rather than trusted from the client, which may have had
+     * the show list cached since before the trailers.
+     */
+    private function resolveShowAndTiming(Request $request, TheatreScreen $screen): array
+    {
+        $timing = strtolower((string) $request->input('delivery_timing', 'asap')) === 'interval'
+            ? 'interval'
+            : 'asap';
+
+        $show = null;
+        if ($request->filled('show_id')) {
+            $show = TheatreShow::where('screen_id', $screen->id)->find($request->input('show_id'));
+            if (! $show) {
+                throw new \RuntimeException('That show is not playing on this screen.');
+            }
+            if (! $show->isAcceptingOrders()) {
+                throw new \RuntimeException('Orders for this show have closed.');
+            }
+        }
+
+        if ($timing === 'asap') {
+            return [$show, 'asap', null];
+        }
+
+        if (! $show) {
+            throw new \RuntimeException('Pick a show before choosing interval delivery.');
+        }
+
+        if (! $show->canDeliverAtInterval(TheatreShow::RELEASE_LEAD_MINUTES)) {
+            throw new \RuntimeException('The interval is too close now — please choose "deliver now" instead.');
+        }
+
+        return [$show, 'interval', $show->interval_at];
     }
 
     /**

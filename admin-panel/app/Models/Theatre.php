@@ -78,6 +78,11 @@ class Theatre extends Model
         return $this->hasMany(DriverGig::class, 'theatre_id');
     }
 
+    public function shows(): HasMany
+    {
+        return $this->hasMany(TheatreShow::class);
+    }
+
     public function orders(): HasMany
     {
         return $this->hasMany(Order::class);

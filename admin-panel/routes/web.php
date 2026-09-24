@@ -297,6 +297,10 @@ Route::middleware(['auth', 'role:theatre_owner|theatre_manager'])->prefix('theat
     Route::get('/screens/{screen}/seat-map', [TheatreDashboardController::class, 'editSeatMap'])->name('screens.seat-map.edit');
     Route::put('/screens/{screen}/seat-map', [TheatreDashboardController::class, 'updateSeatMap'])->name('screens.seat-map.update');
     Route::get('/screens/{screen}/qr-stickers', [TheatreDashboardController::class, 'seatQrStickers'])->name('screens.qr-stickers');
+    Route::get('/shows', [TheatreDashboardController::class, 'shows'])->name('shows');
+    Route::post('/shows', [TheatreDashboardController::class, 'storeShow'])->name('shows.store');
+    Route::post('/shows/{show}/toggle', [TheatreDashboardController::class, 'toggleShow'])->name('shows.toggle');
+    Route::delete('/shows/{show}', [TheatreDashboardController::class, 'destroyShow'])->name('shows.destroy');
     Route::get('/orders', [TheatreDashboardController::class, 'orders'])->name('orders');
 });
 
@@ -307,6 +311,7 @@ Route::middleware(['auth', 'role:theatre_owner|theatre_manager'])->prefix('theat
 Route::prefix('t/{theatre}/{screen}/{seat}/{sig}')->name('seat-order.')->group(function () {
     Route::get('/', [SeatOrderController::class, 'show'])->name('show');
     Route::get('/stalls', [SeatOrderController::class, 'stalls'])->name('stalls');
+    Route::get('/shows', [SeatOrderController::class, 'shows'])->name('shows');
     Route::get('/stalls/{restaurant}/menu', [SeatOrderController::class, 'menu'])->name('menu');
     Route::post('/otp', [SeatOrderController::class, 'sendOtp'])->middleware('throttle:10,1')->name('otp.send');
     Route::post('/otp/verify', [SeatOrderController::class, 'verifyOtp'])->middleware('throttle:20,1')->name('otp.verify');

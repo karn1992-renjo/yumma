@@ -27,6 +27,13 @@ class TheatreCartScreen extends StatefulWidget {
 class _TheatreCartScreenState extends State<TheatreCartScreen> {
   String _paymentMethod = 'cod';
   bool _placing = false;
+
+  /// Show times are optional: a screen with nothing scheduled simply never
+  /// offers the interval choice, which is how every theatre behaved before
+  /// shows existed. So a failed or empty fetch is not an error here.
+  List<TheatreShowOption> _shows = const [];
+  TheatreShowOption? _show;
+  String _timing = 'asap';
   final FlexibleOrderPaymentService _paymentService =
       FlexibleOrderPaymentService();
 
@@ -34,6 +41,23 @@ class _TheatreCartScreenState extends State<TheatreCartScreen> {
   void initState() {
     super.initState();
     widget.cart.addListener(_onCartChanged);
+    _loadShows();
+  }
+
+  Future<void> _loadShows() async {
+    final screenId = widget.cart.screen?.id;
+    if (screenId == null) return;
+
+    try {
+      final shows = await TheatreApiService.instance.shows(screenId);
+      if (!mounted) return;
+      setState(() {
+        _shows = shows;
+        if (shows.length == 1) _show = shows.first;
+      });
+    } catch (_) {
+      // Deliver-now only; nothing to tell the customer about.
+    }
   }
 
   @override
@@ -62,6 +86,8 @@ class _TheatreCartScreenState extends State<TheatreCartScreen> {
               lat: cart.lat,
               lng: cart.lng,
               seatToken: cart.seatToken,
+              showId: _show?.id,
+              deliveryTiming: _timing == 'interval' ? 'interval' : null,
               stalls: cart.toCheckoutStalls(),
               paymentMethod: _paymentMethod,
             );
@@ -125,6 +151,8 @@ class _TheatreCartScreenState extends State<TheatreCartScreen> {
       lat: cart.lat,
       lng: cart.lng,
       seatToken: cart.seatToken,
+      showId: _show?.id,
+      deliveryTiming: _timing == 'interval' ? 'interval' : null,
       stalls: cart.toCheckoutStalls(),
       gateway: gateway,
     );
@@ -146,12 +174,99 @@ class _TheatreCartScreenState extends State<TheatreCartScreen> {
       lat: cart.lat,
       lng: cart.lng,
       seatToken: cart.seatToken,
+      showId: _show?.id,
+      deliveryTiming: _timing == 'interval' ? 'interval' : null,
       stalls: cart.toCheckoutStalls(),
       paymentMethod: gateway,
       paymentId: proof['payment_id'],
       razorpayOrderId: proof['razorpay_order_id'],
       razorpaySignature: proof['razorpay_signature'],
       stripePaymentIntentId: proof['stripe_payment_intent_id'],
+    );
+  }
+
+  /// "Now" vs "at the interval". Only rendered when the screen actually has
+  /// a schedule loaded — see [_loadShows].
+  Widget _buildTimingCard() {
+    final show = _show;
+    final intervalUsable = show != null && show.canDeliverAtInterval;
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFE5E7EB)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.04),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'WHEN SHOULD WE BRING IT?',
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w800,
+              color: Color(0xFF6B7280),
+              letterSpacing: 0.8,
+            ),
+          ),
+          const SizedBox(height: 12),
+
+          // Back-to-back screenings overlap around a changeover, so with
+          // more than one live show the customer has to say which they are
+          // in before an interval time means anything.
+          if (_shows.length > 1) ...[
+            for (final option in _shows)
+              _BmsPaymentTile(
+                icon: Icons.movie_rounded,
+                value: 'show-${option.id}',
+                groupValue: 'show-${_show?.id}',
+                title: option.movieTitle,
+                subtitle: option.language ?? 'Now playing',
+                onChanged: (_) => setState(() {
+                  _show = option;
+                  // A different show means a different interval, so a
+                  // previously chosen interval no longer refers to anything.
+                  _timing = 'asap';
+                }),
+              ),
+            const SizedBox(height: 8),
+          ],
+
+          _BmsPaymentTile(
+            icon: Icons.bolt_rounded,
+            value: 'asap',
+            groupValue: _timing,
+            title: 'Now',
+            subtitle: 'As soon as it is ready',
+            onChanged: (v) => setState(() => _timing = v),
+          ),
+          if (intervalUsable)
+            _BmsPaymentTile(
+              icon: Icons.schedule_rounded,
+              value: 'interval',
+              groupValue: _timing,
+              title: 'At the interval',
+              subtitle: 'Made fresh and brought to you around ${show.intervalLabel}',
+              onChanged: (v) => setState(() => _timing = v),
+            )
+          else if (show != null && show.intervalAt != null)
+            const Padding(
+              padding: EdgeInsets.only(top: 4),
+              child: Text(
+                'The interval is too close to cook for now.',
+                style: TextStyle(fontSize: 11.5, color: Color(0xFF9CA3AF)),
+              ),
+            ),
+        ],
+      ),
     );
   }
 
@@ -564,6 +679,11 @@ class _TheatreCartScreenState extends State<TheatreCartScreen> {
                       ],
                     ),
                   ),
+
+                  if (_shows.isNotEmpty) ...[
+                    const SizedBox(height: 16),
+                    _buildTimingCard(),
+                  ],
 
                   const SizedBox(height: 16),
 

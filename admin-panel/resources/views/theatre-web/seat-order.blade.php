@@ -268,6 +268,11 @@
             <h2 class="section">Your order</h2>
             <div id="cartBody"></div>
 
+            <div id="timingBlock" hidden>
+                <h2 class="section">When?</h2>
+                <div id="timingOptions"></div>
+            </div>
+
             <div class="notice" id="handoffNotice" hidden>
                 Our runner will meet you at the end of your row rather than walk into the auditorium.
             </div>
@@ -348,6 +353,9 @@
             token: null,
             customerName: null,
             paymentMethod: null,
+            shows: null,          // null = not fetched yet, [] = none scheduled
+            show: null,
+            timing: 'asap',
             otpFlow: null,
             phone: null,
             orderGroupId: null,
@@ -748,6 +756,89 @@
             });
         }
 
+        /**
+         * Show times are optional: a screen with nothing scheduled simply
+         * never offers the interval choice, which is how every theatre
+         * behaved before shows existed.
+         */
+        function ensureShows() {
+            if (state.shows !== null) { return; }
+            state.shows = [];
+            get('/shows')
+                .then(function (body) {
+                    state.shows = body.data || [];
+                    if (state.shows.length === 1) { state.show = state.shows[0]; }
+                    if (state.view === 'cart') { renderTiming(); }
+                })
+                .catch(function () { /* deliver-now only */ });
+        }
+
+        function renderTiming() {
+            var block = el('timingBlock');
+            var container = el('timingOptions');
+            var shows = state.shows || [];
+
+            if (!shows.length) {
+                block.hidden = true;
+                state.timing = 'asap';
+                return;
+            }
+
+            block.hidden = false;
+
+            // With several screenings live on one screen (back-to-back
+            // shows overlap around a changeover) the customer has to say
+            // which one they are in before an interval time means anything.
+            var html = '';
+            if (shows.length > 1) {
+                html += '<div class="cat-title" style="margin-top:0">Which show are you watching?</div>';
+                shows.forEach(function (show, index) {
+                    html += '<label class="pay-option' + (state.show === show ? ' selected' : '') + '" data-show="' + index + '">' +
+                        '<input type="radio" name="show" ' + (state.show === show ? 'checked' : '') + '>' +
+                        '<span style="flex:1"><span style="font-weight:700">' + escapeHtml(show.movie_title) + '</span>' +
+                        (show.language ? '<br><span class="muted small">' + escapeHtml(show.language) + '</span>' : '') +
+                        '</span></label>';
+                });
+            }
+
+            var show = state.show;
+            var intervalUsable = show && show.interval_available && show.interval_label;
+
+            html += '<div class="cat-title"' + (shows.length > 1 ? '' : ' style="margin-top:0"') + '>Deliver</div>';
+            html += '<label class="pay-option' + (state.timing === 'asap' ? ' selected' : '') + '" data-timing="asap">' +
+                '<input type="radio" name="timing" ' + (state.timing === 'asap' ? 'checked' : '') + '>' +
+                '<span style="flex:1"><span style="font-weight:700">Now</span>' +
+                '<br><span class="muted small">As soon as it is ready</span></span></label>';
+
+            if (intervalUsable) {
+                html += '<label class="pay-option' + (state.timing === 'interval' ? ' selected' : '') + '" data-timing="interval">' +
+                    '<input type="radio" name="timing" ' + (state.timing === 'interval' ? 'checked' : '') + '>' +
+                    '<span style="flex:1"><span style="font-weight:700">At the interval</span>' +
+                    '<br><span class="muted small">Made fresh and brought to you around ' + escapeHtml(show.interval_label) + '</span></span></label>';
+            } else if (show && show.interval_at && !show.interval_available) {
+                html += '<p class="muted small">The interval is too close to cook for now.</p>';
+            }
+
+            container.innerHTML = html;
+
+            Array.prototype.forEach.call(container.querySelectorAll('[data-show]'), function (node) {
+                node.addEventListener('click', function () {
+                    state.show = shows[Number(node.dataset.show)];
+                    // A different show means a different interval, so a
+                    // previously chosen interval no longer refers to anything.
+                    state.timing = 'asap';
+                    renderTiming();
+                });
+            });
+
+            Array.prototype.forEach.call(container.querySelectorAll('[data-timing]'), function (node) {
+                node.addEventListener('click', function () {
+                    state.timing = node.dataset.timing;
+                    renderTiming();
+                });
+            });
+        }
+
         function renderCart() {
             var body = el('cartBody');
             body.innerHTML = '';
@@ -802,6 +893,8 @@
             }
 
             el('handoffNotice').hidden = !CTX.aisle_handoff_only;
+            ensureShows();
+            renderTiming();
             renderPayOptions();
         }
 
@@ -946,6 +1039,9 @@
                 stalls: stallsPayload(),
                 payment_method: state.paymentMethod,
             };
+
+            if (state.show) { payload.show_id = state.show.id; }
+            if (state.timing === 'interval') { payload.delivery_timing = 'interval'; }
 
             var flow = state.paymentMethod === 'razorpay'
                 ? payWithRazorpay(payload)

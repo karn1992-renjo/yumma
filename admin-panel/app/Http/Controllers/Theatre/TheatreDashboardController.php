@@ -9,12 +9,14 @@ use App\Models\Restaurant;
 use App\Models\Theatre;
 use App\Models\TheatreRunner;
 use App\Models\TheatreScreen;
+use App\Models\TheatreShow;
 use App\Models\TheatreUser;
 use App\Models\User;
 use App\Rules\UniqueUserContactForRole;
 use App\Services\TheatreManagementService;
 use App\Support\TheatreSeatToken;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Storage;
@@ -408,6 +410,96 @@ class TheatreDashboardController extends Controller
         return view('theatre.screen-qr-stickers', compact('theatre', 'screen', 'rows'));
     }
 
+    /**
+     * The day's screenings. Scheduling only -- swaad does not sell
+     * tickets, so there is no seat inventory here; a show exists to tell
+     * the ordering flow when the interval is and when to stop taking
+     * orders.
+     */
+    public function shows(Request $request)
+    {
+        $theatre = $this->currentTheatre($request);
+        $this->authorizeTheatre($request, 'theatre.shows.view');
+
+        $date = $request->filled('date')
+            ? Carbon::parse($request->input('date'))->startOfDay()
+            : now()->startOfDay();
+
+        $shows = $theatre->shows()
+            ->with('screen:id,name')
+            ->whereBetween('starts_at', [$date, $date->copy()->endOfDay()])
+            ->orderBy('starts_at')
+            ->get();
+
+        $screens = $theatre->screens()->where('is_active', true)->orderBy('name')->get();
+        $capabilities = $this->theatreCapabilities($request);
+
+        return view('theatre.shows', compact('theatre', 'shows', 'screens', 'date', 'capabilities'));
+    }
+
+    public function storeShow(Request $request)
+    {
+        $theatre = $this->currentTheatre($request);
+        $this->authorizeTheatre($request, 'theatre.shows.manage');
+
+        $validated = $request->validate([
+            'screen_id' => ['required', Rule::exists('theatre_screens', 'id')->where('theatre_id', $theatre->id)],
+            'movie_title' => ['required', 'string', 'max:160'],
+            'language' => ['nullable', 'string', 'max:40'],
+            'starts_at' => ['required', 'date'],
+            // An interval is optional -- plenty of screenings run straight
+            // through, and those simply do not offer interval delivery.
+            'interval_at' => ['nullable', 'date', 'after:starts_at'],
+            'ends_at' => ['required', 'date', 'after:starts_at'],
+        ]);
+
+        if (! empty($validated['interval_at']) && Carbon::parse($validated['interval_at'])->gte(Carbon::parse($validated['ends_at']))) {
+            return back()->withErrors(['interval_at' => 'The interval has to fall before the show ends.'])->withInput();
+        }
+
+        TheatreShow::create([
+            'theatre_id' => $theatre->id,
+            'screen_id' => $validated['screen_id'],
+            'movie_title' => $validated['movie_title'],
+            'language' => $validated['language'] ?? null,
+            'starts_at' => $validated['starts_at'],
+            'interval_at' => $validated['interval_at'] ?? null,
+            'ends_at' => $validated['ends_at'],
+            'is_active' => true,
+        ]);
+
+        return back()->with('success', 'Show added.');
+    }
+
+    public function toggleShow(Request $request, TheatreShow $show)
+    {
+        $theatre = $this->currentTheatre($request);
+        abort_unless((int) $show->theatre_id === (int) $theatre->id, 404);
+        $this->authorizeTheatre($request, 'theatre.shows.manage');
+
+        $show->update(['is_active' => ! $show->is_active]);
+
+        return back()->with('success', $show->is_active ? 'Show re-enabled.' : 'Show disabled — it will stop taking orders.');
+    }
+
+    public function destroyShow(Request $request, TheatreShow $show)
+    {
+        $theatre = $this->currentTheatre($request);
+        abort_unless((int) $show->theatre_id === (int) $theatre->id, 404);
+        $this->authorizeTheatre($request, 'theatre.shows.manage');
+
+        // Orders already attached to this show keep working: show_id is
+        // nulled rather than cascading, so nobody's paid-for interval
+        // order disappears because a schedule was tidied up.
+        if ($show->orders()->exists()) {
+            return back()->withErrors(['show' => 'This show already has orders — disable it instead of deleting it.']);
+        }
+
+        $show->delete();
+
+        return back()->with('success', 'Show removed.');
+    }
+
     public function orders(Request $request)
     {
         $theatre = $this->currentTheatre($request);
@@ -440,6 +532,8 @@ class TheatreDashboardController extends Controller
             'restaurants_manage' => $this->theatreCan($request, 'theatre.restaurants.manage'),
             'screens_view' => $this->theatreCan($request, 'theatre.screens.view'),
             'screens_manage' => $this->theatreCan($request, 'theatre.screens.manage'),
+            'shows_view' => $this->theatreCan($request, 'theatre.shows.view'),
+            'shows_manage' => $this->theatreCan($request, 'theatre.shows.manage'),
             'runners_view' => $this->theatreCan($request, 'theatre.runners.view'),
             'runners_manage' => $this->theatreCan($request, 'theatre.runners.manage'),
             'orders_view' => $this->theatreCan($request, 'theatre.orders.view'),

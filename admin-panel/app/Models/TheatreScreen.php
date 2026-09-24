@@ -37,6 +37,11 @@ class TheatreScreen extends Model
         return $this->hasMany(Order::class, 'screen_id');
     }
 
+    public function shows(): HasMany
+    {
+        return $this->hasMany(TheatreShow::class, 'screen_id');
+    }
+
     public function hasSeatMap(): bool
     {
         return ! empty($this->seat_map_config);

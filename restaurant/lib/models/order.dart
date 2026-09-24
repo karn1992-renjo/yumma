@@ -74,7 +74,14 @@ class Order {
   // seat instead, see isTheatreDelivery.
   final int? theatreId;
   final int? screenId;
+  final String? screenName;
   final String? seatLabel;
+
+  /// 'asap' or 'interval'. An interval order is timed to reach the seat
+  /// when the house lights come up, so the counter is only shown it a
+  /// prep-time beforehand — see ReleaseHeldTheatreOrders on the backend.
+  final String? deliveryTiming;
+  final DateTime? scheduledFor;
 
   Order({
     required this.id,
@@ -138,7 +145,10 @@ class Order {
     this.deliveryOtp,
     this.theatreId,
     this.screenId,
+    this.screenName,
     this.seatLabel,
+    this.deliveryTiming,
+    this.scheduledFor,
   });
 
   factory Order.fromJson(Map<String, dynamic> json) {
@@ -287,7 +297,14 @@ class Order {
       ]),
       theatreId: parseNullableInt(source['theatre_id']),
       screenId: parseNullableInt(source['screen_id']),
+      screenName: source['screen'] is Map
+          ? _firstNonEmptyString([(source['screen'] as Map)['name']])
+          : _firstNonEmptyString([source['screen_name']]),
       seatLabel: _firstNonEmptyString([source['seat_label']]),
+      deliveryTiming: _firstNonEmptyString([source['delivery_timing']]),
+      scheduledFor: source['scheduled_for'] != null
+          ? DateTime.tryParse(source['scheduled_for'].toString())?.toLocal()
+          : null,
     );
   }
 
@@ -302,7 +319,26 @@ class Order {
   bool get isCancelled => status == 'cancelled';
   bool get isTakeaway => orderType == 'takeaway';
   bool get isTheatreDelivery => orderType == 'theatre_delivery';
-  String get theatreSeatLabel => 'Screen ${screenId ?? '-'} · Seat ${seatLabel ?? '-'}';
+  /// Where the runner is taking it: the auditorium by NAME ("Audi 3"),
+  /// since neither the kitchen nor the runner thinks in screen ids. Falls
+  /// back to the id only for orders placed before screen names were sent.
+  String get theatreSeatLabel {
+    final screen = screenName?.trim();
+    final where = (screen == null || screen.isEmpty) ? 'Screen ${screenId ?? '-'}' : screen;
+    return '$where · Seat ${seatLabel ?? '-'}';
+  }
+
+  bool get isIntervalDelivery => deliveryTiming == 'interval';
+
+  /// "INTERVAL 9:40 PM" — the one thing the counter must not miss about an
+  /// interval order, since cooking it early defeats the point.
+  String? get intervalLabel {
+    final at = scheduledFor;
+    if (!isIntervalDelivery || at == null) return null;
+    final hour = at.hour % 12 == 0 ? 12 : at.hour % 12;
+    final minute = at.minute.toString().padLeft(2, '0');
+    return 'INTERVAL $hour:$minute ${at.hour < 12 ? 'AM' : 'PM'}';
+  }
 
   bool get canRestaurantAccept => isPending;
   bool get canRestaurantReject => isPending;
@@ -495,7 +531,10 @@ class Order {
       deliveryOtp: deliveryOtp,
       theatreId: theatreId,
       screenId: screenId,
+      screenName: screenName,
       seatLabel: seatLabel,
+      deliveryTiming: deliveryTiming,
+      scheduledFor: scheduledFor,
     );
   }
 

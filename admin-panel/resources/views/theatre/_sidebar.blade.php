@@ -22,6 +22,7 @@
         ['route' => 'theatre.dashboard', 'label' => 'Dashboard', 'icon' => 'fas fa-chart-line', 'permission' => 'theatre.dashboard.view'],
         ['route' => 'theatre.restaurants', 'label' => 'Restaurants', 'icon' => 'fas fa-store', 'permission' => 'theatre.restaurants.view'],
         ['route' => 'theatre.screens', 'label' => 'Screens', 'icon' => 'fas fa-film', 'permission' => 'theatre.screens.view'],
+        ['route' => 'theatre.shows', 'label' => 'Show Times', 'icon' => 'fas fa-clock', 'permission' => 'theatre.shows.view'],
         ['route' => 'theatre.runners', 'label' => 'Runners', 'icon' => 'fas fa-person-walking', 'permission' => 'theatre.runners.view'],
         ['route' => 'theatre.orders', 'label' => 'Orders', 'icon' => 'fas fa-box', 'permission' => 'theatre.orders.view'],
     ];

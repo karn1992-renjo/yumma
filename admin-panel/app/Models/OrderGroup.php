@@ -21,7 +21,10 @@ class OrderGroup extends Model
         'user_id',
         'theatre_id',
         'screen_id',
+        'show_id',
         'seat_label',
+        'delivery_timing',
+        'scheduled_for',
         'total_amount',
         'payment_status',
         'payment_reference',
@@ -29,6 +32,7 @@ class OrderGroup extends Model
 
     protected $casts = [
         'total_amount' => 'decimal:2',
+        'scheduled_for' => 'datetime',
     ];
 
     public function user(): BelongsTo
@@ -44,6 +48,11 @@ class OrderGroup extends Model
     public function screen(): BelongsTo
     {
         return $this->belongsTo(TheatreScreen::class, 'screen_id');
+    }
+
+    public function show(): BelongsTo
+    {
+        return $this->belongsTo(TheatreShow::class, 'show_id');
     }
 
     public function orders(): HasMany
