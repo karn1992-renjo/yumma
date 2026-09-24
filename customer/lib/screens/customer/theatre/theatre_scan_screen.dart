@@ -1,9 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
-import 'theatre_api_service.dart';
-import 'theatre_cart_provider.dart';
 import 'theatre_food_court_screen.dart';
+import 'theatre_seat_link.dart';
 
 /// swaad-only: scan the QR sticker on a cinema armrest and drop straight
 /// into that seat's food court.
@@ -45,7 +44,7 @@ class _TheatreScanScreenState extends State<TheatreScanScreen> {
             orElse: () => null);
     if (raw == null) return;
 
-    final seat = _SeatQr.parse(raw);
+    final seat = TheatreSeatLink.parse(raw);
     if (seat == null) {
       setState(() => _error = "That doesn't look like a swaad seat code.");
       return;
@@ -57,27 +56,7 @@ class _TheatreScanScreenState extends State<TheatreScanScreen> {
     });
 
     try {
-      final theatre = await TheatreApiService.instance.theatre(seat.theatreId);
-      if (theatre == null) {
-        throw Exception('This theatre is not taking orders right now.');
-      }
-
-      final screens = await TheatreApiService.instance.screens(seat.theatreId);
-      final matching = screens.where((s) => s.id == seat.screenId).toList();
-      if (matching.isEmpty) {
-        throw Exception('This screen is not taking orders right now.');
-      }
-      final screen = matching.first;
-
-      final cart = TheatreCartProvider();
-      cart.setVenue(
-        theatre: theatre,
-        screen: screen,
-        seatLabel: seat.seatLabel,
-        // No coordinates: the signature IS the presence proof, and the
-        // server accepts it in place of the geofence.
-        seatToken: seat.token,
-      );
+      final cart = await seat.resolveCart();
 
       if (!mounted) return;
       Navigator.of(context).pushReplacement(
@@ -170,47 +149,3 @@ class _TheatreScanScreenState extends State<TheatreScanScreen> {
   }
 }
 
-/// The seat identity encoded in a sticker's URL: `/t/{theatre}/{screen}/{seat}/{signature}`.
-///
-/// Mirrors App\Support\TheatreSeatToken::path() on the backend. Parsed by
-/// position from the END of the path so the same sticker works whether the
-/// deployment serves from a domain root or a subdirectory.
-class _SeatQr {
-  const _SeatQr({
-    required this.theatreId,
-    required this.screenId,
-    required this.seatLabel,
-    required this.token,
-  });
-
-  final int theatreId;
-  final int screenId;
-  final String seatLabel;
-  final String token;
-
-  static _SeatQr? parse(String raw) {
-    final uri = Uri.tryParse(raw.trim());
-    if (uri == null) return null;
-
-    final segments = uri.pathSegments;
-    if (segments.length < 5) return null;
-
-    final tail = segments.sublist(segments.length - 5);
-    if (tail[0] != 't') return null;
-
-    final theatreId = int.tryParse(tail[1]);
-    final screenId = int.tryParse(tail[2]);
-    final seatLabel = Uri.decodeComponent(tail[3]).toUpperCase();
-    final token = tail[4];
-
-    if (theatreId == null || screenId == null) return null;
-    if (seatLabel.isEmpty || token.isEmpty) return null;
-
-    return _SeatQr(
-      theatreId: theatreId,
-      screenId: screenId,
-      seatLabel: seatLabel,
-      token: token,
-    );
-  }
-}

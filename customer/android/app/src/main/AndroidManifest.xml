@@ -63,6 +63,29 @@
                 <category android:name="android.intent.category.BROWSABLE"/>
                 <data android:scheme="https" android:host="${APPSFLYER_ONELINK_DOMAIN}"/>
             </intent-filter>
+
+            <!--
+                swaad-only: movie-theatre seat QR stickers.
+
+                Scoped to the /t path on purpose. The same domain serves the
+                marketing site, the legal pages and the admin panel, so
+                claiming the whole host would make the app intercept links
+                it has no screen for. Only a seat sticker belongs here.
+
+                Verification needs /.well-known/assetlinks.json on each host
+                to list this app's signing certificate — served by
+                App\Http\Controllers\AppLinksController. If a build is
+                distributed through Play App Signing, the fingerprint that
+                must appear there is Google's app signing certificate, not
+                the upload key.
+            -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="https" android:host="yumma.in" android:pathPrefix="/t/"/>
+                <data android:scheme="https" android:host="www.yumma.in" android:pathPrefix="/t/"/>
+            </intent-filter>
         </activity>
         
         <!-- Don't delete the meta-data below -->

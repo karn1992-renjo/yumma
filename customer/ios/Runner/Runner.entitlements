@@ -11,6 +11,14 @@
 	<key>com.apple.developer.associated-domains</key>
 	<array>
 		<string>applinks:yumma.onelink.me</string>
+		<!--
+			swaad-only: movie-theatre seat QR stickers. Which paths actually
+			open the app is decided by the apple-app-site-association file
+			the backend serves (scoped to /t/*), not here — iOS only needs
+			the host listed to go and fetch it.
+		-->
+		<string>applinks:yumma.in</string>
+		<string>applinks:www.yumma.in</string>
 	</array>
 </dict>
 </plist>

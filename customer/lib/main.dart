@@ -16,6 +16,7 @@ import 'services/sound_service.dart';
 import 'services/local_cache_service.dart';
 import 'services/app_branding_service.dart';
 import 'services/appsflyer_deep_link_service.dart';
+import 'services/seat_deep_link_service.dart';
 import 'services/tracking_authorization_service.dart';
 import 'services/app_update_service.dart';
 import 'services/app_image_cache.dart';
@@ -156,6 +157,13 @@ Future<void> _initializeAfterFirstFrame() async {
   await _runStartupStep(
     'appsflyer deep links',
     AppsFlyerDeepLinkService.instance.initialize,
+  );
+  // Scanned armrest stickers (https://<host>/t/...). Separate from the
+  // AppsFlyer handler above, which is for marketing attribution links --
+  // a seat sticker is not a campaign.
+  await _runStartupStep(
+    'seat deep links',
+    SeatDeepLinkService.instance.initialize,
   );
 }
 

@@ -81,6 +81,10 @@ dependencies:
   # QR Code
   qr_flutter: ^4.1.0
   mobile_scanner: ^7.2.0
+
+  # Android App Links / iOS Universal Links, so a scanned seat sticker
+  # opens the app on the right seat instead of the web ordering page.
+  app_links: ^6.3.2
   
   # PDF
   pdf: ^3.10.7

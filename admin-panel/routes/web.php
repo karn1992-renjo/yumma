@@ -76,6 +76,7 @@ use App\Http\Controllers\DirectChatController;
 use App\Http\Controllers\Branch\BranchDashboardController;
 use App\Http\Controllers\Theatre\TheatreDashboardController;
 use App\Http\Controllers\Theatre\SeatOrderController;
+use App\Http\Controllers\AppLinksController;
 use App\Services\HomeSectionService;
 
 // Public routes
@@ -303,6 +304,15 @@ Route::middleware(['auth', 'role:theatre_owner|theatre_manager'])->prefix('theat
     Route::delete('/shows/{show}', [TheatreDashboardController::class, 'destroyShow'])->name('shows.destroy');
     Route::get('/orders', [TheatreDashboardController::class, 'orders'])->name('orders');
 });
+
+// Android App Links / iOS Universal Links verification files. Fetched by
+// the operating system itself, so: no auth, no redirect, domain root.
+// These are what let a scanned seat sticker open the app instead of the
+// browser -- see config/applinks.php.
+Route::get('/.well-known/assetlinks.json', [AppLinksController::class, 'assetLinks'])
+    ->name('well-known.assetlinks');
+Route::get('/.well-known/apple-app-site-association', [AppLinksController::class, 'appleAppSiteAssociation'])
+    ->name('well-known.apple-app-site-association');
 
 // Public, no-login web ordering reached by scanning the QR sticker on a
 // cinema seat (swaad-only). Signature-gated rather than auth-gated: the
