@@ -2,22 +2,27 @@ import google_mobile_ads
 import GoogleMobileAds
 import UIKit
 
-/// Builds a GADNativeAdView matching the Android template
+/// Builds a NativeAdView matching the Android template
 /// (android/.../ListTileNativeAdFactory.kt + res/layout/native_ad_card.xml)
 /// programmatically -- no XIB needed. Registered under the factory id
 /// "listTileNativeAd" in AppDelegate.swift, which must exactly match the
 /// factoryId passed to Dart's NativeAd(...) calls (see
 /// lib/widgets/common/native_ad_widget.dart). Every view that shows
-/// ad-supplied content is assigned to the matching GADNativeAdView property
+/// ad-supplied content is assigned to the matching NativeAdView property
 /// (headlineView, bodyView, ...) rather than wired to a manual tap
 /// handler, so the Google Mobile Ads SDK itself owns click/impression
 /// tracking, per AdMob's native ads implementation guide.
+//
+// Google Mobile Ads SDK 11+ dropped the GAD prefix from these Swift-only
+// type names (GADNativeAd -> NativeAd, GADNativeAdView -> NativeAdView,
+// GADMediaView -> MediaView); the Objective-C names keep the prefix for
+// compatibility, but Swift call sites must use the unprefixed ones.
 class ListTileNativeAdFactory: NSObject, FLTNativeAdFactory {
     func createNativeAd(
-        _ nativeAd: GADNativeAd,
+        _ nativeAd: NativeAd,
         customOptions: [AnyHashable: Any]? = nil
-    ) -> GADNativeAdView? {
-        let adView = GADNativeAdView()
+    ) -> NativeAdView? {
+        let adView = NativeAdView()
 
         let card = UIView()
         card.backgroundColor = .white
@@ -94,7 +99,7 @@ class ListTileNativeAdFactory: NSObject, FLTNativeAdFactory {
         advertiserView.numberOfLines = 1
         titleColumn.addArrangedSubview(advertiserView)
 
-        let mediaView = GADMediaView()
+        let mediaView = MediaView()
         mediaView.translatesAutoresizingMaskIntoConstraints = false
         mediaView.heightAnchor.constraint(equalToConstant: 160).isActive = true
         stack.addArrangedSubview(mediaView)
@@ -110,7 +115,7 @@ class ListTileNativeAdFactory: NSObject, FLTNativeAdFactory {
         ctaButton.setTitleColor(.white, for: .normal)
         ctaButton.titleLabel?.font = .boldSystemFont(ofSize: 14)
         ctaButton.layer.cornerRadius = 14
-        ctaButton.isUserInteractionEnabled = false // GADNativeAdView itself handles taps.
+        ctaButton.isUserInteractionEnabled = false // NativeAdView itself handles taps.
         ctaButton.translatesAutoresizingMaskIntoConstraints = false
         ctaButton.heightAnchor.constraint(equalToConstant: 44).isActive = true
         stack.addArrangedSubview(ctaButton)
