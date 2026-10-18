@@ -16,6 +16,7 @@ class ReferralController extends Controller
     public function summary(Request $request)
     {
         $user = $request->user();
+        $isDriver = $user->hasRole('delivery_partner');
         $code = $user->referral_code ?: '';
         $currencySymbol = AppSetting::sanitizedCurrencySymbol();
         $referrals = UserReferral::query()
@@ -30,7 +31,7 @@ class ReferralController extends Controller
             'success' => true,
             'data' => [
                 'referral_code' => $code,
-                'share_link' => $this->shareLink($code, $appLogoUrl),
+                'share_link' => $this->shareLink($code, $appLogoUrl, $isDriver),
                 'app_logo_url' => $appLogoUrl,
                 'currency_symbol' => $currencySymbol,
                 'stats' => [
@@ -40,14 +41,20 @@ class ReferralController extends Controller
                     'amount_earned' => round((float) $referrals->where('status', 'credited')->sum('amount'), 2),
                     'points_earned' => (int) $referrals->where('status', 'credited')->sum('points'),
                 ],
-                'how_it_works' => [
-                    'Share your referral code or invite link.',
-                    'Your friend signs up as a customer with this code.',
-                    'Referral bonus is credited after the friend places an eligible order and a referral bonus promotion matches.',
-                ],
+                'how_it_works' => $isDriver
+                    ? [
+                        'Share your referral code or invite link.',
+                        'Your friend signs up as a driver with this code.',
+                        'Referral bonus is credited to both of you after your friend completes their first delivery.',
+                    ]
+                    : [
+                        'Share your referral code or invite link.',
+                        'Your friend signs up as a customer with this code.',
+                        'Referral bonus is credited after the friend places an eligible order and a referral bonus promotion matches.',
+                    ],
                 'referrals' => $referrals->map(fn (UserReferral $referral) => [
                     'id' => $referral->id,
-                    'name' => $referral->referredUser?->name ?: 'Customer',
+                    'name' => $referral->referredUser?->name ?: ($isDriver ? 'Driver' : 'Customer'),
                     'phone' => $referral->referredUser?->phone,
                     'status' => $referral->status,
                     'bonus_type' => $referral->bonus_type,
@@ -61,23 +68,24 @@ class ReferralController extends Controller
         ]);
     }
 
-    private function shareLink(string $code, ?string $appLogoUrl): string
+    private function shareLink(string $code, ?string $appLogoUrl, bool $isDriver = false): string
     {
-        $longLink = $this->appsFlyerLongLink($code, $appLogoUrl);
-        $token = trim((string) config('services.appsflyer.onelink_api_token'));
-        $oneLinkId = trim((string) config('services.appsflyer.onelink_id'));
+        $prefix = $isDriver ? 'driver_' : '';
+        $longLink = $this->appsFlyerLongLink($code, $appLogoUrl, $isDriver);
+        $token = trim((string) config("services.appsflyer.{$prefix}onelink_api_token"));
+        $oneLinkId = trim((string) config("services.appsflyer.{$prefix}onelink_id"));
 
         if ($code === '' || $token === '' || $oneLinkId === '') {
             return $longLink;
         }
 
-        $cacheKey = 'referral_appsflyer_short_link:' . sha1($code . '|' . ($appLogoUrl ?? ''));
+        $cacheKey = 'referral_appsflyer_short_link:' . ($isDriver ? 'driver:' : 'customer:') . sha1($code . '|' . ($appLogoUrl ?? ''));
         $cached = Cache::get($cacheKey);
         if (is_string($cached) && $cached !== '') {
             return $cached;
         }
 
-        $shortLink = $this->createAppsFlyerShortLink($code, $appLogoUrl);
+        $shortLink = $this->createAppsFlyerShortLink($code, $appLogoUrl, $isDriver);
         if ($shortLink !== null) {
             Cache::put($cacheKey, $shortLink, now()->addDays(30));
             return $shortLink;
@@ -86,29 +94,32 @@ class ReferralController extends Controller
         return $longLink;
     }
 
-    private function appsFlyerLongLink(string $code, ?string $appLogoUrl): string
+    private function appsFlyerLongLink(string $code, ?string $appLogoUrl, bool $isDriver = false): string
     {
-        $domain = preg_replace('#^https?://#', '', trim((string) config('services.appsflyer.onelink_domain')));
+        $prefix = $isDriver ? 'driver_' : '';
+        $domain = preg_replace('#^https?://#', '', trim((string) config("services.appsflyer.{$prefix}onelink_domain")));
         $domain = rtrim((string) $domain, '/');
         if ($domain === '') {
             $domain = 'Swado.onelink.me';
         }
 
-        $path = trim((string) config('services.appsflyer.onelink_path'), '/');
+        $path = trim((string) config("services.appsflyer.{$prefix}onelink_path"), '/');
         if ($path === '') {
-            $oneLinkId = trim((string) config('services.appsflyer.onelink_id'));
+            $oneLinkId = trim((string) config("services.appsflyer.{$prefix}onelink_id"));
             $path = trim($oneLinkId . '/referral', '/');
         }
 
-        $params = $this->appsFlyerLinkData($code, $appLogoUrl);
+        $params = $this->appsFlyerLinkData($code, $appLogoUrl, $isDriver);
 
         return 'https://' . $domain . '/' . $path . '?' . http_build_query($params);
     }
 
-    private function appsFlyerLinkData(string $code, ?string $appLogoUrl): array
+    private function appsFlyerLinkData(string $code, ?string $appLogoUrl, bool $isDriver = false): array
     {
-        $webLink = $this->webReferralLink($code);
-        $description = 'Use referral code ' . $code . ' for a fast, convenient food ordering experience.';
+        $webLink = $this->webReferralLink($code, $isDriver);
+        $description = $isDriver
+            ? 'Use referral code ' . $code . ' to join as a delivery partner and start earning.'
+            : 'Use referral code ' . $code . ' for a fast, convenient food ordering experience.';
         $params = [
             'pid' => 'referral',
             'c' => 'referral_share',
@@ -131,17 +142,18 @@ class ReferralController extends Controller
         return $params;
     }
 
-    private function createAppsFlyerShortLink(string $code, ?string $appLogoUrl): ?string
+    private function createAppsFlyerShortLink(string $code, ?string $appLogoUrl, bool $isDriver = false): ?string
     {
+        $prefix = $isDriver ? 'driver_' : '';
         try {
-            $response = Http::withToken((string) config('services.appsflyer.onelink_api_token'))
+            $response = Http::withToken((string) config("services.appsflyer.{$prefix}onelink_api_token"))
                 ->acceptJson()
                 ->timeout(5)
                 ->post(
-                    'https://onelink.appsflyer.com/api/v2.0/shortlinks/' . urlencode((string) config('services.appsflyer.onelink_id')),
+                    'https://onelink.appsflyer.com/api/v2.0/shortlinks/' . urlencode((string) config("services.appsflyer.{$prefix}onelink_id")),
                     [
                         'ttl' => (string) config('services.appsflyer.short_link_ttl', '30d'),
-                        'data' => $this->appsFlyerLinkData($code, $appLogoUrl),
+                        'data' => $this->appsFlyerLinkData($code, $appLogoUrl, $isDriver),
                     ]
                 );
 
@@ -169,13 +181,13 @@ class ReferralController extends Controller
         return null;
     }
 
-    private function webReferralLink(string $code): string
+    private function webReferralLink(string $code, bool $isDriver = false): string
     {
-        $base = AppSetting::getValue('customer_deeplink_base_url')
-            ?: AppSetting::getValue('customer_app_url')
-            ?: config('app.url');
+        $base = $isDriver
+            ? (AppSetting::getValue('driver_deeplink_base_url') ?: AppSetting::getValue('customer_deeplink_base_url') ?: config('app.url'))
+            : (AppSetting::getValue('customer_deeplink_base_url') ?: AppSetting::getValue('customer_app_url') ?: config('app.url'));
 
-        return rtrim((string) $base, '/') . '/referral?code=' . urlencode($code);
+        return rtrim((string) $base, '/') . '/referral?code=' . urlencode($code) . ($isDriver ? '&role=driver' : '');
     }
 
     private function appLogoUrl(): ?string

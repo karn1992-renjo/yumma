@@ -24,6 +24,14 @@
                         const payload = isReverse
                             ? {
                                 display_name: result ? result.formatted_address : '',
+                                // Echo the resolved point back (falling back to the
+                                // queried point if the geocoder found no address) so
+                                // callers that only read the reverse-geocode response
+                                // -- rather than the lat/lng they already had -- still
+                                // get real coordinates instead of silently keeping
+                                // whatever was in the field before.
+                                lat: result ? result.geometry.location.lat() : request.location.lat,
+                                lon: result ? result.geometry.location.lng() : request.location.lng,
                                 address: addressParts(result),
                             }
                             : result

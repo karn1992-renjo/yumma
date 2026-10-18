@@ -7,6 +7,7 @@ use App\Models\Restaurant;
 use App\Services\Tax\Contracts\TaxStrategy;
 use App\Services\Tax\Strategies\Concerns\BuildsGenericInvoiceSummary;
 use App\Services\Tax\TaxResult;
+use App\Support\CurrencyFormatter;
 
 /**
  * Honest fallback for a country that has an active CountryTaxProfile row but
@@ -48,13 +49,14 @@ class GenericTaxStrategy implements TaxStrategy
 
         $rate = $this->rate();
         $includeFeesInBase = (bool) $this->profile->configValue('taxable_base_includes_fees', false);
+        $decimals = CurrencyFormatter::decimalsFor((string) ($this->profile->currency_code ?? 'USD'));
 
-        $itemsTotal = round((float) collect($lines)->sum('line_total'), 2);
+        $itemsTotal = round((float) collect($lines)->sum('line_total'), $decimals);
         $feesTotal = $includeFeesInBase
-            ? round((float) array_sum(array_map('floatval', $charges)), 2)
+            ? round((float) array_sum(array_map('floatval', $charges)), $decimals)
             : 0.0;
         $taxableValue = $itemsTotal + $feesTotal;
-        $tax = round($taxableValue * $rate / 100, 2);
+        $tax = round($taxableValue * $rate / 100, $decimals);
 
         $breakdownRow = [
             'rate' => $rate,

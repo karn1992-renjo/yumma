@@ -7,7 +7,7 @@
 <div class="container py-4">
     <div class="row justify-content-center">
         <div class="col-lg-8">
-            <div class="card border-0 shadow-sm mb-4">
+            <div class="card border-0 shadow-sm mb-4" style="border-radius: var(--app-card-radius, 24px); overflow: hidden;">
                 <div class="card-header bg-white border-0 p-4">
                     <h4 class="mb-1 fw-bold">Profile Information</h4>
                     <p class="text-muted mb-0">Update your account details.</p>
@@ -64,14 +64,14 @@
                     </div>
 
                     <div class="mt-4">
-                        <button type="submit" class="btn btn-primary px-4">
+                        <button type="submit" class="btn btn-primary rounded-pill px-4">
                             <i class="fas fa-save me-2"></i>Save Changes
                         </button>
                     </div>
                 </form>
             </div>
 
-            <div class="card border-0 shadow-sm">
+            <div class="card border-0 shadow-sm" style="border-radius: var(--app-card-radius, 24px); overflow: hidden;">
                 <div class="card-header bg-white border-0 p-4">
                     <h4 class="mb-1 fw-bold">Change Password</h4>
                     <p class="text-muted mb-0">Keep your account secure.</p>
@@ -101,7 +101,7 @@
                     </div>
 
                     <div class="mt-4">
-                        <button type="submit" class="btn btn-outline-primary px-4">
+                        <button type="submit" class="btn btn-outline-primary rounded-pill px-4">
                             <i class="fas fa-lock me-2"></i>Update Password
                         </button>
                     </div>

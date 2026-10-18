@@ -100,8 +100,12 @@ class MediaStorage
 
             $disk->put($webpPath, $image->toWebp(82)->toString(), $options);
 
-            if (method_exists($image, 'toAvif')) {
-                $disk->put($directory.'/'.$basename.'.avif', $image->toAvif(65)->toString(), $options);
+            if (function_exists('imageavif')) {
+                try {
+                    $disk->put($directory.'/'.$basename.'.avif', $image->toAvif(65)->toString(), $options);
+                } catch (\Throwable) {
+                    // AVIF encoding unavailable/failed; the webp conversion above still stands.
+                }
             }
 
             return $webpPath;

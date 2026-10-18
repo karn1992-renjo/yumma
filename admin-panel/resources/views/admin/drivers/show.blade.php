@@ -9,6 +9,7 @@
 @section('header', 'Driver Details')
 
 @section('content')
+@php($isDriverSuspended = $driver->isSuspended())
 <div class="page-header mb-3">
     <div class="d-flex justify-content-between align-items-start flex-wrap gap-3">
         <div>
@@ -16,14 +17,38 @@
             <p class="text-muted mb-0">Driver ID: <strong>{{ $driver->driver_code }}</strong></p>
         </div>
         <div class="d-flex gap-2 flex-wrap">
+            @can('edit_drivers')
             <a href="{{ route('admin.drivers.edit', $driver->id) }}" class="btn btn-primary">
                 <i class="fas fa-edit me-2"></i> Edit
             </a>
+            @if($isDriverSuspended)
+                <form method="POST" action="{{ route('admin.drivers.reactivate', $driver->id) }}" class="d-inline" onsubmit="return confirm('Reactivate {{ $driver->name }}? They will immediately be able to log in and go online again.');">
+                    @csrf
+                    <button class="btn btn-success"><i class="fas fa-circle-check me-2"></i>Reactivate</button>
+                </form>
+            @else
+                <button class="btn btn-outline-danger" data-bs-toggle="modal" data-bs-target="#suspendDriverModal">
+                    <i class="fas fa-ban me-2"></i>Suspend
+                </button>
+            @endif
+            @endcan
             <a href="{{ route('admin.drivers.index') }}" class="btn btn-light">
                 <i class="fas fa-arrow-left me-2"></i> Back
             </a>
         </div>
     </div>
+    @if($isDriverSuspended)
+        <div class="table-card mt-3" style="border-color:#fecaca;background:#fef2f2;">
+            <div class="p-3">
+                <strong style="color:#991b1b;"><i class="fas fa-ban me-2"></i>This driver is suspended</strong>
+                <div style="color:#7f1d1d;margin-top:4px;font-size:13px;">
+                    {{ $driver->suspension_reason ?: 'No reason recorded.' }}
+                    &middot;
+                    {{ $driver->suspended_until ? 'Suspended until '.$driver->suspended_until->format('d M Y, h:i A').' (then it will auto-reactivate).' : 'Permanent, until an admin reactivates it.' }}
+                </div>
+            </div>
+        </div>
+    @endif
 </div>
 
 <!-- Key Stats Row -->
@@ -79,7 +104,9 @@
                     <div class="col-md-6">
                         <label class="form-label fw-semibold text-muted small">Status</label>
                         <div>
-                            @if($driver->is_active)
+                            @if($isDriverSuspended)
+                                <span class="badge bg-danger"><i class="fas fa-ban me-1"></i> Suspended</span>
+                            @elseif($driver->is_active)
                                 <span class="badge bg-success"><i class="fas fa-check-circle me-1"></i> Active</span>
                             @else
                                 <span class="badge bg-danger"><i class="fas fa-times-circle me-1"></i> Inactive</span>
@@ -96,7 +123,17 @@
                         <label class="form-label fw-semibold text-muted small">Phone Number</label>
                         <div class="fw-semibold">{{ $driver->phone }}</div>
                     </div>
-                    
+
+                    <div class="col-md-6">
+                        <label class="form-label fw-semibold text-muted small">Date of Birth</label>
+                        <div class="fw-semibold">{{ optional($driver->date_of_birth)->format('d M Y') ?? 'N/A' }}</div>
+                    </div>
+
+                    <div class="col-md-6">
+                        <label class="form-label fw-semibold text-muted small">Gender</label>
+                        <div class="fw-semibold">{{ $driver->gender ?? 'N/A' }}</div>
+                    </div>
+
                     <div class="col-md-6">
                         <label class="form-label fw-semibold text-muted small">Member Since</label>
                         <div class="fw-semibold">{{ $driver->created_at->format('d M Y') }}</div>
@@ -126,23 +163,37 @@
                         <label class="form-label fw-semibold text-muted small">Vehicle Number</label>
                         <div class="fw-semibold">{{ $driver->vehicle_number ?? 'N/A' }}</div>
                     </div>
-                    
+
+                    <div class="col-md-6">
+                        <label class="form-label fw-semibold text-muted small">Vehicle Model</label>
+                        <div class="fw-semibold">{{ $driver->vehicle_model ?? 'N/A' }}</div>
+                    </div>
+
+                    <div class="col-md-6">
+                        <label class="form-label fw-semibold text-muted small">Fuel / Engine Type</label>
+                        <div class="fw-semibold">{{ $driver->fuel_type ? ucfirst($driver->fuel_type) : 'N/A' }}</div>
+                    </div>
+
                     <div class="col-md-6">
                         <label class="form-label fw-semibold text-muted small">License Number</label>
                         <div class="fw-semibold">{{ $driver->license_number ?? 'N/A' }}</div>
                     </div>
+                </div>
+            </div>
+        </div>
 
+        <!-- Payout Mode & Assignment -->
+        <div class="table-card mb-4">
+            <div class="card-header bg-transparent">
+                <h5 class="mb-0 fw-bold"><i class="fas fa-hand-holding-usd me-2"></i> Payout Mode &amp; Assignment</h5>
+            </div>
+            <div class="p-4">
+                <div class="row g-4">
                     <div class="col-md-6">
                         <label class="form-label fw-semibold text-muted small">Payout Mode</label>
                         <div class="fw-semibold">
                             @if(($driver->earning_mode ?? 'commission') === 'salary')
                                 Fixed monthly salary
-                                @if($driver->monthly_salary)
-                                    &mdash; {{ \App\Models\AppSetting::sanitizedCurrencySymbol() }}{{ number_format((float) $driver->monthly_salary, 2) }}/mo
-                                @endif
-                                @if($driver->salary_effective_from)
-                                    <span class="text-muted small">(from {{ optional($driver->salary_effective_from)->format('d M Y') }})</span>
-                                @endif
                             @else
                                 Per-delivery commission
                             @endif
@@ -150,6 +201,72 @@
                     </div>
 
                     <div class="col-md-6">
+                        <label class="form-label fw-semibold text-muted small">Monthly Salary</label>
+                        <div class="fw-semibold">
+                            @if($driver->monthly_salary)
+                                {{ \App\Models\AppSetting::sanitizedCurrencySymbol() }}{{ number_format((float) $driver->monthly_salary, 2) }}/mo
+                            @else
+                                N/A
+                            @endif
+                        </div>
+                    </div>
+
+                    <div class="col-md-6">
+                        <label class="form-label fw-semibold text-muted small">Salary Effective From</label>
+                        <div class="fw-semibold">{{ optional($driver->salary_effective_from)->format('d M Y') ?? 'N/A' }}</div>
+                    </div>
+
+                    <div class="col-md-6">
+                        <label class="form-label fw-semibold text-muted small">Branch</label>
+                        <div class="fw-semibold">{{ $driver->branch->name ?? 'Not mapped' }}</div>
+                    </div>
+
+                    <div class="col-md-6">
+                        <label class="form-label fw-semibold text-muted small">Salary Paid By</label>
+                        <div class="fw-semibold">{{ $driver->salary_payer ? ucfirst($driver->salary_payer) : 'Not set' }}</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Location -->
+        <div class="table-card mb-4">
+            <div class="card-header bg-transparent">
+                <h5 class="mb-0 fw-bold"><i class="fas fa-map-marker-alt me-2"></i> Location</h5>
+            </div>
+            <div class="p-4">
+                <div class="row g-4">
+                    <div class="col-md-6">
+                        <label class="form-label fw-semibold text-muted small">City</label>
+                        <div class="fw-semibold">{{ $driver->city ?? 'N/A' }}</div>
+                    </div>
+
+                    <div class="col-md-6">
+                        <label class="form-label fw-semibold text-muted small">Landmark</label>
+                        <div class="fw-semibold">{{ $driver->landmark ?? 'N/A' }}</div>
+                    </div>
+
+                    <div class="col-md-12">
+                        <label class="form-label fw-semibold text-muted small">Address</label>
+                        <div class="fw-semibold">{{ $driver->address ?? 'N/A' }}</div>
+                    </div>
+
+                    <div class="col-md-6">
+                        <label class="form-label fw-semibold text-muted small">Delivery Zone</label>
+                        <div class="fw-semibold">{{ optional($driver->deliveryArea)->name ?? 'Not set' }}</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- App Settings -->
+        <div class="table-card mb-4">
+            <div class="card-header bg-transparent">
+                <h5 class="mb-0 fw-bold"><i class="fas fa-sliders-h me-2"></i> App Settings</h5>
+            </div>
+            <div class="p-4">
+                <div class="row g-4">
+                    <div class="col-md-4">
                         <label class="form-label fw-semibold text-muted small">Max Active Orders</label>
                         <div class="fw-semibold">
                             @if($driver->max_active_orders)
@@ -159,6 +276,55 @@
                             @endif
                         </div>
                     </div>
+
+                    <div class="col-md-4">
+                        <label class="form-label fw-semibold text-muted small">Background Location</label>
+                        <div>
+                            <span class="badge {{ $driver->background_location_enabled ? 'bg-success' : 'bg-light text-dark border' }}">{{ $driver->background_location_enabled ? 'Enabled' : 'Off/Unknown' }}</span>
+                        </div>
+                    </div>
+
+                    <div class="col-md-4">
+                        <label class="form-label fw-semibold text-muted small">Notification Permission</label>
+                        <div>
+                            <span class="badge {{ $driver->notification_permission_enabled ? 'bg-success' : 'bg-light text-dark border' }}">{{ $driver->notification_permission_enabled ? 'Enabled' : 'Off/Unknown' }}</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Documents -->
+        <div class="table-card mb-4">
+            <div class="card-header bg-transparent">
+                <h5 class="mb-0 fw-bold"><i class="fas fa-file-alt me-2"></i> Documents</h5>
+            </div>
+            <div class="p-4">
+                <div class="row g-4">
+                    @php
+                        $driverDocuments = [
+                            'Profile Photo' => $driver->profile_photo_path,
+                            'Vehicle Image' => $driver->vehicle_image,
+                            'License Document' => $driver->license_document,
+                            'Vehicle RC' => $driver->vehicle_rc,
+                            'Aadhar Card' => $driver->aadhar_card,
+                            'PAN Card' => $driver->pan_card,
+                            'Insurance Document' => $driver->insurance_document,
+                        ];
+                    @endphp
+                    @foreach($driverDocuments as $docLabel => $docPath)
+                        <div class="col-md-3 text-center">
+                            <label class="form-label fw-semibold text-muted small d-block">{{ $docLabel }}</label>
+                            @if($docPath)
+                                <a href="{{ App\Services\MediaStorage::url($docPath) }}" target="_blank">
+                                    <img src="{{ App\Services\MediaStorage::url($docPath) }}" alt="{{ $docLabel }}" class="img-thumbnail" style="max-height: 90px; object-fit: cover;" onerror="this.style.display='none'; this.nextElementSibling.style.display='block';">
+                                    <span class="small d-none">View file</span>
+                                </a>
+                            @else
+                                <span class="badge bg-light text-dark border">Not uploaded</span>
+                            @endif
+                        </div>
+                    @endforeach
                 </div>
             </div>
         </div>
@@ -483,6 +649,44 @@
     </div>
 </div>
 
+<!-- Suspend Driver Modal -->
+<div class="modal fade" id="suspendDriverModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <form method="POST" action="{{ route('admin.drivers.suspend', $driver->id) }}">
+                @csrf
+                <div class="modal-header" style="background: linear-gradient(135deg, #7f1d1d, #b91c1c);">
+                    <h5 class="modal-title text-white fw-bold">Suspend {{ $driver->name }}</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Duration</label>
+                        <select class="form-select" name="suspension_type" onchange="document.getElementById('driverSuspendUntilWrap').style.display = this.value === 'limited' ? 'block' : 'none';">
+                            <option value="limited">Limited time</option>
+                            <option value="permanent">Permanent</option>
+                        </select>
+                    </div>
+                    <div class="mb-3" id="driverSuspendUntilWrap">
+                        <label class="form-label fw-semibold">Suspended until</label>
+                        <input class="form-control" type="datetime-local" name="suspended_until">
+                        <div class="form-text">The driver reactivates automatically once this passes.</div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Reason</label>
+                        <textarea class="form-control" name="suspension_reason" rows="3" placeholder="Optional, shown to admins reviewing this driver"></textarea>
+                    </div>
+                    <div class="form-text">While suspended, this driver cannot log in or go online. Only an admin can lift a permanent suspension.</div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancel</button>
+                    <button class="btn btn-danger">Suspend Driver</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
 <script>
     function confirmTopup(driverId) {
         const form = document.getElementById('topupForm');
@@ -520,3 +724,4 @@
         // });
     }
 </script>
+@endsection

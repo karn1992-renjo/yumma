@@ -21,7 +21,9 @@
                 <x-section-border />
             @endif
 
-            @if (Laravel\Fortify\Features::canManageTwoFactorAuthentication())
+            @if (auth()->user()->requiresAdminMfa())
+                <a href="{{ route('admin.security.index') }}">Manage admin MFA and recovery mobiles in Security settings</a>
+            @elseif (Laravel\Fortify\Features::canManageTwoFactorAuthentication())
                 <div class="mt-10 sm:mt-0">
                     @livewire('profile.two-factor-authentication-form')
                 </div>

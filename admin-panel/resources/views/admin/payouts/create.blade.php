@@ -197,7 +197,7 @@
         const submitBtn = document.getElementById('submitBtn');
 
         if (mode === 'full') {
-            input.value = walletState.balance.toFixed(2);
+            input.value = walletState.balance.toFixed(window.currencyDecimals || 2);
             input.readOnly = true;
             input.classList.add('bg-light');
         } else {

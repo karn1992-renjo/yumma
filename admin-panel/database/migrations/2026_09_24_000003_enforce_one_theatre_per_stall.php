@@ -47,11 +47,29 @@ return new class extends Migration
             );
         }
 
-        Schema::table('theatre_restaurants', function (Blueprint $table) {
-            $table->unique('restaurant_id', 'theatre_restaurants_restaurant_id_unique');
-        });
+        // Idempotent: MySQL auto-commits DDL even inside Laravel's migration
+        // "transaction", so a prior failed attempt at this same migration
+        // (the drop further below, once -- see that comment) can leave this
+        // index already created on a re-run.
+        if (! Schema::hasIndex('theatre_restaurants', 'theatre_restaurants_restaurant_id_unique')) {
+            Schema::table('theatre_restaurants', function (Blueprint $table) {
+                $table->unique('restaurant_id', 'theatre_restaurants_restaurant_id_unique');
+            });
+        }
 
         if (Schema::hasIndex('theatre_restaurants', 'theatre_restaurants_theatre_id_restaurant_id_unique')) {
+            // MySQL/InnoDB uses this composite unique index to back the
+            // theatre_id foreign key and refuses to drop it while it's the
+            // only index covering that column ("Cannot drop index ... needed
+            // in a foreign key constraint") -- never surfaced against the
+            // local SQLite dev DB, which doesn't enforce this. Give the FK a
+            // plain index to fall back on first, then the drop is safe.
+            if (! Schema::hasIndex('theatre_restaurants', 'theatre_restaurants_theatre_id_index')) {
+                Schema::table('theatre_restaurants', function (Blueprint $table) {
+                    $table->index('theatre_id', 'theatre_restaurants_theatre_id_index');
+                });
+            }
+
             Schema::table('theatre_restaurants', function (Blueprint $table) {
                 $table->dropUnique('theatre_restaurants_theatre_id_restaurant_id_unique');
             });
@@ -60,14 +78,36 @@ return new class extends Migration
 
     public function down(): void
     {
-        Schema::table('theatre_restaurants', function (Blueprint $table) {
-            $table->dropUnique('theatre_restaurants_restaurant_id_unique');
-        });
+        // Mirrors the up() fix, in reverse: the restaurant_id_unique index
+        // below is currently the only index backing the restaurant_id
+        // foreign key (confirmed live -- "Cannot drop index ... needed in a
+        // foreign key constraint" on a real migrate:refresh attempt), so it
+        // needs a replacement before it can be dropped. The restored
+        // composite unique further down has theatre_id as its leftmost
+        // column, so it does NOT cover restaurant_id -- this plain index has
+        // to stay permanently, not just during the swap.
+        if (! Schema::hasIndex('theatre_restaurants', 'theatre_restaurants_restaurant_id_index')) {
+            Schema::table('theatre_restaurants', function (Blueprint $table) {
+                $table->index('restaurant_id', 'theatre_restaurants_restaurant_id_index');
+            });
+        }
+
+        if (Schema::hasIndex('theatre_restaurants', 'theatre_restaurants_restaurant_id_unique')) {
+            Schema::table('theatre_restaurants', function (Blueprint $table) {
+                $table->dropUnique('theatre_restaurants_restaurant_id_unique');
+            });
+        }
 
         if (! Schema::hasIndex('theatre_restaurants', 'theatre_restaurants_theatre_id_restaurant_id_unique')) {
             Schema::table('theatre_restaurants', function (Blueprint $table) {
                 $table->unique(['theatre_id', 'restaurant_id']);
             });
+
+            if (Schema::hasIndex('theatre_restaurants', 'theatre_restaurants_theatre_id_index')) {
+                Schema::table('theatre_restaurants', function (Blueprint $table) {
+                    $table->dropIndex('theatre_restaurants_theatre_id_index');
+                });
+            }
         }
     }
 };

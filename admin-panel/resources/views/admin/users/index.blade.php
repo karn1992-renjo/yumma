@@ -17,9 +17,11 @@
             <a href="{{ route('admin.users.export', request()->only(['search', 'role', 'status'])) }}" class="btn btn-outline-success">
                 <i class="fas fa-file-export me-2"></i> Export Users
             </a>
+            @can('create_users')
             <a href="{{ route('admin.users.create') }}" class="btn btn-primary">
                 <i class="fas fa-plus me-2"></i> Add User
             </a>
+            @endcan
         </div>
     </div>
 </div>
@@ -136,9 +138,12 @@
                     <td>{{ $user->created_at->format('d M Y') }}</td>
                     <td>
                         <div class="btn-group" role="group">
+                            @can('edit_users')
                             <a href="{{ route('admin.users.edit', $user) }}" class="btn btn-sm btn-outline-primary">
                                 <i class="fas fa-edit"></i>
                             </a>
+                            @endcan
+                            @can('delete_users')
                             @if(!$user->hasRole('super_admin'))
                             <form action="{{ route('admin.users.destroy', $user) }}" method="POST" id="deleteForm{{ $user->id }}" style="display: inline;">
                                 @csrf
@@ -148,6 +153,7 @@
                                 </button>
                             </form>
                             @endif
+                            @endcan
                         </div>
                     </td>
                 </tr>

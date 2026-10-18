@@ -282,7 +282,7 @@
 
                 <div class="small text-muted d-flex align-items-center gap-2 flex-wrap">
                     @if($item->category)
-                        <span><i class="fas fa-folder me-1"></i>{{ $item->category->name }}</span>
+                        <span><i class="fas fa-folder me-1"></i>{{ $item->category->name }}{{ $item->subcategory ? ' / ' . $item->subcategory->name : '' }}</span>
                     @else
                         <span>Uncategorized</span>
                     @endif

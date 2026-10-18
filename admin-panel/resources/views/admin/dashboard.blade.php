@@ -469,7 +469,7 @@
             </div>
             <div class="kpi-label">Total Orders</div>
             <div class="kpi-value">{{ number_format($totalOrders) }}</div>
-            <canvas class="sparkline" data-color="#3b82f6" data-values='@json($dailyRevenue->pluck("revenue")->values())'></canvas>
+            <canvas class="sparkline" data-color="#3b82f6" data-values='@json($dailyOrderCount->pluck("count")->values())'></canvas>
             <div class="kpi-sub">{{ number_format($todayOrders) }} orders today</div>
         </div>
 
@@ -480,7 +480,7 @@
             </div>
             <div class="kpi-label">Total Customers</div>
             <div class="kpi-value">{{ number_format($totalUsers) }}</div>
-            <canvas class="sparkline" data-color="#8b5cf6" data-values='{{ json_encode([18,24,21,32,36,30,42,45,49,54,58,63]) }}'></canvas>
+            <canvas class="sparkline" data-color="#8b5cf6" data-values='@json($dailyNewCustomers->pluck("count")->values())'></canvas>
             <div class="kpi-sub">Registered customer accounts</div>
         </div>
 
@@ -491,7 +491,7 @@
             </div>
             <div class="kpi-label">Active Restaurants</div>
             <div class="kpi-value">{{ number_format($activeRestaurants) }}</div>
-            <canvas class="sparkline" data-color="#22c55e" data-values='{{ json_encode([12,15,14,18,17,22,21,26,25,28,30,34]) }}'></canvas>
+            <canvas class="sparkline" data-color="#22c55e" data-values='@json($dailyActiveRestaurants->pluck("count")->values())'></canvas>
             <div class="kpi-sub">of {{ number_format($totalRestaurants) }} restaurants</div>
         </div>
 
@@ -502,7 +502,7 @@
             </div>
             <div class="kpi-label">Success Rate</div>
             <div class="kpi-value">{{ number_format($successRate, 1) }}%</div>
-            <canvas class="sparkline" data-color="#14b8a6" data-values='{{ json_encode([82,86,84,88,87,90,91,89,92,93,94,96]) }}'></canvas>
+            <canvas class="sparkline" data-color="#14b8a6" data-values='@json($dailySuccessRate->pluck("rate")->values())'></canvas>
             <div class="kpi-sub">{{ number_format($cancellationRate, 1) }}% cancellation rate</div>
         </div>
     </section>

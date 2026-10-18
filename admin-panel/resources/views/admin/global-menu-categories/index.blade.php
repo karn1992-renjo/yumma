@@ -74,13 +74,27 @@
             <h1 class="h3 mb-1">Global Menu Categories</h1>
             <p class="text-muted mb-0">Create admin-managed categories and sub categories for restaurants to reuse.</p>
         </div>
-        <a href="{{ route('admin.global-menu-categories.create') }}" class="btn btn-primary">
-            <i class="fas fa-plus me-2"></i>Add Category
-        </a>
+        <div class="d-flex flex-wrap gap-2">
+            <a href="{{ route('admin.global-menu-categories.export') }}" class="btn btn-outline-secondary">
+                <i class="fas fa-file-export me-2"></i>Export
+            </a>
+            @can('create_menu_items')
+            <button class="btn btn-outline-success" data-bs-toggle="modal" data-bs-target="#globalCategoryImportModal">
+                <i class="fas fa-file-import me-2"></i>Import
+            </button>
+            <a href="{{ route('admin.global-menu-categories.create') }}" class="btn btn-primary">
+                <i class="fas fa-plus me-2"></i>Add Category
+            </a>
+            @endcan
+        </div>
     </div>
 
     @if(session('success'))
         <div class="alert alert-success">{{ session('success') }}</div>
+    @endif
+
+    @if(session('error'))
+        <div class="alert alert-danger">{{ session('error') }}</div>
     @endif
 
     <div class="table-card overflow-hidden">
@@ -140,9 +154,17 @@
                             <div class="small text-muted">subs</div>
                         </div>
                         <div class="d-flex align-items-center gap-2">
+                            @can('create_menu_items')
+                            <a href="{{ route('admin.global-menu-categories.subcategories.create', $category) }}" class="btn btn-sm btn-outline-success">
+                                <i class="fas fa-plus me-1"></i> Subcategory
+                            </a>
+                            @endcan
+                            @can('edit_menu_items')
                             <a href="{{ route('admin.global-menu-categories.edit', $category) }}" class="btn btn-sm btn-outline-primary">
                                 <i class="fas fa-pen me-1"></i> Edit
                             </a>
+                            @endcan
+                            @can('delete_menu_items')
                             <form action="{{ route('admin.global-menu-categories.destroy', $category) }}" method="POST" class="d-inline" onsubmit="return confirm('Delete this global category and its sub categories?')">
                                 @csrf
                                 @method('DELETE')
@@ -150,6 +172,7 @@
                                     <i class="fas fa-trash me-1"></i> Delete
                                 </button>
                             </form>
+                            @endcan
                         </div>
                     </div>
                 </div>
@@ -158,6 +181,46 @@
             @endforelse
         </div>
         <div class="p-3">{{ $categories->links() }}</div>
+    </div>
+</div>
+
+<div class="modal fade" id="globalCategoryImportModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Import Global Categories</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <form action="{{ route('admin.global-menu-categories.import') }}" method="POST" enctype="multipart/form-data">
+                @csrf
+                <div class="modal-body">
+                    <p class="text-muted">Upload a CSV, XLS, or XLSX file with one category or subcategory per row.</p>
+                    <div class="mb-3">
+                        <label class="form-label">Categories File</label>
+                        <input type="file" name="file" class="form-control" accept=".csv,.txt,.xlsx,.xls" required>
+                    </div>
+                    <div class="alert alert-light border">
+                        <p class="mb-2"><strong>Columns:</strong></p>
+                        <ul class="mb-0">
+                            <li><code>Category</code> — the category or subcategory name</li>
+                            <li><code>Parent Category</code> — leave blank for a top-level category, or the parent's name to create/update a subcategory</li>
+                            <li><code>Display Order</code></li>
+                            <li><code>Active</code> (Yes / No)</li>
+                        </ul>
+                    </div>
+                    <div class="d-flex justify-content-between align-items-center">
+                        <small class="text-muted">Matching rows (same name + same parent) are updated in place.</small>
+                        <a href="{{ route('admin.global-menu-categories.import.template') }}" class="btn btn-sm btn-outline-secondary">
+                            <i class="fas fa-download me-1"></i> Download Sample CSV
+                        </a>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancel</button>
+                    <button class="btn btn-primary">Import</button>
+                </div>
+            </form>
+        </div>
     </div>
 </div>
 @endsection

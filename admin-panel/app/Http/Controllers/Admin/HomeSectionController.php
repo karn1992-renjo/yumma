@@ -172,6 +172,7 @@ class HomeSectionController extends Controller
             'ends_at' => $validated['ends_at'] ?? null,
             'configuration' => [
                 'limit' => (int) ($validated['limit'] ?? 8),
+                'max_price' => isset($validated['max_price']) ? (float) $validated['max_price'] : 99.0,
                 'restaurant_scope' => $validated['restaurant_scope'] ?? 'featured',
                 'popular_only' => (bool) ($validated['popular_only'] ?? false),
                 'banner_ids' => array_values(array_map('intval', $validated['banner_ids'] ?? [])),

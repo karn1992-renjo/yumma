@@ -8,6 +8,7 @@ import '../../theme/foodflow_theme.dart';
 import '../../widgets/aurora/aurora.dart';
 import '../../utils/currency_utils.dart';
 import '../../utils/payout_gateway_utils.dart';
+import 'driver_referral_screen.dart';
 
 class DriverProfileScreen extends StatefulWidget {
   const DriverProfileScreen({Key? key, this.showAppBar = false})
@@ -184,6 +185,17 @@ class _DriverProfileScreenState extends State<DriverProfileScreen> {
               onTap: () => _openEditor(
                 context,
                 DriverProfileEditorScreen.payout(initialData: _driverData),
+              ),
+            ),
+            _ProfileMenuItem(
+              icon: Icons.card_giftcard_outlined,
+              title: 'Refer & Earn',
+              subtitle: 'Invite friends, earn rewards',
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => const DriverReferralScreen(),
+                ),
               ),
             ),
             _ProfileMenuItem(

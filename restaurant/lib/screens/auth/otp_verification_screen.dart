@@ -218,8 +218,13 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen>
       await authProvider.logout();
       if (!mounted) return;
       _showMessage(
-        appText('This mobile number is not linked to a restaurant account.'),
-        isError: true,
+        appText('No account found for this number. Please register.'),
+      );
+      Navigator.pushNamedAndRemoveUntil(
+        context,
+        '/register',
+        (_) => false,
+        arguments: widget.phoneNumber,
       );
       return;
     }

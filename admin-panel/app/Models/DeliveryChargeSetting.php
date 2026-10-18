@@ -15,7 +15,8 @@ class DeliveryChargeSetting extends Model
         'free_delivery_days', 'free_delivery_area_ids',
         'platform_fee',
         'order_acceptance_timeout_seconds',
-        'admin_contribution_percent', 'restaurant_contribution_percent'
+        'admin_contribution_percent', 'restaurant_contribution_percent',
+        'salary_driver_delivery_recipient', 'salary_driver_branch_share_percent',
     ];
     
     protected $casts = [
@@ -53,6 +54,33 @@ class DeliveryChargeSetting extends Model
         $setting = self::safeFirst();
 
         return round((float) ($setting?->platform_fee ?? 0), 2);
+    }
+
+    /**
+     * Who a salaried driver's delivery-fee earning goes to instead of the
+     * driver's own wallet ('admin' or 'branch') -- a salaried driver is
+     * already paid via monthly_salary, so crediting them the per-order
+     * delivery fee too would double-pay them for the same delivery.
+     */
+    public static function getSalaryDriverDeliveryRecipient(): string
+    {
+        $setting = self::safeFirst();
+        $recipient = $setting?->salary_driver_delivery_recipient ?: 'branch';
+
+        return in_array($recipient, ['admin', 'branch'], true) ? $recipient : 'branch';
+    }
+
+    /**
+     * When the recipient above is 'branch', the percentage of the diverted
+     * delivery earning the branch keeps -- the remainder stays with admin.
+     * Mirrors the existing branch_share_percent split used for restaurant
+     * commission.
+     */
+    public static function getSalaryDriverBranchSharePercent(): float
+    {
+        $setting = self::safeFirst();
+
+        return (float) ($setting?->salary_driver_branch_share_percent ?? 70);
     }
 
     public static function getOrderAcceptanceTimeoutSeconds(): int

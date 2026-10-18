@@ -165,7 +165,14 @@
             </li>
             @endif
             <li class="sidebar-nav-item">
-                <a href="{{ route('restaurant.settings.index') }}" 
+                <a href="{{ route('restaurant.petpooja.show') }}"
+                   class="sidebar-nav-link {{ request()->routeIs('restaurant.petpooja.*') ? 'active' : '' }}">
+                    <i class="fas fa-plug"></i>
+                    <span>Petpooja</span>
+                </a>
+            </li>
+            <li class="sidebar-nav-item">
+                <a href="{{ route('restaurant.settings.index') }}"
                    class="sidebar-nav-link {{ request()->routeIs('restaurant.settings.index') ? 'active' : '' }}">
                     <i class="fas fa-cog"></i>
                     <span>General Settings</span>

@@ -16,6 +16,14 @@ class DashboardController extends Controller
 {
     public function index()
     {
+        // Support agents share this route (gated via view_dashboard, the
+        // near-universal baseline permission) but must never see revenue,
+        // commission, or earnings -- send them to their own operational
+        // dashboard instead, even if they type this URL directly.
+        if (auth()->user()->hasRole('support') && ! auth()->user()->hasAnyRole(['super_admin', 'admin'])) {
+            return redirect()->route('support.dashboard');
+        }
+
         $deliveryMinutesExpression = $this->deliveryMinutesExpression();
 
         // Stats
@@ -46,7 +54,48 @@ class DashboardController extends Controller
             ->groupBy('date')
             ->orderBy('date')
             ->get();
-            
+
+        // Real per-day series for the KPI card sparklines (previously
+        // hardcoded literal arrays that never reflected actual activity).
+        $dailyOrderCount = Order::whereDate('created_at', '>=', now()->subDays(30))
+            ->select(DB::raw('DATE(created_at) as date'), DB::raw('COUNT(*) as count'))
+            ->groupBy('date')
+            ->orderBy('date')
+            ->get();
+
+        $dailyNewCustomers = User::whereHas('roles', function ($q) {
+                $q->where('name', 'customer');
+            })
+            ->whereDate('created_at', '>=', now()->subDays(30))
+            ->select(DB::raw('DATE(created_at) as date'), DB::raw('COUNT(*) as count'))
+            ->groupBy('date')
+            ->orderBy('date')
+            ->get();
+
+        // "Active restaurants" trend = distinct restaurants that actually
+        // fulfilled an order each day, not a point-in-time is_open toggle
+        // (which has no history to chart).
+        $dailyActiveRestaurants = Order::where('status', 'delivered')
+            ->whereDate('created_at', '>=', now()->subDays(30))
+            ->select(DB::raw('DATE(created_at) as date'), DB::raw('COUNT(DISTINCT restaurant_id) as count'))
+            ->groupBy('date')
+            ->orderBy('date')
+            ->get();
+
+        $dailySuccessRate = Order::whereDate('created_at', '>=', now()->subDays(30))
+            ->select(
+                DB::raw('DATE(created_at) as date'),
+                DB::raw("SUM(CASE WHEN status = 'delivered' THEN 1 ELSE 0 END) as delivered"),
+                DB::raw('COUNT(*) as total')
+            )
+            ->groupBy('date')
+            ->orderBy('date')
+            ->get()
+            ->map(fn ($row) => (object) [
+                'date' => $row->date,
+                'rate' => $row->total > 0 ? round($row->delivered / $row->total * 100, 1) : 0,
+            ]);
+
         // Recent orders
         $recentOrders = Order::with(['restaurant', 'customer'])
             ->latest()
@@ -77,7 +126,8 @@ class DashboardController extends Controller
             
         return view('admin.dashboard', compact(
             'totalRevenue', 'totalOrders', 'totalRestaurants', 'totalUsers',
-            'dailyRevenue', 'recentOrders', 'topRestaurants', 'deliveredOrdersCount',
+            'dailyRevenue', 'dailyOrderCount', 'dailyNewCustomers', 'dailyActiveRestaurants',
+            'dailySuccessRate', 'recentOrders', 'topRestaurants', 'deliveredOrdersCount',
             'cancelledOrdersCount', 'activeOrdersCount', 'activeRestaurants',
             'totalDrivers', 'successRate', 'cancellationRate', 'avgDeliveryTime',
             'todayRevenue', 'todayOrders', 'topDrivers', 'financialSummary',

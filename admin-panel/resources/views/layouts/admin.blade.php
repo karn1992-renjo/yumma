@@ -2388,6 +2388,8 @@
         @include('branch._sidebar')
     @elseif(auth()->check() && request()->routeIs('theatre.*') && auth()->user()->hasAnyRole(['theatre_owner', 'theatre_manager']))
         @include('theatre._sidebar')
+    @elseif(auth()->check() && auth()->user()->hasRole('support') && ! auth()->user()->hasAnyRole(['super_admin', 'admin']))
+        @include('support._sidebar')
     @else
         @include('admin.partials.sidebar')
     @endif

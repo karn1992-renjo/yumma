@@ -86,15 +86,9 @@
     $revenueSeries = is_array($revenueTrend['revenue'] ?? null) ? $revenueTrend['revenue'] : [];
     $ordersSeries = is_array($revenueTrend['orders'] ?? null) ? $revenueTrend['orders'] : [];
     $labelsSeries = is_array($revenueTrend['labels'] ?? null) ? $revenueTrend['labels'] : [];
-    $customerSpark = [];
-    $baseCustomerValue = max(0, (int) $totalCustomers - 18);
-
-    for ($i = 0; $i < 12; $i++) {
-        $customerSpark[] = min((int) $totalCustomers, $baseCustomerValue + ($i * 2));
-    }
-
-    $ratingSpark = [3.8, 4.1, 4.0, 4.2, 4.4, 4.3, 4.5, 4.6, 4.5, 4.7];
-    $payoutSpark = [12, 14, 16, 13, 18, 22, 20, 24, 26, 30];
+    $customerSpark = is_array($customerTrend ?? null) ? $customerTrend : [];
+    $ratingSpark = is_array($ratingTrend ?? null) ? $ratingTrend : [];
+    $payoutSpark = is_array($payoutTrend ?? null) ? $payoutTrend : [];
 
     $kpiCards = [
         [

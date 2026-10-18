@@ -5,6 +5,7 @@ import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../../../config/ad_config.dart';
 import '../../../../config/api_constants.dart';
 import '../../../../models/order.dart';
 import '../../../../providers/auth_provider.dart';
@@ -12,6 +13,7 @@ import '../../../../providers/order_provider.dart';
 import '../../../../services/api_service.dart';
 import '../../../../services/websocket_service.dart';
 import '../../../../utils/currency_utils.dart';
+import '../../../../widgets/common/native_ad_widget.dart';
 import '../../order_chat_screen.dart';
 import '../theme/v2_theme.dart';
 import '../widgets/v2_anim.dart';
@@ -641,6 +643,10 @@ class _OrderTrackingV2State extends State<OrderTrackingV2> {
                     ),
                   ),
                 ],
+                const SizedBox(height: 14),
+                NativeAdWidget(
+                  adUnitId: AdConfig.nativeAdUnitIdOrderTracking,
+                ),
               ],
             ),
           );

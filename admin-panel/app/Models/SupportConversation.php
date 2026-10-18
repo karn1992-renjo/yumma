@@ -16,6 +16,7 @@ class SupportConversation extends Model
         'user_id',
         'requester_role',
         'restaurant_id',
+        'branch_id',
         'category',
         'stage',
         'status',
@@ -24,6 +25,7 @@ class SupportConversation extends Model
         'assigned_at',
         'resolved_at',
         'resolve_notes',
+        'last_reminded_at',
         'csat_rating',
         'csat_comment',
         'last_message_at',
@@ -34,6 +36,7 @@ class SupportConversation extends Model
         'updated_at' => 'datetime',
         'assigned_at' => 'datetime',
         'resolved_at' => 'datetime',
+        'last_reminded_at' => 'datetime',
         'last_message_at' => 'datetime',
         'csat_rating' => 'integer',
     ];
@@ -51,6 +54,11 @@ class SupportConversation extends Model
     public function restaurant()
     {
         return $this->belongsTo(Restaurant::class);
+    }
+
+    public function branch()
+    {
+        return $this->belongsTo(Branch::class);
     }
 
     public function assignedAdmin()

@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Banner;
 use App\Models\AppSetting;
 use App\Models\Category;
+use App\Models\DeliveryArea;
 use App\Models\MenuItem;
 use App\Models\Restaurant;
 use App\Services\HomeSectionService;
@@ -53,6 +54,7 @@ class BannerController extends Controller
             [
                 'defaultLayoutMode' => $request->query('layout_mode'),
                 'displaySurfaceLabels' => Banner::DISPLAY_SURFACE_LABELS,
+                'deliveryAreas' => DeliveryArea::where('is_active', true)->orderBy('name')->get(['id', 'name']),
             ],
         ));
     }
@@ -78,6 +80,7 @@ class BannerController extends Controller
             'start_date' => 'nullable|date',
             'end_date' => 'nullable|date|after:start_date',
             'is_active' => 'nullable|boolean',
+            'delivery_area_id' => 'nullable|exists:delivery_areas,id',
         ]);
 
         if ($request->hasFile('image')) {
@@ -110,7 +113,10 @@ class BannerController extends Controller
         return view('admin.banners.edit', array_merge(
             compact('banner'),
             $this->redirectOptions(),
-            ['displaySurfaceLabels' => Banner::DISPLAY_SURFACE_LABELS]
+            [
+                'displaySurfaceLabels' => Banner::DISPLAY_SURFACE_LABELS,
+                'deliveryAreas' => DeliveryArea::where('is_active', true)->orderBy('name')->get(['id', 'name']),
+            ]
         ));
     }
     
@@ -136,6 +142,7 @@ class BannerController extends Controller
             'is_active' => 'nullable|boolean',
             'start_date' => 'nullable|date',
             'end_date' => 'nullable|date|after:start_date',
+            'delivery_area_id' => 'nullable|exists:delivery_areas,id',
         ]);
 
         if ($request->hasFile('image')) {

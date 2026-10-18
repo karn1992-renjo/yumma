@@ -10,7 +10,7 @@
             <p class="text-muted">Bot-triaged conversations, escalated to a human when the bot can't resolve them</p>
         </div>
         <div class="d-flex gap-2">
-            <a href="{{ route('admin.support.export') }}" class="btn btn-outline-primary rounded-3">
+            <a href="{{ route('support.export') }}" class="btn btn-outline-primary rounded-3">
                 <i class="fas fa-download me-2"></i> Export
             </a>
             <button type="button" class="btn btn-primary rounded-3" data-bs-toggle="modal" data-bs-target="#bulkActionModal">
@@ -66,7 +66,7 @@
         <h5 class="mb-0 fw-bold">Filter Conversations</h5>
     </div>
     <div class="card-body">
-        <form method="GET" action="{{ route('admin.support.index') }}" class="row g-3">
+        <form method="GET" action="{{ route('support.index') }}" class="row g-3">
             <div class="col-md-3">
                 <label class="form-label">Search</label>
                 <input type="text" name="search" class="form-control"
@@ -128,7 +128,7 @@
         <h5 class="mb-0 fw-bold">Conversations</h5>
     </div>
     <div class="table-responsive">
-        <form id="bulkForm" action="{{ route('admin.support.bulk-update') }}" method="POST">
+        <form id="bulkForm" action="{{ route('support.bulk-update') }}" method="POST">
             @csrf
             <table class="table table-hover mb-0">
                 <thead class="bg-light">
@@ -154,7 +154,7 @@
                             <input type="checkbox" name="conversation_ids[]" value="{{ $conversation->id }}" class="conversation-checkbox">
                         </td>
                         <td>
-                            <a href="{{ route('admin.support.show', $conversation->id) }}" class="fw-bold text-primary text-decoration-none">
+                            <a href="{{ route('support.show', $conversation->id) }}" class="fw-bold text-primary text-decoration-none">
                                 {{ $conversation->conversation_number }}
                             </a>
                         </td>
@@ -198,7 +198,7 @@
                             <small class="text-muted">{{ optional($conversation->last_message_at)->diffForHumans() }}</small>
                         </td>
                         <td>
-                            <a href="{{ route('admin.support.show', $conversation->id) }}"
+                            <a href="{{ route('support.show', $conversation->id) }}"
                                class="btn btn-sm btn-light rounded-3" title="View">
                                 <i class="fas fa-eye"></i>
                             </a>
@@ -253,7 +253,7 @@
                     <label class="form-label">Assign to Admin</label>
                     <select id="assignedTo" class="form-select">
                         <option value="">Select Admin...</option>
-                        @foreach(\App\Models\User::role('admin')->get() as $admin)
+                        @foreach(\App\Models\User::role(['admin', 'support'])->get() as $admin)
                             <option value="{{ $admin->id }}">{{ $admin->name }}</option>
                         @endforeach
                     </select>

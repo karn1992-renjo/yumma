@@ -257,47 +257,78 @@ class LocationService {
       if (response.statusCode == 200) {
         final data = _safeDecodeJson(response.body);
         if (data is List) {
-          final suggestions = <Map<String, dynamic>>[];
-          
+          // Keyed by a normalized city name so Nominatim's own duplicates
+          // (e.g. a town's administrative/taluka boundary AND its actual
+          // place point, both named e.g. "Phaltan" but with different
+          // coordinates) collapse into one suggestion instead of showing
+          // two entries where only one actually resolves to somewhere with
+          // nearby restaurants.
+          final byCity = <String, Map<String, dynamic>>{};
+
           for (final item in data) {
-            if (item is Map<String, dynamic>) {
-              final lat = double.tryParse(item['lat']?.toString() ?? '');
-              final lon = double.tryParse(item['lon']?.toString() ?? '');
-              
-              if (lat != null && lon != null) {
-                String? city;
-                if (item['address'] is Map<String, dynamic>) {
-                  final addressMap = item['address'] as Map<String, dynamic>;
-                  city = addressMap['city']?.toString() ??
-                      addressMap['town']?.toString() ??
-                      addressMap['village']?.toString() ??
-                      addressMap['municipality']?.toString() ??
-                      addressMap['district']?.toString() ??
-                      addressMap['county']?.toString();
-                }
-                
-                if ((city == null || city.isEmpty) && item['display_name'] is String) {
-                  final displayName = item['display_name'] as String;
-                  final parts = displayName.split(',');
-                  if (parts.length > 1) {
-                    city = parts[parts.length - 2].trim();
-                  } else if (parts.isNotEmpty) {
-                    city = parts.first.trim();
-                  }
-                }
-                
-                final displayName = item['display_name']?.toString() ?? city ?? query;
-                suggestions.add({
-                  'city': city?.isNotEmpty == true ? city : displayName.split(',').first.trim(),
-                  'lat': lat,
-                  'lng': lon,
-                  'display_name': displayName,
-                });
-              }
+            if (item is! Map<String, dynamic>) continue;
+            final lat = double.tryParse(item['lat']?.toString() ?? '');
+            final lon = double.tryParse(item['lon']?.toString() ?? '');
+            if (lat == null || lon == null) continue;
+
+            String? city;
+            if (item['address'] is Map<String, dynamic>) {
+              final addressMap = item['address'] as Map<String, dynamic>;
+              city = addressMap['city']?.toString() ??
+                  addressMap['town']?.toString() ??
+                  addressMap['village']?.toString() ??
+                  addressMap['municipality']?.toString() ??
+                  addressMap['district']?.toString() ??
+                  addressMap['county']?.toString();
+            }
+
+            final displayName = item['display_name']?.toString() ?? city ?? query;
+            if ((city == null || city.isEmpty) && displayName.isNotEmpty) {
+              final parts = displayName.split(',');
+              city = parts.length > 1
+                  ? parts[parts.length - 2].trim()
+                  : parts.first.trim();
+            }
+            final resolvedCity =
+                city?.isNotEmpty == true ? city! : displayName.split(',').first.trim();
+            final dedupeKey = resolvedCity.toLowerCase();
+
+            final isPlace = item['class']?.toString() == 'place';
+            final importance =
+                double.tryParse(item['importance']?.toString() ?? '') ?? 0.0;
+
+            final existing = byCity[dedupeKey];
+            final existingIsPlace = existing?['_isPlace'] as bool? ?? false;
+            final existingImportance =
+                existing?['_importance'] as double? ?? -1.0;
+            // Prefer an actual settlement point (Nominatim class "place":
+            // city/town/village/...) over an administrative boundary
+            // polygon for the same name -- the boundary's centroid often
+            // lands nowhere near where restaurants actually are.
+            final shouldReplace = existing == null ||
+                (isPlace && !existingIsPlace) ||
+                (isPlace == existingIsPlace && importance > existingImportance);
+
+            if (shouldReplace) {
+              byCity[dedupeKey] = {
+                'city': resolvedCity,
+                'lat': lat,
+                'lng': lon,
+                'display_name': displayName,
+                '_isPlace': isPlace,
+                '_importance': importance,
+              };
             }
           }
-          
-          return suggestions;
+
+          return byCity.values
+              .map((entry) => {
+                    'city': entry['city'],
+                    'lat': entry['lat'],
+                    'lng': entry['lng'],
+                    'display_name': entry['display_name'],
+                  })
+              .toList();
         }
       }
     } catch (e) {

@@ -33,7 +33,7 @@ class OrderAlertForegroundService : Service() {
 
         val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(applicationInfo.icon)
-            .setContentTitle("${applicationInfo.loadLabel(packageManager)} is online")
+            .setContentTitle("Yumma! Resto is online")
             .setContentText(status)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setCategory(NotificationCompat.CATEGORY_CALL)

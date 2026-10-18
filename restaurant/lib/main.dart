@@ -355,7 +355,11 @@ class _FoodDeliveryAppState extends State<FoodDeliveryApp>
       case '/login':
         return MaterialPageRoute(builder: (_) => const LoginScreen());
       case '/register':
-        return MaterialPageRoute(builder: (_) => const RegisterScreen());
+        return MaterialPageRoute(
+          builder: (_) => RegisterScreen(
+            initialPhone: settings.arguments as String?,
+          ),
+        );
       case '/application-status':
         return MaterialPageRoute(
           builder: (_) => PartnerApplicationStatusScreen(

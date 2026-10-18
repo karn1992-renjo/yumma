@@ -39,6 +39,31 @@ class AppConfig {
     defaultValue: 'info@yumma.ine',
   );
 
+  static const String appsFlyerDevKey = String.fromEnvironment(
+    'APPSFLYER_DEV_KEY',
+    defaultValue: '',
+  );
+  static const String appsFlyerAppId = String.fromEnvironment(
+    'APPSFLYER_APP_ID',
+    defaultValue: '',
+  );
+  static const String appsFlyerOneLinkId = String.fromEnvironment(
+    'APPSFLYER_ONELINK_ID',
+    defaultValue: '',
+  );
+  static const String appsFlyerOneLinkDomain = String.fromEnvironment(
+    'APPSFLYER_ONELINK_DOMAIN',
+    defaultValue: '',
+  );
+  static const String appsFlyerOneLinkPath = String.fromEnvironment(
+    'APPSFLYER_ONELINK_PATH',
+    defaultValue: '',
+  );
+  static const bool appsFlyerDebug = bool.fromEnvironment(
+    'APPSFLYER_DEBUG',
+    defaultValue: false,
+  );
+
   static bool get isCustomerApp => appRole == 'customer';
   static bool get isRestaurantApp => appRole == 'restaurant';
   static bool get isDriverApp => appRole == 'driver';

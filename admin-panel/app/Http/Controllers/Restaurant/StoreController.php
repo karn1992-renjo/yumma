@@ -102,7 +102,7 @@ class StoreController extends Controller
             'slug' => Str::slug($request->name) . '-' . uniqid(),
             'is_verified' => false,
             'is_open' => false,
-            'cuisine' => json_encode([]),
+            'cuisine' => [],
             'min_order_amount' => 0,
             'delivery_fee' => 40,
             'delivery_time' => 30,

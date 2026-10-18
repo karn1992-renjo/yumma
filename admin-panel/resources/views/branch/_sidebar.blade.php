@@ -34,11 +34,12 @@
         ['route' => 'branch.cod', 'label' => 'COD Management', 'icon' => 'fas fa-hand-holding-dollar', 'permissions' => ['branch.cod.view', 'view_wallet', 'manage_drivers']],
         ['route' => 'branch.zones', 'label' => 'Territories', 'icon' => 'fas fa-map-location-dot', 'permissions' => ['branch.zones.view', 'manage_zones']],
         ['route' => 'branch.wallet', 'label' => 'Wallet', 'icon' => 'fas fa-wallet', 'permissions' => ['branch.wallet.view', 'view_wallet', 'view_earnings']],
+        ['route' => 'branch.delivery-charges', 'label' => 'Delivery Charges', 'icon' => 'fas fa-route', 'permissions' => ['branch.wallet.view', 'view_wallet', 'view_earnings']],
         ['route' => 'branch.settlements', 'label' => 'Settlements', 'icon' => 'fas fa-file-invoice-dollar', 'permissions' => ['branch.settlements.view', 'submit_settlement_requests', 'view_wallet']],
         ['route' => 'branch.tax-settlements', 'label' => 'Tax & Settlements', 'icon' => 'fas fa-percent', 'permissions' => ['branch.settlements.view', 'submit_settlement_requests', 'view_wallet']],
         ['route' => 'branch.reports', 'label' => 'Reports', 'icon' => 'fas fa-chart-pie', 'permissions' => ['branch.reports.view', 'view_reports']],
         ['route' => 'branch.settings', 'label' => 'Settings', 'icon' => 'fas fa-gear', 'permissions' => ['branch.settings.view', 'manage_staff']],
-        ['route' => 'branch.tickets', 'label' => 'Support', 'icon' => 'fas fa-headset', 'permissions' => ['branch.tickets.view', 'manage_support_tickets', 'view_assigned_tasks']],
+        ['route' => 'branch.support', 'label' => 'Support', 'icon' => 'fas fa-headset', 'permissions' => ['branch.tickets.view', 'manage_support_tickets', 'view_assigned_tasks']],
     ];
 @endphp
 

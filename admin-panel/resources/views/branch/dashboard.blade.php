@@ -485,7 +485,7 @@
             </div>
             <div class="kpi-label">Branch Orders</div>
             <div class="kpi-value">{{ number_format($stats['orders']) }}</div>
-            <canvas class="sparkline" data-color="#3b82f6" data-values='@json($dailyRevenue->pluck("revenue")->values())'></canvas>
+            <canvas class="sparkline" data-color="#3b82f6" data-values='@json($dailyOrderCount->pluck("count")->values())'></canvas>
             <div class="kpi-sub">{{ number_format($stats['today_orders']) }} orders today</div>
         </div>
 
@@ -496,7 +496,7 @@
             </div>
             <div class="kpi-label">Wallet Balance</div>
             <div class="kpi-value">{{ $currencySymbol }}{{ number_format($stats['wallet'], $decimals) }}</div>
-            <canvas class="sparkline" data-color="#8b5cf6" data-values='@json($dailyRevenue->pluck("revenue")->values())'></canvas>
+            <canvas class="sparkline" data-color="#8b5cf6" data-values='@json($dailyCommission->pluck("commission")->values())'></canvas>
             <div class="kpi-sub">{{ $currencySymbol }}{{ number_format($stats['commission'], $decimals) }} credited commission</div>
         </div>
 
@@ -507,7 +507,7 @@
             </div>
             <div class="kpi-label">Network</div>
             <div class="kpi-value">{{ number_format($stats['restaurants']) }}</div>
-            <canvas class="sparkline" data-color="#22c55e" data-values='{{ json_encode([12,15,14,18,17,22,21,26,25,28,30,34]) }}'></canvas>
+            <canvas class="sparkline" data-color="#22c55e" data-values='@json($dailyActiveRestaurants->pluck("count")->values())'></canvas>
             <div class="kpi-sub">restaurants across {{ number_format($stats['zones']) }} zones</div>
         </div>
 
@@ -518,7 +518,7 @@
             </div>
             <div class="kpi-label">Success Rate</div>
             <div class="kpi-value">{{ number_format($stats['success_rate'], 1) }}%</div>
-            <canvas class="sparkline" data-color="#14b8a6" data-values='{{ json_encode([82,86,84,88,87,90,91,89,92,93,94,96]) }}'></canvas>
+            <canvas class="sparkline" data-color="#14b8a6" data-values='@json($dailySuccessRate->pluck("rate")->values())'></canvas>
             <div class="kpi-sub">{{ number_format($stats['cancellation_rate'], 1) }}% cancellation rate</div>
         </div>
     </section>

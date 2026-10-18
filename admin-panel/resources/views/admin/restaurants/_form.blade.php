@@ -140,6 +140,17 @@
                         <div class="fw-bold" id="zonePreviewName">Use current location or search to detect zone</div>
                         <div class="text-muted small" id="zonePreviewMeta">{{ $zoneMeta ?? ($panel === 'branch' ? "Only restaurants inside this branch's active mapped zone can be saved or approved." : 'Zone preview is calculated from the selected restaurant location.') }}</div>
                     </div>
+                    <div class="mt-3">
+                        <label class="form-label fw-bold">Delivery Zone</label>
+                        <select name="delivery_area_id" id="deliveryAreaSelect" class="form-select @error('delivery_area_id') is-invalid @enderror">
+                            <option value="">Auto-detect from location above</option>
+                            @foreach($deliveryAreas ?? [] as $area)
+                                <option value="{{ $area['id'] ?? $area->id }}" @selected((string) old('delivery_area_id', $restaurant?->delivery_area_id) === (string) ($area['id'] ?? $area->id))>{{ $area['name'] ?? $area->name }}</option>
+                            @endforeach
+                        </select>
+                        <div class="form-text">Leave as "Auto-detect" to match by coordinates, or pick the zone directly if detection didn't find the right one.</div>
+                        @error('delivery_area_id') <div class="invalid-feedback d-block">{{ $message }}</div> @enderror
+                    </div>
                     <input type="hidden" id="latitude" name="latitude" value="{{ old('latitude', $restaurant?->latitude) }}">
                     <input type="hidden" id="longitude" name="longitude" value="{{ old('longitude', $restaurant?->longitude) }}">
                     <div id="locationStatus" class="form-text">Use the map, geolocation or address search to set location and radius.</div>
@@ -401,11 +412,39 @@
             <div class="restaurant-form-panel-header">
                 <div>
                     <h2>Owner Login</h2>
-                    <p>Account used by the restaurant owner to access the seller panel.</p>
+                    <p>Account used by the restaurant owner to access the seller panel. An owner can run more than one restaurant -- map this one to their existing account instead of creating a new login.</p>
                 </div>
             </div>
             <div class="restaurant-form-panel-body">
-                <div class="row g-3">
+                <div class="row g-3 mb-3">
+                    <div class="col-12">
+                        <div class="btn-group" role="group" aria-label="Owner mode">
+                            <input type="radio" class="btn-check" name="owner_mode" id="ownerModeNew" value="new" {{ old('owner_mode', 'new') === 'new' ? 'checked' : '' }}>
+                            <label class="btn btn-outline-primary" for="ownerModeNew">Create New Owner</label>
+                            <input type="radio" class="btn-check" name="owner_mode" id="ownerModeExisting" value="existing" {{ old('owner_mode') === 'existing' ? 'checked' : '' }}>
+                            <label class="btn btn-outline-primary" for="ownerModeExisting">Use Existing Owner</label>
+                        </div>
+                        @error('owner_mode') <div class="invalid-feedback d-block">{{ $message }}</div> @enderror
+                        @error('existing_owner_id') <div class="invalid-feedback d-block">{{ $message }}</div> @enderror
+                    </div>
+                </div>
+
+                <div id="ownerModeExistingFields" class="row g-3 mb-3" style="display: {{ old('owner_mode') === 'existing' ? 'flex' : 'none' }};">
+                    <div class="col-lg-6">
+                        <label class="form-label fw-bold">Existing Restaurant Owner</label>
+                        <select name="existing_owner_id" class="form-select @error('existing_owner_id') is-invalid @enderror">
+                            <option value="">Select an owner...</option>
+                            @foreach(\App\Models\User::role('restaurant_owner')->orderBy('name')->get() as $existingOwner)
+                                <option value="{{ $existingOwner->id }}" {{ (string) old('existing_owner_id') === (string) $existingOwner->id ? 'selected' : '' }}>
+                                    {{ $existingOwner->name }} ({{ $existingOwner->email }}) -- {{ $existingOwner->restaurants()->count() }} restaurant{{ $existingOwner->restaurants()->count() === 1 ? '' : 's' }}
+                                </option>
+                            @endforeach
+                        </select>
+                        <div class="form-text">This restaurant will be added to that owner's "My Stores" list and go through the normal approval queue, same as any other restaurant.</div>
+                    </div>
+                </div>
+
+                <div id="ownerModeNewFields" class="row g-3" style="display: {{ old('owner_mode') === 'existing' ? 'none' : 'flex' }};">
                     <div class="col-lg-4 col-md-6">
                         <label class="form-label fw-bold">Owner Name {{ !$isEdit ? '*' : '' }}</label>
                         <input type="text" name="owner_name" class="form-control @error('owner_name') is-invalid @enderror" value="{{ old('owner_name', $owner?->name) }}" {{ !$isEdit ? 'required' : '' }}>
@@ -434,6 +473,30 @@
                 </div>
             </div>
         </section>
+
+        <script>
+            document.addEventListener('DOMContentLoaded', function () {
+                const newRadio = document.getElementById('ownerModeNew');
+                const existingRadio = document.getElementById('ownerModeExisting');
+                const newFields = document.getElementById('ownerModeNewFields');
+                const existingFields = document.getElementById('ownerModeExistingFields');
+                if (!newRadio || !existingRadio) return;
+
+                function toggle() {
+                    const isExisting = existingRadio.checked;
+                    newFields.style.display = isExisting ? 'none' : 'flex';
+                    existingFields.style.display = isExisting ? 'flex' : 'none';
+                    newFields.querySelectorAll('input[name="owner_name"], input[name="owner_email"], input[name="owner_phone"], input[name="owner_password"], input[name="owner_password_confirmation"]')
+                        .forEach(el => { el.required = !isExisting; });
+                    const existingSelect = existingFields.querySelector('select[name="existing_owner_id"]');
+                    if (existingSelect) existingSelect.required = isExisting;
+                }
+
+                newRadio.addEventListener('change', toggle);
+                existingRadio.addEventListener('change', toggle);
+                toggle();
+            });
+        </script>
     @endif
 
     <section class="restaurant-form-panel span-12">

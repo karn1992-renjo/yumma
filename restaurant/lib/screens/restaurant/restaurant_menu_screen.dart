@@ -2054,9 +2054,15 @@ class _RestaurantMenuScreenState extends State<RestaurantMenuScreen>
   }
 
   Map<String, List<MenuItem>> _groupedVisibleItems() {
+    final visible = _visibleMenuItems()
+        .where((item) => !item.isDisabled && !item.isOutOfStock)
+        .toList(growable: false);
+    return _groupByCategory(visible);
+  }
+
+  Map<String, List<MenuItem>> _groupByCategory(List<MenuItem> items) {
     final grouped = <String, List<MenuItem>>{};
-    for (final item in _visibleMenuItems()) {
-      if (item.isDisabled || item.isOutOfStock) continue;
+    for (final item in items) {
       final category = item.categoryName?.trim().isNotEmpty == true
           ? item.categoryName!.trim()
           : 'Uncategorized';
@@ -2535,19 +2541,16 @@ return Scaffold(
     for (final c in cats) {
       _catKeys.putIfAbsent(c, () => GlobalKey());
     }
+    // `grouped` (the "all items" map) has already had out-of-stock/disabled
+    // items filtered OUT by _groupedVisibleItems() -- re-filtering it here
+    // for the oos/disabled chips would always yield an empty map, making
+    // those items permanently unreachable (no way to toggle them back on).
+    // Group the already-correct outOfStock/disabled lists instead.
     Map<String, List<MenuItem>> shown;
     if (_stockFilter == 'oos') {
-      shown = {
-        for (final e in grouped.entries)
-          if (e.value.any((i) => i.isOutOfStock))
-            e.key: e.value.where((i) => i.isOutOfStock).toList()
-      };
+      shown = _groupByCategory(outOfStock);
     } else if (_stockFilter == 'disabled') {
-      shown = {
-        for (final e in grouped.entries)
-          if (e.value.any((i) => i.isDisabled))
-            e.key: e.value.where((i) => i.isDisabled).toList()
-      };
+      shown = _groupByCategory(disabled);
     } else {
       shown = grouped;
     }

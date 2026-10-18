@@ -67,12 +67,14 @@
             <p>Admin-created catalog items restaurants can add to their menus.</p>
         </div>
         <div class="d-flex gap-2 flex-wrap">
+            @can('create_menu_items')
             <button type="button" class="btn btn-outline-primary" data-bs-toggle="modal" data-bs-target="#globalMenuBulkUploadModal">
                 <i class="fas fa-file-arrow-up me-2"></i> Bulk Upload
             </button>
             <a href="{{ route('admin.master-menu-items.create') }}" class="btn btn-primary">
                 <i class="fas fa-plus me-2"></i> Add Global Item
             </a>
+            @endcan
         </div>
     </div>
 </div>
@@ -188,9 +190,12 @@
                         <div class="small text-muted">restaurants</div>
                     </div>
                     <div class="d-flex align-items-center gap-2">
+                        @can('edit_menu_items')
                         <a href="{{ route('admin.master-menu-items.edit', $item) }}" class="btn btn-sm btn-outline-primary">
                             <i class="fas fa-pen me-1"></i> Edit
                         </a>
+                        @endcan
+                        @can('delete_menu_items')
                         <form action="{{ route('admin.master-menu-items.destroy', $item) }}" method="POST" class="d-inline" onsubmit="return confirm('Delete this global menu item?')">
                             @csrf
                             @method('DELETE')
@@ -198,6 +203,7 @@
                                 <i class="fas fa-trash me-1"></i> Delete
                             </button>
                         </form>
+                        @endcan
                     </div>
                 </div>
             </div>

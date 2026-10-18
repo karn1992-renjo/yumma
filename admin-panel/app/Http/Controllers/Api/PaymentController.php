@@ -14,8 +14,10 @@ use App\Services\PromotionRewardSettlementService;
 use App\Services\ScratchCardService;
 use App\Support\PhoneNumber;
 use App\Support\GatewayRegistry;
+use App\Support\JsonHttp;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Stripe\PaymentIntent;
@@ -150,13 +152,17 @@ class PaymentController extends Controller
             }
 
             try {
-                $cashfreeOrder = Http::withHeaders([
+                // (float) cast + JsonHttp::post() -- see App\Support\JsonHttp
+                // and the matching comment in createCashfreeCheckoutPayment():
+                // Cashfree rejects a bare-integer order_amount for a
+                // whole-rupee total.
+                $cashfreeOrder = JsonHttp::post(Http::withHeaders([
                     'x-api-version' => $apiVersion,
                     'x-client-id' => $clientId,
                     'x-client-secret' => $clientSecret,
-                ])->post($this->cashfreeBaseUrl() . '/pg/orders', [
+                ]), $this->cashfreeBaseUrl() . '/pg/orders', [
                     'order_id' => 'ORDER_' . $order->id . '_' . time(),
-                    'order_amount' => round($order->total, 2),
+                    'order_amount' => (float) round($order->total, 2),
                     'order_currency' => strtoupper(AppSetting::getValue('currency_code', 'INR') ?: 'INR'),
                     'order_note' => 'Payment to ' . AppSetting::getValue('app_name', config('app.name')),
                     'order_tags' => [
@@ -229,6 +235,8 @@ class PaymentController extends Controller
             'status' => 'cancelled',
             'cancellation_reason' => $request->input('reason', 'Payment cancelled before completion'),
             'cancelled_at' => now(),
+            'cancelled_by_role' => 'customer',
+            'cancelled_by_name' => auth()->user()->name ?? 'Customer',
         ]);
 
         app(OrderStatusPushService::class)->notifyParticipants(
@@ -799,7 +807,13 @@ class PaymentController extends Controller
             $customerDetails['customer_name'] = $customerName;
         }
 
-        $cashfreeAmount = ((int) round($amount * 100)) / 100;
+        // Must stay a genuine float (not int) -- Cashfree's create-order API
+        // rejects a bare integer order_amount ("invalid amount entered") for
+        // any whole-rupee total, and PHP's `int / int` division below
+        // silently returns an int when it divides evenly (100 becomes int
+        // 100, not float 100.0). See App\Support\JsonHttp for the matching
+        // JSON-encoding half of this fix.
+        $cashfreeAmount = (float) (((int) round($amount * 100)) / 100);
         if ($cashfreeAmount < 1) {
             abort(422, 'Cashfree requires a minimum order amount of INR 1.');
         }
@@ -823,24 +837,36 @@ class PaymentController extends Controller
             'base_url' => $this->cashfreeBaseUrl(),
             'api_version' => $apiVersion,
             'order_id' => $cashfreeOrderId,
-            'amount' => $cashfreeAmount,
+            // number_format(), not the raw float -- Log::info()'s context
+            // array goes through PHP's own json_encode(), which (unlike the
+            // JsonHttp-encoded request body actually sent below) is at the
+            // mercy of the server's serialize_precision ini setting and can
+            // print a float's full raw IEEE-754 expansion instead of a clean
+            // decimal. Purely a log-readability issue -- the real request on
+            // the next line was never affected.
+            'amount' => number_format($cashfreeAmount, 2, '.', ''),
             'amount_minor' => (int) round($cashfreeAmount * 100),
             'currency' => $currency,
             'client_id_suffix' => substr((string) $clientId, -6),
         ]);
 
-        $response = Http::withHeaders([
+        $response = JsonHttp::post(Http::withHeaders([
             'x-api-version' => $apiVersion,
             'x-client-id' => $clientId,
             'x-client-secret' => $clientSecret,
             'x-idempotency-key' => $token,
-        ])->acceptJson()->asJson()->post($this->cashfreeBaseUrl() . '/pg/orders', $requestPayload);
+        ])->acceptJson(), $this->cashfreeBaseUrl() . '/pg/orders', $requestPayload);
 
         if (! $response->successful()) {
             Log::warning('Cashfree checkout order creation failed.', [
                 'status' => $response->status(),
                 'response' => $response->json() ?: $response->body(),
                 'request' => array_merge($requestPayload, [
+                    // Same log-only float-precision cosmetic issue as the
+                    // request-create log above -- this echoes what was
+                    // built, not a re-send, so fixing it here is purely for
+                    // readability when debugging from this log entry.
+                    'order_amount' => number_format((float) $requestPayload['order_amount'], 2, '.', ''),
                     'customer_details' => array_merge($customerDetails, [
                         'customer_phone' => '***' . substr($customerPhone, -4),
                     ]),
@@ -972,12 +998,36 @@ class PaymentController extends Controller
             'x-client-id' => $clientId,
             'x-client-secret' => $clientSecret,
         ];
-        $orderResponse = Http::withHeaders($headers)->get($this->cashfreeBaseUrl() . '/pg/orders/' . $cashfreeOrderId);
-        if (! $orderResponse->successful()) {
+
+        // A UPI intent hand-off often returns control to the app before
+        // Cashfree has finished marking the order PAID server-side. The web
+        // checkout (CheckoutController::verifyGatewayPayment) already
+        // retries 4 times, 750ms apart, for exactly this race -- this path
+        // used to check once and abort, which is why a payment that
+        // genuinely succeeded could still come back "not confirmed yet" for
+        // app users specifically (UPI intent hand-off is app-only; web's
+        // checkout is a modal, no app switch).
+        $orderResponse = null;
+        $cashfreeOrder = [];
+        for ($attempt = 0; $attempt < 4; $attempt++) {
+            $orderResponse = Http::withHeaders($headers)->get($this->cashfreeBaseUrl() . '/pg/orders/' . $cashfreeOrderId);
+
+            if ($orderResponse->successful()) {
+                $cashfreeOrder = $orderResponse->json() ?: [];
+                if (strtoupper((string) ($cashfreeOrder['order_status'] ?? '')) === 'PAID') {
+                    break;
+                }
+            }
+
+            if ($attempt < 3) {
+                usleep(750000);
+            }
+        }
+
+        if (! $orderResponse || $orderResponse->failed()) {
             abort(422, 'Unable to verify Cashfree payment.');
         }
 
-        $cashfreeOrder = $orderResponse->json() ?: [];
         if (strtoupper((string) ($cashfreeOrder['order_status'] ?? '')) !== 'PAID') {
             abort(422, 'Cashfree payment is not confirmed yet.');
         }
@@ -1043,16 +1093,132 @@ class PaymentController extends Controller
         }
 
         $payload['payment_method'] = $paymentMethod;
-        $orderRequest = Request::create('/api/v1/orders', 'POST', $payload);
-        $orderRequest->setUserResolver(fn () => $request->user());
-        $orderRequest->attributes->set('confirmed_online_payment', [
+
+        // Reaching this point means the gateway has ALREADY confirmed and
+        // charged the payment (signature/status verified above) -- the
+        // customer's money is gone regardless of what happens next. If
+        // OrderController::store() fails (e.g. the transient
+        // "SQLSTATE[HY000] [2002] No such file or directory" dropped-
+        // connection error seen in production logs, which clears up on the
+        // very next DB connection attempt), the old code returned that
+        // failure straight to the app with no retry: the customer saw
+        // "payment failed" despite being charged, and no order existed to
+        // show for it.
+        //
+        // Note: store() catches its own exceptions internally (including
+        // QueryException) and RETURNS a JsonResponse rather than throwing
+        // -- so retrying must be driven by the response status, not a
+        // caught exception. Retrying is safe (not a double-order risk)
+        // because store() wraps everything in its own DB transaction and
+        // explicitly rolls back before returning that failure response, so
+        // a failed attempt creates nothing.
+        $maxAttempts = 3;
+        $response = null;
+
+        for ($attempt = 1; $attempt <= $maxAttempts; $attempt++) {
+            $orderRequest = Request::create('/api/v1/orders', 'POST', $payload);
+            $orderRequest->setUserResolver(fn () => $request->user());
+            $orderRequest->attributes->set('confirmed_online_payment', [
+                'payment_method' => $paymentMethod,
+                'payment_id' => $verification['payment_id'],
+                'gateway_reference' => $verification['gateway_reference'] ?? null,
+                'payload' => $verification['payload'] ?? [],
+            ]);
+
+            if ($attempt > 1) {
+                // Force a fresh connection -- the one in the pool may still
+                // be the stale/dropped one that caused the previous
+                // attempt to fail.
+                DB::reconnect();
+            }
+
+            try {
+                $response = app(OrderController::class)->store($orderRequest);
+            } catch (\Throwable $e) {
+                // store() normally catches its own exceptions and returns a
+                // JsonResponse (handled below) -- but if the DB connection
+                // died badly enough that even its own rollback() call
+                // throws (a double-fault inside that catch block), the
+                // exception escapes uncaught instead. Treat that the same
+                // as a failed attempt rather than letting it propagate and
+                // skip the retry entirely.
+                Log::warning('Order creation threw uncaught after a confirmed payment -- retrying.', [
+                    'attempt' => $attempt,
+                    'max_attempts' => $maxAttempts,
+                    'payment_method' => $paymentMethod,
+                    'payment_id' => $verification['payment_id'] ?? null,
+                    'gateway_reference' => $verification['gateway_reference'] ?? null,
+                    'user_id' => $request->user()->id,
+                    'error' => $e->getMessage(),
+                ]);
+
+                if ($attempt < $maxAttempts) {
+                    usleep(300000 * $attempt);
+                }
+
+                continue;
+            }
+
+            if ($response->getStatusCode() < 500) {
+                // Either succeeded, or failed for a real (non-transient)
+                // reason -- e.g. validation, "restaurant closed" -- that a
+                // retry won't fix. Don't mask it with more attempts.
+                return $response;
+            }
+
+            Log::warning('Order creation failed after a confirmed payment -- retrying.', [
+                'attempt' => $attempt,
+                'max_attempts' => $maxAttempts,
+                'payment_method' => $paymentMethod,
+                'payment_id' => $verification['payment_id'] ?? null,
+                'gateway_reference' => $verification['gateway_reference'] ?? null,
+                'user_id' => $request->user()->id,
+                'response_body' => $response->getContent(),
+            ]);
+
+            if ($attempt < $maxAttempts) {
+                usleep(300000 * $attempt); // 300ms, 600ms
+            }
+        }
+
+        // All retries exhausted -- the payment is confirmed charged but no
+        // order could be created. This must never be a silent 500: log it
+        // at a level that pages/alerts so it can be reconciled manually
+        // (refund or retry) rather than lost.
+        Log::critical('CHARGED BUT NO ORDER: payment confirmed, order creation failed after all retries.', [
             'payment_method' => $paymentMethod,
-            'payment_id' => $verification['payment_id'],
+            'payment_id' => $verification['payment_id'] ?? null,
             'gateway_reference' => $verification['gateway_reference'] ?? null,
-            'payload' => $verification['payload'] ?? [],
+            'user_id' => $request->user()->id,
+            'checkout_payload' => $payload,
+            'last_response_body' => $response?->getContent(),
         ]);
 
-        return app(OrderController::class)->store($orderRequest);
+        try {
+            \App\Models\PaymentRecoveryQueue::create([
+                'user_id' => $request->user()->id,
+                'payment_method' => $paymentMethod,
+                'payment_id' => $verification['payment_id'] ?? null,
+                'gateway_reference' => $verification['gateway_reference'] ?? null,
+                'amount' => $checkout['amount'] ?? null,
+                'checkout_payload' => $payload,
+                'verification_payload' => $verification['payload'] ?? null,
+                'status' => 'pending',
+                'last_error' => $response?->getContent(),
+            ]);
+        } catch (\Throwable $e) {
+            // Don't let a failure to persist the recovery row turn into a
+            // worse error response than the one we're already building --
+            // the critical log above is the fallback of last resort.
+            Log::error('Failed to persist payment recovery queue row.', ['error' => $e->getMessage()]);
+        }
+
+        return response()->json([
+            'success' => false,
+            'message' => 'Your payment was received, but we could not place your order due to a temporary '
+                . 'system issue. Please contact support with this reference: ' . ($verification['payment_id'] ?? 'unknown')
+                . ' -- do not pay again.',
+        ], 500);
     }
 
     private function checkoutPaymentCacheKey(string $token): string
@@ -1165,17 +1331,20 @@ class PaymentController extends Controller
                 $customerDetails['customer_name'] = $customerName;
             }
 
-            $cashfreeAmount = ((int) round($amount * 100)) / 100;
+            // See the matching comment in createCashfreeCheckoutPayment() --
+            // must stay a genuine float or Cashfree rejects whole-rupee
+            // totals with "invalid amount entered".
+            $cashfreeAmount = (float) (((int) round($amount * 100)) / 100);
             if ($cashfreeAmount < 1) {
                 throw new \RuntimeException('This order total is below Cashfree\'s minimum of ' . $currency . ' 1.');
             }
 
-            $response = Http::withHeaders([
+            $response = JsonHttp::post(Http::withHeaders([
                 'x-api-version' => $apiVersion,
                 'x-client-id' => $clientId,
                 'x-client-secret' => $clientSecret,
                 'x-idempotency-key' => $reference,
-            ])->acceptJson()->asJson()->post($this->cashfreeBaseUrl() . '/pg/orders', [
+            ])->acceptJson(), $this->cashfreeBaseUrl() . '/pg/orders', [
                 'order_id' => $reference,
                 'order_amount' => $cashfreeAmount,
                 'order_currency' => $currency,

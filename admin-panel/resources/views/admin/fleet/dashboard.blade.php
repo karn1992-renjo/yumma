@@ -309,7 +309,7 @@
                                     <div class="driver-muted">{{ $driverNames->isNotEmpty() ? $driverNames->join(', ') : 'Open for booking' }}</div>
                                 </div>
                             </td>
-                            <td data-label="Incentive"><strong>{{ $gig->estimated_earning }}</strong></td>
+                            <td data-label="Incentive"><strong>{{ $currencySymbol }}{{ number_format((float) $gig->estimated_earning, $currencyDecimals) }}</strong></td>
                             <td data-label="Status"><span class="fleet-pill {{ $statusClass }}">{{ ucfirst($gig->status) }}</span></td>
                         </tr>
                     @empty

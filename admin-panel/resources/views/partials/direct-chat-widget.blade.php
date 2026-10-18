@@ -531,12 +531,20 @@ document.addEventListener('DOMContentLoaded', function () {
 
     loadConversations();
     setInterval(() => {
+        if (!navigator.onLine) return;
         if (activeConversation) {
             openConversation(activeConversation.id).catch(() => {});
         } else {
             loadConversations();
         }
     }, 5000);
+    window.addEventListener('online', () => {
+        if (activeConversation) {
+            openConversation(activeConversation.id).catch(() => {});
+        } else {
+            loadConversations();
+        }
+    });
 });
 </script>
 @endauth

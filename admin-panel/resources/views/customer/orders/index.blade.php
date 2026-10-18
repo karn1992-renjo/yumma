@@ -5,58 +5,132 @@
 @section('styles')
 <style>
     .order-card {
-        transition: all 0.3s ease;
-        border-radius: 20px;
+        transition: all 0.2s ease;
+        border-radius: 14px;
         overflow: hidden;
         background: white;
-        border: 1px solid rgba(0,0,0,0.05);
-        margin-bottom: 20px;
+        border: 1px solid #E8E8EE;
+        box-shadow: 0 7px 18px rgba(15, 23, 42, 0.06);
+        margin-bottom: 16px;
     }
-    
+
     .order-card:hover {
-        transform: translateY(-3px);
-        box-shadow: 0 15px 35px rgba(0,0,0,0.1);
-    }
-    
-    .order-status {
-        padding: 4px 12px;
-        border-radius: 20px;
-        font-size: 12px;
-        font-weight: 600;
-    }
-    
-    .status-delivered { background: #D1FAE5; color: #065F46; }
-    .status-pending { background: #FEF3C7; color: #92400E; }
-    .status-confirmed { background: #DBEAFE; color: #1E40AF; }
-    .status-preparing { background: #E0E7FF; color: #3730A3; }
-    .status-cancelled { background: #FEE2E2; color: #991B1B; }
-    .status-on-the-way { background: #FEF3C7; color: #92400E; }
-    
-    .restaurant-image {
-        width: 60px;
-        height: 60px;
-        border-radius: 12px;
-        object-fit: cover;
-    }
-    
-    .rating-star {
-        color: #FFB800;
-        font-size: 12px;
-    }
-    
-    .reorder-btn {
-        background: #FF6B35;
-        color: white;
-        border: none;
-        padding: 8px 20px;
-        border-radius: 30px;
-        font-weight: 600;
-        transition: all 0.3s;
-    }
-    
-    .reorder-btn:hover {
-        background: #E55A2B;
         transform: translateY(-2px);
+        box-shadow: 0 10px 24px rgba(15, 23, 42, 0.1);
+    }
+
+    .order-card-top {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 14px 16px 0;
+    }
+
+    .status-chip {
+        display: inline-block;
+        border-radius: 6px;
+        padding: 6px 10px;
+        font-size: 11.5px;
+        font-weight: 900;
+        text-transform: uppercase;
+        letter-spacing: 0.03em;
+    }
+
+    .status-chip.status-cancelled { color: #E11D28; background: #FFECEC; }
+    .status-chip.status-delivered { color: #169B3A; background: #E8F8EA; }
+    .status-chip.status-live { color: #11832D; background: #E6F7E7; }
+    .status-chip.status-confirmed { color: #2563EB; background: #EAF2FF; }
+
+    .order-timestamp {
+        font-size: 12px;
+        color: var(--app-muted, #6B7280);
+        font-weight: 500;
+    }
+
+    .order-card-body {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        padding: 14px 16px;
+        text-decoration: none;
+        color: inherit;
+    }
+
+    .order-restaurant-thumb {
+        width: 74px;
+        height: 74px;
+        border-radius: 13px;
+        object-fit: cover;
+        background: #F3F4F6;
+        flex-shrink: 0;
+    }
+
+    .order-card-info {
+        flex: 1;
+        min-width: 0;
+    }
+
+    .order-restaurant-name {
+        font-family: 'Plus Jakarta Sans', sans-serif;
+        font-weight: 800;
+        font-size: 15px;
+        color: var(--app-ink, #111827);
+        margin-bottom: 2px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .order-meta {
+        font-size: 12.5px;
+        color: var(--app-muted, #6B7280);
+        font-weight: 500;
+        margin-bottom: 4px;
+    }
+
+    .order-total {
+        font-size: 14px;
+        font-weight: 800;
+        color: var(--app-ink, #111827);
+    }
+
+    .order-chevron {
+        color: #9CA3AF;
+        flex-shrink: 0;
+    }
+
+    .order-card-actions {
+        display: flex;
+        gap: 10px;
+        padding: 0 16px 16px;
+    }
+
+    .order-action-btn {
+        flex: 1;
+        text-align: center;
+        padding: 10px 14px;
+        border-radius: 999px;
+        font-weight: 800;
+        font-size: 13px;
+        text-decoration: none;
+        border: none;
+        cursor: pointer;
+        transition: transform 0.15s ease;
+    }
+
+    .order-action-btn:hover {
+        transform: translateY(-1px);
+    }
+
+    .order-action-btn.outlined {
+        background: transparent;
+        border: 1.5px solid var(--primary);
+        color: var(--primary);
+    }
+
+    .order-action-btn.filled {
+        background: color-mix(in srgb, var(--primary) 13%, white);
+        color: var(--primary);
     }
 
     .orders-pagination .pagination {
@@ -112,25 +186,25 @@
     <!-- Stats Cards -->
     <div class="row mb-4">
         <div class="col-6 col-md-3 mb-3">
-            <div class="card border-0 shadow-sm text-center p-3">
+            <div class="card border-0 shadow-sm text-center p-3" style="border-radius: var(--app-card-radius, 24px);">
                 <h3 class="fw-bold text-primary mb-0">{{ $orders->total() }}</h3>
                 <small class="text-muted">Total Orders</small>
             </div>
         </div>
         <div class="col-6 col-md-3 mb-3">
-            <div class="card border-0 shadow-sm text-center p-3">
+            <div class="card border-0 shadow-sm text-center p-3" style="border-radius: var(--app-card-radius, 24px);">
                 <h3 class="fw-bold text-success mb-0">{{ $orders->where('status', 'delivered')->count() }}</h3>
                 <small class="text-muted">Delivered</small>
             </div>
         </div>
         <div class="col-6 col-md-3 mb-3">
-            <div class="card border-0 shadow-sm text-center p-3">
+            <div class="card border-0 shadow-sm text-center p-3" style="border-radius: var(--app-card-radius, 24px);">
                 <h3 class="fw-bold text-warning mb-0">{{ $orders->whereIn('status', ['pending', 'confirmed', 'preparing'])->count() }}</h3>
                 <small class="text-muted">In Progress</small>
             </div>
         </div>
         <div class="col-6 col-md-3 mb-3">
-            <div class="card border-0 shadow-sm text-center p-3">
+            <div class="card border-0 shadow-sm text-center p-3" style="border-radius: var(--app-card-radius, 24px);">
                 <h3 class="fw-bold text-danger mb-0">{{ $orders->where('status', 'cancelled')->count() }}</h3>
                 <small class="text-muted">Cancelled</small>
             </div>
@@ -150,45 +224,48 @@
         </div>
     </div>
     @else
-    <div class="row">
+    <div>
         @foreach($orders as $order)
-        @php $statusClass = str_replace('_', '-', $order->status); @endphp
-        <div class="col-12 mb-4">
-            <div class="order-card">
-                <div class="p-4">
-                    <div class="row align-items-center">
-                        <div class="col-md-2">
-                            <div class="bg-light rounded-3 p-2 text-center">
-                                <i class="fas fa-receipt fa-3x text-primary"></i>
-                            </div>
-                        </div>
-                        <div class="col-md-3">
-                            <h6 class="fw-bold mb-1">Order #{{ substr($order->order_number, -8) }}</h6>
-                            <small class="text-muted">{{ $order->created_at->format('d M Y, h:i A') }}</small>
-                        </div>
-                        <div class="col-md-2">
-                            <span class="order-status status-{{ $statusClass }}">
-                                {{ ucfirst(str_replace('_', ' ', $order->status)) }}
-                            </span>
-                        </div>
-                        <div class="col-md-2">
-                            <span class="fw-bold text-primary fs-5">{{ $currencySymbol }}{{ number_format($order->total, App\Models\AppSetting::currencyDecimals()) }}</span>
-                        </div>
-                        <div class="col-md-3 text-md-end">
-                            <a href="{{ route('customer.orders.show', $order->id) }}" class="btn btn-outline-primary rounded-pill me-2">
-                                <i class="fas fa-eye me-1"></i> View
-                            </a>
-                            @if(in_array($order->status, ['delivered', 'completed']))
-                            <form action="{{ route('customer.orders.reorder', $order->id) }}" method="POST" class="d-inline">
-                                @csrf
-                                <button type="submit" class="btn btn-primary rounded-pill reorder-btn">
-                                    <i class="fas fa-redo-alt me-1"></i> Reorder
-                                </button>
-                            </form>
-                            @endif
-                        </div>
+        @php
+            $terminal = in_array($order->status, ['delivered', 'completed', 'cancelled']);
+            $chipClass = match(true) {
+                $order->status === 'cancelled' => 'status-cancelled',
+                in_array($order->status, ['delivered', 'completed']) => 'status-delivered',
+                in_array($order->status, ['on_the_way', 'picked_up', 'out_for_delivery']) => 'status-live',
+                default => 'status-confirmed',
+            };
+            $restaurantLogo = $order->restaurant?->logo_image ? \App\Services\MediaStorage::url($order->restaurant->logo_image) : null;
+        @endphp
+        <div class="order-card">
+            <div class="order-card-top">
+                <span class="status-chip {{ $chipClass }}">{{ ucfirst(str_replace('_', ' ', $order->status)) }}</span>
+                <span class="order-timestamp">{{ $order->created_at->format('d M Y, h:i A') }}</span>
+            </div>
+            <a href="{{ route('customer.orders.show', $order->id) }}" class="order-card-body">
+                @if($restaurantLogo)
+                    <img src="{{ $restaurantLogo }}" alt="" class="order-restaurant-thumb">
+                @else
+                    <div class="order-restaurant-thumb d-flex align-items-center justify-content-center">
+                        <i class="fas fa-store text-muted"></i>
                     </div>
+                @endif
+                <div class="order-card-info">
+                    <div class="order-restaurant-name">{{ $order->restaurant->name ?? 'Order #'.substr($order->order_number, -8) }}</div>
+                    <div class="order-meta">#{{ substr($order->order_number, -8) }} &middot; {{ $order->order_items_count }} {{ \Illuminate\Support\Str::plural('item', $order->order_items_count) }}</div>
+                    <div class="order-total">{{ $currencySymbol }}{{ number_format($order->total, App\Models\AppSetting::currencyDecimals()) }}</div>
                 </div>
+                <i class="fas fa-chevron-right order-chevron"></i>
+            </a>
+            <div class="order-card-actions">
+                <a href="{{ route('customer.orders.show', $order->id) }}" class="order-action-btn outlined">View Details</a>
+                @if(in_array($order->status, ['delivered', 'completed']))
+                <form action="{{ route('customer.orders.reorder', $order->id) }}" method="POST" class="d-flex flex-grow-1">
+                    @csrf
+                    <button type="submit" class="order-action-btn filled w-100">Reorder</button>
+                </form>
+                @elseif(!$terminal)
+                <a href="{{ route('customer.orders.track', $order->id) }}" class="order-action-btn filled">Track Order</a>
+                @endif
             </div>
         </div>
         @endforeach

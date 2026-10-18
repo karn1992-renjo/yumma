@@ -240,6 +240,26 @@
                                 <div class="form-text">Required for Razorpay payouts along with Key ID and Secret.</div>
                             </div>
                         </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label class="form-label fw-semibold">Razorpay Subscriptions Webhook Secret</label>
+                                <input type="password" name="razorpay_subscription_webhook_secret" class="form-control" value="{{ old('razorpay_subscription_webhook_secret', '') }}">
+                                <div class="form-text">Set this in Razorpay's dashboard under a webhook pointed at <code>{{ route('webhooks.razorpay.subscription') }}</code>, subscribed to the Subscriptions event group. Different secret from the other Razorpay webhooks above -- each endpoint has its own.</div>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="mb-3">
+                                <label class="form-label fw-semibold">Subscription Grace Period (days)</label>
+                                <input type="number" min="0" max="30" name="subscription_past_due_grace_days" class="form-control" value="{{ $settings['subscription_past_due_grace_days'] ?? 3 }}">
+                                <div class="form-text">Days a lapsed restaurant subscription stays "past due" before requiring a billing choice.</div>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="mb-3">
+                                <label class="form-label fw-semibold">Story Video Max Length (sec)</label>
+                                <input type="number" min="5" max="300" name="story_video_max_seconds" class="form-control" value="{{ $settings['story_video_max_seconds'] ?? 60 }}">
+                            </div>
+                        </div>
                     </div>
 
                     <hr>
@@ -264,6 +284,13 @@
                                     <option value="test" {{ ($settings['cashfree_mode'] ?? 'test') == 'test' ? 'selected' : '' }}>Test Mode</option>
                                     <option value="live" {{ ($settings['cashfree_mode'] ?? '') == 'live' ? 'selected' : '' }}>Live Mode</option>
                                 </select>
+                            </div>
+                        </div>
+                        <div class="col-md-8">
+                            <div class="mb-3">
+                                <label class="form-label fw-semibold">Cashfree Subscriptions Webhook Secret</label>
+                                <input type="password" name="cashfree_subscription_webhook_secret" class="form-control" value="{{ old('cashfree_subscription_webhook_secret', '') }}">
+                                <div class="form-text">Set this in Cashfree's dashboard under a webhook pointed at <code>{{ route('webhooks.cashfree.subscription') }}</code>, subscribed to Subscription events. Distinct from the App ID/Secret Key above.</div>
                             </div>
                         </div>
                     </div>

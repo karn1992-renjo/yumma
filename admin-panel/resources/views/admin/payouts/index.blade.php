@@ -210,15 +210,19 @@
             <p class="text-muted">Manage restaurant and driver payouts</p>
         </div>
         <div>
+            @can('create_payouts')
             <button type="button" class="btn btn-modern btn-modern-primary me-2" data-bs-toggle="modal" data-bs-target="#generatePayoutModal">
                 <i class="fas fa-calculator me-2"></i> Generate Payouts
             </button>
             <a href="{{ route('admin.payouts.create') }}" class="btn btn-outline-primary btn-modern me-2">
                 <i class="fas fa-plus me-2"></i> Create Manual Payout
             </a>
+            @endcan
+            @can('manage_payouts')
             <button type="button" class="btn btn-outline-primary btn-modern" data-bs-toggle="modal" data-bs-target="#settingsModal">
                 <i class="fas fa-cog me-2"></i> Settings
             </button>
+            @endcan
         </div>
     </div>
 </div>
@@ -475,8 +479,9 @@
                     </td>
                     <td>
                         <div class="btn-group" role="group">
+                            @can('process_payouts')
                             @if($payout->status == 'pending')
-                                <button type="button" 
+                                <button type="button"
                                         class="btn btn-sm btn-modern-success rounded-3 me-1 {{ $activeGatewaySupportsAutomation ? '' : 'disabled' }}"
                                         onclick="{{ $activeGatewaySupportsAutomation ? "processPayout({$payout->id})" : 'return false;' }}"
                                         title="{{ $activeGatewaySupportsAutomation ? 'Process Payout' : 'Manual settlement only' }}"
@@ -487,7 +492,7 @@
                             @if(in_array($payout->status, ['pending', 'processing', 'queued', 'failed', 'partially_paid']) || ($payout->status === 'completed' && strtolower((string) $payout->gateway) === 'cash'))
                                 <button type="button"
                                         class="btn btn-sm btn-modern-warning rounded-3 me-1"
-                                        onclick="markCashPaid({{ $payout->id }}, {{ $payout->status === 'completed' ? 0 : round((float) $payout->amount - (float) $payout->paid_amount, 2) }})"
+                                        onclick="markCashPaid({{ $payout->id }}, {{ $payout->status === 'completed' ? 0 : round((float) $payout->amount - (float) $payout->paid_amount, $currencyDecimals) }})"
                                         title="{{ $payout->status === 'completed' ? 'Sync Cash Wallet' : ($payout->status === 'partially_paid' ? 'Record Cash Payment' : 'Mark as Cash Paid') }}">
                                     <i class="fas fa-money-bill-wave"></i>
                                 </button>
@@ -500,6 +505,7 @@
                                     <i class="fas fa-ban"></i>
                                 </button>
                             @endif
+                            @endcan
                             <button type="button"
                                     class="btn btn-sm btn-outline-primary rounded-3"
                                     onclick="viewDetails({{ $payout->id }})"

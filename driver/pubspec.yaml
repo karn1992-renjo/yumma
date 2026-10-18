@@ -3,7 +3,7 @@ description: A complete food delivery application with customer, restaurant, and
 
 publish_to: 'none'
 
-version: 2.3.4+23
+version: 2.3.6+25
 
 environment:
   sdk: '>=3.0.0 <4.0.0'
@@ -85,6 +85,10 @@ dependencies:
   firebase_analytics: ^12.4.1
   firebase_auth: ^6.5.1
   firebase_core: ^4.9.0
+  appsflyer_sdk: ^6.18.0
+
+  # Share
+  share_plus: ^12.0.2
 
 dev_dependencies:
   flutter_test:

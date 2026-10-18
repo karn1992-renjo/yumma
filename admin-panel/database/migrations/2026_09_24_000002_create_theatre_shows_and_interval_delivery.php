@@ -33,11 +33,18 @@ return new class extends Migration
             $table->foreignId('screen_id')->constrained('theatre_screens')->cascadeOnDelete();
             $table->string('movie_title');
             $table->string('language')->nullable();
-            $table->timestamp('starts_at');
+            // dateTime, not timestamp: a second NOT NULL timestamp column
+            // with no explicit default (ends_at, after starts_at) is
+            // rejected outright by MySQL strict mode ("Invalid default
+            // value") -- confirmed live against swado.online's production
+            // MySQL, though it never surfaced against the local SQLite dev
+            // DB since SQLite doesn't enforce this. dateTime has no such
+            // default-value rule.
+            $table->dateTime('starts_at');
             // Nullable: plenty of screenings run without an interval, and
             // those simply do not offer interval delivery.
             $table->timestamp('interval_at')->nullable();
-            $table->timestamp('ends_at');
+            $table->dateTime('ends_at');
             $table->boolean('is_active')->default(true)->index();
             $table->timestamps();
 

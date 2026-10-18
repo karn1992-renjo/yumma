@@ -34,6 +34,8 @@ import 'restaurant_orders_screen.dart';
 import 'restaurant_menu_screen.dart';
 import 'restaurant_promos_screen.dart';
 import 'restaurant_ads_screen.dart';
+import 'restaurant_subscription_screen.dart';
+import 'restaurant_stories_screen.dart';
 import 'restaurant_printers_screen.dart';
 import 'restaurant_info_screen.dart';
 import 'staff_management_screen.dart';
@@ -584,6 +586,20 @@ class _AccountSheet extends StatelessWidget {
                         title: 'Ads',
                         subtitle: 'Sponsored placement and ad wallet',
                         onTap: () => go(const RestaurantAdsScreen()),
+                      ),
+                    if (isOwner)
+                      _AccountTile(
+                        icon: Icons.workspace_premium_outlined,
+                        title: 'Subscription',
+                        subtitle: 'Billing plan and limits',
+                        onTap: () => go(const RestaurantSubscriptionScreen()),
+                      ),
+                    if (isOwner)
+                      _AccountTile(
+                        icon: Icons.auto_awesome_outlined,
+                        title: 'Stories',
+                        subtitle: 'Post photo/video stories to customers',
+                        onTap: () => go(const RestaurantStoriesScreen()),
                       ),
                     if (showDining && (user?.canViewOrders ?? true))
                       _AccountTile(
@@ -1441,6 +1457,43 @@ class _RestaurantHomeContentState extends State<RestaurantHomeContent>
         : message;
   }
 
+  /// True when the dashboard load failed because this account has no
+  /// restaurant linked yet (e.g. a fresh signup, or a pending/rejected
+  /// application) rather than a genuine connectivity problem. Retrying a
+  /// request that fails for this reason can never succeed, so showing the
+  /// generic "Connection lost" screen leaves the user stuck in an endless,
+  /// dead-end retry loop — exactly the kind of unresponsive dead end that
+  /// got this app flagged in store review. Route them somewhere actionable
+  /// instead.
+  bool _isNoRestaurantLinkedError(String? message) {
+    if (message == null) return false;
+    final normalized = message.toLowerCase();
+    return normalized.contains('restaurant not found') &&
+        normalized.contains('current user');
+  }
+
+  /// True when the dashboard load failed because an admin suspended this
+  /// restaurant (backend returns this exact phrase — see
+  /// `Api\RestaurantController::dashboard()`). Distinct from both a real
+  /// connectivity error and "no restaurant linked": retrying never helps,
+  /// and only an admin (or the suspension's own expiry) can clear it, so
+  /// this gets its own explanatory screen rather than reusing either.
+  bool _isSuspendedError(String? message) {
+    if (message == null) return false;
+    return message.toLowerCase().contains('suspended by the admin');
+  }
+
+  /// True when the dashboard load failed because this restaurant's
+  /// subscription lapsed past its grace period (backend returns this exact
+  /// phrase — see `Api\RestaurantController::dashboard()`). Unlike a
+  /// suspension, the restaurant isn't blocked by an admin decision — it must
+  /// make an explicit choice (resubscribe, or switch to commission billing
+  /// with consent) before it can operate again.
+  bool _isBillingChoiceRequiredError(String? message) {
+    if (message == null) return false;
+    return message.toLowerCase().contains('subscription has lapsed');
+  }
+
   Future<bool> _ensureBatteryOptimizationDisabled() async {
     final disabled =
         await OrderAlertPermissionManager.isBatteryOptimizationDisabled();
@@ -1510,6 +1563,18 @@ class _RestaurantHomeContentState extends State<RestaurantHomeContent>
     }
 
     if (_loadError != null && _stats.isEmpty) {
+      if (_isBillingChoiceRequiredError(_loadError)) {
+        return const _BillingChoiceRequiredView();
+      }
+      if (_isSuspendedError(_loadError)) {
+        return _RestaurantSuspendedView(
+          message: _loadError!,
+          onRetry: _loadData,
+        );
+      }
+      if (_isNoRestaurantLinkedError(_loadError)) {
+        return _NoRestaurantLinkedView(onRetry: _loadData);
+      }
       return NetworkErrorView(message: _loadError, onRetry: _loadData);
     }
 
@@ -3930,6 +3995,312 @@ class _BillBreakup extends StatelessWidget {
       value is num ? value : num.tryParse(value?.toString() ?? '') ?? 0;
 }
 
+/// Shown instead of [NetworkErrorView] when the dashboard 404s because this
+/// account has no restaurant linked yet — a fresh signup, a still-pending
+/// application, or a rejected one. Unlike a real connectivity failure,
+/// retrying this can never succeed on its own, so this gives the user an
+/// actual next step instead of a dead-end "Try again" loop.
+class _NoRestaurantLinkedView extends StatelessWidget {
+  const _NoRestaurantLinkedView({required this.onRetry});
+
+  final Future<void> Function() onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: Center(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 132,
+                height: 132,
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(28),
+                  border: Border.all(color: foodflow.line),
+                  boxShadow: [
+                    BoxShadow(
+                      color: foodflow.orange.withOpacity(0.10),
+                      blurRadius: 28,
+                      offset: const Offset(0, 14),
+                    ),
+                  ],
+                ),
+                child: Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    Container(
+                      width: 72,
+                      height: 72,
+                      decoration: BoxDecoration(
+                        color: foodflow.orange.withOpacity(0.08),
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    Icon(
+                      Icons.storefront_outlined,
+                      size: 48,
+                      color: foodflow.orange,
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 26),
+              Text(
+                'No restaurant linked yet',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: foodflow.ink,
+                  fontSize: 22,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              const SizedBox(height: 10),
+              Text(
+                "We couldn't find a restaurant connected to your account. "
+                'If you just applied, your application may still be under '
+                'review. Otherwise, register your restaurant to get started.',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: foodflow.muted,
+                  fontSize: 14,
+                  height: 1.45,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(height: 24),
+              SizedBox(
+                width: double.infinity,
+                height: 48,
+                child: ElevatedButton.icon(
+                  onPressed: () =>
+                      Navigator.of(context).pushNamed('/application-status'),
+                  style: FoodFlowTheme.zomatoPrimaryButton(radius: 8),
+                  icon: const Icon(Icons.fact_check_outlined),
+                  label: const Text('Check application status'),
+                ),
+              ),
+              const SizedBox(height: 10),
+              SizedBox(
+                width: double.infinity,
+                height: 48,
+                child: OutlinedButton.icon(
+                  onPressed: () => Navigator.of(context).pushNamed('/register'),
+                  icon: const Icon(Icons.add_business_outlined),
+                  label: const Text('Register your restaurant'),
+                ),
+              ),
+              const SizedBox(height: 10),
+              TextButton.icon(
+                onPressed: () => onRetry(),
+                icon: const Icon(Icons.refresh_rounded),
+                label: const Text("I've already set this up — try again"),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Shown when the dashboard reports this restaurant was suspended by an
+/// admin. [message] already carries the reason and suspended-until date
+/// from the backend (see `_isSuspendedError`), so it's displayed verbatim
+/// rather than re-parsed. There is deliberately no "retry forever" dead
+/// end here: suspension can only end via an admin action or its own
+/// time-limited expiry, so this screen just explains that plainly and
+/// offers a manual refresh for after it's resolved.
+class _RestaurantSuspendedView extends StatelessWidget {
+  const _RestaurantSuspendedView({
+    required this.message,
+    required this.onRetry,
+  });
+
+  final String message;
+  final Future<void> Function() onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: Center(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 132,
+                height: 132,
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(28),
+                  border: Border.all(color: foodflow.line),
+                  boxShadow: [
+                    BoxShadow(
+                      color: const Color(0xFFDC2626).withOpacity(0.10),
+                      blurRadius: 28,
+                      offset: const Offset(0, 14),
+                    ),
+                  ],
+                ),
+                child: Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    Container(
+                      width: 72,
+                      height: 72,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFDC2626).withOpacity(0.08),
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    const Icon(
+                      Icons.block_rounded,
+                      size: 48,
+                      color: Color(0xFFDC2626),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 26),
+              Text(
+                'Restaurant suspended',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: foodflow.ink,
+                  fontSize: 22,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              const SizedBox(height: 10),
+              Text(
+                message,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: foodflow.muted,
+                  fontSize: 14,
+                  height: 1.45,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(height: 24),
+              TextButton.icon(
+                onPressed: () => onRetry(),
+                icon: const Icon(Icons.refresh_rounded),
+                label: const Text('Refresh'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Shown when the dashboard reports this restaurant's subscription has
+/// lapsed into billing_choice_required. Unlike suspension (an admin
+/// decision) or "no restaurant linked" (nothing to act on from here), this
+/// restaurant genuinely has unfinished business to resolve, so the single
+/// CTA goes straight to RestaurantSubscriptionScreen -- which already
+/// renders this exact status as a warning banner on the current-plan card,
+/// alongside both real next steps (pick a new plan below, or the "switch to
+/// commission billing" button with its own rate-shown consent dialog).
+/// Building a second copy of that choice here would just duplicate it.
+class _BillingChoiceRequiredView extends StatelessWidget {
+  const _BillingChoiceRequiredView();
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: Center(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 132,
+                height: 132,
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(28),
+                  border: Border.all(color: foodflow.line),
+                  boxShadow: [
+                    BoxShadow(
+                      color: const Color(0xFFDC2626).withOpacity(0.10),
+                      blurRadius: 28,
+                      offset: const Offset(0, 14),
+                    ),
+                  ],
+                ),
+                child: Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    Container(
+                      width: 72,
+                      height: 72,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFDC2626).withOpacity(0.08),
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    const Icon(
+                      Icons.workspace_premium_outlined,
+                      size: 48,
+                      color: Color(0xFFDC2626),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 26),
+              Text(
+                'Subscription needs attention',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: foodflow.ink,
+                  fontSize: 22,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              const SizedBox(height: 10),
+              Text(
+                "Your subscription has lapsed. Choose a new plan or switch to "
+                'commission billing to keep receiving orders.',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: foodflow.muted,
+                  fontSize: 14,
+                  height: 1.45,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(height: 24),
+              SizedBox(
+                width: double.infinity,
+                height: 48,
+                child: ElevatedButton.icon(
+                  onPressed: () => Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => const RestaurantSubscriptionScreen(),
+                    ),
+                  ),
+                  style: FoodFlowTheme.zomatoPrimaryButton(radius: 8),
+                  icon: const Icon(Icons.workspace_premium_outlined),
+                  label: const Text('Manage subscription'),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _DashboardPalette {
   static Color get ink => foodflow.ink;
   static Color get muted => foodflow.muted;
@@ -4601,6 +4972,20 @@ class _RestaurantBusinessScreenState extends State<_RestaurantBusinessScreen> {
           title: 'Ads',
           subtitle: 'Sponsored placement and wallet',
           onTap: () => push(const RestaurantAdsScreen()),
+        ),
+      if (user?.isRestaurantOwner ?? true)
+        _BusinessActionData(
+          icon: Icons.workspace_premium_outlined,
+          title: 'Subscription',
+          subtitle: 'Billing plan and limits',
+          onTap: () => push(const RestaurantSubscriptionScreen()),
+        ),
+      if (user?.isRestaurantOwner ?? true)
+        _BusinessActionData(
+          icon: Icons.auto_awesome_outlined,
+          title: 'Stories',
+          subtitle: 'Post photo/video stories to customers',
+          onTap: () => push(const RestaurantStoriesScreen()),
         ),
       if (user?.canViewMenu ?? true)
         _BusinessActionData(

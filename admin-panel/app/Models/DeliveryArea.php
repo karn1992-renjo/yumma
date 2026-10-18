@@ -104,7 +104,18 @@ class DeliveryArea extends Model
         }
         return $this->isWithinPolygon($latitude, $longitude);
     }
-    
+
+    public static function resolveForPoint(?float $latitude, ?float $longitude): ?self
+    {
+        if ($latitude === null || $longitude === null) {
+            return null;
+        }
+
+        return self::where('is_active', true)
+            ->get()
+            ->first(fn (self $area) => $area->containsPoint($latitude, $longitude));
+    }
+
     private function isWithinCircle($latitude, $longitude)
     {
         if (!$this->latitude || !$this->longitude || !$this->radius_km) {

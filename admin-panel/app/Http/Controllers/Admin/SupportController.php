@@ -25,8 +25,34 @@ class SupportController extends Controller
     ) {
     }
 
+    /**
+     * Operational KPIs only -- current running orders, tickets, driver
+     * assignment state, delivered/cancelled today. No revenue, commission,
+     * or earnings: those belong to Admin\DashboardController, which a
+     * support-only user never reaches (see its guard at the top of index()).
+     */
+    public function dashboard()
+    {
+        abort_unless(Auth::user()->can('view_dashboard'), 403);
+
+        $activeStatuses = ['delivered', 'cancelled', 'delivery_failed'];
+
+        $stats = [
+            'running_orders' => Order::whereNotIn('status', $activeStatuses)->count(),
+            'open_tickets' => SupportConversation::where('stage', 'human')->whereIn('status', ['open', 'in_progress'])->count(),
+            'drivers_assigned' => Order::whereNotNull('driver_id')->whereNotNull('driver_accepted_at')->whereNotIn('status', $activeStatuses)->count(),
+            'drivers_pending' => Order::whereNotNull('driver_id')->whereNull('driver_accepted_at')->whereNotIn('status', $activeStatuses)->count(),
+            'delivered_today' => Order::where('status', 'delivered')->whereDate('updated_at', today())->count(),
+            'cancelled_today' => Order::where('status', 'cancelled')->whereDate('updated_at', today())->count(),
+        ];
+
+        return view('support.dashboard', compact('stats'));
+    }
+
     public function index(Request $request)
     {
+        abort_unless(Auth::user()->can('view_support_tickets'), 403);
+
         $query = SupportConversation::with(['restaurant', 'user', 'order:id,order_number']);
 
         if ($request->filled('stage')) {
@@ -76,11 +102,13 @@ class SupportController extends Controller
         $restaurants = Restaurant::orderBy('name')->get(['id', 'name']);
         $requesterRoles = SupportConversation::select('requester_role')->distinct()->orderBy('requester_role')->pluck('requester_role');
 
-        return view('admin.support.index', compact('conversations', 'stats', 'restaurants', 'requesterRoles'));
+        return view('support.index', compact('conversations', 'stats', 'restaurants', 'requesterRoles'));
     }
 
     public function show($id)
     {
+        abort_unless(Auth::user()->can('view_support_tickets'), 403);
+
         $conversation = SupportConversation::with([
             'restaurant',
             'user',
@@ -93,11 +121,13 @@ class SupportController extends Controller
             $conversation->update(['status' => 'in_progress']);
         }
 
-        return view('admin.support.show', compact('conversation'));
+        return view('support.show', compact('conversation'));
     }
 
     public function reply(Request $request, $id)
     {
+        abort_unless(Auth::user()->can('reply_support_tickets'), 403);
+
         $conversation = SupportConversation::findOrFail($id);
 
         $validated = $request->validate([
@@ -107,7 +137,7 @@ class SupportController extends Controller
 
         $message = $conversation->messages()->create([
             'sender_id' => Auth::id(),
-            'sender_type' => 'admin',
+            'sender_type' => $this->actorSenderType(),
             'message_type' => 'text',
             'message' => $validated['message'],
             'delivered_at' => now(),
@@ -127,7 +157,7 @@ class SupportController extends Controller
         broadcast(new SupportMessageSent($message))->toOthers();
         $this->supportNotifications->notifyRequesterAboutAdminReply($conversation, $message);
 
-        return redirect()->route('admin.support.show', $conversation->id)->with('success', 'Reply sent successfully!');
+        return redirect()->route('support.show', $conversation->id)->with('success', 'Reply sent successfully!');
     }
 
     public function updateStatus(Request $request, $id)
@@ -139,8 +169,10 @@ class SupportController extends Controller
             'resolve_notes' => 'nullable|string|required_if:status,resolved',
         ]);
 
-        $oldStatus = $conversation->status;
         $isResolved = $validated['status'] === 'resolved';
+        abort_unless(Auth::user()->can($isResolved ? 'resolve_support_tickets' : 'manage_support_tickets'), 403);
+
+        $oldStatus = $conversation->status;
 
         $conversation->update([
             'status' => $validated['status'],
@@ -162,11 +194,13 @@ class SupportController extends Controller
 
         $message = $isResolved ? 'Conversation resolved successfully!' : 'Conversation status updated successfully!';
 
-        return redirect()->route('admin.support.show', $conversation->id)->with('success', $message);
+        return redirect()->route('support.show', $conversation->id)->with('success', $message);
     }
 
     public function assign(Request $request, $id)
     {
+        abort_unless(Auth::user()->can('manage_support_tickets'), 403);
+
         $conversation = SupportConversation::findOrFail($id);
 
         $validated = $request->validate([
@@ -178,16 +212,18 @@ class SupportController extends Controller
             'assigned_at' => $validated['assigned_to'] ? now() : null,
         ]);
 
-        return redirect()->route('admin.support.show', $conversation->id)->with('success', 'Conversation assigned successfully!');
+        return redirect()->route('support.show', $conversation->id)->with('success', 'Conversation assigned successfully!');
     }
 
     public function resolutionAction(Request $request, $id)
     {
+        abort_unless(Auth::user()->can('resolve_support_tickets'), 403);
+
         $conversation = SupportConversation::with('order')->findOrFail($id);
         $order = $conversation->order;
 
         if (! $order) {
-            return redirect()->route('admin.support.show', $conversation->id)->with('error', 'This conversation is not linked to an order.');
+            return redirect()->route('support.show', $conversation->id)->with('error', 'This conversation is not linked to an order.');
         }
 
         $validated = $request->validate([
@@ -202,7 +238,7 @@ class SupportController extends Controller
 
         $message = $conversation->messages()->create([
             'sender_id' => Auth::id(),
-            'sender_type' => 'admin',
+            'sender_type' => $this->actorSenderType(),
             'message_type' => 'action',
             'message' => $result['message'],
             'meta' => ['action' => $validated['action'], 'success' => $result['success']],
@@ -212,8 +248,19 @@ class SupportController extends Controller
         $conversation->update(['last_message_at' => now()]);
         broadcast(new SupportMessageSent($message))->toOthers();
 
-        return redirect()->route('admin.support.show', $conversation->id)
+        return redirect()->route('support.show', $conversation->id)
             ->with($result['success'] ? 'success' : 'error', $result['message']);
+    }
+
+    /**
+     * This controller is reachable by both the full admin role and the
+     * scoped 'support' role (see routes/web.php's support.* group) --
+     * messages/actions should carry the sender_type that actually matches
+     * who's logged in, not a hardcoded 'admin' for everyone.
+     */
+    private function actorSenderType(): string
+    {
+        return Auth::user()->hasAnyRole(['super_admin', 'admin']) ? 'admin' : 'support';
     }
 
     private function runRefundAction(Order $order, array $data): array
@@ -222,7 +269,13 @@ class SupportController extends Controller
             return ['success' => false, 'message' => 'Refund already processed for this order.'];
         }
 
-        $result = $this->refundService->processRefund($order, $data['reason'], $data['amount'] ?? null);
+        $result = $this->refundService->processRefund(
+            $order,
+            $data['reason'],
+            $data['amount'] ?? null,
+            'admin',
+            Auth::user()->name ?? 'Admin'
+        );
 
         return [
             'success' => $result['success'],
@@ -266,12 +319,16 @@ class SupportController extends Controller
 
     public function bulkUpdate(Request $request)
     {
+        abort_unless(Auth::user()->can('manage_support_tickets'), 403);
+
         $validated = $request->validate([
             'conversation_ids' => 'required|array',
             'conversation_ids.*' => 'exists:support_conversations,id',
             'action' => 'required|in:resolve,close,assign,in_progress',
             'assigned_to' => 'required_if:action,assign|nullable|exists:users,id',
         ]);
+
+        abort_if($validated['action'] === 'resolve' && ! Auth::user()->can('resolve_support_tickets'), 403);
 
         $conversations = SupportConversation::whereIn('id', $validated['conversation_ids'])->with('user')->get();
 
@@ -311,11 +368,13 @@ class SupportController extends Controller
                 break;
         }
 
-        return redirect()->route('admin.support.index')->with('success', $message);
+        return redirect()->route('support.index')->with('success', $message);
     }
 
     public function export(Request $request)
     {
+        abort_unless(Auth::user()->can('view_support_tickets'), 403);
+
         $query = SupportConversation::with(['restaurant', 'user']);
 
         if ($request->filled('status')) {
@@ -367,15 +426,17 @@ class SupportController extends Controller
 
     public function destroy($id)
     {
+        abort_unless(Auth::user()->can('manage_support_tickets'), 403);
+
         $conversation = SupportConversation::findOrFail($id);
 
         if ($conversation->status !== 'closed') {
-            return redirect()->route('admin.support.index')->with('error', 'Only closed conversations can be deleted.');
+            return redirect()->route('support.index')->with('error', 'Only closed conversations can be deleted.');
         }
 
         $conversation->delete();
 
-        return redirect()->route('admin.support.index')->with('success', 'Conversation deleted successfully!');
+        return redirect()->route('support.index')->with('success', 'Conversation deleted successfully!');
     }
 
     public function statistics()
@@ -420,7 +481,7 @@ class SupportController extends Controller
                 'requester_name' => $conversation->user?->name ?: $conversation->restaurant?->name ?: 'Unknown',
                 'requester_role' => $conversation->requester_role,
                 'updated_at_human' => optional($conversation->updated_at)?->diffForHumans(),
-                'url' => route('admin.support.show', $conversation->id),
+                'url' => route('support.show', $conversation->id),
             ])
             ->values();
 

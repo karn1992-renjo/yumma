@@ -32,7 +32,9 @@ class RefundController extends Controller
         $result = $refundService->processRefund(
             $order,
             $validated['refund_reason'],
-            $validated['refund_amount'] ?? null
+            $validated['refund_amount'] ?? null,
+            'admin',
+            auth()->user()->name ?? 'Admin'
         );
 
         return redirect()->route('admin.refunds.index')

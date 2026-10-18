@@ -81,5 +81,38 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+
+	<!--
+		Lets Razorpay's Standard Checkout SDK detect which UPI apps are
+		installed (canOpenURL) so it can show/launch them directly instead of
+		falling back to a generic UPI flow. Schemes per Razorpay's UPI Intent
+		doc: https://razorpay.com/docs/payments/payment-methods/upi/upi-intent/
+	-->
+	<key>LSApplicationQueriesSchemes</key>
+	<array>
+		<string>tez</string>
+		<string>phonepe</string>
+		<string>paytmmp</string>
+		<string>credpay</string>
+		<string>mobikwik</string>
+		<string>in.fampay.app</string>
+		<string>bhim</string>
+		<string>amazonpay</string>
+		<string>navi</string>
+		<string>kiwi</string>
+		<string>payzapp</string>
+		<string>jupiter</string>
+		<string>omnicard</string>
+		<string>icici</string>
+		<string>popclubapp</string>
+		<string>sbiyono</string>
+		<string>myjio</string>
+		<string>slice-upi</string>
+		<string>bobupi</string>
+		<string>shriramone</string>
+		<string>indusmobile</string>
+		<string>whatsapp</string>
+		<string>kotakbank</string>
+	</array>
 </dict>
 </plist>

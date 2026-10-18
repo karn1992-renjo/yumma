@@ -97,9 +97,13 @@ class AuthController extends Controller
             ], 422);
         }
 
+        // Customer and driver referrals both run through the same
+        // UserReferral ledger -- restaurant/staff signups aren't part of
+        // either referral program.
+        $referrableRoles = ['customer', 'delivery_partner'];
         $referrer = null;
         $referralCode = $this->normalizeReferralCode($request->input('referral_code'));
-        if ($requestedRole === 'customer' && $referralCode !== '') {
+        if (in_array($requestedRole, $referrableRoles, true) && $referralCode !== '') {
             $referrer = User::query()->where('referral_code', $referralCode)->first();
             if (! $referrer) {
                 return $this->validationErrorResponse('referral_code', 'Referral code is invalid.');
@@ -145,7 +149,7 @@ class AuthController extends Controller
         $role = $requestedRole;
         $user->assignRole($role);
 
-        if ($referrer && $role === 'customer') {
+        if ($referrer && in_array($role, $referrableRoles, true)) {
             UserReferral::firstOrCreate(
                 ['referred_user_id' => $user->id],
                 [
@@ -154,6 +158,7 @@ class AuthController extends Controller
                     'status' => 'registered',
                     'metadata' => [
                         'source' => 'signup',
+                        'program' => $role === 'delivery_partner' ? 'driver' : 'customer',
                         'registered_at' => now()->toDateTimeString(),
                     ],
                 ]
@@ -201,6 +206,10 @@ class AuthController extends Controller
                 'success' => false,
                 'message' => 'Your account has been deactivated'
             ], 403);
+        }
+
+        if ($response = $this->suspendedDriverLoginResponse($user)) {
+            return $response;
         }
 
         $this->repairRestaurantStaffRole($user);
@@ -358,6 +367,10 @@ class AuthController extends Controller
                 ], 403);
             }
 
+            if ($response = $this->suspendedDriverLoginResponse($user)) {
+                return $response;
+            }
+
             $this->grantCustomerRoleIfRequested($user, $role);
         }
 
@@ -453,6 +466,10 @@ class AuthController extends Controller
                 'success' => false,
                 'message' => 'Your account has been deactivated.'
             ], 403);
+        }
+
+        if ($response = $this->suspendedDriverLoginResponse($user)) {
+            return $response;
         }
 
         $this->grantCustomerRoleIfRequested($user, $role);
@@ -662,6 +679,10 @@ class AuthController extends Controller
                 'success' => false,
                 'message' => 'Your account has been deactivated.'
             ], 403);
+        }
+
+        if ($user && ($response = $this->suspendedDriverLoginResponse($user))) {
+            return $response;
         }
 
         // Demo / app-review number: skip every SMS provider and let the app
@@ -902,6 +923,10 @@ class AuthController extends Controller
                 'success' => false,
                 'message' => 'Your account has been deactivated.'
             ], 403);
+        }
+
+        if ($response = $this->suspendedDriverLoginResponse($user)) {
+            return $response;
         }
 
         $this->grantCustomerRoleIfRequested($user, $role);
@@ -1146,6 +1171,13 @@ class AuthController extends Controller
                 // up) can't leave the app looking hung indefinitely. Clamped
                 // again on the client side; this is just the source value.
                 'api_request_timeout_seconds' => (int) AppSetting::getValue('api_request_timeout_seconds', 20),
+                'admob_ads_enabled' => filter_var(AppSetting::getValue('admob_ads_enabled', '0'), FILTER_VALIDATE_BOOLEAN),
+                'admob_android_app_id' => AppSetting::getValue('admob_android_app_id', ''),
+                'admob_ios_app_id' => AppSetting::getValue('admob_ios_app_id', ''),
+                'admob_android_order_tracking_ad_unit_id' => AppSetting::getValue('admob_android_order_tracking_ad_unit_id', ''),
+                'admob_ios_order_tracking_ad_unit_id' => AppSetting::getValue('admob_ios_order_tracking_ad_unit_id', ''),
+                'admob_android_checkout_ad_unit_id' => AppSetting::getValue('admob_android_checkout_ad_unit_id', ''),
+                'admob_ios_checkout_ad_unit_id' => AppSetting::getValue('admob_ios_checkout_ad_unit_id', ''),
             ],
         ]);
     }
@@ -1327,6 +1359,35 @@ class AuthController extends Controller
             'driver' => 'delivery_partner',
             default => null,
         };
+    }
+
+    /**
+     * A suspended driver is fully locked out at login — unlike a restaurant
+     * suspension (which blocks the restaurant from receiving orders via
+     * Restaurant::isOpenNow(), not the owner's account, since one owner can
+     * have other, unaffected restaurants), a driver account maps 1:1 to a
+     * single delivery identity, so there's nothing useful left to reach.
+     * Returns null when the user isn't a suspended driver.
+     */
+    protected function suspendedDriverLoginResponse(User $user): ?\Illuminate\Http\JsonResponse
+    {
+        if (! $user->hasRole('delivery_partner') || ! $user->isSuspended()) {
+            return null;
+        }
+
+        $message = 'Your account has been suspended by the admin.';
+        $message .= $user->suspension_reason ? ' Reason: '.$user->suspension_reason.'.' : '';
+        $message .= $user->suspended_until
+            ? ' Suspended until '.$user->suspended_until->format('d M Y, h:i A').'.'
+            : ' This suspension is permanent.';
+
+        return response()->json([
+            'success' => false,
+            'message' => trim($message),
+            'suspended' => true,
+            'suspension_reason' => $user->suspension_reason,
+            'suspended_until' => $user->suspended_until?->toIso8601String(),
+        ], 403);
     }
 
     protected function matchesAuthRole(User $user, string $role): bool
@@ -1894,15 +1955,27 @@ class AuthController extends Controller
             ltrim($digits, '0'),
         ];
 
+        // A 10-digit Indian mobile number can legitimately start with the
+        // same digits as the country code (e.g. 9155308530 starts with
+        // "91"), so str_starts_with() alone can't tell a local number from
+        // one that already carries its country code -- it previously
+        // guessed "already prefixed" for those numbers and never generated
+        // the correct "+91"+local candidate at all. Generate both
+        // interpretations instead of picking one.
         if ($defaultCountryDigits !== '') {
-            if (str_starts_with($digits, $defaultCountryDigits)) {
+            $looksAlreadyPrefixed = str_starts_with($digits, $defaultCountryDigits)
+                && strlen($digits) === strlen($defaultCountryDigits) + 10;
+
+            if ($looksAlreadyPrefixed) {
                 $localDigits = substr($digits, strlen($defaultCountryDigits));
                 if ($localDigits !== false && $localDigits !== '') {
                     $candidates[] = $localDigits;
                     $candidates[] = '0' . $localDigits;
                     $candidates[] = '+' . $defaultCountryDigits . $localDigits;
                 }
-            } else {
+            }
+
+            if (strlen($digits) === 10) {
                 $candidates[] = '+' . $defaultCountryDigits . $digits;
                 $candidates[] = $defaultCountryDigits . $digits;
             }
@@ -2013,8 +2086,9 @@ class AuthController extends Controller
             'name' => 'sometimes|string|max:255',
             'phone' => ['sometimes', 'string', 'max:20', UniqueUserContactForRole::phone($user->roles()->value('name'), $user->id)],
             'profile_image' => 'nullable|image|mimes:jpeg,jpg,png,webp|max:4096',
+            'date_of_birth' => 'sometimes|nullable|date|before:today',
         ]);
-        
+
         if ($validator->fails()) {
             return response()->json(['errors' => $validator->errors()], 422);
         }
@@ -2024,7 +2098,7 @@ class AuthController extends Controller
             $user->refresh();
         }
 
-        $user->update($request->only(['name', 'phone']));
+        $user->update($request->only(['name', 'phone', 'date_of_birth']));
         $user->load('roles');
         
         return response()->json([

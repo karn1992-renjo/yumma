@@ -102,6 +102,17 @@
                     @error('display_surface') <div class="invalid-feedback">{{ $message }}</div> @enderror
                 </div>
                 <div class="col-md-6">
+                    <label class="form-label fw-bold">Delivery Zone</label>
+                    <select name="delivery_area_id" class="form-select @error('delivery_area_id') is-invalid @enderror">
+                        <option value="">All Zones</option>
+                        @foreach($deliveryAreas as $area)
+                            <option value="{{ $area->id }}" @selected((string) old('delivery_area_id', $banner->delivery_area_id ?? '') === (string) $area->id)>{{ $area->name }}</option>
+                        @endforeach
+                    </select>
+                    <div class="bf-muted mt-1">Leave as "All Zones" to show this banner everywhere.</div>
+                    @error('delivery_area_id') <div class="invalid-feedback">{{ $message }}</div> @enderror
+                </div>
+                <div class="col-md-6">
                     <label class="form-label fw-bold">Layout Mode <span class="text-danger">*</span></label>
                     <select name="layout_mode" id="layoutMode" class="form-select @error('layout_mode') is-invalid @enderror" required>
                         <option value="text_image" @selected(old('layout_mode', $banner->layout_mode ?? 'text_image') === 'text_image')>Text + Media</option>

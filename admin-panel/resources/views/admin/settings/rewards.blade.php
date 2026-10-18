@@ -7,6 +7,9 @@
     $pointsValue = old('reward_points_per_currency', $settings['reward_points_per_currency'] ?? '');
     $minimumPoints = old('reward_points_min_redeem', $settings['reward_points_min_redeem'] ?? '');
     $redemptionEnabled = old('reward_points_redemption_enabled', $settings['reward_points_redemption_enabled'] ?? '');
+    $driverReferralEnabled = old('driver_referral_enabled', $settings['driver_referral_enabled'] ?? '');
+    $driverReferrerBonus = old('driver_referral_referrer_bonus', $settings['driver_referral_referrer_bonus'] ?? '');
+    $driverRefereeBonus = old('driver_referral_referee_bonus', $settings['driver_referral_referee_bonus'] ?? '');
 @endphp
 
 @section('content')
@@ -107,6 +110,79 @@
 
                 <div class="settings-action-bar">
                     <button type="submit" class="btn btn-primary">Save Reward Settings</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div class="settings-card mt-4">
+        <div class="settings-card-header">
+            <div>
+                <h2 class="settings-card-title">Driver Refer &amp; Earn Program</h2>
+                <p class="settings-card-subtitle">Bonus credited to wallets after a referred driver completes their first delivery.</p>
+            </div>
+        </div>
+        <div class="settings-card-body">
+            <form action="{{ route('admin.settings.update') }}" method="POST">
+                @csrf
+                <input type="hidden" name="redirect_to" value="admin.settings.rewards">
+                <input type="hidden" name="driver_referral_enabled" value="0">
+
+                <div class="settings-grid">
+                    <div class="settings-field settings-span-4">
+                        <label class="form-label">Enable Driver Referral Program</label>
+                        <div class="border rounded-4 p-3 bg-white h-100">
+                            <div class="form-check form-switch">
+                                <input
+                                    class="form-check-input"
+                                    type="checkbox"
+                                    role="switch"
+                                    name="driver_referral_enabled"
+                                    value="1"
+                                    id="driverReferralEnabled"
+                                    @checked((string) $driverReferralEnabled === '1')
+                                >
+                                <label class="form-check-label fw-semibold" for="driverReferralEnabled">
+                                    Pay a bonus for driver referrals
+                                </label>
+                            </div>
+                            <div class="form-text mt-2">When off, driver referral signups are still tracked but no bonus is paid.</div>
+                        </div>
+                    </div>
+
+                    <div class="settings-field settings-span-4">
+                        <label class="form-label">Referrer Bonus</label>
+                        <input
+                            type="number"
+                            name="driver_referral_referrer_bonus"
+                            class="form-control @error('driver_referral_referrer_bonus') is-invalid @enderror"
+                            min="0"
+                            step="0.01"
+                            value="{{ $driverReferrerBonus }}"
+                            placeholder="Example: 100"
+                        >
+                        <div class="form-text">Credited to the existing driver who shared their code.</div>
+                        @error('driver_referral_referrer_bonus') <div class="invalid-feedback">{{ $message }}</div> @enderror
+                    </div>
+
+                    <div class="settings-field settings-span-4">
+                        <label class="form-label">Referee Bonus</label>
+                        <input
+                            type="number"
+                            name="driver_referral_referee_bonus"
+                            class="form-control @error('driver_referral_referee_bonus') is-invalid @enderror"
+                            min="0"
+                            step="0.01"
+                            value="{{ $driverRefereeBonus }}"
+                            placeholder="Example: 50"
+                        >
+                        <div class="form-text">Credited to the new driver who signed up with a code.</div>
+                        @error('driver_referral_referee_bonus') <div class="invalid-feedback">{{ $message }}</div> @enderror
+                    </div>
+                </div>
+
+                <div class="settings-action-bar">
+                    <button type="submit" class="btn btn-primary">Save Driver Referral Settings</button>
                 </div>
             </form>
         </div>

@@ -42,6 +42,10 @@
                         <label class="form-label">Refund Policy</label>
                         <textarea name="legal_refund" class="form-control" rows="4">{{ $settings['legal_refund'] ?? 'Refund eligibility depends on payment status, restaurant acceptance, delivery progress and support review.' }}</textarea>
                     </div>
+                    <div class="settings-field settings-span-12">
+                        <label class="form-label">Merchant Compliance</label>
+                        <textarea name="legal_merchant" class="form-control" rows="4">{{ $settings['legal_merchant'] ?? 'Partner restaurants must maintain valid food safety licenses, accurate menu and pricing information, and timely order acceptance.' }}</textarea>
+                    </div>
                     <div class="settings-field settings-span-6">
                         <label class="form-label">Legal Contact Email</label>
                         <input type="email" name="legal_contact_email" class="form-control" value="{{ $settings['legal_contact_email'] ?? ($settings['contact_email'] ?? 'support@foodflow.com') }}">

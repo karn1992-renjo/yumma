@@ -10,28 +10,39 @@
 
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,300;14..32,400;14..32,500;14..32,600;14..32,700&display=swap" rel="stylesheet">
+    <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Nunito+Sans:wght@400;500;600;700;800;900&display=swap" onload="this.onload=null;this.rel='stylesheet'">
+    <noscript><link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Nunito+Sans:wght@400;500;600;700;800;900&display=swap" rel="stylesheet"></noscript>
     @if($gatewayEnabled && $gatewayProvider === 'razorpay')
         <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
     @elseif($gatewayEnabled && $gatewayProvider === 'cashfree')
         <script src="https://sdk.cashfree.com/js/v3/cashfree.js"></script>
     @endif
-    <script>
-        window.initGoogleMaps = function () {
-            window.checkoutGoogleMapsReady = true;
-        };
-    </script>
-    <script src="https://maps.googleapis.com/maps/api/js?key={{ $googleMapsApiKey ?? App\Models\AppSetting::getValue('google_maps_api_key', App\Models\AppSetting::getValue('google_maps_key', '')) }}&libraries=places&callback=initGoogleMaps&loading=async" async defer></script>
+    {{-- Google Maps JS is loaded once by partials.frontend-header (shared
+         across every page) -- this page's own map/autocomplete setup below
+         hooks into that same load instead of loading the Maps API a second
+         time, which Google's own JS throws a console warning for and can
+         reset window.google mid-session. --}}
 
     <style>
         :root {
-            --primary: {{ $primaryColor ?? '#EF4F5F' }};
-            --primary-dark: {{ $primaryDark ?? '#E03546' }};
+            --primary: {{ $primaryColor ?? '#2563EB' }};
+            --primary-dark: {{ $primaryDark ?? '#1D4ED8' }};
+            --app-ink: #11223A;
+            --app-muted: #7A8699;
+            --app-border: #E7EBF2;
+            --app-bg: #F4F6FA;
+            --app-success: #11924E;
+            --app-danger: #E53935;
+            --app-card-radius: 18px;
+        }
+
+        h1, h2, h3, h4, h5, h6 {
+            font-family: 'Plus Jakarta Sans', sans-serif;
         }
 
         body {
-            font-family: 'Inter', sans-serif;
-            background: #F8F9FA;
+            font-family: 'Nunito Sans', sans-serif;
+            background: var(--app-bg);
         }
 
         .checkout-container {
@@ -43,9 +54,10 @@
         .form-card,
         .order-summary {
             background: #fff;
-            border-radius: 20px;
+            border: 1px solid var(--app-border);
+            border-radius: var(--app-card-radius);
             padding: 1.5rem;
-            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+            box-shadow: 0 6px 14px rgba(17, 34, 58, 0.06);
         }
 
         .form-card {
@@ -55,6 +67,11 @@
         .order-summary {
             position: sticky;
             top: 20px;
+            /* public-blade-polish.blade.php applies backdrop-filter to .order-summary,
+               which creates a new containing block for position:fixed descendants --
+               neutralized here so .order-summary-cta can anchor to the viewport, not
+               this card's own box. */
+            backdrop-filter: none !important;
         }
 
         .payment-method {
@@ -175,13 +192,82 @@
             background: var(--primary);
             border-color: var(--primary);
             padding: 0.875rem;
-            font-weight: 600;
-            border-radius: 12px;
+            font-weight: 700;
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            border-radius: 16px;
         }
 
         .btn-primary:hover {
             background: var(--primary-dark);
             border-color: var(--primary-dark);
+        }
+
+        .order-summary-cta {
+            margin-top: 0.5rem;
+        }
+
+        .mobile-pay-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--app-muted);
+            margin-bottom: 10px;
+        }
+
+        .mobile-pay-row a {
+            color: var(--primary);
+            font-weight: 700;
+            text-decoration: none;
+        }
+
+        .checkout-place-btn {
+            width: 100%;
+            height: 54px;
+            border-radius: 16px;
+            background: linear-gradient(135deg, var(--primary), var(--primary-dark));
+            box-shadow: 0 10px 24px color-mix(in srgb, var(--primary) 30%, transparent);
+            border: none;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 20px;
+            color: #fff;
+            transition: box-shadow 0.15s ease, transform 0.15s ease;
+        }
+
+        .checkout-place-btn:hover {
+            box-shadow: 0 14px 30px color-mix(in srgb, var(--primary) 36%, transparent);
+            transform: translateY(-1px);
+            color: #fff;
+        }
+
+        .cpb-total {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-start;
+            line-height: 1.15;
+        }
+
+        .cpb-total-label {
+            font-size: 10px;
+            font-weight: 700;
+            letter-spacing: 0.05em;
+            opacity: 0.85;
+        }
+
+        .cpb-total-amount {
+            font-size: 16px;
+            font-weight: 900;
+        }
+
+        .cpb-cta {
+            font-size: 14px;
+            font-weight: 800;
+            display: flex;
+            align-items: center;
+            gap: 6px;
         }
 
         .address-card {
@@ -191,6 +277,37 @@
             margin-bottom: 1rem;
             cursor: pointer;
             transition: all 0.3s;
+        }
+
+        .address-summary-tile {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            padding: 14px;
+            border: 1px solid var(--app-border, #E5E7EB);
+            border-radius: 14px;
+            cursor: pointer;
+            transition: border-color 0.2s;
+        }
+
+        .address-summary-tile:hover {
+            border-color: var(--primary);
+        }
+
+        .address-summary-tile > i.fa-location-dot {
+            width: 36px;
+            height: 36px;
+            border-radius: 12px;
+            background: color-mix(in srgb, var(--primary) 10%, white);
+            color: var(--primary);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+        }
+
+        .address-summary-tile .min-w-0 {
+            min-width: 0;
         }
 
         .address-form-container {
@@ -278,7 +395,7 @@
             border: none;
             box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
             margin-top: 8px;
-            font-family: 'Inter', sans-serif;
+            font-family: 'Nunito Sans', sans-serif;
             z-index: 2000;
         }
 
@@ -301,21 +418,35 @@
                 padding: 1rem;
             }
         }
+
+        @media (max-width: 991.98px) {
+            .order-summary {
+                position: static;
+            }
+
+            .order-summary-cta {
+                position: fixed;
+                left: 0;
+                right: 0;
+                bottom: 0;
+                z-index: 1035;
+                background: #fff;
+                border-radius: 24px 24px 0 0;
+                box-shadow: 0 -8px 24px rgba(17, 34, 58, 0.12);
+                padding: 14px 18px calc(14px + env(safe-area-inset-bottom, 0px));
+                margin: 0;
+            }
+
+            body {
+                padding-bottom: calc(132px + env(safe-area-inset-bottom, 0px));
+            }
+        }
     </style>
 @include('partials.public-blade-polish')
 </head>
 <body>
 
-<nav class="navbar navbar-light bg-white shadow-sm">
-    <div class="container">
-        <a class="navbar-brand fw-bold fs-3" href="{{ route('home') }}">
-            <i class="fas fa-utensils text-danger me-2"></i>{{ $appName ?? config('app.name') }}
-        </a>
-        <a href="{{ route('home') }}" class="btn btn-outline-secondary rounded-pill">
-            <i class="fas fa-arrow-left me-2"></i>Back to Home
-        </a>
-    </div>
-</nav>
+@include('partials.frontend-header')
 
 <div class="checkout-container">
     <div class="row g-4">
@@ -356,94 +487,115 @@
                 </div>
             @endif
 
-            <div class="form-card">
+            <div class="form-card" id="addressSummaryCard">
                 <h5 class="fw-bold mb-3">
-                    <i class="fas fa-map-marker-alt text-primary me-2"></i>Saved Addresses
+                    <i class="fas fa-map-marker-alt text-primary me-2"></i>Delivery Address
                 </h5>
-                <div id="savedAddresses">
-                    @auth
-                        @foreach(Auth::user()->addresses ?? array() as $address)
-                            <div class="address-card" data-address-id="{{ $address->id }}" onclick="selectAddress({{ $address->id }})">
-                                <div class="d-flex justify-content-between align-items-start">
-                                    <div>
-                                        <div class="fw-semibold">{{ $address->name ?? 'Home' }}</div>
-                                        <div class="text-muted small">{{ $address->address }}, {{ $address->city }}, {{ $address->pincode }}</div>
-                                        <div class="text-muted small mt-1">{{ $address->phone }}</div>
+                <div class="address-summary-tile" onclick="openAddressModal()">
+                    <i class="fas fa-location-dot"></i>
+                    <div class="flex-grow-1 min-w-0">
+                        <div class="fw-semibold" id="addressSummaryTitle">Select delivery address</div>
+                        <div class="text-muted small text-truncate" id="addressSummarySubtitle">Tap to choose or add an address</div>
+                    </div>
+                    <i class="fas fa-chevron-right text-muted"></i>
+                </div>
+            </div>
+
+            <div class="modal fade" id="addressModal" tabindex="-1">
+                <div class="modal-dialog modal-dialog-centered modal-lg">
+                    <div class="modal-content rounded-4 border-0">
+                        <div class="modal-header border-0">
+                            <h5 class="modal-title fw-bold">Select delivery address</h5>
+                            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                        </div>
+                        <div class="modal-body">
+                            <div id="savedAddresses">
+                                @auth
+                                    @foreach(Auth::user()->addresses ?? array() as $address)
+                                        <div class="address-card" data-address-id="{{ $address->id }}" onclick="selectAddress({{ $address->id }})">
+                                            <div class="d-flex justify-content-between align-items-start">
+                                                <div>
+                                                    <div class="fw-semibold">{{ $address->name ?? 'Home' }}</div>
+                                                    <div class="text-muted small">{{ $address->address }}, {{ $address->city }}, {{ $address->pincode }}</div>
+                                                    <div class="text-muted small mt-1">{{ $address->phone }}</div>
+                                                </div>
+                                                <div class="form-check">
+                                                    <input class="form-check-input" type="radio" name="address_id" value="{{ $address->id }}" onchange="selectAddress({{ $address->id }})">
+                                                </div>
+                                            </div>
+                                        </div>
+                                    @endforeach
+                                @endauth
+                            </div>
+
+                            <button class="btn btn-outline-primary w-100 mt-3" onclick="showNewAddressForm()">
+                                <i class="fas fa-plus me-2"></i>Add New Address
+                            </button>
+
+                            <div id="newAddressForm" style="display: none;" class="address-form-container">
+                                <h6 class="fw-bold mb-3">Add New Delivery Address</h6>
+
+                                <div class="row g-3">
+                                    <div class="col-12">
+                                        <label class="form-label">Search Address</label>
+                                        <div class="input-group">
+                                            <input type="text" id="autocompleteInput" class="form-control" placeholder="Search for your address...">
+                                            <button class="btn btn-detect" type="button" onclick="detectMyLocation()">
+                                                <i class="fas fa-location-dot me-1"></i> Detect
+                                            </button>
+                                        </div>
+                                        <small class="text-muted">Start typing your address or click detect to use current location</small>
                                     </div>
-                                    <div class="form-check">
-                                        <input class="form-check-input" type="radio" name="address_id" value="{{ $address->id }}" onchange="selectAddress({{ $address->id }})">
+
+                                    <div class="col-12">
+                                        <div class="map-container" id="mapContainer" style="display: none;">
+                                            <div id="map"></div>
+                                        </div>
+                                        <small id="mapHint" class="text-muted d-none">Tap or click on the map to place the pin and fetch the full address.</small>
+                                    </div>
+
+                                    <div class="col-md-6">
+                                        <label class="form-label">Address Name</label>
+                                        <select id="addressName" class="form-select">
+                                            <option value="Home">Home</option>
+                                            <option value="Work">Work</option>
+                                            <option value="Other">Other</option>
+                                        </select>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label class="form-label">Phone Number</label>
+                                        <input type="text" id="addressPhone" class="form-control" value="{{ Auth::user()->phone ?? '' }}" placeholder="Phone number">
+                                    </div>
+                                    <div class="col-12">
+                                        <label class="form-label">Full Address</label>
+                                        <textarea id="addressLine" class="form-control" rows="2" placeholder="Complete address"></textarea>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <label class="form-label">City</label>
+                                        <input type="text" id="addressCity" class="form-control" placeholder="City">
+                                    </div>
+                                    <div class="col-md-4">
+                                        <label class="form-label">State</label>
+                                        <input type="text" id="addressState" class="form-control" placeholder="State">
+                                    </div>
+                                    <div class="col-md-4">
+                                        <label class="form-label">Pincode</label>
+                                        <input type="text" id="addressPincode" class="form-control" placeholder="Pincode">
+                                    </div>
+                                    <div class="col-12">
+                                        <input type="hidden" id="addressLat" value="">
+                                        <input type="hidden" id="addressLng" value="">
+                                        <button class="btn btn-primary w-100" onclick="saveNewAddress()">Save Address</button>
+                                        <button class="btn btn-light w-100 mt-2" onclick="hideNewAddressForm()">Cancel</button>
                                     </div>
                                 </div>
                             </div>
-                        @endforeach
-                    @endauth
-                </div>
-
-                <button class="btn btn-outline-primary w-100 mt-3" onclick="showNewAddressForm()">
-                    <i class="fas fa-plus me-2"></i>Add New Address
-                </button>
-
-                <div id="newAddressForm" style="display: none;" class="address-form-container">
-                    <h6 class="fw-bold mb-3">Add New Delivery Address</h6>
-
-                    <div class="row g-3">
-                        <div class="col-12">
-                            <label class="form-label">Search Address</label>
-                            <div class="input-group">
-                                <input type="text" id="autocompleteInput" class="form-control" placeholder="Search for your address...">
-                                <button class="btn btn-detect" type="button" onclick="detectMyLocation()">
-                                    <i class="fas fa-location-dot me-1"></i> Detect
-                                </button>
-                            </div>
-                            <small class="text-muted">Start typing your address or click detect to use current location</small>
-                        </div>
-
-                        <div class="col-12">
-                            <div class="map-container" id="mapContainer" style="display: none;">
-                                <div id="map"></div>
-                            </div>
-                            <small id="mapHint" class="text-muted d-none">Tap or click on the map to place the pin and fetch the full address.</small>
-                        </div>
-
-                        <div class="col-md-6">
-                            <label class="form-label">Address Name</label>
-                            <select id="addressName" class="form-select">
-                                <option value="Home">Home</option>
-                                <option value="Work">Work</option>
-                                <option value="Other">Other</option>
-                            </select>
-                        </div>
-                        <div class="col-md-6">
-                            <label class="form-label">Phone Number</label>
-                            <input type="text" id="addressPhone" class="form-control" value="{{ Auth::user()->phone ?? '' }}" placeholder="Phone number">
-                        </div>
-                        <div class="col-12">
-                            <label class="form-label">Full Address</label>
-                            <textarea id="addressLine" class="form-control" rows="2" placeholder="Complete address"></textarea>
-                        </div>
-                        <div class="col-md-4">
-                            <label class="form-label">City</label>
-                            <input type="text" id="addressCity" class="form-control" placeholder="City">
-                        </div>
-                        <div class="col-md-4">
-                            <label class="form-label">State</label>
-                            <input type="text" id="addressState" class="form-control" placeholder="State">
-                        </div>
-                        <div class="col-md-4">
-                            <label class="form-label">Pincode</label>
-                            <input type="text" id="addressPincode" class="form-control" placeholder="Pincode">
-                        </div>
-                        <div class="col-12">
-                            <input type="hidden" id="addressLat" value="">
-                            <input type="hidden" id="addressLng" value="">
-                            <button class="btn btn-primary w-100" onclick="saveNewAddress()">Save Address</button>
-                            <button class="btn btn-light w-100 mt-2" onclick="hideNewAddressForm()">Cancel</button>
                         </div>
                     </div>
                 </div>
             </div>
 
-            <div class="form-card">
+            <div class="form-card" id="paymentMethodCard">
                 <h5 class="fw-bold mb-3">
                     <i class="fas fa-credit-card text-primary me-2"></i>Payment Method
                 </h5>
@@ -555,14 +707,20 @@
                     <span>Coupon Discount</span>
                     <span class="fw-bold">-{{ $currencySymbol }} <span id="summaryDiscount">0</span></span>
                 </div>
-                <div class="d-flex justify-content-between mb-3 pt-2 border-top">
-                    <span class="fw-bold fs-5">Total</span>
-                    <span class="fw-bold text-primary fs-4">{{ $currencySymbol }} <span id="summaryTotal">0</span></span>
+                <div class="order-summary-cta">
+                    <div class="mobile-pay-row">
+                        Pay via <strong id="mobilePayMethodLabel">{{ $gatewayEnabled ? 'Online ('.ucfirst($gatewayProvider).')' : 'Cash on Delivery' }}</strong>
+                        <a href="javascript:void(0)" onclick="scrollToPaymentMethod()">Change</a>
+                    </div>
+                    <button class="checkout-place-btn" onclick="placeOrder()" id="placeOrderBtn">
+                        <span class="cpb-total">
+                            <span class="cpb-total-label">TOTAL</span>
+                            <span class="cpb-total-amount">{{ $currencySymbol }} <span id="summaryTotal">0</span></span>
+                        </span>
+                        <span class="cpb-cta">Place order <i class="fas fa-arrow-right ms-1"></i></span>
+                    </button>
                 </div>
-                <button class="btn btn-primary w-100 py-3" onclick="placeOrder()" id="placeOrderBtn">
-                    <i class="fas fa-check-circle me-2"></i>Place Order
-                </button>
-                <div class="text-center mt-3">
+                <div class="text-center mt-3 d-none d-lg-block">
                     <small class="text-muted">
                         <i class="fas fa-shield-alt me-1"></i>Secure payment protected
                     </small>
@@ -648,7 +806,7 @@
         localStorage.removeItem('checkout_restaurant_id');
     }
 
-    window.initGoogleMaps = function initGoogleMaps() {
+    function initCheckoutGoogleMaps() {
         const input = document.getElementById('autocompleteInput');
         if (input && typeof google !== 'undefined') {
             autocomplete = new google.maps.places.Autocomplete(input, {
@@ -680,10 +838,21 @@
                 setAddressLocation(event.latLng.lat(), event.latLng.lng(), true);
             });
         }
-    };
+    }
 
-    if (window.checkoutGoogleMapsReady || typeof google !== 'undefined') {
-        window.initGoogleMaps();
+    // partials.frontend-header loads the Google Maps JS API once (shared
+    // across every page) and calls window.initGlobalPlacesAutocomplete when
+    // it's ready. If Maps has already finished loading by the time this
+    // script runs (header's callback fired first), set up immediately;
+    // otherwise hook into that same callback for when it does fire.
+    if (typeof google !== 'undefined' && google.maps && google.maps.places) {
+        initCheckoutGoogleMaps();
+    } else {
+        const existingGlobalPlacesCallback = window.initGlobalPlacesAutocomplete;
+        window.initGlobalPlacesAutocomplete = function() {
+            if (typeof existingGlobalPlacesCallback === 'function') existingGlobalPlacesCallback();
+            initCheckoutGoogleMaps();
+        };
     }
 
     function onPlaceChanged() {
@@ -791,6 +960,10 @@
         });
     }
 
+    function openAddressModal() {
+        new bootstrap.Modal(document.getElementById('addressModal')).show();
+    }
+
     function selectAddress(addressId) {
         selectedAddressId = addressId;
         if (selectedOrderType === 'takeaway') {
@@ -800,8 +973,22 @@
         document.querySelectorAll('.address-card').forEach(function(card) {
             card.classList.remove('selected');
         });
-        document.querySelector('.address-card[data-address-id="' + addressId + '"]').classList.add('selected');
+        var selectedCard = document.querySelector('.address-card[data-address-id="' + addressId + '"]');
+        if (selectedCard) selectedCard.classList.add('selected');
         document.querySelector('input[name="address_id"][value="' + addressId + '"]').checked = true;
+
+        if (selectedCard) {
+            var titleEl = selectedCard.querySelector('.fw-semibold');
+            var subtitleEl = selectedCard.querySelector('.text-muted.small');
+            var summaryTitle = document.getElementById('addressSummaryTitle');
+            var summarySubtitle = document.getElementById('addressSummarySubtitle');
+            if (summaryTitle) summaryTitle.textContent = 'Deliver to: ' + (titleEl ? titleEl.textContent : 'Selected address');
+            if (summarySubtitle && subtitleEl) summarySubtitle.textContent = subtitleEl.textContent;
+        }
+        var addressModalEl = document.getElementById('addressModal');
+        var addressModalInstance = bootstrap.Modal.getInstance(addressModalEl);
+        if (addressModalInstance) addressModalInstance.hide();
+
         refreshCheckoutSummary();
     }
 
@@ -811,7 +998,7 @@
             card.classList.toggle('selected', card.getAttribute('data-order-type') === type);
         });
 
-        const addressSection = document.getElementById('savedAddresses')?.closest('.form-card');
+        const addressSection = document.getElementById('addressSummaryCard');
         if (addressSection) {
             addressSection.style.display = type === 'takeaway' ? 'none' : '';
         }
@@ -829,6 +1016,18 @@
             el.classList.remove('selected');
         });
         document.querySelector('.payment-method[data-payment="' + method + '"]').classList.add('selected');
+
+        var payLabel = document.getElementById('mobilePayMethodLabel');
+        if (payLabel) {
+            payLabel.textContent = method === 'card' ? 'Online (' + (gatewayProvider ? gatewayProvider.charAt(0).toUpperCase() + gatewayProvider.slice(1) : 'Gateway') + ')'
+                : method === 'wallet' ? 'Wallet'
+                : 'Cash on Delivery';
+        }
+    }
+
+    function scrollToPaymentMethod() {
+        var card = document.getElementById('paymentMethodCard');
+        if (card) card.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }
 
     function showNewAddressForm() {
@@ -1267,6 +1466,7 @@
         if (restaurantId) {
             localStorage.removeItem('cart_' + restaurantId);
         }
+        if (window.updateHeaderCartCount) window.updateHeaderCartCount();
     }
 
     function setPlaceOrderLoading(isLoading, label) {
@@ -1338,6 +1538,7 @@
         refreshCheckoutSummary();
     }
 </script>
+@include('partials.frontend-footer')
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 @include('partials.web-visit-tracker', ['panel' => 'checkout'])
 </body>

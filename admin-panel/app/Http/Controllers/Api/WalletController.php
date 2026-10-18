@@ -15,6 +15,7 @@ use App\Models\WalletTransaction;
 use App\Services\MediaStorage;
 use App\Services\PayoutSettlementService;
 use App\Support\GatewayRegistry;
+use App\Support\JsonHttp;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
@@ -368,13 +369,15 @@ class WalletController extends Controller
             }
 
             $cashfreeOrderId = 'WALLET_' . $recharge->id . '_' . time();
-            $cashfreeOrder = Http::withHeaders([
+            // (float) + JsonHttp::post() -- Cashfree rejects a bare-integer
+            // order_amount for a whole-rupee total. See App\Support\JsonHttp.
+            $cashfreeOrder = JsonHttp::post(Http::withHeaders([
                 'x-api-version' => $apiVersion,
                 'x-client-id' => $clientId,
                 'x-client-secret' => $clientSecret,
-            ])->post($this->cashfreeBaseUrl() . '/pg/orders', [
+            ]), $this->cashfreeBaseUrl() . '/pg/orders', [
                 'order_id' => $cashfreeOrderId,
-                'order_amount' => round($recharge->amount, 2),
+                'order_amount' => (float) round($recharge->amount, 2),
                 'order_currency' => $recharge->currency,
                 'order_note' => 'Wallet recharge for ' . AppSetting::getValue('app_name', config('app.name')),
                 'order_tags' => [
@@ -747,6 +750,8 @@ class WalletController extends Controller
             'gst_on_commission' => (float) ($payout->gst_on_commission ?? 0),
             'payment_gateway_fee' => (float) ($payout->payment_gateway_fee ?? 0),
             'delivery_fee' => (float) ($payout->delivery_fee ?? 0),
+            'long_distance_charge' => (float) data_get($payout->breakdown, 'long_distance_charge', 0),
+            'long_distance_free_km' => (float) AppSetting::getValue('long_distance_free_km', 0),
             'deduction_amount' => (float) ($payout->deduction_amount ?? 0),
             'net_amount' => (float) ($payout->net_amount ?? $payout->amount),
             'period_start' => optional($payout->period_start)->toIso8601String(),
@@ -779,6 +784,8 @@ class WalletController extends Controller
             'platform_commission' => (float) ($order->platform_commission ?? 0),
             'gst_on_commission' => (float) ($order->gst_on_commission ?? 0),
             'payment_gateway_fee' => (float) ($order->payment_gateway_fee ?? 0),
+            'long_distance_charge' => (float) ($order->long_distance_charge ?? 0),
+            'delivery_distance_km' => $order->delivery_distance_km !== null ? (float) $order->delivery_distance_km : null,
             'restaurant_earning' => (float) ($order->restaurant_earning ?? 0),
             'payment_method' => $order->payment_method,
             'items' => $this->formatPayoutOrderItemsForApi($order),

@@ -11,9 +11,11 @@
             <h1>Driver Management</h1>
             <p>Manage delivery partners</p>
         </div>
+        @can('create_drivers')
         <a href="{{ route('admin.drivers.create') }}" class="btn btn-primary">
             <i class="fas fa-plus me-2"></i> Add Driver
         </a>
+        @endcan
     </div>
 </div>
 
@@ -133,9 +135,12 @@
                             <a href="{{ route('admin.drivers.show', $driver->id) }}" class="btn btn-sm btn-outline-info" title="View Details">
                                 <i class="fas fa-eye"></i>
                             </a>
+                            @can('edit_drivers')
                             <a href="{{ route('admin.drivers.edit', $driver->id) }}" class="btn btn-sm btn-outline-primary" title="Edit">
                                 <i class="fas fa-edit"></i>
                             </a>
+                            @endcan
+                            @can('delete_drivers')
                             <form action="{{ route('admin.drivers.destroy', $driver->id) }}" method="POST" id="deleteForm{{ $driver->id }}" style="display: inline;">
                                 @csrf
                                 @method('DELETE')
@@ -143,6 +148,7 @@
                                     <i class="fas fa-trash"></i>
                                 </button>
                             </form>
+                            @endcan
                         </div>
                     </td>
                 </tr>

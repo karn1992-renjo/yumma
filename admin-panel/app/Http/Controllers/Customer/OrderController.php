@@ -23,6 +23,7 @@ class OrderController extends Controller
     public function index()
     {
         $orders = Order::with(['restaurant'])
+            ->withCount('orderItems')
             ->where('customer_id', Auth::id())
             ->orderBy('created_at', 'desc')
             ->paginate(15);
@@ -105,8 +106,16 @@ class OrderController extends Controller
         DB::beginTransaction();
 
         try {
+            $customerName = Auth::user()->name ?? 'Customer';
+
             if (($canForceCancel || $canInstantCancel) && $order->payment_status === 'success') {
-                $refundResult = $this->refundService->processRefund($order, $request->reason);
+                $refundResult = $this->refundService->processRefund(
+                    $order,
+                    $request->reason,
+                    null,
+                    'customer',
+                    $customerName
+                );
 
                 if (! $refundResult['success']) {
                     throw new \Exception('Refund processing failed: ' . $refundResult['message']);
@@ -118,6 +127,8 @@ class OrderController extends Controller
                     'status' => 'cancelled',
                     'cancelled_at' => now(),
                     'cancellation_reason' => $request->reason,
+                    'cancelled_by_role' => 'customer',
+                    'cancelled_by_name' => $customerName,
                     'refund_status' => 'pending',
                     'refund_reason' => $request->reason,
                 ]);
@@ -127,11 +138,19 @@ class OrderController extends Controller
                     'status' => 'cancelled',
                     'cancelled_at' => now(),
                     'cancellation_reason' => $request->reason,
+                    'cancelled_by_role' => 'customer',
+                    'cancelled_by_name' => $customerName,
                 ]);
                 $message = 'Order cancelled successfully!';
             }
 
             DB::commit();
+
+            try {
+                app(\App\Services\Petpooja\PetpoojaOrderRelayService::class)->cancel($order, $request->reason);
+            } catch (\Throwable $e) {
+                \Illuminate\Support\Facades\Log::warning('Petpooja cancel relay failed.', ['order_id' => $order->id, 'message' => $e->getMessage()]);
+            }
 
             return redirect()->route('customer.orders.show', $order->id)->with('success', $message);
         } catch (\Exception $e) {

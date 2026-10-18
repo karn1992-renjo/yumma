@@ -5,6 +5,7 @@ namespace App\Console\Commands;
 use App\Models\Category;
 use App\Models\MenuItem;
 use App\Models\Restaurant;
+use App\Services\CityDirectoryService;
 use Illuminate\Console\Command;
 use Illuminate\Routing\Route;
 use Illuminate\Support\Facades\Route as RouteFacade;
@@ -86,12 +87,12 @@ class GenerateSitemap extends Command
     private function dynamicUrls(): array
     {
         $definitions = [
-            [Restaurant::class, 'restaurant.show', 'id', 0.8, Url::CHANGE_FREQUENCY_DAILY],
+            [Restaurant::class, 'restaurant.show', 'slug', 0.8, Url::CHANGE_FREQUENCY_DAILY],
             [Category::class, 'category.show', 'category', 0.6, Url::CHANGE_FREQUENCY_WEEKLY],
             [MenuItem::class, 'product.show', 'product', 0.6, Url::CHANGE_FREQUENCY_WEEKLY],
         ];
 
-        return collect($definitions)
+        $urls = collect($definitions)
             ->filter(fn (array $definition) => RouteFacade::has($definition[1]))
             ->flatMap(function (array $definition) {
                 [$modelClass, $routeName, $parameter, $priority, $frequency] = $definition;
@@ -104,7 +105,17 @@ class GenerateSitemap extends Command
 
                     return (object) ['url' => $url->url, 'sitemapUrl' => $url];
                 })->pluck('sitemapUrl');
-            })
-            ->all();
+            });
+
+        if (RouteFacade::has('city.restaurants')) {
+            $cityUrls = app(CityDirectoryService::class)->listActiveCities()
+                ->map(fn (array $city) => Url::create(route('city.restaurants', $city['slug']))
+                    ->setPriority(0.7)
+                    ->setChangeFrequency(Url::CHANGE_FREQUENCY_WEEKLY));
+
+            $urls = $urls->merge($cityUrls);
+        }
+
+        return $urls->all();
     }
 }

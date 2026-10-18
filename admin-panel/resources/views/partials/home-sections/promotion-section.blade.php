@@ -105,61 +105,126 @@
 @if($displayItems->isNotEmpty())
     <section class="restaurants-section">
         <div class="container">
-            <div class="rounded-5 p-4 bg-white shadow-sm border">
-                <div class="section-header text-start mb-4">
-                    <h2 class="section-title" style="text-align:left;">{!! $section['title'] ?? 'Promotions' !!}</h2>
-                    @if(!empty($section['subtitle']))
-                        <p class="section-subtitle" style="text-align:left;">{{ $section['subtitle'] }}</p>
-                    @endif
-                </div>
-                <div class="row g-4">
-                    @foreach($displayItems as $offer)
-                        @php
-                            $menu = $menuItems($offer);
-                            $firstItem = $menu->first();
-                            $image = $imageFor($offer);
-                            $restaurantId = $firstItem['restaurant_id'] ?? $offer['restaurant_id'] ?? null;
-                            $title = $offer['title'] ?? $firstItem['name'] ?? 'Special offer';
-                            $subtitle = $firstItem['description'] ?? $offer['subtitle'] ?? $offer['description'] ?? 'Eligible promotion item';
-                            $price = (float) ($firstItem['discounted_price'] ?? $firstItem['price'] ?? $offer['discount_value'] ?? 0);
-                            $originalPrice = (float) ($firstItem['price'] ?? $price);
-                        @endphp
-                        <div class="col-sm-6 col-lg-4">
-                            <a href="{{ $restaurantId ? url('/restaurants/'.$restaurantId) : url('/offers') }}" class="text-decoration-none">
-                                <div class="h-100 rounded-4 overflow-hidden border bg-white shadow-sm">
-                                    <div class="position-relative" style="height:190px;background:#f8fafc;">
-                                        @if($image)
-                                            <img src="{{ $image }}" alt="{{ $title }}" width="400" height="240" loading="lazy" class="w-100 h-100" style="object-fit:cover;">
-                                        @else
-                                            <div class="w-100 h-100 d-flex align-items-center justify-content-center" style="background:linear-gradient(135deg,#16a34a,#f97316);">
-                                                <i class="fas fa-gift text-white fa-3x"></i>
-                                            </div>
-                                        @endif
-                                        <span class="position-absolute top-0 start-0 m-3 badge rounded-pill bg-danger">{{ $rewardText($offer) }}</span>
-                                    </div>
-                                    <div class="p-3">
-                                        <h5 class="fw-bold text-dark mb-1 text-truncate">{{ $title }}</h5>
-                                        <p class="text-muted small mb-3" style="min-height:38px;">{{ \Illuminate\Support\Str::limit($subtitle, 78) }}</p>
-                                        <div class="d-flex align-items-center justify-content-between gap-2">
-                                            <div>
-                                                @if($price > 0)
-                                                    <span class="fw-bold text-dark">{{ $currencySymbol }}{{ number_format($price, $currencyDecimals) }}</span>
-                                                    @if($originalPrice > $price)
-                                                        <span class="text-muted text-decoration-line-through small ms-1">{{ $currencySymbol }}{{ number_format($originalPrice, $currencyDecimals) }}</span>
-                                                    @endif
-                                                @else
-                                                    <span class="fw-bold text-success">Auto applies</span>
-                                                @endif
-                                            </div>
-                                            <span class="btn btn-sm btn-success rounded-pill px-3">Add</span>
-                                        </div>
-                                    </div>
-                                </div>
-                            </a>
+            <div class="section-header text-start mb-4">
+                <h2 class="section-title" style="text-align:left;">{!! $section['title'] ?? 'Promotions' !!}</h2>
+                @if(!empty($section['subtitle']))
+                    <p class="section-subtitle" style="text-align:left;">{{ $section['subtitle'] }}</p>
+                @endif
+            </div>
+            <div class="offer-tile-row">
+                @foreach($displayItems as $offer)
+                    @php
+                        $menu = $menuItems($offer);
+                        $firstItem = $menu->first();
+                        $image = $imageFor($offer);
+                        $restaurantId = $firstItem['restaurant_id'] ?? $offer['restaurant_id'] ?? null;
+                        $title = $offer['title'] ?? $firstItem['name'] ?? 'Special offer';
+                        $couponCode = $offer['coupon_code'] ?? $offer['code'] ?? null;
+                    @endphp
+                    <a href="{{ $restaurantId ? route('restaurant.show', $restaurantId) : url('/offers') }}" class="offer-tile">
+                        @if($image)
+                            <img src="{{ $image }}" alt="{{ $title }}" width="310" height="180" loading="lazy" class="offer-tile-img">
+                        @else
+                            <div class="offer-tile-img offer-tile-img-fallback">
+                                <i class="fas fa-gift"></i>
+                            </div>
+                        @endif
+                        <div class="offer-tile-overlay"></div>
+                        <div class="offer-tile-content">
+                            <div class="offer-tile-reward">{{ $rewardText($offer) }}</div>
+                            <div class="offer-tile-title">{{ \Illuminate\Support\Str::limit($title, 40) }}</div>
+                            @if($couponCode)
+                                <span class="offer-tile-coupon">CODE {{ $couponCode }}</span>
+                            @endif
                         </div>
-                    @endforeach
-                </div>
+                    </a>
+                @endforeach
             </div>
         </div>
     </section>
 @endif
+
+<style>
+    .offer-tile-row {
+        display: flex;
+        gap: 16px;
+        overflow-x: auto;
+        padding-bottom: 8px;
+        scrollbar-width: none;
+    }
+
+    .offer-tile-row::-webkit-scrollbar {
+        display: none;
+    }
+
+    .offer-tile {
+        position: relative;
+        flex: 0 0 310px;
+        height: 180px;
+        border-radius: 18px;
+        overflow: hidden;
+        text-decoration: none;
+        display: block;
+        box-shadow: 0 6px 16px rgba(0, 0, 0, 0.12);
+    }
+
+    .offer-tile-img {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+    }
+
+    .offer-tile-img-fallback {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 48px;
+        color: #fff;
+        background: linear-gradient(135deg, var(--primary), var(--secondary));
+    }
+
+    .offer-tile-overlay {
+        position: absolute;
+        inset: 0;
+        background: linear-gradient(90deg, rgba(0,0,0,0.72) 0%, rgba(0,0,0,0.25) 55%, rgba(0,0,0,0.08) 100%);
+    }
+
+    .offer-tile-content {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        gap: 6px;
+        padding: 16px 18px;
+        color: #fff;
+    }
+
+    .offer-tile-reward {
+        font-family: 'Nunito Sans', sans-serif;
+        font-size: 26px;
+        font-weight: 900;
+        line-height: 1.1;
+    }
+
+    .offer-tile-title {
+        font-size: 13px;
+        font-weight: 600;
+        opacity: 0.92;
+    }
+
+    .offer-tile-coupon {
+        display: inline-block;
+        margin-top: 4px;
+        background: #fff;
+        color: #1C1C1C;
+        font-size: 11px;
+        font-weight: 800;
+        letter-spacing: 0.02em;
+        padding: 4px 10px;
+        border-radius: 9px;
+        width: fit-content;
+    }
+</style>

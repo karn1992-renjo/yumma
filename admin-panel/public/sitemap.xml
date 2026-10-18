@@ -1,42 +1,91 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:xhtml="http://www.w3.org/1999/xhtml" xmlns:image="http://www.google.com/schemas/sitemap-image/1.1" xmlns:video="http://www.google.com/schemas/sitemap-video/1.1" xmlns:news="http://www.google.com/schemas/sitemap-news/0.9">
     <url>
-    <loc>https://swaadsathi.com</loc>
+    <loc>https://yumma.in</loc>
             </url>
     <url>
-    <loc>https://swaadsathi.com/terms</loc>
+    <loc>https://yumma.in/terms</loc>
             </url>
     <url>
-    <loc>https://swaadsathi.com/privacy</loc>
+    <loc>https://yumma.in/privacy</loc>
             </url>
     <url>
-    <loc>https://swaadsathi.com/privacy-policy</loc>
+    <loc>https://yumma.in/privacy-policy</loc>
             </url>
     <url>
-    <loc>https://swaadsathi.com/legal</loc>
+    <loc>https://yumma.in/legal</loc>
             </url>
     <url>
-    <loc>https://swaadsathi.com/about</loc>
+    <loc>https://yumma.in/app</loc>
             </url>
     <url>
-    <loc>https://swaadsathi.com/careers</loc>
+    <loc>https://yumma.in/app/qr.svg</loc>
             </url>
     <url>
-    <loc>https://swaadsathi.com/blog</loc>
+    <loc>https://yumma.in/app/qr.png</loc>
             </url>
     <url>
-    <loc>https://swaadsathi.com/help</loc>
+    <loc>https://yumma.in/about</loc>
             </url>
     <url>
-    <loc>https://swaadsathi.com/contact</loc>
+    <loc>https://yumma.in/careers</loc>
             </url>
     <url>
-    <loc>https://swaadsathi.com/faqs</loc>
+    <loc>https://yumma.in/blog</loc>
             </url>
     <url>
-    <loc>https://swaadsathi.com/sitemap.xml</loc>
+    <loc>https://yumma.in/help</loc>
             </url>
     <url>
-    <loc>https://swaadsathi.com/partner/register</loc>
+    <loc>https://yumma.in/contact</loc>
+            </url>
+    <url>
+    <loc>https://yumma.in/faqs</loc>
+            </url>
+    <url>
+    <loc>https://yumma.in/sitemap.xml</loc>
+            </url>
+    <url>
+    <loc>https://yumma.in/partner/register</loc>
+            </url>
+    <url>
+    <loc>https://yumma.in/.well-known/assetlinks.json</loc>
+            </url>
+    <url>
+    <loc>https://yumma.in/.well-known/apple-app-site-association</loc>
+            </url>
+    <url>
+    <loc>https://yumma.in/restaurants/popcorn-co-demo-6ab3593634b1d</loc>
+    <lastmod>2026-09-23T04:44:38+00:00</lastmod>
+    <changefreq>daily</changefreq>
+    <priority>0.8</priority>
+            </url>
+    <url>
+    <loc>https://yumma.in/restaurants/coffee-corner-demo-6ab38ae4ba676</loc>
+    <lastmod>2026-09-23T08:16:36+00:00</lastmod>
+    <changefreq>daily</changefreq>
+    <priority>0.8</priority>
+            </url>
+    <url>
+    <loc>https://yumma.in/restaurants/nachos-corner</loc>
+    <lastmod>2026-09-23T18:45:58+00:00</lastmod>
+    <changefreq>daily</changefreq>
+    <priority>0.8</priority>
+            </url>
+    <url>
+    <loc>https://yumma.in/restaurants/dashboard-test-restaurant-1790742906</loc>
+    <lastmod>2026-09-30T04:35:07+00:00</lastmod>
+    <changefreq>daily</changefreq>
+    <priority>0.8</priority>
+            </url>
+    <url>
+    <loc>https://yumma.in/restaurants-in-mumbai</loc>
+    <changefreq>weekly</changefreq>
+    <priority>0.7</priority>
+            </url>
+    <url>
+    <loc>https://yumma.in/restaurants-in-test-city</loc>
+    <changefreq>weekly</changefreq>
+    <priority>0.7</priority>
             </url>
 </urlset>

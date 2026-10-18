@@ -44,7 +44,7 @@
                 <h5 class="mb-0 fw-bold">Driver Information</h5>
             </div>
             <div class="p-4">
-                <form action="{{ route('admin.drivers.update', $driver->id) }}" method="POST">
+                <form action="{{ route('admin.drivers.update', $driver->id) }}" method="POST" enctype="multipart/form-data">
                     @csrf
                     @method('PUT')
                     
@@ -79,21 +79,57 @@
                                 <option value="">Select Type</option>
                                 <option value="bike" {{ old('vehicle_type', $driver->vehicle_type) == 'bike' ? 'selected' : '' }}>Bike</option>
                                 <option value="scooter" {{ old('vehicle_type', $driver->vehicle_type) == 'scooter' ? 'selected' : '' }}>Scooter</option>
+                                <option value="ev_scooter" {{ old('vehicle_type', $driver->vehicle_type) == 'ev_scooter' ? 'selected' : '' }}>EV Scooter</option>
+                                <option value="bicycle" {{ old('vehicle_type', $driver->vehicle_type) == 'bicycle' ? 'selected' : '' }}>Bicycle</option>
                                 <option value="car" {{ old('vehicle_type', $driver->vehicle_type) == 'car' ? 'selected' : '' }}>Car</option>
                             </select>
                             @error('vehicle_type') <div class="invalid-feedback">{{ $message }}</div> @enderror
                         </div>
-                        
+
                         <div class="col-md-4">
                             <label class="form-label fw-semibold">Vehicle Number <span class="text-danger">*</span></label>
                             <input type="text" name="vehicle_number" class="form-control @error('vehicle_number') is-invalid @enderror" value="{{ old('vehicle_number', $driver->vehicle_number) }}" required>
                             @error('vehicle_number') <div class="invalid-feedback">{{ $message }}</div> @enderror
                         </div>
-                        
+
+                        <div class="col-md-4">
+                            <label class="form-label fw-semibold">Vehicle Model</label>
+                            <input type="text" name="vehicle_model" class="form-control @error('vehicle_model') is-invalid @enderror" value="{{ old('vehicle_model', $driver->vehicle_model) }}" placeholder="e.g. Hero Splendor, Honda Activa">
+                            @error('vehicle_model') <div class="invalid-feedback">{{ $message }}</div> @enderror
+                        </div>
+
+                        <div class="col-md-4">
+                            <label class="form-label fw-semibold">Fuel / Engine Type</label>
+                            <select name="fuel_type" class="form-select @error('fuel_type') is-invalid @enderror">
+                                <option value="">Not set</option>
+                                <option value="petrol" @selected(old('fuel_type', $driver->fuel_type) === 'petrol')>Petrol</option>
+                                <option value="electric" @selected(old('fuel_type', $driver->fuel_type) === 'electric')>Electric</option>
+                                <option value="manual" @selected(old('fuel_type', $driver->fuel_type) === 'manual')>Manual / Pedal</option>
+                            </select>
+                            @error('fuel_type') <div class="invalid-feedback">{{ $message }}</div> @enderror
+                        </div>
+
                         <div class="col-md-4">
                             <label class="form-label fw-semibold">License Number <span class="text-danger">*</span></label>
                             <input type="text" name="license_number" class="form-control @error('license_number') is-invalid @enderror" value="{{ old('license_number', $driver->license_number) }}" required>
                             @error('license_number') <div class="invalid-feedback">{{ $message }}</div> @enderror
+                        </div>
+
+                        <div class="col-md-4">
+                            <label class="form-label fw-semibold">Date of Birth</label>
+                            <input type="date" name="date_of_birth" class="form-control @error('date_of_birth') is-invalid @enderror" value="{{ old('date_of_birth', optional($driver->date_of_birth)->format('Y-m-d')) }}">
+                            @error('date_of_birth') <div class="invalid-feedback">{{ $message }}</div> @enderror
+                        </div>
+
+                        <div class="col-md-4">
+                            <label class="form-label fw-semibold">Gender</label>
+                            <select name="gender" class="form-select @error('gender') is-invalid @enderror">
+                                <option value="">Not set</option>
+                                <option value="Male" @selected(old('gender', $driver->gender) === 'Male')>Male</option>
+                                <option value="Female" @selected(old('gender', $driver->gender) === 'Female')>Female</option>
+                                <option value="Other" @selected(old('gender', $driver->gender) === 'Other')>Other</option>
+                            </select>
+                            @error('gender') <div class="invalid-feedback">{{ $message }}</div> @enderror
                         </div>
 
                         <div class="col-md-4">
@@ -114,6 +150,27 @@
                             <input type="date" name="salary_effective_from" class="form-control @error('salary_effective_from') is-invalid @enderror" value="{{ old('salary_effective_from', optional($driver->salary_effective_from)->format('Y-m-d')) }}">
                             @error('salary_effective_from') <div class="invalid-feedback">{{ $message }}</div> @enderror
                         </div>
+                        <div class="col-md-4">
+                            <label class="form-label fw-semibold">Branch</label>
+                            <select name="branch_id" class="form-select @error('branch_id') is-invalid @enderror">
+                                <option value="">Not mapped to a branch</option>
+                                @foreach($branches as $branch)
+                                    <option value="{{ $branch->id }}" @selected(old('branch_id', $driver->branch_id) == $branch->id)>{{ $branch->name }}</option>
+                                @endforeach
+                            </select>
+                            <div class="form-text">Required for a salaried driver's delivery earning and COD to route to their branch instead of admin.</div>
+                            @error('branch_id') <div class="invalid-feedback">{{ $message }}</div> @enderror
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label fw-semibold">Salary Paid By</label>
+                            <select name="salary_payer" class="form-select @error('salary_payer') is-invalid @enderror">
+                                <option value="" @selected(old('salary_payer', $driver->salary_payer) === null)>Not set</option>
+                                <option value="admin" @selected(old('salary_payer', $driver->salary_payer) === 'admin')>Admin</option>
+                                <option value="branch" @selected(old('salary_payer', $driver->salary_payer) === 'branch')>Branch</option>
+                            </select>
+                            <div class="form-text">Only for salary mode. Bookkeeping only — records who is financially responsible; does not move any wallet money in this app.</div>
+                            @error('salary_payer') <div class="invalid-feedback">{{ $message }}</div> @enderror
+                        </div>
 
                         <div class="col-md-4">
                             <label class="form-label fw-semibold">PAN <span class="text-muted small">(TDS 194-C)</span></label>
@@ -126,6 +183,18 @@
                                 <option value="individual" @selected(old('tax_deductee_type', $driver->tax_deductee_type ?? 'individual') === 'individual')>Individual / HUF</option>
                                 <option value="company" @selected(old('tax_deductee_type', $driver->tax_deductee_type) === 'company')>Company / Firm</option>
                             </select>
+                        </div>
+
+                        <div class="col-md-6">
+                            <label class="form-label fw-semibold">City</label>
+                            <input type="text" name="city" class="form-control @error('city') is-invalid @enderror" value="{{ old('city', $driver->city) }}">
+                            @error('city') <div class="invalid-feedback">{{ $message }}</div> @enderror
+                        </div>
+
+                        <div class="col-md-6">
+                            <label class="form-label fw-semibold">Landmark</label>
+                            <input type="text" name="landmark" class="form-control @error('landmark') is-invalid @enderror" value="{{ old('landmark', $driver->landmark) }}">
+                            @error('landmark') <div class="invalid-feedback">{{ $message }}</div> @enderror
                         </div>
 
                         <div class="col-12">
@@ -142,6 +211,17 @@
                                 <div class="fw-bold" id="zonePreviewName">{{ optional($driver->deliveryArea)->name ?? 'Use current location or search to detect zone' }}</div>
                                 <div class="text-muted small" id="zonePreviewMeta">{{ optional($driver->deliveryArea)->description ?? 'Zone will be fetched automatically from the selected map location.' }}</div>
                             </div>
+                            <div class="mt-3">
+                                <label class="form-label fw-bold">Delivery Zone</label>
+                                <select name="delivery_area_id" id="deliveryAreaSelect" class="form-select @error('delivery_area_id') is-invalid @enderror">
+                                    <option value="">Auto-detect from location above</option>
+                                    @foreach($deliveryAreas as $area)
+                                        <option value="{{ $area->id }}" @selected((string) old('delivery_area_id', $driver->delivery_area_id) === (string) $area->id)>{{ $area->name }}</option>
+                                    @endforeach
+                                </select>
+                                <div class="form-text">Leave as "Auto-detect" to match by coordinates, or pick the zone directly if detection didn't find the right one.</div>
+                                @error('delivery_area_id') <div class="invalid-feedback d-block">{{ $message }}</div> @enderror
+                            </div>
                             <input type="hidden" id="latitude" name="latitude" value="{{ old('latitude', $driver->latitude) }}">
                             <input type="hidden" id="longitude" name="longitude" value="{{ old('longitude', $driver->longitude) }}">
                             <div id="locationStatus" class="form-text">Search manually, use browser location, or drag the map marker to set driver location.</div>
@@ -156,6 +236,49 @@
                             <small class="text-muted">Leave blank to use global limit: {{ $globalMaxActiveOrders }} active order{{ $globalMaxActiveOrders == 1 ? '' : 's' }}.</small>
                             @error('max_active_orders') <div class="invalid-feedback">{{ $message }}</div> @enderror
                         </div>
+
+                        <div class="col-md-4">
+                            <div class="form-check form-switch mt-4">
+                                <input class="form-check-input" type="checkbox" role="switch" name="background_location_enabled" value="1" id="backgroundLocationEnabled" @checked(old('background_location_enabled', $driver->background_location_enabled) ? true : false)>
+                                <label class="form-check-label fw-semibold" for="backgroundLocationEnabled">Background Location Enabled</label>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="form-check form-switch mt-4">
+                                <input class="form-check-input" type="checkbox" role="switch" name="notification_permission_enabled" value="1" id="notificationPermissionEnabled" @checked(old('notification_permission_enabled', $driver->notification_permission_enabled) ? true : false)>
+                                <label class="form-check-label fw-semibold" for="notificationPermissionEnabled">Notification Permission Enabled</label>
+                            </div>
+                        </div>
+
+                        <div class="col-12"><hr class="my-2"></div>
+                        <div class="col-12">
+                            <label class="form-label fw-bold mb-0">Documents</label>
+                            <div class="form-text mb-2">Same documents collected during driver-app signup — upload a file to replace the current one.</div>
+                        </div>
+                        @php
+                            $driverDocFields = [
+                                'profile_photo' => ['Profile Photo', $driver->profile_photo_path],
+                                'vehicle_image' => ['Vehicle Image', $driver->vehicle_image],
+                                'license_document' => ['License Document', $driver->license_document],
+                                'vehicle_rc' => ['Vehicle RC', $driver->vehicle_rc],
+                                'aadhar_card' => ['Aadhar Card', $driver->aadhar_card],
+                                'pan_card' => ['PAN Card', $driver->pan_card],
+                                'insurance_document' => ['Insurance Document', $driver->insurance_document],
+                            ];
+                        @endphp
+                        @foreach($driverDocFields as $docField => [$docLabel, $docPath])
+                            <div class="col-md-3">
+                                <label class="form-label fw-semibold">{{ $docLabel }}</label>
+                                @if($docPath)
+                                    <div class="mb-1">
+                                        <a href="{{ App\Services\MediaStorage::url($docPath) }}" target="_blank" class="small">View current file</a>
+                                    </div>
+                                @endif
+                                <input type="file" name="{{ $docField }}" accept=".pdf,image/*" class="form-control @error($docField) is-invalid @enderror">
+                                @error($docField) <div class="invalid-feedback">{{ $message }}</div> @enderror
+                            </div>
+                        @endforeach
+                        <div class="col-12"><hr class="my-2"></div>
 
                         @include('admin.partials.payout-account-fields', ['values' => [
                             'account_holder_name' => old('account_holder_name', $driver->account_holder_name),
@@ -242,6 +365,7 @@
         const statusEl = document.getElementById('locationStatus');
         const zonePreviewName = document.getElementById('zonePreviewName');
         const zonePreviewMeta = document.getElementById('zonePreviewMeta');
+        const deliveryAreaSelect = document.getElementById('deliveryAreaSelect');
 
         let map;
         let marker;
@@ -333,6 +457,10 @@
 
             zonePreviewName.textContent = zone.name;
             zonePreviewMeta.textContent = zone.description || `Auto-matched within ${zone.radius_km ?? '-'} km coverage.`;
+            // Keep the manual zone selector in sync with what auto-detect
+            // found, so it's correct by default and only needs touching
+            // when detection picked the wrong one.
+            if (deliveryAreaSelect) deliveryAreaSelect.value = String(zone.id);
         }
 
         function createMap() {
@@ -439,6 +567,9 @@
 
             updateStatus('Detecting current location...');
             navigator.geolocation.getCurrentPosition(async (position) => {
+                // Capture the real GPS reading immediately -- don't depend on
+                // the address reverse-lookup succeeding just to set lat/lng.
+                updateMarker(position.coords.latitude, position.coords.longitude);
                 try {
                     const params = new URLSearchParams({
                         lat: position.coords.latitude,

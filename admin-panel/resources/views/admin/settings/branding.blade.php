@@ -154,6 +154,11 @@
                                 <input type="url" name="customer_deeplink_base_url" class="form-control" value="{{ $settings['customer_deeplink_base_url'] ?? '' }}" placeholder="https://foodflow.in">
                             </div>
                             <div class="col-md-6">
+                                <label class="form-label fw-semibold">Driver App Web Deep Link Base URL</label>
+                                <input type="url" name="driver_deeplink_base_url" class="form-control" value="{{ $settings['driver_deeplink_base_url'] ?? '' }}" placeholder="https://foodflow.in/driver">
+                                <small class="text-muted">Fallback web link used for driver referral invites when AppsFlyer isn't configured.</small>
+                            </div>
+                            <div class="col-md-6">
                                 <label class="form-label fw-semibold">Order Deep Link Template</label>
                                 <input type="text" name="customer_order_deeplink_template" class="form-control" value="{{ $settings['customer_order_deeplink_template'] ?? 'foodflow://orders/{order_id}' }}">
                             </div>
@@ -222,6 +227,48 @@
                                 <label class="form-label fw-semibold">Request Timeout (seconds)</label>
                                 <input type="number" name="api_request_timeout_seconds" class="form-control" min="5" max="120" value="{{ $settings['api_request_timeout_seconds'] ?? 20 }}">
                                 <small class="text-muted">Applies on the next app launch or branding refresh. Range 5–120 seconds.</small>
+                            </div>
+                        </div>
+                    </div>
+                    <hr class="my-4">
+                    <div class="mb-4">
+                        <div class="d-flex align-items-center justify-content-between mb-1">
+                            <h6 class="fw-bold mb-0">Google Ads (AdMob)</h6>
+                            <div class="form-check form-switch mb-0">
+                                <input type="hidden" name="admob_ads_enabled" value="0">
+                                <input class="form-check-input" type="checkbox" role="switch" name="admob_ads_enabled" value="1" {{ ($settings['admob_ads_enabled'] ?? '0') === '1' ? 'checked' : '' }}>
+                                <label class="form-check-label small text-muted">Show ads in the customer app</label>
+                            </div>
+                        </div>
+                        <p class="text-muted small mb-3">Ad format is <strong>Native Advanced</strong> (not Banner) — each ad unit below must be created in the AdMob console specifically as "Native advanced" format, or it will not serve. Ad unit IDs apply the next time the app refreshes its branding (no app update needed). The App IDs below are build-time values baked into the Android/iOS app at release — changing them here is for record-keeping only and requires a new app build to actually take effect.</p>
+                        <div class="row g-3 mb-3">
+                            <div class="col-md-6">
+                                <label class="form-label fw-semibold">Android App ID</label>
+                                <input type="text" name="admob_android_app_id" class="form-control" placeholder="ca-app-pub-xxxxxxxxxxxxxxxx~xxxxxxxxxx" value="{{ $settings['admob_android_app_id'] ?? '' }}">
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label fw-semibold">iOS App ID</label>
+                                <input type="text" name="admob_ios_app_id" class="form-control" placeholder="ca-app-pub-xxxxxxxxxxxxxxxx~xxxxxxxxxx" value="{{ $settings['admob_ios_app_id'] ?? '' }}">
+                            </div>
+                        </div>
+                        <div class="row g-3 mb-3">
+                            <div class="col-md-6">
+                                <label class="form-label fw-semibold">Android — Order Tracking Native Ad Unit ID</label>
+                                <input type="text" name="admob_android_order_tracking_ad_unit_id" class="form-control" placeholder="ca-app-pub-xxxxxxxxxxxxxxxx/xxxxxxxxxx" value="{{ $settings['admob_android_order_tracking_ad_unit_id'] ?? '' }}">
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label fw-semibold">iOS — Order Tracking Native Ad Unit ID</label>
+                                <input type="text" name="admob_ios_order_tracking_ad_unit_id" class="form-control" placeholder="ca-app-pub-xxxxxxxxxxxxxxxx/xxxxxxxxxx" value="{{ $settings['admob_ios_order_tracking_ad_unit_id'] ?? '' }}">
+                            </div>
+                        </div>
+                        <div class="row g-3">
+                            <div class="col-md-6">
+                                <label class="form-label fw-semibold">Android — Checkout Native Ad Unit ID</label>
+                                <input type="text" name="admob_android_checkout_ad_unit_id" class="form-control" placeholder="ca-app-pub-xxxxxxxxxxxxxxxx/xxxxxxxxxx" value="{{ $settings['admob_android_checkout_ad_unit_id'] ?? '' }}">
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label fw-semibold">iOS — Checkout Native Ad Unit ID</label>
+                                <input type="text" name="admob_ios_checkout_ad_unit_id" class="form-control" placeholder="ca-app-pub-xxxxxxxxxxxxxxxx/xxxxxxxxxx" value="{{ $settings['admob_ios_checkout_ad_unit_id'] ?? '' }}">
                             </div>
                         </div>
                     </div>

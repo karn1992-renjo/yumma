@@ -4,6 +4,7 @@ use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
 use App\Http\Middleware\CheckRole;
+use App\Http\Middleware\CheckRoleOrPermission;
 use App\Http\Middleware\EnsureRestaurantPermission;
 use App\Http\Middleware\EnsureInstallationCompleted;
 use Illuminate\Auth\AuthenticationException;
@@ -34,22 +35,28 @@ return Application::configure(basePath: dirname(__DIR__))
         GenerateSitemap::class,
     ])
     ->withMiddleware(function (Middleware $middleware) {
+            $middleware->web(append: [\App\Http\Middleware\EnsureAdminMfa::class]);
             // Register middleware aliases
             $middleware->alias([
                 'role' => CheckRole::class,
+                'role_or_permission' => CheckRoleOrPermission::class,
                 'restaurant.permission' => EnsureRestaurantPermission::class,
                 'purchase.verified' => \App\Http\Middleware\EnsurePurchaseCodeVerified::class,
             ]);
         $middleware->append(EnsureInstallationCompleted::class);
         $middleware->validateCsrfTokens(except: [
             'webhooks/razorpay/payout',
+            'webhooks/razorpay/subscription',
             'webhooks/stripe/payout',
             'webhooks/cashfree/payout',
+            'webhooks/cashfree/subscription',
             'webhooks/exotel/call-status',
             'webhook/*',
+            'webhooks/petpooja/*',
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions) {
+        $exceptions->dontFlash(['otp', 'code', 'factor', 'recovery_code']);
         // Return JSON for API routes
         $exceptions->render(function (Throwable $e, $request) {
             if ($request->is('api/*')) {

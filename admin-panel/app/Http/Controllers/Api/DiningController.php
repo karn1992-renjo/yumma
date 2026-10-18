@@ -7,6 +7,7 @@ use App\Models\AppSetting;
 use App\Models\DiningBooking;
 use App\Models\Restaurant;
 use App\Models\CelebrationType;
+use App\Support\JsonHttp;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Validator;
@@ -41,6 +42,7 @@ class DiningController extends Controller
                       ->orWhere('restaurant_type', 'both');
             })
             ->where('is_open', true)
+            ->customerVisible()
             ->select('*')
             ->selectRaw("{$distanceSql} AS distance", [$request->lat, $request->lng, $request->lat])
             ->whereRaw("{$distanceSql} <= ?", [$request->lat, $request->lng, $request->lat, $radius])
@@ -226,13 +228,15 @@ class DiningController extends Controller
                 ], 503);
             }
 
-            $cashfreeOrder = Http::withHeaders([
+            // (float) + JsonHttp::post() -- Cashfree rejects a bare-integer
+            // order_amount for a whole-rupee total. See App\Support\JsonHttp.
+            $cashfreeOrder = JsonHttp::post(Http::withHeaders([
                 'x-api-version' => $apiVersion,
                 'x-client-id' => $clientId,
                 'x-client-secret' => $clientSecret,
-            ])->post($this->cashfreeBaseUrl() . '/pg/orders', [
+            ]), $this->cashfreeBaseUrl() . '/pg/orders', [
                 'order_id' => 'DINE_' . $booking->id . '_' . time(),
-                'order_amount' => round($booking->booking_charge, 2),
+                'order_amount' => (float) round($booking->booking_charge, 2),
                 'order_currency' => strtoupper(AppSetting::getValue('currency_code', 'INR') ?: 'INR'),
                 'customer_details' => [
                     'customer_id' => 'CUST_' . $booking->user_id,

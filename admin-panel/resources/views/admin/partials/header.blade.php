@@ -60,7 +60,7 @@
                     <i class="fas fa-bell"></i>
                     <span class="badge-notification {{ $pendingOrdersCount > 0 ? '' : 'd-none' }}" id="adminPendingOrdersBadge">{{ $pendingOrdersCount > 99 ? '99+' : $pendingOrdersCount }}</span>
                 </a>
-                <a href="{{ route('admin.support.index') }}" class="header-icon-btn" id="supportInboxBtn" title="Live chat inbox">
+                <a href="{{ route('support.index') }}" class="header-icon-btn" id="supportInboxBtn" title="Live chat inbox">
                     <i class="fas fa-comments"></i>
                     <span class="badge-notification d-none" id="supportInboxBadge">0</span>
                 </a>
@@ -219,7 +219,7 @@
             return; // branch has no unread-ticket-count endpoint yet -- badge stays hidden rather than polling a 404
         @endif
         try {
-            const response = await fetch(`{{ route('admin.support.notification-summary') }}`, {
+            const response = await fetch(`{{ route('support.notification-summary') }}`, {
                 headers: { 'X-Requested-With': 'XMLHttpRequest' }
             });
             if (!response.ok) return;
@@ -285,6 +285,8 @@
                 if (!document.hidden) this.refreshCounts();
             });
 
+            window.addEventListener('online', () => this.checkNewOrders());
+
             if ('Notification' in window && Notification.permission === 'default') {
                 Notification.requestPermission().catch(() => {});
             }
@@ -295,6 +297,7 @@
         }
 
         async checkNewOrders() {
+            if (!navigator.onLine) return;
             try {
                 const url = new URL(this.routes.checkNew, window.location.origin);
                 url.searchParams.set('last_check', this.lastCheckTime.toISOString());
@@ -329,6 +332,7 @@
         }
 
         async refreshCounts() {
+            if (!navigator.onLine) return;
             try {
                 const response = await fetch(this.routes.counts, {
                     headers: {

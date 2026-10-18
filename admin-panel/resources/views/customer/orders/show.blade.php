@@ -4,36 +4,105 @@
 
 @section('styles')
 <style>
-    .tracking-step {
-        position: relative;
-        padding: 20px;
-        background: white;
-        border-radius: 16px;
-        margin-bottom: 10px;
-        border: 1px solid #e2e8f0;
-        transition: all 0.3s;
+    .status-chip {
+        display: inline-block;
+        border-radius: 6px;
+        padding: 6px 10px;
+        font-size: 11.5px;
+        font-weight: 900;
+        text-transform: uppercase;
+        letter-spacing: 0.03em;
     }
-    
-    .tracking-step.completed {
-        background: linear-gradient(135deg, #D1FAE5 0%, #A7F3D0 100%);
-        border-color: #10B981;
+
+    .status-chip.status-cancelled { color: #E11D28; background: #FFECEC; }
+    .status-chip.status-delivered { color: #169B3A; background: #E8F8EA; }
+    .status-chip.status-live { color: #11832D; background: #E6F7E7; }
+    .status-chip.status-confirmed { color: #2563EB; background: #EAF2FF; }
+
+    .order-timeline {
+        display: flex;
+        flex-direction: column;
     }
-    
-    .tracking-step.active {
-        background: linear-gradient(135deg, #FEF3C7 0%, #FDE68A 100%);
-        border-color: #F59E0B;
+
+    .timeline-step {
+        display: flex;
+        gap: 14px;
     }
-    
-    .step-icon {
-        width: 40px;
-        height: 40px;
-        border-radius: 20px;
+
+    .timeline-marker {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+    }
+
+    .timeline-circle {
+        width: 20px;
+        height: 20px;
+        border-radius: 50%;
         display: flex;
         align-items: center;
         justify-content: center;
-        font-size: 18px;
+        font-size: 10px;
+        color: white;
+        flex-shrink: 0;
+        background: #F2F2F2;
+        border: 2px solid #D8D8D8;
+        box-sizing: border-box;
     }
-    
+
+    .timeline-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--primary);
+    }
+
+    .timeline-step.done .timeline-circle {
+        background: var(--primary);
+        border-color: var(--primary);
+    }
+
+    .timeline-step.current .timeline-circle {
+        background: white;
+        border-color: var(--primary);
+    }
+
+    .timeline-line {
+        width: 2px;
+        flex: 1;
+        min-height: 24px;
+        background: #E4E4E4;
+    }
+
+    .timeline-step.done .timeline-line {
+        background: var(--primary);
+    }
+
+    .timeline-content {
+        padding-bottom: 22px;
+    }
+
+    .timeline-label {
+        font-size: 14px;
+        font-weight: 800;
+        color: #9A9A9A;
+    }
+
+    .timeline-step.done .timeline-label {
+        color: #171717;
+    }
+
+    .timeline-step.current .timeline-label {
+        color: var(--primary);
+    }
+
+    .timeline-sub {
+        font-size: 12px;
+        color: var(--app-muted, #6B7280);
+        margin-top: 2px;
+        font-weight: 500;
+    }
+
     .item-card {
         background: #F8FAFC;
         border-radius: 12px;
@@ -59,6 +128,12 @@
 @section('content')
 @php
     $currencySymbol = App\Models\AppSetting::sanitizedCurrencySymbol();
+    $headerChipClass = match(true) {
+        $order->status === 'cancelled' => 'status-cancelled',
+        in_array($order->status, ['delivered', 'completed']) => 'status-delivered',
+        in_array($order->status, ['on_the_way', 'picked_up', 'out_for_delivery']) => 'status-live',
+        default => 'status-confirmed',
+    };
 @endphp
 <div class="container py-4">
     <div class="row">
@@ -87,7 +162,7 @@
                                 </button>
                             </form>
                             @endif
-                            <span class="badge fs-6 px-3 py-2 status-{{ $order->status }}">
+                            <span class="status-chip {{ $headerChipClass }}">
                                 {{ ucfirst(str_replace('_', ' ', $order->status)) }}
                             </span>
                         </div>
@@ -128,37 +203,43 @@
                         ];
                     @endphp
                     
+                    <div class="order-timeline">
                     @foreach($statuses as $index => $status)
                         @php
-                            $isCompleted = $index <= $currentIndex;
-                            $isActive = $index == $currentIndex;
-                            $stepClass = '';
-                            if ($isCompleted && !$isActive) $stepClass = 'completed';
-                            if ($isActive) $stepClass = 'active';
+                            $isDone = $index < $currentIndex;
+                            $isCurrent = $index == $currentIndex;
+                            $stepState = $isDone ? 'done' : ($isCurrent ? 'current' : 'pending');
                         @endphp
-                        <div class="tracking-step {{ $stepClass }}">
-                            <div class="d-flex align-items-center gap-3">
-                                <div class="step-icon bg-white shadow-sm">
-                                    <i class="fas {{ $statusIcons[$status] }} {{ $isCompleted ? 'text-success' : 'text-muted' }}"></i>
-                                </div>
-                                <div class="flex-grow-1">
-                                    <div class="fw-bold">{{ $statusLabels[$status] }}</div>
-                                    @if($isActive && $order->status == 'pending')
-                                        <small class="text-muted">Waiting for restaurant confirmation</small>
-                                    @elseif($isActive && $order->status == 'preparing')
-                                        <small class="text-muted">Your food is being prepared</small>
-                                    @elseif($isActive && $order->status == 'on_the_way')
-                                        <small class="text-muted">Your order is out for delivery</small>
+                        <div class="timeline-step {{ $stepState }}">
+                            <div class="timeline-marker">
+                                <span class="timeline-circle">
+                                    @if($isDone)
+                                        <i class="fas fa-check"></i>
+                                    @elseif($isCurrent)
+                                        <span class="timeline-dot"></span>
                                     @endif
-                                </div>
-                                @if($isActive)
-                                    <div class="spinner-border text-primary" role="status" style="width: 20px; height: 20px;">
-                                        <span class="visually-hidden">Loading...</span>
-                                    </div>
+                                </span>
+                                @if(!$loop->last)<span class="timeline-line"></span>@endif
+                            </div>
+                            <div class="timeline-content">
+                                <div class="timeline-label">{{ $statusLabels[$status] }}</div>
+                                @if($isCurrent && $order->status == 'pending')
+                                    <div class="timeline-sub">Waiting for restaurant confirmation</div>
+                                @elseif($isCurrent && $order->status == 'preparing')
+                                    <div class="timeline-sub">Your food is being prepared</div>
+                                @elseif($isCurrent && $order->status == 'on_the_way')
+                                    <div class="timeline-sub">Your order is out for delivery</div>
+                                @elseif($isDone)
+                                    <div class="timeline-sub">Completed</div>
+                                @elseif($isCurrent)
+                                    <div class="timeline-sub">In progress</div>
+                                @else
+                                    <div class="timeline-sub">Pending</div>
                                 @endif
                             </div>
                         </div>
                     @endforeach
+                    </div>
                 </div>
             </div>
             
@@ -266,7 +347,7 @@
                             </div>
                         </div>
                     </div>
-                    <a href="{{ route('restaurant.show', $order->restaurant_id) }}" class="btn btn-outline-primary w-100 mt-3 rounded-pill">
+                    <a href="{{ route('restaurant.show', $order->restaurant->slug ?? $order->restaurant_id) }}" class="btn btn-outline-primary w-100 mt-3 rounded-pill">
                         <i class="fas fa-eye me-2"></i> View Restaurant
                     </a>
                 </div>
@@ -315,23 +396,16 @@
             <div class="card border-0 shadow-sm mb-4">
                 <div class="card-body p-4">
                     <h5 class="fw-bold mb-3">
-                        <i class="fas fa-{{ $order->order_type === 'theatre_delivery' ? 'chair' : 'location-dot' }} me-2 text-primary"></i>
-                        {{ $order->order_type === 'theatre_delivery' ? 'Your Seat' : 'Delivery Address' }}
+                        <i class="fas fa-location-dot me-2 text-primary"></i> Delivery Address
                     </h5>
                     <div class="bg-light rounded p-3">
                         <p class="mb-1 fw-semibold">{{ $order->customer_name ?? 'Customer' }}</p>
-                        @if($order->order_type === 'theatre_delivery')
-                            <p class="mb-0 text-muted small">Screen {{ $order->screen_id ?? '-' }} · Seat {{ $order->seat_label ?? '-' }}</p>
-                        @else
-                            <p class="mb-0 text-muted small">{{ $order->delivery_address }}</p>
-                        @endif
+                        <p class="mb-0 text-muted small">{{ $order->delivery_address }}</p>
                         <p class="mb-0 text-muted small">{{ $order->customer_phone ?? '' }}</p>
                     </div>
-                    @if($order->order_type !== 'theatre_delivery')
-                        <button class="btn btn-outline-primary w-100 mt-3 rounded-pill" onclick="openInMaps()">
-                            <i class="fas fa-map-marker-alt me-2"></i> View in Maps
-                        </button>
-                    @endif
+                    <button class="btn btn-outline-primary w-100 mt-3 rounded-pill" onclick="openInMaps()">
+                        <i class="fas fa-map-marker-alt me-2"></i> View in Maps
+                    </button>
                 </div>
             </div>
             

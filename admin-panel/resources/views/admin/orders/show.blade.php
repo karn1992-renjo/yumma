@@ -648,6 +648,17 @@
                         <i class="fas fa-layer-group"></i>{{ $serviceType }}
                     </span>
                 </div>
+                @if($currentStatus === 'cancelled' && $order->cancelled_by_role)
+                    <div class="admin-order-meta mt-1">
+                        <span class="text-muted small">
+                            <i class="fas fa-user-slash me-1"></i>Cancelled by
+                            <strong>{{ ucfirst($order->cancelled_by_role) }}</strong>
+                            @if($order->cancelled_by_name)
+                                ({{ $order->cancelled_by_name }})
+                            @endif
+                        </span>
+                    </div>
+                @endif
             </div>
         </div>
 
@@ -1162,6 +1173,20 @@
                                 </div>
                                 <button type="submit" class="btn btn-outline-danger">
                                     <i class="fas fa-ban me-2"></i>Cancel Order
+                                </button>
+                            </form>
+                        @endif
+
+                        @if(in_array($order->payment_gateway, ['razorpay', 'cashfree', 'stripe'], true))
+                            <hr class="my-2">
+                            <form action="{{ route('admin.orders.verify-payment', $order->id) }}" method="POST" class="admin-action-stack">
+                                @csrf
+                                <div>
+                                    <label class="form-label fw-bold">Verify Payment</label>
+                                    <small class="text-muted d-block mb-2">Re-checks this payment directly with {{ ucfirst($order->payment_gateway) }} using the stored transaction reference ({{ $order->payment_id ?: $order->payment_link_id ?: 'none recorded' }}) and corrects the payment status here if the gateway confirms it was actually paid.</small>
+                                </div>
+                                <button type="submit" class="btn btn-outline-primary">
+                                    <i class="fas fa-rotate me-2"></i>Verify Payment with {{ ucfirst($order->payment_gateway) }}
                                 </button>
                             </form>
                         @endif

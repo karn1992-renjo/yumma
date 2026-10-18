@@ -29,6 +29,25 @@ class SettingController extends Controller
         return view('admin.settings.homepage', compact('settings'));
     }
 
+    public function seo()
+    {
+        $settings = AppSetting::all()->pluck('value', 'key')->toArray();
+        $robotsPath = public_path('robots.txt');
+        $robotsContent = $settings['seo_robots_txt'] ?? (File::exists($robotsPath) ? File::get($robotsPath) : '');
+        $sitemapPath = public_path('sitemap.xml');
+        $sitemapGeneratedAt = File::exists($sitemapPath) ? File::lastModified($sitemapPath) : null;
+
+        return view('admin.settings.seo', compact('settings', 'robotsContent', 'sitemapGeneratedAt'));
+    }
+
+    public function regenerateSitemap()
+    {
+        \Illuminate\Support\Facades\Artisan::call('sitemap:generate');
+
+        return redirect()->route('admin.settings.seo')
+            ->with('success', 'Sitemap regenerated successfully!');
+    }
+
     public function privacy()
     {
         $settings = AppSetting::all()->pluck('value', 'key')->toArray();
@@ -624,6 +643,7 @@ class SettingController extends Controller
             'legal_terms' => 'nullable|string',
             'legal_privacy' => 'nullable|string',
             'legal_refund' => 'nullable|string',
+            'legal_merchant' => 'nullable|string',
             'legal_contact_email' => 'nullable|email|max:255',
             'hero_title' => 'nullable|string|max:255',
             'hero_subtitle' => 'nullable|string|max:255',
@@ -662,6 +682,18 @@ class SettingController extends Controller
             'reward_points_redemption_enabled' => 'nullable|in:0,1',
             'reward_points_per_currency' => 'required_if:redirect_to,admin.settings.rewards|numeric|min:0.0001|max:1000000',
             'reward_points_min_redeem' => 'required_if:redirect_to,admin.settings.rewards|integer|min:1|max:100000000',
+            'driver_referral_enabled' => 'nullable|in:0,1',
+            'driver_referral_referrer_bonus' => 'nullable|numeric|min:0|max:1000000',
+            'driver_referral_referee_bonus' => 'nullable|numeric|min:0|max:1000000',
+            // SEO (Admin -> Settings -> SEO)
+            'seo_meta_title_suffix' => 'nullable|string|max:120',
+            'seo_meta_description' => 'nullable|string|max:320',
+            'seo_meta_keywords' => 'nullable|string|max:500',
+            'seo_og_image' => 'nullable|image|mimes:png,jpg,jpeg,webp|max:2048',
+            'seo_google_site_verification' => 'nullable|string|max:255',
+            'seo_ga4_measurement_id' => 'nullable|string|max:40',
+            'seo_gtm_container_id' => 'nullable|string|max:40',
+            'seo_robots_txt' => 'nullable|string|max:5000',
         ]);
 
         $redirectRoute = $request->input('redirect_to', 'admin.settings.index');
@@ -676,6 +708,7 @@ class SettingController extends Controller
             'admin.settings.rewards',
             'admin.settings.business',
             'admin.settings.integrations',
+            'admin.settings.seo',
         ];
 
         if (! in_array($redirectRoute, $allowedRoutes)) {
@@ -724,10 +757,20 @@ class SettingController extends Controller
             AppSetting::updateOrCreate(['key' => 'invoice_signature_image'], ['value' => $signaturePath, 'type' => 'string']);
         }
 
+        if ($request->hasFile('seo_og_image')) {
+            $ogImagePath = \App\Services\MediaStorage::store($request->file('seo_og_image'), 'seo');
+            AppSetting::updateOrCreate(['key' => 'seo_og_image'], ['value' => $ogImagePath, 'type' => 'string']);
+        }
+
+        if ($request->filled('seo_robots_txt')) {
+            File::put(public_path('robots.txt'), $request->input('seo_robots_txt'));
+        }
+
         $settings = $request->except([
             '_token',
             'firebase_service_account_json',
             'invoice_signature_image',
+            'seo_og_image',
             'redirect_to',
         ]);
 
@@ -838,6 +881,13 @@ class SettingController extends Controller
             'onboarding_slide_3_image' => 'nullable|image|mimes:png,jpg,jpeg,webp|max:2048',
             'ai_feature_enabled' => 'nullable|in:0,1',
             'api_request_timeout_seconds' => 'nullable|integer|min:5|max:120',
+            'admob_ads_enabled' => 'nullable|in:0,1',
+            'admob_android_app_id' => 'nullable|string|max:60',
+            'admob_ios_app_id' => 'nullable|string|max:60',
+            'admob_android_order_tracking_ad_unit_id' => 'nullable|string|max:60',
+            'admob_ios_order_tracking_ad_unit_id' => 'nullable|string|max:60',
+            'admob_android_checkout_ad_unit_id' => 'nullable|string|max:60',
+            'admob_ios_checkout_ad_unit_id' => 'nullable|string|max:60',
         ]);
 
         // The master AI on/off switch lives in App\Models\AiSetting (via
@@ -898,6 +948,7 @@ class SettingController extends Controller
         AppSetting::updateOrCreate(['key' => 'customer_deeplink_base_url'], ['value' => $request->customer_deeplink_base_url ?? '', 'type' => 'string']);
         AppSetting::updateOrCreate(['key' => 'customer_order_deeplink_template'], ['value' => $request->customer_order_deeplink_template ?? 'foodflow://orders/{order_id}', 'type' => 'string']);
         AppSetting::updateOrCreate(['key' => 'customer_restaurant_deeplink_template'], ['value' => $request->customer_restaurant_deeplink_template ?? 'foodflow://restaurants/{restaurant_id}', 'type' => 'string']);
+        AppSetting::updateOrCreate(['key' => 'driver_deeplink_base_url'], ['value' => $request->driver_deeplink_base_url ?? '', 'type' => 'string']);
         AppSetting::updateOrCreate(['key' => 'customer_wallet_deeplink_template'], ['value' => $request->customer_wallet_deeplink_template ?? 'foodflow://wallet', 'type' => 'string']);
         AppSetting::updateOrCreate(['key' => 'api_request_timeout_seconds'], ['value' => $request->input('api_request_timeout_seconds', 20), 'type' => 'number']);
         AppSetting::updateOrCreate(['key' => 'onboarding_intro_title'], ['value' => $request->onboarding_intro_title ?? '', 'type' => 'string']);
@@ -922,12 +973,24 @@ class SettingController extends Controller
             }
         }
 
+        AppSetting::updateOrCreate(['key' => 'admob_ads_enabled'], ['value' => $request->boolean('admob_ads_enabled') ? '1' : '0', 'type' => 'boolean']);
+        foreach ([
+            'admob_android_app_id',
+            'admob_ios_app_id',
+            'admob_android_order_tracking_ad_unit_id',
+            'admob_ios_order_tracking_ad_unit_id',
+            'admob_android_checkout_ad_unit_id',
+            'admob_ios_checkout_ad_unit_id',
+        ] as $key) {
+            AppSetting::updateOrCreate(['key' => $key], ['value' => $request->input($key, ''), 'type' => 'string']);
+        }
+
         Cache::forget('app_settings');
-        
+
         return redirect()->route('admin.settings.index')
             ->with('success', 'App branding updated successfully!');
     }
-    
+
     public function updatePaymentSettings(Request $request)
     {
         $request->validate([
@@ -951,6 +1014,10 @@ class SettingController extends Controller
             'razorpay_secret' => 'nullable|string',
             'razorpay_mode' => 'nullable|in:test,live',
             'razorpay_x_account_number' => 'nullable|string',
+            'razorpay_subscription_webhook_secret' => 'nullable|string',
+            'cashfree_subscription_webhook_secret' => 'nullable|string',
+            'subscription_past_due_grace_days' => 'nullable|integer|min:0|max:30',
+            'story_video_max_seconds' => 'nullable|integer|min:5|max:300',
             'stripe_key' => 'nullable|string',
             'stripe_secret' => 'nullable|string',
             'stripe_mode' => 'nullable|in:test,live',
@@ -1005,6 +1072,10 @@ class SettingController extends Controller
             'razorpay_secret',
             'razorpay_mode',
             'razorpay_x_account_number',
+            'razorpay_subscription_webhook_secret',
+            'cashfree_subscription_webhook_secret',
+            'subscription_past_due_grace_days',
+            'story_video_max_seconds',
             'stripe_key',
             'stripe_secret',
             'stripe_mode',

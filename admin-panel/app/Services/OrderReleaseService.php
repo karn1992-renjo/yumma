@@ -56,6 +56,15 @@ class OrderReleaseService
         // (routes/console.php) falls back to an Exotel voice call.
 
         try {
+            app(\App\Services\Petpooja\PetpoojaOrderRelayService::class)->relay($order);
+        } catch (\Throwable $e) {
+            Log::warning('Petpooja order relay failed.', [
+                'order_id' => $order->id,
+                'message' => $e->getMessage(),
+            ]);
+        }
+
+        try {
             app(\App\Services\Tax\TaxLedgerService::class)->recordOrderGst($order);
         } catch (\Throwable $e) {
             Log::warning('Order GST ledger write failed.', [

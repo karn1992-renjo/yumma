@@ -24,8 +24,11 @@
     <!-- Favicon -->
     <link rel="icon" href="{{ $faviconUrl }}">
     
-    <!-- Google Fonts -->
-    <link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,300;14..32,400;14..32,500;14..32,600;14..32,700;14..32,800&display=swap" rel="stylesheet">
+    <!-- Google Fonts -- matches the Flutter app: Plus Jakarta Sans app-wide, Nunito Sans for body text -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Nunito+Sans:wght@400;500;600;700;800;900&display=swap" onload="this.onload=null;this.rel='stylesheet'">
+    <noscript><link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Nunito+Sans:wght@400;500;600;700;800;900&display=swap" rel="stylesheet"></noscript>
     
     <!-- Bootstrap 5 CSS -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
@@ -65,6 +68,15 @@
             --gray-700: #374151;
             --gray-800: #1F2937;
             --gray-900: #111827;
+
+            /* App-parity tokens -- same names/values as home_new.blade.php and restaurant-detail.blade.php */
+            --app-ink: #111827;
+            --app-muted: #6B7280;
+            --app-border: #E5E7EB;
+            --app-bg: #FAFAFA;
+            --app-success: #22C55E;
+            --app-danger: #E53935;
+            --app-card-radius: 24px;
         }
 
         * {
@@ -74,10 +86,14 @@
         }
 
         body {
-            font-family: 'Inter', sans-serif;
+            font-family: 'Nunito Sans', sans-serif;
             background: #FFFFFF;
             color: var(--gray-800);
             overflow-x: hidden;
+        }
+
+        h1, h2, h3, h4, h5, h6, .navbar-brand, .page-title {
+            font-family: 'Plus Jakarta Sans', sans-serif;
         }
 
         /* ========== TOP NAVBAR STYLES ========== */
@@ -750,83 +766,7 @@
     @yield('styles')
 </head>
 <body>
-    <!-- Top Navbar -->
-    <nav class="navbar navbar-expand-lg">
-        <div class="container">
-            <a class="navbar-brand" href="{{ route('home') }}">
-                {{ $appName }}
-            </a>
-            
-            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarMain">
-                <span class="navbar-toggler-icon"></span>
-            </button>
-            
-            <div class="collapse navbar-collapse" id="navbarMain">
-                <ul class="navbar-nav mx-auto mb-2 mb-lg-0">
-                    <li class="nav-item">
-                        <a class="nav-link {{ request()->routeIs('home') ? 'active' : '' }}" href="{{ route('home') }}">
-                            <i class="fas fa-home me-1"></i> Home
-                        </a>
-                    </li>
-                    <li class="nav-item">
-                        <a class="nav-link {{ request()->routeIs('restaurant*') ? 'active' : '' }}" href="{{ route('home') }}#restaurants">
-                            <i class="fas fa-utensils me-1"></i> Restaurants
-                        </a>
-                    </li>
-                    @auth
-                    <li class="nav-item">
-                        <a class="nav-link {{ request()->routeIs('customer.orders*') ? 'active' : '' }}" href="{{ route('customer.orders.index') }}">
-                            <i class="fas fa-shopping-bag me-1"></i> My Orders
-                        </a>
-                    </li>
-                    @endauth
-                </ul>
-                
-                <div class="d-flex gap-2 align-items-center">
-                    @auth
-                        <a href="{{ route('checkout.index') }}" class="position-relative me-2">
-                            <i class="fas fa-shopping-cart fa-lg" style="color: var(--gray-600);"></i>
-                            @php
-                                $cartCount = session()->get('cart_count', 0);
-                            @endphp
-                            @if($cartCount > 0)
-                                <span class="cart-count">{{ $cartCount > 99 ? '99+' : $cartCount }}</span>
-                            @endif
-                        </a>
-                        
-                        <div class="dropdown">
-                            <div class="user-avatar" data-bs-toggle="dropdown" style="cursor: pointer;">
-                                {{ substr(auth()->user()->name, 0, 1) }}
-                            </div>
-                            <ul class="dropdown-menu dropdown-menu-end">
-                                <li><a class="dropdown-item" href="{{ route('customer.orders.index') }}">
-                                    <i class="fas fa-shopping-bag me-2"></i> My Orders
-                                </a></li>
-                                <li><a class="dropdown-item" href="{{ route('profile.edit') }}">
-                                    <i class="fas fa-user me-2"></i> Profile Settings
-                                </a></li>
-                                <li><a class="dropdown-item" href="{{ route('customer.addresses.index') }}">
-                                    <i class="fas fa-map-marker-alt me-2"></i> Saved Addresses
-                                </a></li>
-                                <li><hr class="dropdown-divider"></li>
-                                <li>
-                                    <form method="POST" action="{{ route('logout') }}">
-                                        @csrf
-                                        <button type="submit" class="dropdown-item text-danger">
-                                            <i class="fas fa-sign-out-alt me-2"></i> Logout
-                                        </button>
-                                    </form>
-                                </li>
-                            </ul>
-                        </div>
-                    @else
-                        <a href="{{ route('login') }}" class="btn btn-outline-primary btn-sm rounded-pill px-4">Login</a>
-                        <a href="{{ route('register') }}" class="btn btn-primary btn-sm rounded-pill px-4">Sign Up</a>
-                    @endauth
-                </div>
-            </div>
-        </div>
-    </nav>
+    @include('partials.frontend-header')
     
     <!-- Location Bar (if on home page or restaurant pages) -->
     @if(request()->routeIs('home') || request()->routeIs('restaurant.show'))
@@ -861,56 +801,7 @@
         @yield('content')
     </main>
     
-    <!-- Footer -->
-    <footer class="footer">
-        <div class="container">
-            <div class="row">
-                <div class="col-md-4 mb-4">
-                    <h5>{{ $appName }}</h5>
-                    <p class="small">Order food from the best restaurants in your city. Fast delivery, great taste!</p>
-                    <div class="social-icons">
-                        <a href="#"><i class="fab fa-facebook-f"></i></a>
-                        <a href="#"><i class="fab fa-instagram"></i></a>
-                        <a href="#"><i class="fab fa-twitter"></i></a>
-                        <a href="#"><i class="fab fa-linkedin-in"></i></a>
-                    </div>
-                </div>
-                <div class="col-md-2 mb-4">
-                    <h5>Company</h5>
-                    <ul class="footer-links">
-                        <li><a href="#">About Us</a></li>
-                        <li><a href="#">Careers</a></li>
-                        <li><a href="#">Blog</a></li>
-                        <li><a href="#">Press</a></li>
-                    </ul>
-                </div>
-                <div class="col-md-2 mb-4">
-                    <h5>Support</h5>
-                    <ul class="footer-links">
-                        <li><a href="#">Help Center</a></li>
-                        <li><a href="#">FAQs</a></li>
-                        <li><a href="#">Contact Us</a></li>
-                        <li><a href="{{ route('privacy-policy') }}">Privacy Policy</a></li>
-                    </ul>
-                </div>
-                <div class="col-md-4 mb-4">
-                    <h5>Download App</h5>
-                    <p class="small">Get the best food experience with our mobile app</p>
-                    <div class="d-flex gap-3">
-                        <a href="#" class="btn btn-dark rounded-pill">
-                            <i class="fab fa-google-play me-2"></i> Google Play
-                        </a>
-                        <a href="#" class="btn btn-dark rounded-pill">
-                            <i class="fab fa-apple me-2"></i> App Store
-                        </a>
-                    </div>
-                </div>
-            </div>
-            <div class="copyright">
-                <p>&copy; {{ date('Y') }} {{ $appName }}. All rights reserved.</p>
-            </div>
-        </div>
-    </footer>
+    @include('partials.frontend-footer')
     
     <!-- Location Modal -->
     <div class="modal fade" id="locationModal" tabindex="-1">

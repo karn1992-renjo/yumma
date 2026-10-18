@@ -33,6 +33,25 @@
         ];
     @endphp
     <meta name="restaurant-id" content="{{ auth()->user()->activeRestaurant()?->id ?? '' }}">
+    @php
+        $__activeRestaurant = auth()->user()?->activeRestaurant();
+        $__needsBillingChoice = $__activeRestaurant?->needsBillingChoice() ?? false;
+        $__onBillingChoicePage = request()->routeIs('restaurant.billing.*');
+        $__commissionDefinition = null;
+        if ($__needsBillingChoice && ! $__onBillingChoicePage && $__activeRestaurant) {
+            $__commissionType = $__activeRestaurant->commission_calculation_type;
+            $__commissionValue = $__activeRestaurant->commission_rate;
+            $__commissionDefinition = ($__commissionType === 'global' || $__commissionValue === null || $__commissionValue === '')
+                ? [
+                    'type' => \App\Models\CommissionSetting::getCalculationType('restaurant'),
+                    'value' => (float) (\App\Models\CommissionSetting::getRate('restaurant') ?: 0),
+                ]
+                : [
+                    'type' => $__commissionType ?: \App\Models\CommissionSetting::TYPE_PERCENTAGE,
+                    'value' => (float) $__commissionValue,
+                ];
+        }
+    @endphp
     <title>@yield('title', 'Restaurant Dashboard') - {{ $appName ?? config('app.name') }}</title>
     <link rel="icon" href="{{ $appFavicon ? $brandingUrl($appFavicon) : asset('favicon.ico') }}">
     
@@ -1555,15 +1574,18 @@
     @yield('styles')
 </head>
 <body class="dashboard-ui-compact">
+@if ($__needsBillingChoice && ! $__onBillingChoicePage)
+    @include('restaurant.partials.billing-choice-required', ['commissionDefinition' => $__commissionDefinition])
+@else
     <!-- Sidebar Overlay for Mobile -->
     <div class="sidebar-overlay" id="sidebarOverlay" onclick="closeSidebar()"></div>
-    
+
     <!-- Sidebar -->
     @include('restaurant.partials.sidebar')
-    
+
     <!-- Top Header -->
     @include('restaurant.partials.header')
-    
+
     <!-- Main Content -->
     <div class="main-content">
         <div class="page-content">
@@ -2104,5 +2126,6 @@
 
     @include('partials.web-visit-tracker', ['panel' => 'restaurant'])
     @yield('scripts')
+@endif
 </body>
 </html>

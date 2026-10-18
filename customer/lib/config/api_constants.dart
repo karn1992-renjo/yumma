@@ -93,6 +93,16 @@ class ApiConstants {
   static String removeFavoriteMenuItem(int menuItemId) =>
       '/favorites/menu-items/$menuItemId/remove';
 
+  // Gold membership (waives delivery fees)
+  static const String goldPlans = '/gold/plans';
+  static const String goldCurrent = '/gold/current';
+  static const String goldSubscribe = '/gold/subscribe';
+  static const String goldCancel = '/gold/cancel';
+
+  // Restaurant Stories
+  static String restaurantStories(int restaurantId) => '/restaurants/$restaurantId/stories';
+  static String storyMarkViewed(int storyId) => '/stories/$storyId/viewed';
+
   // Content endpoints
   static const String homeSections = '/home/sections';
   static const String banners = '/banners';

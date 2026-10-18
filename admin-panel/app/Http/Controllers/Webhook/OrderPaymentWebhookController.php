@@ -13,16 +13,29 @@ class OrderPaymentWebhookController extends Controller
     public function __construct(
         private readonly PaymentGatewayManager $gateways,
         private readonly OrderPaymentService $payments,
-    ) {
-    }
+    ) {}
 
     public function __invoke(Request $request, string $gateway)
     {
         abort_unless(in_array($gateway, ['razorpay', 'cashfree', 'stripe'], true), 404);
 
+        Log::info('Order payment webhook received.', [
+            'gateway' => $gateway,
+            'ip' => $request->ip(),
+            'content_length' => strlen($request->getContent()),
+        ]);
+
         try {
             $event = $this->gateways->gateway($gateway)->verifyWebhook($request);
             $attempt = $this->payments->completeFromWebhook($gateway, $event);
+
+            Log::info('Order payment webhook processed.', [
+                'gateway' => $gateway,
+                'payment_attempt_id' => $attempt?->id,
+                'attempt_status' => $attempt?->status,
+                'order_id' => $attempt?->order_id,
+                'processed' => $attempt !== null,
+            ]);
 
             return response()->json([
                 'success' => true,
@@ -32,6 +45,8 @@ class OrderPaymentWebhookController extends Controller
             Log::warning('Order payment webhook rejected.', [
                 'gateway' => $gateway,
                 'message' => $exception->getMessage(),
+                'exception_class' => $exception::class,
+                'file' => $exception->getFile() . ':' . $exception->getLine(),
             ]);
 
             return response()->json([

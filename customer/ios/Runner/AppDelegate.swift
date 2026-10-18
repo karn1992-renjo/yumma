@@ -5,6 +5,11 @@ import FirebaseAuth
 import FirebaseMessaging
 import GoogleMaps
 import UserNotifications
+import google_mobile_ads
+
+// Must match the factoryId Dart passes to NativeAd(...) in
+// lib/widgets/common/native_ad_widget.dart.
+private let nativeAdFactoryId = "listTileNativeAd"
 
 @main
 @objc class AppDelegate: FlutterAppDelegate, MessagingDelegate {
@@ -24,6 +29,12 @@ import UserNotifications
 
         // Register Flutter plugins
         GeneratedPluginRegistrant.register(with: self)
+
+        FLTGoogleMobileAdsPlugin.registerNativeAdFactory(
+            self,
+            factoryId: nativeAdFactoryId,
+            nativeAdFactory: ListTileNativeAdFactory()
+        )
 
         UNUserNotificationCenter.current().delegate = self
         Messaging.messaging().delegate = self

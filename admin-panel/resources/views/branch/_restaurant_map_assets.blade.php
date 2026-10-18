@@ -317,6 +317,7 @@ document.addEventListener('DOMContentLoaded', function () {
     const statusEl = document.getElementById('locationStatus');
     const zonePreviewName = document.getElementById('zonePreviewName');
     const zonePreviewMeta = document.getElementById('zonePreviewMeta');
+    const deliveryAreaSelect = document.getElementById('deliveryAreaSelect');
     const mapContainer = document.getElementById('restaurantMap');
     if (!mapContainer) return;
     if (!window.google || !google.maps) {
@@ -399,6 +400,7 @@ document.addEventListener('DOMContentLoaded', function () {
 
         zonePreviewName.textContent = zone.name;
         zonePreviewMeta.textContent = zone.description || `Matched mapped zone within ${zone.radius_km ?? '-'} km coverage.`;
+        if (deliveryAreaSelect) deliveryAreaSelect.value = String(zone.id);
     }
 
     function getRadiusMeters() {
@@ -504,7 +506,13 @@ document.addEventListener('DOMContentLoaded', function () {
         }
         updateStatus('Detecting current location...');
         navigator.geolocation.getCurrentPosition(
-            (position) => reverseGeocode(position.coords.latitude, position.coords.longitude),
+            (position) => {
+                // Capture the real GPS reading immediately -- don't depend on
+                // the address reverse-lookup succeeding (or the shim actually
+                // echoing coordinates back) just to set lat/lng.
+                updateMarker(position.coords.latitude, position.coords.longitude);
+                reverseGeocode(position.coords.latitude, position.coords.longitude);
+            },
             () => updateStatus('Permission denied or unable to detect location.'),
             { timeout: 10000 }
         );

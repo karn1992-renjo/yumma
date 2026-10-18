@@ -19,8 +19,7 @@ class OrderPaymentService
     public function __construct(
         private readonly PaymentGatewayManager $gateways,
         private readonly FirebaseHelper $firebase,
-    ) {
-    }
+    ) {}
 
     public function createCustomerPayment(Order $order, string $gateway, int $userId): PaymentAttempt
     {
@@ -140,9 +139,38 @@ class OrderPaymentService
     {
         $releaseOrderId = null;
 
+        // $attempts=3: this locks the Order row then updates sibling
+        // payment_attempts rows for the same order (expireOtherOpenAttempts()
+        // below) -- a concurrent statusPayload() poll for the same order
+        // does a similar update outside any transaction, and under load the
+        // two can lock those rows in a different order and genuinely
+        // deadlock (confirmed live: SQLSTATE[40001] on this exact query).
+        // Laravel auto-retries the whole closure when the DB reports a
+        // deadlock/lock-wait-timeout, which is the correct fix for a
+        // transient lock conflict like this -- not a real data problem.
+        \Log::info('completeFromWebhook: processing event.', [
+            'gateway' => $gateway,
+            'event_id' => $event['event_id'] ?? null,
+            'gateway_reference' => $event['gateway_reference'] ?? null,
+            'payment_link_id' => $event['payment_link_id'] ?? null,
+            'transaction_id' => $event['transaction_id'] ?? null,
+            'payment_attempt_id' => $event['payment_attempt_id'] ?? null,
+            'status' => $event['status'] ?? null,
+            'event' => $event['event'] ?? null,
+            'amount' => $event['amount'] ?? null,
+        ]);
+
         $attempt = DB::transaction(function () use ($gateway, $event, &$releaseOrderId) {
             $attempt = $this->resolveAttempt($gateway, $event);
             if (! $attempt) {
+                \Log::warning('completeFromWebhook: no matching PaymentAttempt found for webhook event.', [
+                    'gateway' => $gateway,
+                    'payment_attempt_id' => $event['payment_attempt_id'] ?? null,
+                    'gateway_reference' => $event['gateway_reference'] ?? null,
+                    'payment_link_id' => $event['payment_link_id'] ?? null,
+                    'transaction_id' => $event['transaction_id'] ?? null,
+                ]);
+
                 return null;
             }
 
@@ -152,11 +180,21 @@ class OrderPaymentService
             }
 
             if ($attempt->status === PaymentAttempt::STATUS_SUCCESS) {
+                \Log::info('completeFromWebhook: attempt already marked success, no-op.', [
+                    'payment_attempt_id' => $attempt->id,
+                    'order_id' => $attempt->order_id,
+                ]);
+
                 return $attempt;
             }
 
             $order = Order::whereKey($attempt->order_id)->lockForUpdate()->firstOrFail();
             if ($order->payment_status === 'success') {
+                \Log::info('completeFromWebhook: order already paid via a different attempt, cancelling this one.', [
+                    'payment_attempt_id' => $attempt->id,
+                    'order_id' => $order->id,
+                ]);
+
                 $attempt->forceFill([
                     'status' => PaymentAttempt::STATUS_CANCELLED,
                     'webhook_event_id' => $event['event_id'] ?? $attempt->webhook_event_id,
@@ -167,6 +205,15 @@ class OrderPaymentService
             }
 
             $isSuccessfulPayment = $this->isSuccessfulGatewayStatus($gateway, (string) ($event['status'] ?? ''), (string) ($event['event'] ?? ''));
+
+            \Log::info('completeFromWebhook: success determination.', [
+                'payment_attempt_id' => $attempt->id,
+                'order_id' => $order->id,
+                'raw_status' => $event['status'] ?? null,
+                'raw_event' => $event['event'] ?? null,
+                'is_successful_payment' => $isSuccessfulPayment,
+                'attempt_is_expired' => $attempt->isExpired(),
+            ]);
 
             if ($attempt->isExpired() && ! $isSuccessfulPayment) {
                 $attempt->forceFill([
@@ -180,6 +227,14 @@ class OrderPaymentService
             }
 
             if (! $isSuccessfulPayment) {
+                \Log::warning('completeFromWebhook: gateway status not recognized as successful, marking attempt failed.', [
+                    'payment_attempt_id' => $attempt->id,
+                    'order_id' => $order->id,
+                    'gateway' => $gateway,
+                    'raw_status' => $event['status'] ?? null,
+                    'raw_event' => $event['event'] ?? null,
+                ]);
+
                 $attempt->forceFill([
                     'status' => PaymentAttempt::STATUS_FAILED,
                     'webhook_event_id' => $event['event_id'] ?? null,
@@ -190,6 +245,13 @@ class OrderPaymentService
             }
 
             if (isset($event['amount']) && round((float) $event['amount'], 2) !== round((float) $attempt->amount, 2)) {
+                \Log::warning('completeFromWebhook: webhook amount does not match payment attempt amount.', [
+                    'payment_attempt_id' => $attempt->id,
+                    'order_id' => $order->id,
+                    'webhook_amount' => $event['amount'],
+                    'attempt_amount' => (float) $attempt->amount,
+                ]);
+
                 throw new UnprocessableEntityHttpException('Webhook amount does not match payment attempt.');
             }
 
@@ -212,8 +274,14 @@ class OrderPaymentService
                 $releaseOrderId = $order->id;
             }
 
+            \Log::info('completeFromWebhook: attempt marked success, order marked paid.', [
+                'payment_attempt_id' => $attempt->id,
+                'order_id' => $order->id,
+                'source' => $attempt->source,
+            ]);
+
             return $attempt->fresh();
-        });
+        }, 3);
 
         if ($attempt?->status === PaymentAttempt::STATUS_SUCCESS) {
             if ($releaseOrderId) {
@@ -239,16 +307,34 @@ class OrderPaymentService
         $this->reconcileOpenGatewayAttempts($order);
         $order = $order->fresh() ?: $order;
 
-        PaymentAttempt::where('order_id', $order->id)
-            ->whereIn('status', [PaymentAttempt::STATUS_PENDING, PaymentAttempt::STATUS_ACTIVE])
-            ->whereNotNull('expires_at')
-            ->where('expires_at', '<=', now())
-            ->update(['status' => PaymentAttempt::STATUS_EXPIRED, 'updated_at' => now()]);
+        // statusPayload() is polled frequently while a customer waits on
+        // payment confirmation, so this update commonly runs concurrently
+        // with completeFromWebhook()'s own transaction touching the same
+        // order's payment_attempts rows -- wrapped with a retry count so a
+        // transient deadlock (SQLSTATE[40001], confirmed live on this exact
+        // query) gets retried automatically instead of failing the request.
+        DB::transaction(function () use ($order) {
+            PaymentAttempt::where('order_id', $order->id)
+                ->whereIn('status', [PaymentAttempt::STATUS_PENDING, PaymentAttempt::STATUS_ACTIVE])
+                ->whereNotNull('expires_at')
+                ->where('expires_at', '<=', now())
+                ->update(['status' => PaymentAttempt::STATUS_EXPIRED, 'updated_at' => now()]);
+        }, 3);
 
         $order->loadMissing([
             'paymentAttempts' => fn ($query) => $query->latest(),
             'activePaymentAttempt',
         ]);
+
+        if ($order->activePaymentAttempt?->source === PaymentAttempt::SOURCE_DRIVER_QR) {
+            \Log::info('statusPayload: driver QR order polled.', [
+                'order_id' => $order->id,
+                'order_payment_status' => $order->payment_status,
+                'active_attempt_id' => $order->activePaymentAttempt->id,
+                'active_attempt_status' => $order->activePaymentAttempt->status,
+                'active_attempt_gateway' => $order->activePaymentAttempt->gateway,
+            ]);
+        }
 
         return [
             'payment_status' => $order->payment_status,

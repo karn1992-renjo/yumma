@@ -12,6 +12,7 @@ import 'package:lottie/lottie.dart' hide Marker;
 import 'package:provider/provider.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
+import '../../config/ad_config.dart';
 import '../../config/api_constants.dart';
 import '../../providers/order_provider.dart';
 import '../../providers/auth_provider.dart';
@@ -27,6 +28,7 @@ import '../../theme/foodflow_theme.dart';
 import '../../utils/currency_utils.dart';
 import '../../widgets/common/app_cached_image.dart';
 import '../../widgets/common/app_skeleton.dart';
+import '../../widgets/common/native_ad_widget.dart';
 import '../../widgets/customer/order_feedback_dialog.dart';
 import '../../widgets/customer/tip_driver_sheet.dart';
 import 'order_chat_screen.dart';
@@ -1047,8 +1049,8 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen>
       return [];
     }
     try {
-      final points = await DirectionsService.fetchRoutePoints(
-          startLocation, endLocation);
+      final points =
+          await DirectionsService.fetchRoutePoints(startLocation, endLocation);
       if (points.length >= 2) return points;
     } catch (e) {
       debugPrint('Route loading error: $e');
@@ -1331,7 +1333,8 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen>
   /// call masking is active, the real number otherwise) rather than dialing
   /// a phone field straight out of the order payload -- that field may be
   /// redacted server-side once masking is on.
-  Future<void> _callViaMaskedNumber(String target, String fallbackMessage) async {
+  Future<void> _callViaMaskedNumber(
+      String target, String fallbackMessage) async {
     final order = _order;
     if (order == null) return;
 
@@ -1339,9 +1342,8 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen>
       final response = await ApiService().get(
         ApiConstants.orderCallNumber(order.id, target),
       );
-      final number = response is Map
-          ? (response['data']?['number'] as String?)
-          : null;
+      final number =
+          response is Map ? (response['data']?['number'] as String?) : null;
       await _launchPhone(number, fallbackMessage);
     } catch (e) {
       if (!mounted) return;
@@ -2752,8 +2754,7 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen>
                     subtitle: _order!.restaurant?.address ?? 'Pickup location'),
                 if (_order!.isTheatreDelivery)
                   _buildRoutePointText(
-                      title: 'Your seat',
-                      subtitle: _order!.theatreSeatLabel)
+                      title: 'Your seat', subtitle: _order!.theatreSeatLabel)
                 else if (!isTakeaway)
                   _buildRoutePointText(
                       title: 'Delivery address',
@@ -3119,8 +3120,8 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen>
     // Banner mode: admin marks the campaign `type = banner`, or the caller
     // asks for it (bottom "Explore" slot). Needs a creative image; without
     // one we fall back to the compact row.
-    final wantsBanner = banner ??
-        (c['type']?.toString().toLowerCase() == 'banner');
+    final wantsBanner =
+        banner ?? (c['type']?.toString().toLowerCase() == 'banner');
     final asBanner = wantsBanner && image.isNotEmpty;
 
     if (asBanner) {
@@ -3299,8 +3300,7 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen>
                     color: green,
                   ),
                 ),
-                const Icon(Icons.chevron_right_rounded,
-                    size: 18, color: green),
+                const Icon(Icons.chevron_right_rounded, size: 18, color: green),
               ],
             ),
           ),
@@ -3338,6 +3338,43 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen>
         ),
       ),
     );
+  }
+
+  /// Inserts exactly 2 native ads spread evenly through the section list
+  /// (roughly after the 1/3 and 2/3 marks), each wrapped in its own
+  /// RepaintBoundary so an individual ad's own layout/paint (AdMob's
+  /// AdWidget is a platform view) doesn't force neighbouring cards to
+  /// repaint.
+  List<Widget> _withAdAfterEachSection(List<Widget> sections) {
+    if (sections.isEmpty) return sections;
+
+    final lastIndex = sections.length - 1;
+    final firstAdAfter = (sections.length / 3).floor().clamp(0, lastIndex);
+    // Only attempt a second position when there's room for one after the
+    // first -- clamp(lower, upper) throws if lower > upper, which a short
+    // section list (e.g. length 1) would otherwise hit.
+    final secondAdAfter = sections.length > 1
+        ? (sections.length * 2 / 3).floor().clamp(firstAdAfter, lastIndex)
+        : firstAdAfter;
+    final adIndexes = secondAdAfter > firstAdAfter
+        ? {firstAdAfter, secondAdAfter}
+        : {firstAdAfter};
+
+    final result = <Widget>[];
+    for (var i = 0; i < sections.length; i++) {
+      result.add(sections[i]);
+      if (adIndexes.contains(i)) {
+        result.add(const SizedBox(height: 12));
+        result.add(
+          RepaintBoundary(
+            child:
+                NativeAdWidget(adUnitId: AdConfig.nativeAdUnitIdOrderTracking),
+          ),
+        );
+        result.add(const SizedBox(height: 12));
+      }
+    }
+    return result;
   }
 
   Widget _buildHeroStatusCard() {
@@ -3736,7 +3773,8 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen>
             style: TextStyle(fontSize: 11.5, color: Color(0xFF9CA3AF))));
       }
       metaParts
-        ..add(const Icon(Icons.star_rounded, size: 13, color: Color(0xFFF5A623)))
+        ..add(
+            const Icon(Icons.star_rounded, size: 13, color: Color(0xFFF5A623)))
         ..add(const SizedBox(width: 2))
         ..add(Text(
           driverRating.toString(),
@@ -3749,7 +3787,9 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen>
     if (metaParts.isEmpty) {
       metaParts.add(Text(
         hasDriver
-            ? (vehicleLabel.isNotEmpty ? vehicleLabel : 'Assigned to this order')
+            ? (vehicleLabel.isNotEmpty
+                ? vehicleLabel
+                : 'Assigned to this order')
             : order.statusText,
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
@@ -3810,8 +3850,7 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen>
                         fontWeight: FontWeight.w900,
                       ),
                     ),
-                    if (hasDriver &&
-                        (driver?.driverCode ?? '').isNotEmpty) ...[
+                    if (hasDriver && (driver?.driverCode ?? '').isNotEmpty) ...[
                       const SizedBox(height: 2),
                       Text(
                         'Partner ID ${driver?.driverCode}',
@@ -3845,8 +3884,8 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen>
                         builder: (_) => OrderChatScreen(order: order),
                       ),
                     ),
-                    icon: const Icon(Icons.chat_bubble_outline_rounded,
-                        size: 18),
+                    icon:
+                        const Icon(Icons.chat_bubble_outline_rounded, size: 18),
                     label: const Text('Send a message'),
                     style: OutlinedButton.styleFrom(
                       foregroundColor: const Color(0xFF1A1A1A),
@@ -4078,8 +4117,8 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen>
                   children: [
                     const Text(
                       'Order delivered',
-                      style: TextStyle(
-                          fontSize: 15, fontWeight: FontWeight.w900),
+                      style:
+                          TextStyle(fontSize: 15, fontWeight: FontWeight.w900),
                     ),
                     const SizedBox(height: 2),
                     Text(
@@ -4127,8 +4166,8 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen>
               ),
               borderRadius: BorderRadius.circular(12),
               child: Container(
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 12, vertical: 12),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
                 decoration: BoxDecoration(
                   color: const Color(0xFFFFF7ED),
                   borderRadius: BorderRadius.circular(12),
@@ -4303,7 +4342,10 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen>
   ({IconData icon, Color color}) _weatherStyle(WeatherAdvisoryKind kind) {
     switch (kind) {
       case WeatherAdvisoryKind.rain:
-        return (icon: Icons.water_drop_outlined, color: const Color(0xFF3B82F6));
+        return (
+          icon: Icons.water_drop_outlined,
+          color: const Color(0xFF3B82F6)
+        );
       case WeatherAdvisoryKind.storm:
         return (icon: Icons.bolt_rounded, color: const Color(0xFF7C3AED));
       case WeatherAdvisoryKind.snow:
@@ -4464,8 +4506,9 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen>
 
     final name = order.customerName.trim();
     final phone = order.customerPhone.trim();
-    final address =
-        order.isTheatreDelivery ? order.theatreSeatLabel : order.deliveryAddress.trim();
+    final address = order.isTheatreDelivery
+        ? order.theatreSeatLabel
+        : order.deliveryAddress.trim();
     final label = order.isTheatreDelivery ? 'Seat' : 'Home';
 
     final instructions = order.deliveryInstructions?.trim() ?? '';
@@ -4488,9 +4531,8 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen>
       ),
       _zRow(
         icon: Icons.moped_outlined,
-        title: instructions.isEmpty
-            ? 'Add delivery instructions'
-            : instructions,
+        title:
+            instructions.isEmpty ? 'Add delivery instructions' : instructions,
         subtitle: instructions.isEmpty ? null : 'Tap to edit',
         onTap: canEdit ? () => _editOrderNote(cooking: false) : null,
       ),
@@ -4601,7 +4643,9 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen>
       await _loadOrderDetails(showLoading: false);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('$title saved'), duration: const Duration(seconds: 2)),
+          SnackBar(
+              content: Text('$title saved'),
+              duration: const Duration(seconds: 2)),
         );
       }
     }
@@ -4637,13 +4681,11 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen>
     final order = _order!;
     final r = order.restaurant;
     final rName = r?.name.trim() ?? 'Restaurant';
-    final locality = (r?.address ?? '')
-        .split(',')
-        .map((e) => e.trim())
-        .firstWhere(
-          (e) => e.length >= 3 && !RegExp(r'^\d+$').hasMatch(e),
-          orElse: () => '',
-        );
+    final locality =
+        (r?.address ?? '').split(',').map((e) => e.trim()).firstWhere(
+              (e) => e.length >= 3 && !RegExp(r'^\d+$').hasMatch(e),
+              orElse: () => '',
+            );
     final itemCount =
         order.items.fold<int>(0, (sum, it) => sum + (it.quantity));
     final firstItem = order.items.isNotEmpty ? order.items.first.name : '';
@@ -4651,7 +4693,8 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen>
         ? '$itemCount x $firstItem'
         : '$itemCount items';
     final rCode = r?.code ?? '';
-    final rSubtitle = [rCode, locality].where((e) => e.isNotEmpty).join('  ·  ');
+    final rSubtitle =
+        [rCode, locality].where((e) => e.isNotEmpty).join('  ·  ');
 
     return _zCard(rows: [
       _zRow(
@@ -5040,44 +5083,45 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen>
                             ),
                           ),
                           _buildHeroStatusCard(),
-                          if (order.isCancelled) ...[
-                            _buildOrderSummaryLink(),
-                            _buildCancelledStateCard(),
-                            _buildCancelledTimelineCard(),
-                            const SizedBox(height: 16),
-                            KeyedSubtree(
-                              key: _orderSummaryKey,
-                              child: _buildPremiumOrderSummaryCard(),
-                            ),
-                            _buildDeliveryAddressCard(),
-                            _buildSafetyStrip(),
-                            const SizedBox(height: 28),
-                          ] else ...[
-                            _buildWeatherStrip(),
-                            _buildCancellationWindowCard(),
-                            _buildPaymentStatusCard(),
-                            _buildDeliveredFeedbackCard(),
-                            _buildBrandCampaignCard(),
-                            _buildDeliveryPartnerCard(),
-                            _buildAssignDriverTipCard(),
-                            _buildSafetyStrip(),
-                            _buildDeliveryDetailsHeader(),
-                            _buildDeliveryDetailsGroupCard(),
-                            _buildDeliveryOtpCard(),
-                            _buildRestaurantOrderCard(),
-                            _buildHelpCard(),
-                            KeyedSubtree(
-                              key: _orderSummaryKey,
-                              child: _buildPremiumOrderSummaryCard(),
-                            ),
-                            _buildExploreBrandsHeader(),
-                            if (_exploreBrandCampaign != null)
-                              _buildBrandCampaignCard(
-                                campaign: _exploreBrandCampaign,
-                                banner: true,
+                          if (order.isCancelled)
+                            ..._withAdAfterEachSection([
+                              _buildOrderSummaryLink(),
+                              _buildCancelledStateCard(),
+                              _buildCancelledTimelineCard(),
+                              KeyedSubtree(
+                                key: _orderSummaryKey,
+                                child: _buildPremiumOrderSummaryCard(),
                               ),
-                            const SizedBox(height: 28),
-                          ],
+                              _buildDeliveryAddressCard(),
+                              _buildSafetyStrip(),
+                            ])
+                          else
+                            ..._withAdAfterEachSection([
+                              _buildWeatherStrip(),
+                              _buildCancellationWindowCard(),
+                              _buildPaymentStatusCard(),
+                              _buildDeliveredFeedbackCard(),
+                              _buildBrandCampaignCard(),
+                              _buildDeliveryPartnerCard(),
+                              _buildAssignDriverTipCard(),
+                              _buildSafetyStrip(),
+                              _buildDeliveryDetailsHeader(),
+                              _buildDeliveryDetailsGroupCard(),
+                              _buildDeliveryOtpCard(),
+                              _buildRestaurantOrderCard(),
+                              _buildHelpCard(),
+                              KeyedSubtree(
+                                key: _orderSummaryKey,
+                                child: _buildPremiumOrderSummaryCard(),
+                              ),
+                              _buildExploreBrandsHeader(),
+                              if (_exploreBrandCampaign != null)
+                                _buildBrandCampaignCard(
+                                  campaign: _exploreBrandCampaign,
+                                  banner: true,
+                                ),
+                            ]),
+                          const SizedBox(height: 28),
                         ],
                       ),
                     ),
@@ -5348,7 +5392,8 @@ class _FullScreenMapScreenState extends State<FullScreenMapScreen> {
             valueListenable: widget.markersListenable,
             builder: (context, markers, _) => GoogleMap(
               onMapCreated: _onMapCreated,
-              initialCameraPosition: CameraPosition(target: initialMapTarget, zoom: 14),
+              initialCameraPosition:
+                  CameraPosition(target: initialMapTarget, zoom: 14),
               markers: markers,
               polylines: widget.polylines,
               myLocationEnabled: true,
@@ -5517,4 +5562,3 @@ class _FullScreenMapScreenState extends State<FullScreenMapScreen> {
     );
   }
 }
-

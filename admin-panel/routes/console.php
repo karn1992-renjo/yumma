@@ -100,6 +100,82 @@ Schedule::call(function () {
         ]);
 })->when(fn () => $cronTaskEnabled('restore_timed_menu_items'))->everyMinute();
 
+// Restore Petpooja addon stock after a restaurant-selected out-of-stock
+// period (mirrors the menu-item restore block above -- addons have no
+// addressable menu_items row, hence the separate overlay table).
+Schedule::call(function () {
+    \App\Models\PetpoojaAddonStockOverride::query()
+        ->where('in_stock', false)
+        ->whereNotNull('unavailable_until')
+        ->where('unavailable_until', '<=', now())
+        ->update([
+            'in_stock' => true,
+            'unavailable_until' => null,
+            'updated_at' => now(),
+        ]);
+})->when(fn () => $cronTaskEnabled('restore_timed_petpooja_addons'))->everyMinute();
+
+// Auto-lift admin suspensions once their time-limited expiry passes. A
+// permanent suspension (suspended_until = null) is excluded by the
+// whereNotNull and can only be cleared by an explicit admin reactivate.
+Schedule::call(function () {
+    \App\Models\Restaurant::query()
+        ->whereNotNull('suspended_at')
+        ->whereNotNull('suspended_until')
+        ->where('suspended_until', '<=', now())
+        ->update([
+            'suspended_at' => null,
+            'suspended_until' => null,
+            'suspension_reason' => null,
+            'suspended_by' => null,
+            'updated_at' => now(),
+        ]);
+
+    \App\Models\User::query()
+        ->whereNotNull('suspended_at')
+        ->whereNotNull('suspended_until')
+        ->where('suspended_until', '<=', now())
+        ->update([
+            'suspended_at' => null,
+            'suspended_until' => null,
+            'suspension_reason' => null,
+            'suspended_by' => null,
+            'updated_at' => now(),
+        ]);
+})->when(fn () => $cronTaskEnabled('auto_lift_expired_suspensions'))->everyMinute();
+
+// Once a subscription's past-due grace window elapses with no successful
+// renewal charge, it moves to billing_choice_required -- hidden from
+// customer discovery and blocked in both the restaurant app and panel until
+// the restaurant explicitly resubscribes or switches to commission billing
+// (see Restaurant::needsBillingChoice(), SubscriptionService::
+// markBillingChoiceRequired()). Deliberately does NOT auto-fall-back.
+Schedule::call(function () {
+    $graceDays = (int) \App\Models\AppSetting::getValue('subscription_past_due_grace_days', 3);
+
+    \App\Models\RestaurantSubscription::query()
+        ->where('status', 'past_due')
+        ->whereNotNull('past_due_at')
+        ->where('past_due_at', '<=', now()->subDays($graceDays))
+        ->get()
+        ->each(fn ($subscription) => app(\App\Services\SubscriptionService::class)
+            ->markBillingChoiceRequired($subscription));
+})->when(fn () => $cronTaskEnabled('process_subscription_past_due_to_billing_choice'))->everyMinute();
+
+// Reopen a restaurant Petpooja closed for online orders once its
+// requested reopen time has passed.
+Schedule::call(function () {
+    \App\Models\Restaurant::query()
+        ->where('is_open', false)
+        ->whereNotNull('petpooja_store_closed_until')
+        ->where('petpooja_store_closed_until', '<=', now())
+        ->update([
+            'is_open' => true,
+            'petpooja_store_closed_until' => null,
+            'updated_at' => now(),
+        ]);
+})->when(fn () => $cronTaskEnabled('restore_petpooja_store_status'))->everyMinute();
+
 // Refresh local weather/event/traffic signal baselines for gig forecasts.
 Schedule::call(function () {
     app(GigExternalSignalService::class)->refresh(today());
@@ -131,6 +207,22 @@ Schedule::call(function () {
         ->where('created_at', '<', now()->subDays(30))
         ->delete();
 })->when(fn () => $cronTaskEnabled('cleanup_old_notifications'))->daily();
+
+// Pure storage hygiene -- expires_at (not this) already governs what's "live"
+// on the home rail/viewer; this just reclaims media for stories whose
+// expiry passed well over a month ago.
+Schedule::call(function () {
+    \App\Models\RestaurantStory::query()
+        ->where('expires_at', '<', now()->subDays(30))
+        ->chunkById(100, function ($stories) {
+            foreach ($stories as $story) {
+                \App\Services\MediaStorage::delete($story->media_path);
+                \App\Services\MediaStorage::delete($story->thumbnail_path);
+                $story->views()->delete();
+                $story->delete();
+            }
+        });
+})->when(fn () => $cronTaskEnabled('purge_expired_restaurant_stories'))->dailyAt('03:00');
 
 Schedule::command('payouts:generate --auto')->when(fn () => $cronTaskEnabled('generate_auto_payouts'))->dailyAt('02:00');
 Schedule::command('payouts:process-scheduled')->when(fn () => $cronTaskEnabled('process_scheduled_payouts'))->everyThirtyMinutes();
@@ -165,6 +257,11 @@ Schedule::command('restaurants:business-reports')->when(fn () => $cronTaskEnable
 Schedule::call(function () {
     app(\App\Services\RestaurantApprovalReminderService::class)->run();
 })->when(fn () => $cronTaskEnabled('restaurant_ai_approval_reminders'))->dailyAt('10:00');
+// Flag Support Desk tickets that have gone quiet past their priority's SLA
+// threshold (urgent: 2h, high: 6h, medium/normal: 24h, low: 48h).
+Schedule::call(function () {
+    app(\App\Services\SupportSlaReminderService::class)->run();
+})->when(fn () => $cronTaskEnabled('support_sla_reminders'))->everyFifteenMinutes();
 // Weekly item-wise demand review -- propose menu price changes for restaurant approval.
 Schedule::call(function () {
     app(\App\Services\Ai\Managers\AiMenuPricingManager::class)->run();

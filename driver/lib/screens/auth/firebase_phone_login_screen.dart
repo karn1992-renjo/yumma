@@ -56,14 +56,29 @@ class _FirebasePhoneLoginScreenState extends State<FirebasePhoneLoginScreen> {
     final dialDigits = widget.countryCode.replaceAll(RegExp(r'\D'), '');
 
     if (raw.startsWith('+')) return '+$digits';
-    if (digits.startsWith(dialDigits)) return '+$digits';
+    // A bare prefix check (startsWith) alone is wrong: a 10-digit Indian
+    // mobile number can legitimately start with the same digits as the
+    // country code (e.g. 9155308530 starts with "91"), which would
+    // otherwise be mistaken for an already-prefixed number and lose its
+    // real country code. Require the digit count to match
+    // country-code-length + 10 (local Indian mobile length) too.
+    if (dialDigits.isNotEmpty &&
+        digits.startsWith(dialDigits) &&
+        digits.length == dialDigits.length + 10) {
+      return '+$digits';
+    }
     return '${widget.countryCode}$digits';
   }
 
   String _initialLocalNumber(String phone) {
     final digits = phone.replaceAll(RegExp(r'\D'), '');
     final dialDigits = widget.countryCode.replaceAll(RegExp(r'\D'), '');
-    if (digits.startsWith(dialDigits) && digits.length > dialDigits.length) {
+    // See _normalizedPhone() above: an exact length match (not just
+    // "longer than the dial code"), since a 10-digit local number can
+    // legitimately start with the same digits as the dial code.
+    if (dialDigits.isNotEmpty &&
+        digits.startsWith(dialDigits) &&
+        digits.length == dialDigits.length + 10) {
       return digits.substring(dialDigits.length);
     }
     return digits;

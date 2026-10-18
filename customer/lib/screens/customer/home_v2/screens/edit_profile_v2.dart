@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
 import '../../../../providers/auth_provider.dart';
@@ -23,6 +24,7 @@ class _EditProfileV2State extends State<EditProfileV2> {
   final _phone = TextEditingController();
   String? _pickedImagePath;
   bool _saving = false;
+  DateTime? _dob;
 
   @override
   void initState() {
@@ -30,6 +32,7 @@ class _EditProfileV2State extends State<EditProfileV2> {
     final u = context.read<AuthProvider>().currentUser;
     _name.text = u?.name ?? '';
     _phone.text = u?.phone ?? '';
+    _dob = u?.dateOfBirth;
   }
 
   @override
@@ -47,6 +50,17 @@ class _EditProfileV2State extends State<EditProfileV2> {
     } catch (_) {}
   }
 
+  Future<void> _pickDob() async {
+    final now = DateTime.now();
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _dob ?? DateTime(now.year - 18, now.month, now.day),
+      firstDate: DateTime(now.year - 100),
+      lastDate: DateTime(now.year - 5, now.month, now.day),
+    );
+    if (picked != null && mounted) setState(() => _dob = picked);
+  }
+
   Future<void> _save() async {
     if (_name.text.trim().isEmpty) {
       _toast('Name cannot be empty');
@@ -57,6 +71,7 @@ class _EditProfileV2State extends State<EditProfileV2> {
           name: _name.text.trim(),
           phone: _phone.text.trim(),
           profileImagePath: _pickedImagePath,
+          dateOfBirth: _dob,
         );
     if (!mounted) return;
     setState(() => _saving = false);
@@ -131,6 +146,8 @@ class _EditProfileV2State extends State<EditProfileV2> {
           _field(context, 'Full name', _name, TextInputType.name),
           const SizedBox(height: 14),
           _field(context, 'Phone number', _phone, TextInputType.phone),
+          const SizedBox(height: 14),
+          _dobField(context),
           const SizedBox(height: 10),
           Text(
             'Email: ${u?.email ?? '—'}',
@@ -173,6 +190,48 @@ class _EditProfileV2State extends State<EditProfileV2> {
       child: Text(ch,
           style: TextStyle(
               color: p.ink, fontSize: 34, fontWeight: FontWeight.w900)),
+    );
+  }
+
+  Widget _dobField(BuildContext context) {
+    final p = V2Theme.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('Date of birth',
+            style: TextStyle(
+                color: p.inkFaint,
+                fontSize: 11.5,
+                fontWeight: FontWeight.w700)),
+        const SizedBox(height: 6),
+        V2Tappable(
+          onTap: _pickDob,
+          child: Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+            decoration: BoxDecoration(
+              color: p.isDark ? const Color(0xFF1B2233) : const Color(0xFFF3F4F6),
+              borderRadius: BorderRadius.circular(13),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.cake_outlined, size: 18, color: p.inkFaint),
+                const SizedBox(width: 10),
+                Text(
+                  _dob != null
+                      ? DateFormat('d MMM yyyy').format(_dob!)
+                      : 'Select your date of birth',
+                  style: TextStyle(
+                    color: _dob != null ? p.ink : p.inkFaint,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
     );
   }
 

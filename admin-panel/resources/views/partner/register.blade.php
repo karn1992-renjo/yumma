@@ -68,6 +68,7 @@
 @include('partials.public-blade-polish')
 </head>
 <body>
+@include('partials.frontend-header')
     @php($mobileCountryCode = App\Models\AppSetting::getValue('default_mobile_country_code', '+91'))
     <div class="partner-container">
         <div class="partner-card">
@@ -840,6 +841,7 @@
         style.textContent = `@keyframes slideInRight { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } } @keyframes slideOutRight { from { transform: translateX(0); opacity: 1; } to { transform: translateX(100%); opacity: 0; } } .is-invalid { border-color: #EF4444 !important; }`;
         document.head.appendChild(style);
     </script>
+@include('partials.frontend-footer')
 @include('partials.web-visit-tracker', ['panel' => 'partner'])
 </body>
 </html>

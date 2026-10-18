@@ -8,6 +8,7 @@ use App\Models\DeliveryArea;
 use App\Models\PartnerApplication;
 use App\Models\Restaurant;
 use App\Models\User;
+use App\Models\UserReferral;
 use App\Services\CashfreeVerificationService;
 use App\Services\DeliveryAreaResolver;
 use App\Services\RestaurantOnboardingService;
@@ -662,6 +663,11 @@ class PartnerApplicationController extends Controller
         $bankDetails = is_array($bankDetails) ? $bankDetails : [];
         $meta = is_array($application->onboarding_meta) ? $application->onboarding_meta : [];
 
+        $referralCode = trim((string) ($meta['referral_code'] ?? ''));
+        $referrer = $referralCode !== ''
+            ? User::query()->where('referral_code', $referralCode)->first()
+            : null;
+
         $driver = User::create([
             'name' => $application->full_name,
             'email' => $application->email,
@@ -670,18 +676,52 @@ class PartnerApplicationController extends Controller
             'is_active' => true,
             'vehicle_type' => $application->vehicle_type,
             'vehicle_number' => $application->vehicle_number,
+            'vehicle_model' => $meta['vehicle_model'] ?? null,
+            'fuel_type' => $meta['fuel_type'] ?? null,
             'license_number' => $application->license_number,
+            'license_document' => $application->license_document,
+            'date_of_birth' => $meta['date_of_birth'] ?? null,
+            'gender' => $meta['gender'] ?? null,
             'address' => $application->address,
+            'city' => $application->city,
+            'landmark' => $meta['landmark'] ?? null,
             'delivery_area_id' => $application->area_id,
             'latitude' => $application->latitude,
             'longitude' => $application->longitude,
+            'profile_photo_path' => $application->profile_photo,
+            'vehicle_image' => $application->vehicle_image,
+            'aadhar_card' => $application->aadhar_card,
+            'pan_card' => $application->pan_card,
+            'vehicle_rc' => $application->vehicle_rc,
+            'insurance_document' => $application->insurance_document,
+            'background_location_enabled' => $meta['background_location_enabled'] ?? null,
+            'notification_permission_enabled' => $meta['notification_permission_enabled'] ?? null,
             'account_holder_name' => $bankDetails['holder_name'] ?? null,
             'bank_name' => $bankDetails['bank_name'] ?? null,
             'account_number' => $bankDetails['account_number'] ?? null,
             'ifsc_code' => $bankDetails['ifsc'] ?? null,
             'upi_id' => $bankDetails['upi_id'] ?? null,
+            'referral_code' => $this->generateReferralCode(),
+            'referred_by_user_id' => $referrer?->id,
+            'referral_registered_at' => $referrer ? now() : null,
         ]);
         $driver->assignRole('delivery_partner');
+
+        if ($referrer) {
+            UserReferral::firstOrCreate(
+                ['referred_user_id' => $driver->id],
+                [
+                    'referrer_id' => $referrer->id,
+                    'referral_code' => $referralCode,
+                    'status' => 'registered',
+                    'metadata' => [
+                        'source' => 'driver_application_approval',
+                        'program' => 'driver',
+                        'registered_at' => now()->toDateTimeString(),
+                    ],
+                ]
+            );
+        }
 
         Mail::send('emails.partner-approved', [
             'application' => $application,
@@ -692,6 +732,15 @@ class PartnerApplicationController extends Controller
             $mail->to($application->email)
                 ->subject('Congratulations! Your Delivery Partner Application is Approved - FoodFlow');
         });
+    }
+
+    protected function generateReferralCode(): string
+    {
+        do {
+            $code = 'SWD' . strtoupper(Str::random(7));
+        } while (User::query()->where('referral_code', $code)->exists());
+
+        return $code;
     }
 
     protected function encodeCuisine(string $value): ?string

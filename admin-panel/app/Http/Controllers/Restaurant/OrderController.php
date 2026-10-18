@@ -197,6 +197,8 @@ class OrderController extends Controller
             if ($request->status === 'cancelled') {
                 $order->cancelled_at = now();
                 $order->cancellation_reason = $request->reason;
+                $order->cancelled_by_role = 'restaurant';
+                $order->cancelled_by_name = auth()->user()->name ?? $restaurant->name ?? 'Restaurant';
             }
 
             if ($request->status === 'ready_for_pickup' && !$order->delivery_otp) {
@@ -390,12 +392,20 @@ class OrderController extends Controller
             $order->status = 'cancelled';
             $order->cancelled_at = now();
             $order->cancellation_reason = $request->reason;
+            $order->cancelled_by_role = 'restaurant';
+            $order->cancelled_by_name = auth()->user()->name ?? $restaurant->name ?? 'Restaurant';
             $order->save();
-            
+
             DB::commit();
 
             if ($order->payment_status === 'success') {
-                app(RefundService::class)->processRefund($order, 'Order rejected by restaurant');
+                app(RefundService::class)->processRefund(
+                    $order,
+                    'Order rejected by restaurant',
+                    null,
+                    'restaurant',
+                    auth()->user()->name ?? $restaurant->name ?? 'Restaurant'
+                );
                 $order->refresh();
             }
 

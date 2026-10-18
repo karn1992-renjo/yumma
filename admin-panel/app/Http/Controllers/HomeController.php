@@ -6,10 +6,14 @@ use App\Models\Restaurant;
 use App\Models\Banner;
 use App\Models\Cuisine;
 use App\Models\AppSetting;
+use App\Models\Order;
+use App\Models\User;
 use App\Services\HomeSectionService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Str;
 
 class HomeController extends Controller
 {
@@ -39,8 +43,44 @@ class HomeController extends Controller
             ->sortBy(fn (array $section) => in_array($section['type'] ?? '', ['banner_carousel', 'hero_banner'], true) ? 0 : 1)
             ->values();
         $homepageCollectionsEnabled = false;
+        $homepageStats = static::homepageStats();
 
-        return view('home', compact('banners', 'homepageSections', 'homepageCollectionsEnabled'));
+        return view('home_new', compact('banners', 'homepageSections', 'homepageCollectionsEnabled', 'homepageStats'));
+    }
+
+    /**
+     * Real hero-strip counts (restaurants, delivered orders, customers,
+     * cities) instead of admin-typed marketing placeholders -- cached
+     * briefly since this loads on every homepage view but doesn't need
+     * to be second-by-second accurate.
+     */
+    private static function homepageStats(): array
+    {
+        return Cache::remember('homepage_real_stats', 900, function () {
+            $restaurantCount = Restaurant::verified()->count();
+            $orderCount = Order::where('status', 'delivered')->count();
+            $customerCount = User::whereHas('roles', fn ($q) => $q->where('name', 'customer'))->count();
+            $cityCount = Restaurant::verified()->whereNotNull('city')->where('city', '!=', '')->distinct('city')->count('city');
+
+            return [
+                'restaurant_count' => static::formatStatCount($restaurantCount),
+                'order_count' => static::formatStatCount($orderCount),
+                'customer_count' => static::formatStatCount($customerCount),
+                'city_count' => static::formatStatCount($cityCount),
+            ];
+        });
+    }
+
+    private static function formatStatCount(int $count): string
+    {
+        if ($count >= 1000000) {
+            return round($count / 1000000, 1) . 'M+';
+        }
+        if ($count >= 1000) {
+            return round($count / 1000) . 'K+';
+        }
+
+        return $count > 0 ? $count . '+' : '0';
     }
     
     /**
@@ -129,8 +169,9 @@ class HomeController extends Controller
     public function searchRestaurants(Request $request)
     {
         $query = Restaurant::with('owner')
-            ->where('is_verified', true);
-        
+            ->where('is_verified', true)
+            ->customerVisible();
+
         // Search by location
         if ($request->lat && $request->lng) {
             if (DB::getDriverName() === 'sqlite') {
@@ -237,8 +278,10 @@ class HomeController extends Controller
         $restaurantData = $restaurants->map(function($restaurant) {
             return [
                 'id' => $restaurant->id,
+                'slug' => $restaurant->slug,
                 'name' => $restaurant->name,
-                'image' => \App\Services\MediaStorage::url($restaurant->logo_image),
+                'image' => \App\Services\MediaStorage::url($restaurant->banner_image ?: $restaurant->logo_image),
+                'logo' => \App\Services\MediaStorage::url($restaurant->logo_image),
                 'cuisine' => $restaurant->cuisine_text ?: 'Variety Cuisine',
                 'cuisine_text' => $restaurant->cuisine_text,
                 'cuisine_names' => $restaurant->cuisine_names,
@@ -268,6 +311,7 @@ class HomeController extends Controller
     {
         $limit = 8;
         $candidates = Restaurant::where('is_verified', true)
+            ->customerVisible()
             ->orderByDesc('rating')
             ->limit(40)
             ->get();
@@ -363,8 +407,25 @@ class HomeController extends Controller
     /**
      * Get restaurant details page
      */
-    public function showRestaurant($id)
+    public function showRestaurant($slug)
     {
+        // Legacy numeric-id URLs (bookmarked or already indexed by search engines)
+        // 301-redirect to the canonical slug URL instead of 404ing.
+        if (ctype_digit((string) $slug)) {
+            $legacy = Restaurant::find($slug);
+
+            if (! $legacy) {
+                abort(404);
+            }
+
+            if (empty($legacy->slug)) {
+                $legacy->slug = Str::slug($legacy->name).'-'.$legacy->id;
+                $legacy->save();
+            }
+
+            return redirect()->route('restaurant.show', $legacy->slug, 301);
+        }
+
         $restaurant = Restaurant::with([
             'owner',
             'menuItems' => function($q) {
@@ -377,12 +438,17 @@ class HomeController extends Controller
                 ->whereDate('start_date', '<=', now())
                 ->whereDate('end_date', '>=', now());
             }
-        ])->findOrFail($id);
+        ])->where('slug', $slug)->firstOrFail();
+
+        if ($restaurant->isHiddenFromDiscovery()) {
+            abort(404);
+        }
 
         $activePromos = $restaurant->promos->filter(fn($promo) => $promo->isValid())->values();
         $similarRestaurants = Restaurant::query()
             ->where('id', '!=', $restaurant->id)
             ->where('is_verified', true)
+            ->customerVisible()
             ->where(function ($query) use ($restaurant) {
                 $query->where('restaurant_type', $restaurant->restaurant_type);
 
@@ -398,6 +464,7 @@ class HomeController extends Controller
             $fallback = Restaurant::query()
                 ->where('id', '!=', $restaurant->id)
                 ->where('is_verified', true)
+                ->customerVisible()
                 ->whereNotIn('id', $similarRestaurants->pluck('id'))
                 ->orderByDesc('rating')
                 ->limit(6 - $similarRestaurants->count())
@@ -414,5 +481,66 @@ class HomeController extends Controller
                 : \App\Services\MediaStorage::url($restaurant->logo_image));
         
         return view('restaurant-detail', compact('restaurant', 'activePromos', 'restaurantBannerUrl', 'similarRestaurants'));
+    }
+
+    /**
+     * City/area SEO landing page -- e.g. /restaurants-in-adityapur.
+     */
+    public function showCity(string $citySlug)
+    {
+        $cityDirectory = app(\App\Services\CityDirectoryService::class);
+        $city = $cityDirectory->resolveBySlug($citySlug);
+
+        if (! $city) {
+            abort(404);
+        }
+
+        $restaurants = Restaurant::query()
+            ->where('is_verified', true)
+            ->customerVisible()
+            ->whereRaw('LOWER(TRIM(city)) = ?', [Str::lower($city['name'])])
+            ->orderByDesc('rating')
+            ->get();
+
+        $restaurantData = $restaurants->map(function (Restaurant $restaurant) {
+            return [
+                'id' => $restaurant->id,
+                'slug' => $restaurant->slug,
+                'name' => $restaurant->name,
+                'image' => \App\Services\MediaStorage::url($restaurant->banner_image ?: $restaurant->logo_image),
+                'logo' => \App\Services\MediaStorage::url($restaurant->logo_image),
+                'cuisine' => $restaurant->cuisine_text ?: 'Variety Cuisine',
+                'cuisine_names' => $restaurant->cuisine_names,
+                'rating' => $restaurant->rating ?? 0,
+                'delivery_time' => $restaurant->delivery_time ?? 35,
+                'is_open' => $restaurant->is_open,
+            ];
+        });
+
+        $topCuisines = $restaurantData->flatMap(fn ($r) => $r['cuisine_names'])
+            ->filter()
+            ->countBy()
+            ->sortDesc()
+            ->keys()
+            ->take(5)
+            ->values();
+
+        $ratedRestaurants = $restaurantData->filter(fn ($r) => $r['delivery_time'] > 0);
+        $avgDeliveryTime = $ratedRestaurants->isNotEmpty()
+            ? (int) round($ratedRestaurants->avg('delivery_time'))
+            : null;
+
+        $otherCities = $cityDirectory->listActiveCities()
+            ->reject(fn ($c) => $c['slug'] === $city['slug'])
+            ->sortByDesc('count')
+            ->values();
+
+        return view('restaurants-by-city', [
+            'city' => $city,
+            'restaurants' => $restaurantData,
+            'topCuisines' => $topCuisines,
+            'avgDeliveryTime' => $avgDeliveryTime,
+            'otherCities' => $otherCities,
+        ]);
     }
 }

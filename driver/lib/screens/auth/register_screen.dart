@@ -8,11 +8,13 @@ import 'package:geolocator/geolocator.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../config/app_config.dart';
 import '../../models/app_branding.dart';
 import '../../providers/auth_provider.dart';
 import '../../services/app_branding_service.dart';
+import '../../services/appsflyer_deep_link_service.dart';
 import '../../services/firebase_phone_auth_service.dart';
 import '../../services/location_service.dart';
 import '../../services/partner_application_service.dart';
@@ -734,10 +736,15 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
     setState(() => _isSubmitting = true);
     try {
+      final prefs = await SharedPreferences.getInstance();
+      final referralCode =
+          prefs.getString(AppsFlyerDeepLinkService.pendingReferralCodeKey);
       final response = await _applicationService.submitApplication(
         fields: {
           'partner_type': 'driver',
           'verified_phone_token': _verifiedPhoneToken!,
+          if (referralCode != null && referralCode.trim().isNotEmpty)
+            'referral_code': referralCode.trim(),
           'full_name': _nameController.text.trim(),
           'email': _emailController.text.trim(),
           'phone': _verifiedPhoneNumber!,
@@ -783,6 +790,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
         '/application-status',
         arguments: response['data']?['application_number']?.toString(),
       );
+      await prefs.remove(AppsFlyerDeepLinkService.pendingReferralCodeKey);
     } catch (e) {
       if (!mounted) return;
       _showMessage(e.toString().replaceFirst('Exception: ', ''), isError: true);

@@ -1,7 +1,7 @@
 <style>
     :root {
-        --ff-primary: {{ App\Models\AppSetting::getValue('primary_color', '#FF6B35') }};
-        --ff-secondary: {{ App\Models\AppSetting::getValue('secondary_color', '#FF8C42') }};
+        --ff-primary: var(--primary, {{ App\Models\AppSetting::getValue('primary_color', '#FF6B35') }});
+        --ff-secondary: var(--secondary, {{ App\Models\AppSetting::getValue('secondary_color', '#FF8C42') }});
         --ff-ink: #111827;
         --ff-muted: #64748b;
         --ff-border: #e2e8f0;
@@ -41,7 +41,7 @@
     .order-summary,
     .address-card {
         border: 1px solid rgba(226, 232, 240, 0.86) !important;
-        border-radius: 28px !important;
+        border-radius: var(--app-card-radius, 24px) !important;
         background: var(--ff-surface) !important;
         box-shadow: 0 24px 64px rgba(15, 23, 42, 0.09) !important;
         backdrop-filter: blur(16px);
@@ -196,7 +196,7 @@
         .summary-card,
         .order-summary,
         .address-card {
-            border-radius: 22px !important;
+            border-radius: var(--app-card-radius, 24px) !important;
         }
     }
 </style>

@@ -342,7 +342,8 @@
         var STORE_KEY = 'swaad.seat.' + CTX.theatre_id + '.' + CTX.screen_id + '.' + CTX.seat_label;
 
         var el = function (id) { return document.getElementById(id); };
-        var money = function (amount) { return MONEY + Number(amount || 0).toFixed(2); };
+        var MONEY_DECIMALS = Number(CTX.currency_decimals || 2);
+        var money = function (amount) { return MONEY + Number(amount || 0).toFixed(MONEY_DECIMALS); };
 
         var state = {
             view: 'stalls',

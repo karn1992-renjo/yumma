@@ -83,6 +83,12 @@ class OrderStatusPushService
         $order->loadMissing(['customer', 'restaurant.owner', 'driver']);
         $roles = collect($roles)->map(fn ($role) => strtolower((string) $role))->all();
 
+        try {
+            app(\App\Services\Petpooja\PetpoojaRiderPushService::class)->push($order);
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::warning('Petpooja rider push failed.', ['order_id' => $order->id, 'message' => $e->getMessage()]);
+        }
+
         return [
             'customer' => in_array('customer', $roles, true) ? $this->notifyCustomer($order, $customerMessage) : false,
             'restaurant' => in_array('restaurant', $roles, true) ? $this->notifyRestaurant($order, null, $cancellationSource) : [

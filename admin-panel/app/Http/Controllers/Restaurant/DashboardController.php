@@ -100,6 +100,9 @@ class DashboardController extends Controller
 
         $restaurantBreakdown = $this->restaurantRevenueBreakdown($restaurants, $restaurantIds, $totalRevenue);
         $revenueTrend = $this->revenueTrend($restaurantIds);
+        $customerTrend = $this->customerTrend($restaurantIds);
+        $ratingTrend = $this->ratingTrend($restaurantIds);
+        $payoutTrend = $this->payoutTrend($restaurantIds);
         $bestOrderTime = $this->bestOrderTime($restaurantIds);
         $payoutSummary = $this->payoutSummary($restaurantIds);
         $pendingAiApprovals = \App\Models\AiApproval::whereIn('restaurant_id', $restaurantIds)
@@ -130,10 +133,89 @@ class DashboardController extends Controller
             'popularItems',
             'restaurantBreakdown',
             'revenueTrend',
+            'customerTrend',
+            'ratingTrend',
+            'payoutTrend',
             'bestOrderTime',
             'payoutSummary',
             'pendingAiApprovals'
         ));
+    }
+
+    /**
+     * Real daily distinct-customer count over the same 14-day window as
+     * revenueTrend() -- replaces a previous blade-side fabrication that drew
+     * an invented straight-line ramp ending at the real total instead of any
+     * actual per-day history.
+     */
+    private function customerTrend(array $restaurantIds): array
+    {
+        $start = now()->subDays(13)->startOfDay();
+        $rows = Order::whereIn('restaurant_id', $restaurantIds)
+            ->whereNotNull('customer_id')
+            ->whereDate('created_at', '>=', $start)
+            ->selectRaw('DATE(created_at) as order_date, COUNT(DISTINCT customer_id) as customers')
+            ->groupBy('order_date')
+            ->orderBy('order_date')
+            ->get()
+            ->keyBy('order_date');
+
+        $trend = [];
+        for ($date = $start->copy(); $date->lte(now()); $date->addDay()) {
+            $trend[] = (int) ($rows[$date->toDateString()]->customers ?? 0);
+        }
+
+        return $trend;
+    }
+
+    /**
+     * Real daily average of the customer-given restaurant_rating over the
+     * same 14-day window -- replaces a previous fully hardcoded literal
+     * array. Ratings are sparse (most days have none), so unlike
+     * revenueTrend() this does NOT fill every day with a 0 -- that would
+     * swamp the sparkline's scale. Only days with a real rating contribute
+     * a point.
+     */
+    private function ratingTrend(array $restaurantIds): array
+    {
+        $start = now()->subDays(13)->startOfDay();
+
+        return Order::whereIn('restaurant_id', $restaurantIds)
+            ->whereNotNull('restaurant_rating')
+            ->where('restaurant_rating', '>', 0)
+            ->where(function ($query) use ($start) {
+                $query->whereDate('feedback_submitted_at', '>=', $start)
+                    ->orWhere(function ($fallback) use ($start) {
+                        $fallback->whereNull('feedback_submitted_at')
+                            ->whereDate('created_at', '>=', $start);
+                    });
+            })
+            ->selectRaw('DATE(COALESCE(feedback_submitted_at, created_at)) as rating_date, AVG(restaurant_rating) as rating')
+            ->groupBy('rating_date')
+            ->orderBy('rating_date')
+            ->get()
+            ->pluck('rating')
+            ->map(fn ($rating) => round((float) $rating, 1))
+            ->values()
+            ->all();
+    }
+
+    /**
+     * Real amount from the restaurant's own last 10 Payout records (any
+     * status), oldest-first -- replaces a previous fully hardcoded literal
+     * array. Payouts happen periodically (weekly/monthly), not daily, so
+     * this charts payout-to-payout rather than day-to-day.
+     */
+    private function payoutTrend(array $restaurantIds): array
+    {
+        return Payout::whereIn('restaurant_id', $restaurantIds)
+            ->latest('created_at')
+            ->limit(10)
+            ->pluck('amount')
+            ->reverse()
+            ->map(fn ($amount) => round((float) $amount, 2))
+            ->values()
+            ->all();
     }
 
     private function revenueTrend(array $restaurantIds): array
@@ -170,9 +252,18 @@ class DashboardController extends Controller
 
     private function bestOrderTime(array $restaurantIds): array
     {
+        // MySQL's HOUR() has no SQLite equivalent -- this crashed with a
+        // genuine 500 the first time this method actually ran against the
+        // local sqlite dev DB (it presumably only ever ran against MySQL in
+        // production until now). Mirrors the existing sqlite/mysql branch
+        // pattern already used by deliveryMinutesExpression() below.
+        $hourExpression = DB::connection()->getDriverName() === 'sqlite'
+            ? "CAST(strftime('%H', created_at) AS INTEGER)"
+            : 'HOUR(created_at)';
+
         $row = Order::whereIn('restaurant_id', $restaurantIds)
             ->whereNotIn('status', ['cancelled'])
-            ->selectRaw('HOUR(created_at) as order_hour, COUNT(*) as orders, SUM(CASE WHEN status = "delivered" THEN total ELSE 0 END) as revenue')
+            ->selectRaw("{$hourExpression} as order_hour, COUNT(*) as orders, SUM(CASE WHEN status = 'delivered' THEN total ELSE 0 END) as revenue")
             ->groupBy('order_hour')
             ->orderByDesc('orders')
             ->first();

@@ -74,6 +74,12 @@
                         <div class="form-text">Recommended For You defaults to 12 and supports 1–24 cards.</div>
                         @error('limit')<div class="invalid-feedback">{{ $message }}</div>@enderror
                     </div>
+                    <div class="col-md-3 {{ $selectedType === 'dishes_under_99' ? '' : 'd-none' }}" data-max-price-field>
+                        <label class="form-label fw-semibold">Max Price (₹)</label>
+                        <input type="number" name="max_price" min="1" max="100000" step="0.01" class="form-control @error('max_price') is-invalid @enderror" value="{{ old('max_price', $configuration['max_price'] ?? 99) }}">
+                        <div class="form-text">Only dishes priced at or below this show in this section.</div>
+                        @error('max_price')<div class="invalid-feedback">{{ $message }}</div>@enderror
+                    </div>
                     <div class="col-md-3">
                         <label class="form-label fw-semibold">Sort Order</label>
                         <input type="number" name="display_order" min="0" class="form-control @error('display_order') is-invalid @enderror" value="{{ old('display_order', $homeSection->display_order) }}">
@@ -371,6 +377,10 @@ document.addEventListener('DOMContentLoaded', function () {
             auto: [],
             manual: ['menu_item_ids'],
         },
+        dishes_under_99: {
+            auto: [],
+            manual: [],
+        },
         shop_by_brand: {
             auto: ['restaurant_scope'],
             manual: ['restaurant_ids'],
@@ -382,6 +392,7 @@ document.addEventListener('DOMContentLoaded', function () {
         const selectedSource = sourceSelect?.value || 'auto';
         const visible = (blockMap[selectedType] && blockMap[selectedType][selectedSource]) || [];
         heroMediaField?.classList.toggle('d-none', selectedType !== 'hero_banner');
+        document.querySelector('[data-max-price-field]')?.classList.toggle('d-none', selectedType !== 'dishes_under_99');
         if (selectedType === 'recommended_for_you' &&
             previousSectionType !== 'recommended_for_you' &&
             sectionLimit && sectionLimit.value === '8') {

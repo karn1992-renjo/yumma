@@ -139,7 +139,15 @@ class EnhancedAuthService {
     final countryDigits = countryCode.replaceAll(RegExp(r'\D'), '');
 
     if (raw.startsWith('+')) return '+$digits';
-    if (countryDigits.isNotEmpty && digits.startsWith(countryDigits)) {
+    // A bare prefix check (startsWith) alone is wrong: a 10-digit Indian
+    // mobile number can legitimately start with the same digits as the
+    // country code (e.g. 9155308530 starts with "91"), which would
+    // otherwise be mistaken for an already-prefixed number and lose its
+    // real country code. Require the digit count to match
+    // country-code-length + 10 (local Indian mobile length) too.
+    if (countryDigits.isNotEmpty &&
+        digits.startsWith(countryDigits) &&
+        digits.length == countryDigits.length + 10) {
       return '+$digits';
     }
 

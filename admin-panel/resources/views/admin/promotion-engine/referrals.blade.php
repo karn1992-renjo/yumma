@@ -70,6 +70,7 @@
         <table class="table align-middle mb-0">
             <thead>
                 <tr>
+                    <th>Program</th>
                     <th>Referrer</th>
                     <th>Referred User</th>
                     <th>Code</th>
@@ -82,6 +83,10 @@
             <tbody>
                 @forelse($referrals as $referral)
                     <tr>
+                        <td>
+                            @php($isDriverReferral = ($referral->metadata['program'] ?? null) === 'driver')
+                            <span class="badge bg-{{ $isDriverReferral ? 'info' : 'dark' }}">{{ $isDriverReferral ? 'Driver' : 'Customer' }}</span>
+                        </td>
                         <td>
                             <div class="fw-semibold">{{ $referral->referrer?->name ?: 'User #'.$referral->referrer_id }}</div>
                             <div class="text-muted small">{{ $referral->referrer?->phone ?: $referral->referrer?->email }}</div>
@@ -121,7 +126,7 @@
                     </tr>
                 @empty
                     <tr>
-                        <td colspan="7" class="text-center text-muted py-5">No referrals found.</td>
+                        <td colspan="8" class="text-center text-muted py-5">No referrals found.</td>
                     </tr>
                 @endforelse
             </tbody>

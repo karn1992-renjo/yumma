@@ -6,6 +6,12 @@ class PhoneNumberUtils {
   static const String invalidMobileMessage =
       'Enter a valid mobile number for the selected country code.';
 
+  // Indian mobile numbers are always exactly 10 digits. Used below to tell
+  // a number that already carries its country code apart from a bare local
+  // number that merely happens to start with the same digits (e.g.
+  // 9155308530 starts with "91" but is NOT "+91" + "55308530").
+  static const int _localNumberLength = 10;
+
   static PhoneNormalizationResult normalizeMobile(
     String input, {
     String? countryCode,
@@ -27,8 +33,16 @@ class PhoneNumberUtils {
       throw const FormatException(invalidMobileMessage);
     }
 
-    final hasCountryCode =
-        countryDigits.isNotEmpty && digits.startsWith(countryDigits);
+    // A bare prefix check (startsWith) alone is wrong: a 10-digit Indian
+    // mobile number can legitimately start with the same digits as the
+    // country code (e.g. 9155308530 starts with "91"), which would
+    // otherwise be mistaken for an already-prefixed number and lose its
+    // real country code (producing "+9155308530" instead of the correct
+    // "+919155308530"). Require the digit count to match
+    // country-code-length + local-number-length too.
+    final hasCountryCode = countryDigits.isNotEmpty &&
+        digits.startsWith(countryDigits) &&
+        digits.length == countryDigits.length + _localNumberLength;
     final localDigits = hasCountryCode
         ? digits.substring(countryDigits.length)
         : digits;

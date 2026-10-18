@@ -437,13 +437,26 @@ class FlexibleOrderPaymentService {
       _complete(_GatewayPaymentResult.failure());
 
   void _onCashfreeSuccess(String orderId) {
+    _paymentTrace('cashfree.success orderId=$orderId');
     _complete(_GatewayPaymentResult.success({
       'payment_id': orderId,
     }));
   }
 
-  void _onCashfreeError(CFErrorResponse _, String __) =>
-      _complete(_GatewayPaymentResult.failure());
+  void _onCashfreeError(CFErrorResponse error, String orderId) {
+    _paymentTrace(
+      'cashfree.error orderId=$orderId status=${error.getStatus() ?? '-'} '
+      'code=${error.getCode() ?? '-'} type=${error.getType() ?? '-'} '
+      'message=${error.getMessage() ?? '-'}',
+    );
+    // A UPI intent hand-off (switch to a UPI app and back) frequently
+    // reaches Cashfree's SDK as an error/cancel even when the bank later
+    // confirms the payment -- the web checkout hits the same race and
+    // always asks the server to check the real order status rather than
+    // trusting this callback. Carry the order id through on failure too so
+    // payForCheckout can do the same for cashfree instead of giving up here.
+    _complete(_GatewayPaymentResult.failure(data: {'payment_id': orderId}));
+  }
 
   void _complete(_GatewayPaymentResult value) {
     if (!(_completion?.isCompleted ?? true)) _completion!.complete(value);
@@ -593,8 +606,22 @@ extension FlexibleOrderPaymentCheckout on FlexibleOrderPaymentService {
       }
 
       final result = await _completion!.future;
+      // Cashfree's SDK can report failure/cancel on a UPI intent hand-off
+      // even when the bank later confirms the payment (the web checkout
+      // hits the same race and always asks the server, regardless of what
+      // its SDK callback said -- see checkout_fresh.blade.php's
+      // startOnlinePayment, which calls verify in both the success `then`
+      // and the error `catch`). Mirror that here for cashfree specifically:
+      // as long as we have the gateway order id, ask the server, which
+      // re-checks Cashfree's own order status rather than trusting this
+      // callback. For other gateways there's no reliable id to re-verify
+      // with on failure, so keep the original give-up-immediately behavior.
       if (!result.success) {
-        return null;
+        final canRecheck = resolved == 'cashfree' &&
+            _firstNonEmptyString(result.data, const ['payment_id']) != null;
+        if (!canRecheck) {
+          return null;
+        }
       }
 
       final verifyResponse = await _api.post(
@@ -720,10 +747,10 @@ class _GatewayPaymentResult {
     );
   }
 
-  factory _GatewayPaymentResult.failure() {
-    return const _GatewayPaymentResult._(
+  factory _GatewayPaymentResult.failure({Map<String, dynamic> data = const {}}) {
+    return _GatewayPaymentResult._(
       success: false,
-      data: <String, dynamic>{},
+      data: data,
     );
   }
 

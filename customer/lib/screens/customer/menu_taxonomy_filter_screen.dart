@@ -1682,7 +1682,7 @@ class _MenuItemDetailSheet extends StatelessWidget {
                       const SizedBox(height: 18),
                       Text(
                         description,
-                        style: GoogleFonts.plusJakartaSans(
+                        style: GoogleFonts.poppins(
                           color: _taxonomySubtext,
                           fontSize: 13.5,
                           height: 1.55,

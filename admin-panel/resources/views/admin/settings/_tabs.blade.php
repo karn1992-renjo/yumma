@@ -1,14 +1,17 @@
 ﻿@php
     $settingsTabs = [
         ['route' => 'admin.settings.index', 'icon' => 'fas fa-sliders-h', 'label' => 'General'],
+        ['route' => 'admin.security.index', 'icon' => 'fas fa-lock', 'label' => 'Security'],
         ['route' => 'admin.settings.business', 'icon' => 'fas fa-building', 'label' => 'Business'],
         ['route' => 'admin.settings.tax-charges', 'icon' => 'fas fa-receipt', 'label' => 'Tax & Charges'],
         ['route' => 'admin.settings.country-tax', 'icon' => 'fas fa-globe', 'label' => 'Country & Tax'],
         ['route' => 'admin.settings.integrations', 'icon' => 'fas fa-plug', 'label' => 'Integrations'],
         ['route' => 'admin.settings.branding', 'icon' => 'fas fa-palette', 'label' => 'Branding'],
+        ['route' => 'admin.settings.app-download', 'icon' => 'fas fa-qrcode', 'label' => 'App QR'],
         ['route' => 'admin.settings.payment', 'icon' => 'fas fa-credit-card', 'label' => 'Payment'],
         ['route' => 'admin.settings.rewards', 'icon' => 'fas fa-gift', 'label' => 'Rewards'],
         ['route' => 'admin.settings.homepage', 'icon' => 'fas fa-home', 'label' => 'Homepage'],
+        ['route' => 'admin.settings.seo', 'icon' => 'fas fa-search', 'label' => 'SEO'],
         ['route' => 'admin.settings.privacy', 'icon' => 'fas fa-shield-alt', 'label' => 'Legal'],
         ['route' => 'admin.settings.driver_assignment', 'icon' => 'fas fa-route', 'label' => 'Drivers'],
         ['route' => 'admin.settings.communication', 'icon' => 'fas fa-envelope', 'label' => 'Communication'],
@@ -22,6 +25,7 @@
 <nav class="settings-tabs" aria-label="Settings sections">
     @foreach($settingsTabs as $settingsTab)
         @continue(! \Illuminate\Support\Facades\Route::has($settingsTab['route']))
+        @continue($settingsTab['route'] === 'admin.security.index' && ! auth()->user()->requiresAdminMfa())
 
         <a
             href="{{ route($settingsTab['route']) }}"

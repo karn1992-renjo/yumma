@@ -12,8 +12,10 @@ use App\Services\AutoAssignDriverService;
 use App\Services\BranchManagementService;
 use App\Services\OrderStatusPushService;
 use App\Services\PayoutCalculationService;
+use App\Services\PaymentVerificationService;
 use App\Services\RefundService;
 use App\Services\ScratchCardService;
+use App\Support\BuildsOrderDetailPresentation;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
@@ -24,6 +26,8 @@ use Carbon\Carbon;
 
 class OrderController extends Controller
 {
+    use BuildsOrderDetailPresentation;
+
     protected $payoutCalculation;
     protected $refundService;
     
@@ -242,57 +246,7 @@ class OrderController extends Controller
             ->findOrFail($id);
             
         $timeline = $this->getOrderTimeline($order);
-        
-        $restaurantEarnings = $this->payoutCalculation->calculateRestaurantEarning($order);
-        $driverEarnings = $this->payoutCalculation->calculateDriverEarning($order);
-        $isPersisted = (bool) $order->payout_processed;
-        $restaurantCommission = $isPersisted
-            ? (float) $order->platform_commission
-            : (float) $restaurantEarnings['platform_commission'];
-        $driverCommission = $isPersisted
-            ? (float) $order->admin_delivery_commission + (float) $order->driver_deduction
-            : (float) $driverEarnings['driver_commission'];
-        $branchCommission = $isPersisted
-            ? (float) $order->branch_commission
-            : ($order->branch
-                ? round($restaurantCommission * ((float) $order->branch->branch_share_percent / 100), 2)
-                : 0);
-
-        $financials = [
-            'source' => $isPersisted ? 'Finalized settlement' : 'Current estimate',
-            'restaurant_commission_type' => $isPersisted
-                ? ($order->restaurant_commission_type ?: $restaurantEarnings['commission_type'])
-                : $restaurantEarnings['commission_type'],
-            'restaurant_commission_value' => $isPersisted
-                ? (float) ($order->restaurant_commission_value ?? $restaurantEarnings['commission_value'])
-                : (float) $restaurantEarnings['commission_value'],
-            'restaurant_commission' => $restaurantCommission,
-            'gst_on_commission' => $isPersisted
-                ? (float) $order->gst_on_commission
-                : (float) $restaurantEarnings['gst_on_commission'],
-            'payment_gateway_fee' => $isPersisted
-                ? (float) $order->payment_gateway_fee
-                : (float) $restaurantEarnings['payment_gateway_fee'],
-            'restaurant_earning' => $isPersisted
-                ? (float) $order->restaurant_earning
-                : (float) $restaurantEarnings['restaurant_earning'],
-            'driver_base' => $isPersisted
-                ? (float) $order->driver_delivery_base
-                : (float) $driverEarnings['delivery_base'],
-            'driver_commission_type' => $isPersisted
-                ? ($order->driver_deduction_type ?: $driverEarnings['driver_commission_type'])
-                : $driverEarnings['driver_commission_type'],
-            'driver_commission_value' => $isPersisted
-                ? (float) ($order->driver_deduction_value ?? $driverEarnings['driver_commission_value'])
-                : (float) $driverEarnings['driver_commission_value'],
-            'driver_commission' => $driverCommission,
-            'batch_bonus' => $isPersisted ? (float) $order->batch_bonus : (float) $driverEarnings['multiple_order_bonus'],
-            'driver_earning' => $isPersisted ? (float) $order->driver_earning : (float) $driverEarnings['driver_earning'],
-            'branch_commission' => $branchCommission,
-            'admin_earning' => $isPersisted
-                ? (float) $order->admin_commission
-                : round($restaurantCommission - $branchCommission + $driverCommission + (float) $order->platform_fee, 2),
-        ];
+        $financials = $this->buildOrderFinancials($order, $this->payoutCalculation);
         $deliveryDistanceKm = $this->calculateDeliveryDistanceKm($order);
         
         return view('admin.orders.show', compact('order', 'timeline', 'financials', 'deliveryDistanceKm'));
@@ -448,6 +402,8 @@ class OrderController extends Controller
             if (Schema::hasColumn('orders', 'cancellation_reason')) {
                 $order->cancellation_reason = $reason;
             }
+            $order->cancelled_by_role = 'admin';
+            $order->cancelled_by_name = auth()->user()->name ?? 'Admin';
             $order->save();
 
             activity()
@@ -462,6 +418,12 @@ class OrderController extends Controller
                 ->log('Order cancelled by admin');
 
             DB::commit();
+
+            try {
+                app(\App\Services\Petpooja\PetpoojaOrderRelayService::class)->cancel($order, $reason);
+            } catch (\Throwable $e) {
+                \Illuminate\Support\Facades\Log::warning('Petpooja cancel relay failed.', ['order_id' => $order->id, 'message' => $e->getMessage()]);
+            }
 
             if ($oldStatus !== 'cancelled') {
                 app(OrderStatusPushService::class)->notifyParticipants(
@@ -506,7 +468,9 @@ class OrderController extends Controller
         $refundResult = $this->refundService->processRefund(
             $order,
             $request->refund_reason,
-            $request->refund_amount
+            $request->refund_amount,
+            'admin',
+            auth()->user()->name ?? 'Admin'
         );
 
         return $this->orderActionResponse(
@@ -515,6 +479,57 @@ class OrderController extends Controller
             $refundResult['message'],
             $refundResult['success'] ? 200 : 422,
             ['order' => $this->formatOrdersForLive(collect([$order->fresh(['customer', 'restaurant', 'branch', 'driver', 'orderItems.menuItem'])]))->first()]
+        );
+    }
+
+    /**
+     * Re-check an order's payment status directly with the gateway and
+     * correct orders.payment_status if it's genuinely paid but still shows
+     * otherwise -- covers a missed webhook, a stuck app session after a
+     * confirmed charge (see PaymentController::createOrderFromVerifiedCheckout
+     * and the payment recovery queue), or a webhook was missed. Never
+     * silently marks an order "paid" without the gateway actually
+     * confirming it.
+     */
+    public function verifyPayment(Request $request, $id, PaymentVerificationService $verification)
+    {
+        $order = Order::findOrFail($id);
+        $result = $verification->checkOrderPayment($order);
+
+        $corrected = false;
+        if ($result['paid'] && $order->payment_status !== 'success') {
+            $order->payment_status = 'success';
+            $order->paid_at ??= now();
+            $order->online_payment_verified_at ??= now();
+            $order->save();
+            $corrected = true;
+
+            activity()
+                ->performedOn($order)
+                ->causedBy(auth()->user())
+                ->withProperties([
+                    'gateway' => $order->payment_gateway,
+                    'gateway_status' => $result['status'],
+                ])
+                ->log('Payment manually re-verified and corrected to success');
+        }
+
+        $message = $corrected
+            ? $result['message'] . ' Order payment status has been corrected to "success".'
+            : $result['message'];
+
+        return $this->orderActionResponse(
+            $request,
+            true,
+            $message,
+            200,
+            [
+                'gateway_paid' => $result['paid'],
+                'gateway_status' => $result['status'],
+                'gateway_amount' => $result['amount'],
+                'corrected' => $corrected,
+                'order' => $this->formatOrdersForLive(collect([$order->fresh(['customer', 'restaurant', 'branch', 'driver', 'orderItems.menuItem'])]))->first(),
+            ]
         );
     }
 
@@ -949,88 +964,7 @@ class OrderController extends Controller
             ];
         })->values();
     }
-    /**
-     * Get order timeline
-     */
-    private function getOrderTimeline($order)
-    {
-        $statuses = [
-            'pending' => 'Order Placed',
-            'confirmed' => 'Order Confirmed',
-            'preparing' => 'Preparing Food',
-            'ready_for_pickup' => 'Ready for Pickup',
-            'reached_pickup' => 'Reached Pickup',
-            'picked_up' => 'Picked Up',
-            'on_the_way' => 'On The Way',
-            'delivered' => 'Delivered'
-        ];
-        
-        $statusOrder = array_keys($statuses);
-        $currentIndex = array_search($order->status, $statusOrder);
-        
-        $timeline = [];
-        foreach ($statusOrder as $index => $status) {
-            $timeline[] = [
-                'status' => $status,
-                'label' => $statuses[$status],
-                'completed' => $index <= $currentIndex,
-                'timestamp' => $this->getStatusTimestamp($order, $status, $index, $currentIndex)
-            ];
-        }
-        
-        return $timeline;
-    }
 
-    private function calculateDeliveryDistanceKm(Order $order): ?float
-    {
-        if (($order->order_type ?? 'delivery') === 'takeaway') {
-            return null;
-        }
-
-        if (! $order->restaurant ||
-            $order->restaurant->latitude === null ||
-            $order->restaurant->longitude === null ||
-            $order->delivery_lat === null ||
-            $order->delivery_lng === null) {
-            return null;
-        }
-
-        $earthRadiusKm = 6371;
-        $restaurantLat = deg2rad((float) $order->restaurant->latitude);
-        $restaurantLng = deg2rad((float) $order->restaurant->longitude);
-        $deliveryLat = deg2rad((float) $order->delivery_lat);
-        $deliveryLng = deg2rad((float) $order->delivery_lng);
-
-        $latDelta = $deliveryLat - $restaurantLat;
-        $lngDelta = $deliveryLng - $restaurantLng;
-
-        $a = sin($latDelta / 2) ** 2
-            + cos($restaurantLat) * cos($deliveryLat) * sin($lngDelta / 2) ** 2;
-
-        return round($earthRadiusKm * (2 * atan2(sqrt($a), sqrt(1 - $a))), 2);
-    }
-    
-    /**
-     * Get timestamp for each status
-     */
-    private function getStatusTimestamp($order, $status, $index, $currentIndex)
-    {
-        return match ($status) {
-            'pending' => $order->created_at,
-            'confirmed' => $order->confirmed_at,
-            'preparing' => $order->preparing_at ?? $order->confirmed_at,
-            'ready_for_pickup' => $order->ready_at,
-            'reached_pickup' => $order->reached_at,
-            'picked_up', 'on_the_way' => $order->getAttribute('picked_up_at')
-                ?? $order->driver_accepted_at
-                ?? $order->reached_at
-                ?? $order->ready_at,
-            'delivered' => $order->delivered_at,
-            'cancelled' => $order->cancelled_at,
-            default => null,
-        };
-    }
-    
     /**
      * Permanently delete an order from the database.
      */

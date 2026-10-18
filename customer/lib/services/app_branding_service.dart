@@ -16,6 +16,12 @@ class AppBrandingService {
   final ApiService _api = ApiService();
   AppBranding? _memoryCache;
 
+  // Synchronous access to whatever's already in memory, for call sites that
+  // can't await (e.g. building an ad widget's adUnitId). loadBranding() is
+  // already called once at app startup, so by the time a user reaches a
+  // screen deep enough to show an ad, this is populated.
+  AppBranding get cachedOrFallback => _memoryCache ?? AppBranding.fallback();
+
   Future<AppBranding> loadBranding({bool forceRefresh = false}) async {
     if (!forceRefresh && _memoryCache != null) {
       return _memoryCache!;

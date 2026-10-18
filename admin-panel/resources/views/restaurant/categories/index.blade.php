@@ -4,6 +4,8 @@
 @section('title', 'Categories')
 
 @php($canManageMenu = auth()->user()->hasRestaurantPermission('manage_menu'))
+@php($totalMenuItems = $categories->sum('menu_items_count') + $categories->sum(fn ($c) => $c->children->sum('subcategory_menu_items_count')))
+@php($totalSubcategories = $categories->sum(fn ($c) => $c->children->count()))
 
 @section('styles')
 <style>
@@ -20,6 +22,12 @@
         align-items: center;
     }
 
+    .category-list-row.subcategory-row {
+        grid-template-columns: 40px 44px minmax(0, 1fr) auto;
+        padding-left: 32px;
+        background: rgba(148, 163, 184, 0.06);
+    }
+
     .category-list-row:last-child {
         border-bottom: 0;
     }
@@ -34,6 +42,21 @@
         display: flex;
         align-items: center;
         justify-content: center;
+        flex-shrink: 0;
+    }
+
+    .subcategory-row .category-list-image {
+        width: 44px;
+        height: 44px;
+        border-radius: 10px;
+    }
+
+    .subcategory-connector {
+        width: 40px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #94a3b8;
         flex-shrink: 0;
     }
 
@@ -58,6 +81,10 @@
             grid-template-columns: 54px minmax(0, 1fr);
         }
 
+        .category-list-row.subcategory-row {
+            grid-template-columns: 28px 40px minmax(0, 1fr);
+        }
+
         .category-list-image {
             width: 54px;
             height: 54px;
@@ -79,12 +106,20 @@
     <div class="d-flex justify-content-between align-items-center flex-wrap gap-3">
         <div>
             <h1>Menu Categories</h1>
-            <p>Organize your menu items into logical categories</p>
+            <p>Organize your menu items into categories and subcategories</p>
         </div>
         @if($canManageMenu)
-        <a href="{{ route('restaurant.categories.create') }}" class="btn btn-primary rounded-3">
-            <i class="fas fa-plus me-2"></i> Add Category
-        </a>
+        <div class="d-flex flex-wrap gap-2">
+            <a href="{{ route('restaurant.categories.export') }}" class="btn btn-outline-secondary rounded-3">
+                <i class="fas fa-file-export me-2"></i> Export
+            </a>
+            <button class="btn btn-outline-success rounded-3" data-bs-toggle="modal" data-bs-target="#categoryImportModal">
+                <i class="fas fa-file-import me-2"></i> Import
+            </button>
+            <a href="{{ route('restaurant.categories.create') }}" class="btn btn-primary rounded-3">
+                <i class="fas fa-plus me-2"></i> Add Category
+            </a>
+        </div>
         @endif
     </div>
 </div>
@@ -111,8 +146,22 @@
                     <i class="fas fa-folder"></i>
                 </div>
                 <div>
-                    <div class="small text-muted">Total Categories</div>
+                    <div class="small text-muted">Categories</div>
                     <div class="h4 mb-0 fw-bold">{{ $categories->count() }}</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-xl-3 col-md-6">
+        <div class="stat-card">
+            <div class="d-flex align-items-center gap-3">
+                <div class="icon info" style="width: 44px; height: 44px; font-size: 18px;">
+                    <i class="fas fa-folder-tree"></i>
+                </div>
+                <div>
+                    <div class="small text-muted">Subcategories</div>
+                    <div class="h4 mb-0 fw-bold">{{ $totalSubcategories }}</div>
                 </div>
             </div>
         </div>
@@ -125,7 +174,7 @@
                     <i class="fas fa-check-circle"></i>
                 </div>
                 <div>
-                    <div class="small text-muted">Active</div>
+                    <div class="small text-muted">Active Categories</div>
                     <div class="h4 mb-0 fw-bold">{{ $categories->where('is_active', true)->count() }}</div>
                 </div>
             </div>
@@ -136,25 +185,11 @@
         <div class="stat-card">
             <div class="d-flex align-items-center gap-3">
                 <div class="icon warning" style="width: 44px; height: 44px; font-size: 18px;">
-                    <i class="fas fa-ban"></i>
-                </div>
-                <div>
-                    <div class="small text-muted">Inactive</div>
-                    <div class="h4 mb-0 fw-bold">{{ $categories->where('is_active', false)->count() }}</div>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <div class="col-xl-3 col-md-6">
-        <div class="stat-card">
-            <div class="d-flex align-items-center gap-3">
-                <div class="icon info" style="width: 44px; height: 44px; font-size: 18px;">
                     <i class="fas fa-utensils"></i>
                 </div>
                 <div>
                     <div class="small text-muted">Menu Items</div>
-                    <div class="h4 mb-0 fw-bold">{{ $categories->sum('menu_items_count') }}</div>
+                    <div class="h4 mb-0 fw-bold">{{ $totalMenuItems }}</div>
                 </div>
             </div>
         </div>
@@ -183,15 +218,14 @@
                         {{ $category->is_active ? 'Active' : 'Inactive' }}
                     </span>
                     <span class="badge bg-light text-dark border">Order {{ $category->display_order }}</span>
+                    @if($category->children->isNotEmpty())
+                        <span class="badge bg-light text-dark border">{{ $category->children->count() }} subcategor{{ $category->children->count() === 1 ? 'y' : 'ies' }}</span>
+                    @endif
                 </div>
 
                 <div class="small text-muted d-flex align-items-center gap-2 flex-wrap">
                     <span><i class="fas fa-utensils me-1"></i>{{ $category->menu_items_count }} menu items</span>
                     <span><i class="fas fa-layer-group me-1"></i>{{ $category->is_active ? 'Visible in menu' : 'Hidden from menu' }}</span>
-                </div>
-
-                <div class="text-muted small mt-1">
-                    {{ $category->menu_items_count > 0 ? 'Contains active menu organization data.' : 'No menu items assigned yet.' }}
                 </div>
             </div>
 
@@ -206,7 +240,12 @@
                         <button class="btn btn-sm btn-light rounded-3 border" data-bs-toggle="dropdown" aria-label="Category actions">
                             <i class="fas fa-ellipsis-v"></i>
                         </button>
-                        <ul class="dropdown-menu dropdown-menu-end p-2" style="border-radius: 12px; min-width: 180px;">
+                        <ul class="dropdown-menu dropdown-menu-end p-2" style="border-radius: 12px; min-width: 200px;">
+                            <li>
+                                <a class="dropdown-item rounded-3 py-2" href="{{ route('restaurant.categories.subcategories.create', $category->id) }}">
+                                    <i class="fas fa-plus me-2 text-success"></i> Add Subcategory
+                                </a>
+                            </li>
                             <li>
                                 <a class="dropdown-item rounded-3 py-2" href="{{ route('restaurant.categories.edit', $category->id) }}">
                                     <i class="fas fa-pen me-2 text-primary"></i> Edit Category
@@ -228,6 +267,65 @@
                 @endif
             </div>
         </div>
+
+        @foreach($category->children as $subcategory)
+            <div class="category-list-row subcategory-row">
+                <div class="subcategory-connector">
+                    <i class="fas fa-turn-up fa-rotate-90"></i>
+                </div>
+                <div class="category-list-image">
+                @if($subcategory->image)
+                    <img src="{{ asset('storage/' . $subcategory->image) }}"
+                         alt="{{ $subcategory->name }}"
+                         class="w-100 h-100"
+                         style="object-fit: cover;">
+                @else
+                    <i class="fas fa-folder text-muted opacity-50"></i>
+                @endif
+                </div>
+
+                <div class="min-w-0">
+                    <div class="d-flex align-items-center gap-2 flex-wrap mb-1">
+                        <span class="category-status-dot {{ $subcategory->is_active ? 'bg-success' : 'bg-secondary' }}"></span>
+                        <h6 class="mb-0 fw-semibold text-truncate">{{ $subcategory->name }}</h6>
+                        <span class="badge {{ $subcategory->is_active ? 'bg-success' : 'bg-secondary' }}">
+                            {{ $subcategory->is_active ? 'Active' : 'Inactive' }}
+                        </span>
+                    </div>
+                    <div class="small text-muted">
+                        <i class="fas fa-utensils me-1"></i>{{ $subcategory->subcategory_menu_items_count }} menu items
+                    </div>
+                </div>
+
+                @if($canManageMenu)
+                    <div class="category-row-actions d-flex align-items-center justify-content-end gap-3">
+                        <div class="dropdown">
+                            <button class="btn btn-sm btn-light rounded-3 border" data-bs-toggle="dropdown" aria-label="Subcategory actions">
+                                <i class="fas fa-ellipsis-v"></i>
+                            </button>
+                            <ul class="dropdown-menu dropdown-menu-end p-2" style="border-radius: 12px; min-width: 180px;">
+                                <li>
+                                    <a class="dropdown-item rounded-3 py-2" href="{{ route('restaurant.categories.edit', $subcategory->id) }}">
+                                        <i class="fas fa-pen me-2 text-primary"></i> Edit Subcategory
+                                    </a>
+                                </li>
+                                <li><hr class="dropdown-divider"></li>
+                                <li>
+                                    <form action="{{ route('restaurant.categories.destroy', $subcategory->id) }}" method="POST"
+                                          onsubmit="return confirm('Delete this subcategory?')">
+                                        @csrf
+                                        @method('DELETE')
+                                        <button type="submit" class="dropdown-item rounded-3 py-2 text-danger">
+                                            <i class="fas fa-trash me-2"></i> Delete
+                                        </button>
+                                    </form>
+                                </li>
+                            </ul>
+                        </div>
+                    </div>
+                @endif
+            </div>
+        @endforeach
     @empty
     <div class="text-center py-5">
         <div class="mb-4">
@@ -243,4 +341,46 @@
     </div>
     @endforelse
 </div>
+
+@if($canManageMenu)
+<div class="modal fade" id="categoryImportModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Import Categories</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <form action="{{ route('restaurant.categories.import') }}" method="POST" enctype="multipart/form-data">
+                @csrf
+                <div class="modal-body">
+                    <p class="text-muted">Upload a CSV, XLS, or XLSX file with one category or subcategory per row.</p>
+                    <div class="mb-3">
+                        <label class="form-label">Categories File</label>
+                        <input type="file" name="file" class="form-control" accept=".csv,.txt,.xlsx,.xls" required>
+                    </div>
+                    <div class="alert alert-light rounded-3">
+                        <p class="mb-2"><strong>Columns:</strong></p>
+                        <ul class="mb-0">
+                            <li><code>Category</code> — the category or subcategory name</li>
+                            <li><code>Parent Category</code> — leave blank for a top-level category, or the parent's name to create/update a subcategory</li>
+                            <li><code>Display Order</code></li>
+                            <li><code>Active</code> (Yes / No)</li>
+                        </ul>
+                    </div>
+                    <div class="d-flex justify-content-between align-items-center">
+                        <small class="text-muted">Matching rows (same name + same parent) are updated in place.</small>
+                        <a href="{{ route('restaurant.categories.import.template') }}" class="btn btn-sm btn-outline-secondary rounded-3">
+                            <i class="fas fa-download me-1"></i> Download Sample CSV
+                        </a>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancel</button>
+                    <button class="btn btn-primary">Import</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+@endif
 @endsection

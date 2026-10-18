@@ -167,7 +167,7 @@ class PosController extends Controller
         $todayRevenue = (float) (clone $todayOrderBase)
             ->whereNotIn('status', ['cancelled', 'refunded'])
             ->sum('total');
-        $avgOrderValue = $todayOrders > 0 ? round($todayRevenue / $todayOrders, 2) : 0;
+        $avgOrderValue = $todayOrders > 0 ? round($todayRevenue / $todayOrders, AppSetting::currencyDecimals()) : 0;
         $deliveryOrders = 0;
         $pickupOrders = 0;
         $dineInOrders = 0;
@@ -423,7 +423,7 @@ class PosController extends Controller
                 }
 
                 $unitPrice = (float) ($menuItem->final_price ?? $menuItem->getFinalPriceAttribute());
-                $lineTotal = round($unitPrice * (int) $item['quantity'], 2);
+                $lineTotal = round($unitPrice * (int) $item['quantity'], AppSetting::currencyDecimals());
                 $subtotal += $lineTotal;
                 $orderItems[] = [
                     'id' => $menuItem->id,
@@ -436,10 +436,10 @@ class PosController extends Controller
                 ];
             }
 
-            $subtotal = round($subtotal, 2);
-            $discount = min(round((float) ($validated['discount_amount'] ?? 0), 2), $subtotal);
-            $taxableSubtotal = max(0, round($subtotal - $discount, 2));
-            $tax = round((float) TaxSetting::calculateTax($taxableSubtotal, 0), 2);
+            $subtotal = round($subtotal, AppSetting::currencyDecimals());
+            $discount = min(round((float) ($validated['discount_amount'] ?? 0), AppSetting::currencyDecimals()), $subtotal);
+            $taxableSubtotal = max(0, round($subtotal - $discount, AppSetting::currencyDecimals()));
+            $tax = round((float) TaxSetting::calculateTax($taxableSubtotal, 0), AppSetting::currencyDecimals());
 
             // GST mode override (Settings -> Business).
             $gstService = app(\App\Services\Gst\GstTaxService::class);
@@ -449,7 +449,7 @@ class PosController extends Controller
                 $grossItems = array_sum(array_column($rawLines, 'line_total'));
                 $scale = $grossItems > 0 ? $taxableSubtotal / $grossItems : 1.0;
                 foreach ($rawLines as &$rl) {
-                    $rl['line_total'] = round($rl['line_total'] * $scale, 2);
+                    $rl['line_total'] = round($rl['line_total'] * $scale, AppSetting::currencyDecimals());
                 }
                 unset($rl);
                 $gstBreakdown = $gstService->computeForOrder($restaurant, $rawLines, []);
@@ -459,14 +459,14 @@ class PosController extends Controller
             }
 
             $posCommission = CommissionSetting::calculate('pos', $taxableSubtotal, 0);
-            $total = round($taxableSubtotal + $tax, 2);
+            $total = round($taxableSubtotal + $tax, AppSetting::currencyDecimals());
             $customerName = $validated['customer_name'] ?: 'Walk-in Customer';
             $customerPhone = $validated['customer_phone'] ?: (Auth::user()->phone ?: '0000000000');
             $paymentBreakdown = collect([
-                'cash' => round((float) ($validated['paid_cash'] ?? 0), 2),
-                'card' => round((float) ($validated['paid_card'] ?? 0), 2),
-                'upi' => round((float) ($validated['paid_upi'] ?? 0), 2),
-                'wallet' => round((float) ($validated['paid_wallet'] ?? 0), 2),
+                'cash' => round((float) ($validated['paid_cash'] ?? 0), AppSetting::currencyDecimals()),
+                'card' => round((float) ($validated['paid_card'] ?? 0), AppSetting::currencyDecimals()),
+                'upi' => round((float) ($validated['paid_upi'] ?? 0), AppSetting::currencyDecimals()),
+                'wallet' => round((float) ($validated['paid_wallet'] ?? 0), AppSetting::currencyDecimals()),
             ])->filter(fn ($amount) => $amount > 0);
 
             if ($validated['payment_method'] === 'split' && abs($paymentBreakdown->sum() - $total) >= 0.05) {

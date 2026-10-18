@@ -9,17 +9,19 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 class MenuItem extends Model
 {
     protected $fillable = [
-        'restaurant_id', 'master_menu_item_id', 'item_source', 'category_id', 'cuisine_id', 'name', 'description', 'price',
+        'restaurant_id', 'master_menu_item_id', 'item_source', 'category_id', 'subcategory_id', 'cuisine_id', 'name', 'description', 'price',
         'discounted_price', 'is_price_inclusive_gst', 'gst_rate', 'hsn_code', 'images', 'is_veg', 'food_type', 'is_available', 'unavailable_until', 'is_recommended',
         'is_bestseller', 'is_new', 'is_spicy', 'is_combo', 'availability_schedule', 'approval_status',
-        'preparation_time', 'rating', 'total_ratings', 'total_orders', 'tags', 'variants', 'add_ons'
+        'preparation_time', 'rating', 'total_ratings', 'total_orders', 'tags', 'variants', 'add_ons',
+        'petpooja_item_id', 'petpooja_variation_id', 'petpooja_meta'
     ];
-    
+
     protected $casts = [
         'images' => 'array',
         'tags' => 'array',
         'variants' => 'array',
         'add_ons' => 'array',
+        'petpooja_meta' => 'array',
         'availability_schedule' => 'array',
         'is_veg' => 'boolean',
         'is_price_inclusive_gst' => 'boolean',
@@ -50,6 +52,11 @@ class MenuItem extends Model
     public function category(): BelongsTo
     {
         return $this->belongsTo(Category::class);
+    }
+
+    public function subcategory(): BelongsTo
+    {
+        return $this->belongsTo(Category::class, 'subcategory_id');
     }
 
     public function cuisine(): BelongsTo

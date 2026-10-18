@@ -1,0 +1,15282 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:math';
+import 'dart:ui' as ui;
+
+import 'package:cached_network_image/cached_network_image.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart';
+import 'package:google_fonts/google_fonts.dart';
+import 'package:http/http.dart' as http;
+import 'package:lottie/lottie.dart';
+import 'package:package_info_plus/package_info_plus.dart';
+import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:url_launcher/url_launcher.dart';
+
+import '../../utils/route_observer.dart';
+
+import '../../config/api_constants.dart';
+import '../../config/app_config.dart';
+import '../../models/address.dart' as app_address;
+import '../../models/menu_item.dart';
+import '../../models/order.dart';
+import '../../models/restaurant.dart';
+import '../../providers/cart_provider.dart';
+import '../../providers/auth_provider.dart';
+import '../../providers/order_provider.dart';
+import '../../services/api_service.dart';
+import '../../services/app_image_cache.dart';
+import '../../widgets/common/app_cached_image.dart';
+import '../../services/app_branding_service.dart';
+import '../../services/location_service.dart';
+import '../../services/websocket_service.dart';
+import '../../theme/foodflow_theme.dart';
+import '../../utils/currency_utils.dart';
+import '../../widgets/common/lucide_icon.dart';
+import '../../widgets/customer/menu_item_card.dart';
+import '../../widgets/customer/order_feedback_dialog.dart';
+import '../../widgets/customer/promotion_detail_sheet.dart';
+import '../customer/cart_screen.dart';
+import '../customer/menu_price_filter_screen.dart';
+import '../customer/menu_taxonomy_filter_screen.dart';
+import '../customer/orders_screen.dart';
+import '../customer/profile_screen.dart';
+import '../customer/restaurant_detail_screen.dart';
+import '../customer/search_screen.dart';
+
+const _homeAccent = Color(0xFFFF6B00);
+const _homeAccentDeep = Color(0xFFFF7A00);
+const _homePeach = Color(0xFFFFE9DD);
+const _homeBg = Color(0xFFFAFAFA);
+const _homeText = Color(0xFF111827);
+const _homeMuted = Color(0xFF6B7280);
+const _homeBorder = Color(0xFFE5E7EB);
+const _homeGreen = Color(0xFF16A34A);
+const _homeLightGreen = Color(0xFFEAF8EA);
+const _homeRed = Color(0xFFE53935);
+const _vegModePrefsKey = 'customer_home_veg_only_mode';
+final Set<int> _sessionShownPopupCampaignIds = <int>{};
+
+enum _HomeBlockingState { offline, deliveryUnavailable }
+
+bool _hasCustomerAccountAccess(BuildContext context) {
+  final authProvider = context.read<AuthProvider>();
+  return authProvider.isAuthenticated && authProvider.canUseCurrentApp;
+}
+
+bool _openLoginForAccountFeature(BuildContext context) {
+  if (_hasCustomerAccountAccess(context)) return true;
+  Navigator.pushNamed(context, '/login');
+  return false;
+}
+
+String _resolveHomeAssetUrl(String rawValue) {
+  return AppImageCache.resolveUrl(rawValue);
+}
+
+bool _isLottieUrl(String url) {
+  final normalized = url.trim().toLowerCase();
+  if (normalized.isEmpty) return false;
+  final uri = Uri.tryParse(normalized);
+  final path = uri?.path.toLowerCase() ?? normalized.split('?').first;
+  final format = uri?.queryParameters['format']?.toLowerCase();
+  final type = uri?.queryParameters['type']?.toLowerCase();
+  final filename = path.split('/').last;
+
+  return filename.endsWith('.json') ||
+      path.contains('.json/') ||
+      format == 'json' ||
+      type == 'lottie' ||
+      normalized.contains('lottie') ||
+      normalized.contains('animation');
+}
+
+bool _isLottieMediaItem(dynamic item) {
+  if (item is! Map) return false;
+
+  final mediaType = item['media_type']?.toString().toLowerCase();
+  if (mediaType == 'lottie' ||
+      mediaType == 'animation' ||
+      mediaType == 'json') {
+    return true;
+  }
+
+  final type = item['type']?.toString().toLowerCase();
+  if (type == 'lottie' || type == 'animation') return true;
+
+  final format = item['format']?.toString().toLowerCase();
+  if (format == 'json') return true;
+
+  for (final key in const <String>[
+    'animation_url',
+    'lottie_url',
+    'json_url',
+    'media_url',
+    'asset_url',
+    'webp_url',
+    'hero_image',
+    'image',
+    'banner_image',
+    'image_url',
+    'photo'
+  ]) {
+    final value = item[key];
+    if (value is String && value.trim().isNotEmpty) {
+      final normalizedValue = value.trim().toLowerCase();
+      if (normalizedValue.contains('lottie') ||
+          normalizedValue.contains('animation') ||
+          normalizedValue.endsWith('.json')) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+double _homePriceValue(dynamic value) {
+  if (value == null) return 0;
+  if (value is num) return value.toDouble();
+  if (value is String) {
+    final cleaned = value.replaceAll(RegExp(r'[^0-9.\-]'), '');
+    if (cleaned.isEmpty || cleaned == '-' || cleaned == '.') return 0;
+    return double.tryParse(cleaned) ?? 0;
+  }
+  if (value is Map) {
+    for (final key in const ['amount', 'value', 'price', 'final_price']) {
+      final parsed = _homePriceValue(value[key]);
+      if (parsed > 0) return parsed;
+    }
+  }
+  return 0;
+}
+
+double _homeMenuItemPrice(Map<String, dynamic> item) {
+  for (final value in <dynamic>[
+    item['final_price'],
+    item['finalPrice'],
+    item['discounted_price'],
+    item['discountedPrice'],
+    item['sale_price'],
+    item['offer_price'],
+    item['price'],
+    item['base_price'],
+    item['regular_price'],
+    item['item_price'],
+    item['menu_price'],
+    item['unit_price'],
+    item['mrp'],
+    item['selling_price'],
+    item['amount'],
+  ]) {
+    final parsed = _homePriceValue(value);
+    if (parsed > 0) return parsed;
+  }
+
+  for (final key in const ['variant', 'default_variant', 'selected_variant']) {
+    final value = item[key];
+    if (value is Map) {
+      final parsed = _homePriceValue(value['price'] ?? value['final_price']);
+      if (parsed > 0) return parsed;
+    }
+  }
+
+  final variants = item['variants'];
+  if (variants is List) {
+    final prices = variants
+        .whereType<Map>()
+        .map((variant) => _homePriceValue(
+              variant['price'] ?? variant['final_price'] ?? variant['amount'],
+            ))
+        .where((value) => value > 0)
+        .toList();
+    if (prices.isNotEmpty) {
+      prices.sort();
+      return prices.first;
+    }
+  }
+
+  return 0;
+}
+
+double _homeMinimumNestedMenuPrice(dynamic value) {
+  final prices = <double>[];
+
+  void collectPrice(dynamic candidate, {bool nestedOnly = false}) {
+    if (candidate == null) return;
+    if (candidate is Map) {
+      final map = Map<String, dynamic>.from(candidate);
+      if (!nestedOnly) {
+        final directPrice = _homeMenuItemPrice(map);
+        if (directPrice > 0) prices.add(directPrice);
+      }
+      for (final key in const [
+        'items',
+        'menu_items',
+        'matched_menu_items',
+        'matchedMenuItems',
+        'popular_items',
+        'popular_dishes',
+        'recommended_items',
+        'products',
+      ]) {
+        collectPrice(map[key]);
+      }
+      return;
+    }
+    if (candidate is List) {
+      for (final item in candidate) {
+        collectPrice(item);
+      }
+    }
+  }
+
+  collectPrice(value, nestedOnly: true);
+  if (prices.isEmpty) return 0;
+  prices.sort();
+  return prices.first;
+}
+
+Future<bool> _isRemoteImageUrl(Uri uri) async {
+  try {
+    final headResponse =
+        await http.head(uri).timeout(const Duration(seconds: 4));
+    final contentType =
+        headResponse.headers['content-type']?.toLowerCase() ?? '';
+    if (headResponse.statusCode == 200 && contentType.startsWith('image/')) {
+      return true;
+    }
+    if (headResponse.statusCode == 405 || headResponse.statusCode == 501) {
+      final getResponse = await http.get(uri, headers: {
+        'Range': 'bytes=0-8191'
+      }).timeout(const Duration(seconds: 6));
+      final getType = getResponse.headers['content-type']?.toLowerCase() ?? '';
+      return getResponse.statusCode == 200 && getType.startsWith('image/');
+    }
+    return false;
+  } catch (_) {
+    return false;
+  }
+}
+
+Future<void> _safePrecacheImage(String url, BuildContext context) async {
+  final uri = Uri.tryParse(url);
+  if (uri == null || !uri.isAbsolute) return;
+
+  try {
+    await precacheImage(
+      CachedNetworkImageProvider(url, cacheManager: AppImageCache.instance),
+      context,
+    );
+  } catch (_) {
+    // ignore invalid image data or network decode failures
+  }
+}
+
+Widget _buildHomeNetworkImage(
+  String imageUrl, {
+  BoxFit fit = BoxFit.cover,
+  double? width,
+  double? height,
+  Widget? placeholder,
+  Widget? errorWidget,
+}) {
+  final resolvedUrl = _resolveHomeAssetUrl(imageUrl);
+  final uri = Uri.tryParse(resolvedUrl);
+  if (resolvedUrl.isEmpty || uri == null || !uri.isAbsolute) {
+    return errorWidget ?? const SizedBox.shrink();
+  }
+  if (_isLottieUrl(resolvedUrl)) {
+    return errorWidget ?? const SizedBox.shrink();
+  }
+
+  return AppCachedImage(
+    imageUrl: resolvedUrl,
+    fit: fit,
+    width: width,
+    height: height,
+    loadingBuilder: (context, _, __) {
+      return placeholder ??
+          Container(
+            color: const Color(0xFFF3F3F3),
+            child: const Center(
+              child: SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+            ),
+          );
+    },
+    errorBuilder: (_, __, ___) => errorWidget ?? const SizedBox.shrink(),
+  );
+}
+
+Widget _buildImageOrFallback(
+  String imageUrl, {
+  BoxFit fit = BoxFit.cover,
+  double? width,
+  double? height,
+  Widget? placeholder,
+  Widget? errorWidget,
+}) {
+  final resolvedUrl = _resolveHomeAssetUrl(imageUrl);
+  if (resolvedUrl.isEmpty || _isLottieUrl(resolvedUrl)) {
+    return errorWidget ?? placeholder ?? const SizedBox.shrink();
+  }
+  return _buildHomeNetworkImage(
+    imageUrl,
+    fit: fit,
+    width: width,
+    height: height,
+    placeholder: placeholder,
+    errorWidget: errorWidget,
+  );
+}
+
+class CustomerHomeScreenProduction extends StatefulWidget {
+  const CustomerHomeScreenProduction({super.key});
+
+  @override
+  State<CustomerHomeScreenProduction> createState() =>
+      _CustomerHomeScreenProductionState();
+}
+
+class _CustomerHomeScreenProductionState
+    extends State<CustomerHomeScreenProduction>
+    with RouteAware, WidgetsBindingObserver {
+  final LocationService _locationService = LocationService();
+  final ApiService _api = ApiService();
+  int _currentIndex = 0;
+  int _locationRevision = 0;
+  Timer? _activeOrderRefreshTimer;
+  bool _isRefreshingActiveOrders = false;
+  bool _feedbackPromptOpen = false;
+  bool _feedbackPromptChecked = false;
+  bool _isRouteAwareSubscribed = false;
+  int? _realtimeCustomerId;
+  String? _realtimeCustomerHandlerId;
+  bool _showDiningMode = false;
+  bool _hasPromptedForLocation = false;
+  bool _bottomNavVisible = true;
+  bool _showVoiceAssistant = false;
+  String _currentCity = 'Home';
+  String _currentAddress = 'Select your delivery address';
+  double? _currentLat;
+  double? _currentLng;
+  Timer? _bottomNavRevealTimer;
+  Map<String, dynamic> _menuPriceFilterConfig = const <String, dynamic>{};
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _ensureLocationSelected();
+      _loadMenuPriceFilterConfig();
+      _loadVoiceAiVisibility();
+      if (_hasCustomerAccountAccess(context)) {
+        final orderProvider = context.read<OrderProvider>();
+        if (orderProvider.orders.isEmpty) {
+          orderProvider
+              .fetchMyOrders()
+              .then((_) => _maybeShowRecentOrderFeedback());
+        } else {
+          _maybeShowRecentOrderFeedback();
+        }
+        _startActiveOrderRefreshTimer();
+        _initializeCustomerRealtime();
+      }
+    });
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (!_isRouteAwareSubscribed) {
+      final route = ModalRoute.of(context);
+      if (route is PageRoute) {
+        routeObserver.subscribe(this, route);
+        _isRouteAwareSubscribed = true;
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _activeOrderRefreshTimer?.cancel();
+    _bottomNavRevealTimer?.cancel();
+    final customerId = _realtimeCustomerId;
+    if (customerId != null) {
+      WebSocketService().removeCustomerHandler(
+        customerId,
+        _realtimeCustomerHandlerId,
+      );
+    }
+    if (_isRouteAwareSubscribed) {
+      routeObserver.unsubscribe(this);
+    }
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(_loadLocation());
+      _refresh();
+      unawaited(_refreshActiveOrders());
+      unawaited(_loadVoiceAiVisibility());
+    }
+  }
+
+  Future<void> _initializeCustomerRealtime() async {
+    for (var attempt = 0; attempt < 10 && mounted; attempt++) {
+      final user = context.read<AuthProvider>().currentUser;
+      if (user != null) {
+        _realtimeCustomerId = user.id;
+        _realtimeCustomerHandlerId = await WebSocketService().initCustomer(
+          user.id,
+          onOrderUpdate: _handleRealtimeOrderUpdate,
+        );
+        return;
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+    }
+  }
+
+  void _handleRealtimeOrderUpdate(Map<String, dynamic> data) {
+    if (!mounted) return;
+    final order = context.read<OrderProvider>().applyOrderStatusUpdate(data);
+    if (order == null) {
+      unawaited(_refreshActiveOrders());
+      unawaited(_loadVoiceAiVisibility());
+      return;
+    }
+
+    if (order.isDelivered) {
+      _feedbackPromptChecked = false;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _maybeShowRecentOrderFeedback(force: true);
+      });
+    }
+
+    unawaited(
+      _refreshOrdersAfterRealtimeUpdate(showFeedback: order.isDelivered),
+    );
+  }
+
+  Future<void> _refreshOrdersAfterRealtimeUpdate(
+      {required bool showFeedback}) async {
+    await context.read<OrderProvider>().fetchMyOrders(notifyLoading: false);
+    if (mounted && showFeedback) {
+      await _maybeShowRecentOrderFeedback(force: true);
+    }
+  }
+
+  @override
+  void didPopNext() {
+    super.didPopNext();
+    _loadLocation();
+    _refreshActiveOrders();
+  }
+
+  void _startActiveOrderRefreshTimer() {
+    _activeOrderRefreshTimer?.cancel();
+    _activeOrderRefreshTimer = Timer.periodic(const Duration(seconds: 12), (_) {
+      _refreshActiveOrders();
+    });
+  }
+
+  Future<void> _refreshActiveOrders() async {
+    if (!mounted ||
+        !_hasCustomerAccountAccess(context) ||
+        _isRefreshingActiveOrders) {
+      return;
+    }
+    _isRefreshingActiveOrders = true;
+    try {
+      final provider = context.read<OrderProvider>();
+      final hasRunningOrder = provider.orders.any(_isTrackableOrder);
+      if (provider.orders.isEmpty || hasRunningOrder) {
+        await provider.fetchMyOrders(notifyLoading: false);
+        await _maybeShowRecentOrderFeedback();
+      }
+    } finally {
+      _isRefreshingActiveOrders = false;
+    }
+  }
+
+  bool _isTrackableOrder(Order order) {
+    return !order.isDelivered &&
+        !order.isCancelled &&
+        const <String>{
+          'pending',
+          'confirmed',
+          'preparing',
+          'ready_for_pickup',
+          'reached_pickup',
+          'picked_up',
+          'on_the_way',
+        }.contains(order.status);
+  }
+
+  Future<void> _maybeShowRecentOrderFeedback({bool force = false}) async {
+    if (!mounted || _feedbackPromptOpen) return;
+    if (_feedbackPromptChecked && !force) return;
+    _feedbackPromptChecked = true;
+
+    final provider = context.read<OrderProvider>();
+    final delivered = provider.orders.where((order) => order.needsFeedback);
+    if (delivered.isEmpty) return;
+
+    final order = delivered.first;
+    final prefs = await SharedPreferences.getInstance();
+    final dismissedOrderId = prefs.getInt('dismissed_feedback_order_id');
+    if (!force && dismissedOrderId == order.id) return;
+
+    _feedbackPromptOpen = true;
+    await _showFeedbackDialog(order);
+    _feedbackPromptOpen = false;
+  }
+
+  Future<void> _showFeedbackDialog(Order order) async {
+    final feedbackSubmitted = await showOrderFeedbackDialog(context, order);
+    if (feedbackSubmitted && mounted) {
+      await _loadPlayStoreCta();
+    }
+  }
+
+  Future<void> _loadPlayStoreCta() async {
+    final branding = await AppBrandingService.instance.loadBranding();
+    var playStoreUrl = branding.customerPlayStoreUrl.trim();
+    if (playStoreUrl.isEmpty) {
+      final packageInfo = await PackageInfo.fromPlatform();
+      final packageName = packageInfo.packageName.trim();
+      if (packageName.isNotEmpty) {
+        playStoreUrl =
+            'https://play.google.com/store/apps/details?id=$packageName';
+      }
+    }
+    if (!mounted || playStoreUrl.isEmpty) return;
+
+    final openStore = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Enjoying Yumma!?'),
+        content: const Text('Would you like to rate us on the Play Store?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Not now'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Rate us'),
+          ),
+        ],
+      ),
+    );
+
+    if (openStore == true) {
+      await launchUrl(Uri.parse(playStoreUrl),
+          mode: LaunchMode.externalApplication);
+    }
+  }
+
+  void _refresh() {
+    setState(() {
+      _locationRevision++;
+    });
+  }
+
+  Future<void> _loadLocation() async {
+    final savedLocation = await _locationService.getSavedLocation();
+    if (!mounted || savedLocation == null) return;
+
+    final nextCity =
+        (savedLocation['city']?.toString().trim().isNotEmpty ?? false)
+            ? savedLocation['city'].toString().trim()
+            : 'Home';
+    final savedAddress = savedLocation['address']?.toString().trim();
+    final nextAddress =
+        savedAddress?.isNotEmpty == true ? savedAddress! : _currentAddress;
+    final nextLat = _parseDouble(savedLocation['lat']);
+    final nextLng = _parseDouble(savedLocation['lng']);
+    final changed = nextCity != _currentCity ||
+        nextLat != _currentLat ||
+        nextLng != _currentLng;
+
+    if (!changed) return;
+
+    setState(() {
+      _currentCity = nextCity;
+      _currentAddress = nextAddress;
+      _currentLat = nextLat;
+      _currentLng = nextLng;
+      _locationRevision++;
+    });
+    unawaited(_loadMenuPriceFilterConfig());
+  }
+
+  Future<void> _ensureLocationSelected() async {
+    if (_hasPromptedForLocation) return;
+
+    await _loadLocation();
+    if (!mounted) return;
+
+    final savedLocation = await _locationService.getSavedLocation();
+    final hasLocation = savedLocation != null &&
+        (savedLocation['address']?.toString().trim().isNotEmpty == true ||
+            savedLocation['city']?.toString().trim().isNotEmpty == true);
+
+    if (!hasLocation) {
+      _hasPromptedForLocation = true;
+      await _openLocationPicker();
+    }
+  }
+
+  Future<void> _openLocationPicker() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: FoodFlowTheme.canvas,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(30)),
+      ),
+      builder: (context) {
+        return _LocationPickerSheet(
+          loadSavedAddresses: _loadSavedAddresses,
+          onUseCurrentLocation: _useCurrentLocation,
+          onManualSearch: _searchLocationManually,
+          onSavedAddressSelected: _useSavedAddress,
+          onManageAddresses: () async {
+            Navigator.pop(context);
+            await Navigator.pushNamed(context, '/addresses');
+            if (!mounted) return;
+            await _loadLocation();
+          },
+          onAddAddress: () async {
+            Navigator.pop(context);
+            await Navigator.pushNamed(context, '/addresses/add');
+            if (!mounted) return;
+            await _loadLocation();
+          },
+        );
+      },
+    );
+  }
+
+  Future<List<app_address.Address>> _loadSavedAddresses() async {
+    if (!_hasCustomerAccountAccess(context)) {
+      return const <app_address.Address>[];
+    }
+    final response = await _api.get(ApiConstants.addresses);
+    final data = response is Map ? response['data'] : response;
+    final items = data is List
+        ? data
+        : data is Map && data['data'] is List
+            ? data['data'] as List
+            : const <dynamic>[];
+    final addresses = items
+        .whereType<Map>()
+        .map((item) => app_address.Address.fromJson(
+              Map<String, dynamic>.from(item),
+            ))
+        .toList();
+    addresses.sort((a, b) {
+      if (a.isDefault == b.isDefault) return b.id.compareTo(a.id);
+      return a.isDefault ? -1 : 1;
+    });
+    return addresses;
+  }
+
+  Future<void> _useCurrentLocation() async {
+    final position = await _locationService.getCurrentLocation();
+    if (!mounted) return;
+    if (position == null) {
+      _showLocationMessage('Unable to fetch current location.');
+      return;
+    }
+
+    final address = await _locationService.getAddressFromLatLng(
+      position.latitude,
+      position.longitude,
+    );
+    if (!mounted) return;
+
+    final city = address?['city']?.trim();
+    final label = address?['address']?.trim();
+    await _applySelectedLocation(
+      city: city?.isNotEmpty == true ? city! : 'Current location',
+      address: label?.isNotEmpty == true ? label! : 'Current location',
+      latitude: position.latitude,
+      longitude: position.longitude,
+    );
+  }
+
+  Future<void> _searchLocationManually() async {
+    final selected = await showModalBottomSheet<_ManualLocationResult>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: FoodFlowTheme.canvas,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(30)),
+      ),
+      builder: (context) {
+        return _ManualLocationSearchSheet(
+          loadSuggestions: _locationService.getLocationSuggestions,
+        );
+      },
+    );
+
+    if (!mounted || selected == null) return;
+    await _applySelectedLocation(
+      city: selected.city,
+      address: selected.address,
+      latitude: selected.latitude,
+      longitude: selected.longitude,
+      closePicker: false,
+    );
+  }
+
+  Future<void> _useSavedAddress(app_address.Address address) async {
+    final lat = address.latitude;
+    final lng = address.longitude;
+    if (lat == null || lng == null) {
+      _showLocationMessage(
+          'Edit this address and pin the exact location first.');
+      return;
+    }
+
+    await _applySelectedLocation(
+      city: address.city.trim().isNotEmpty ? address.city.trim() : address.name,
+      address: address.fullAddress,
+      latitude: lat,
+      longitude: lng,
+    );
+  }
+
+  Future<void> _applySelectedLocation({
+    required String city,
+    required String address,
+    required double latitude,
+    required double longitude,
+    bool closePicker = true,
+  }) async {
+    await _locationService.saveLocation(
+      city,
+      latitude,
+      longitude,
+      address: address,
+    );
+    if (!mounted) return;
+    if (closePicker && Navigator.canPop(context)) {
+      Navigator.pop(context);
+    }
+    setState(() {
+      _currentCity = city;
+      _currentAddress = address;
+      _currentLat = latitude;
+      _currentLng = longitude;
+      _locationRevision++;
+    });
+    unawaited(_loadMenuPriceFilterConfig());
+  }
+
+  double? _parseDouble(dynamic value) {
+    if (value is num) return value.toDouble();
+    return double.tryParse(value?.toString() ?? '');
+  }
+
+  void _showLocationMessage(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
+  }
+
+  void _openCartTab() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const CartScreen()),
+    );
+  }
+
+  Future<void> _loadVoiceAiVisibility() async {
+    try {
+      final response = await _api.get(
+        ApiConstants.aiStatus,
+        includeAuth: false,
+        cachePolicy: ApiCachePolicy.screen,
+        cacheFirst: true,
+        refreshCached: true,
+        onCacheRefreshed: _applyVoiceAiVisibility,
+      );
+      _applyVoiceAiVisibility(response);
+    } catch (_) {
+      if (!mounted || !_showVoiceAssistant) return;
+      setState(() => _showVoiceAssistant = false);
+    }
+  }
+
+  void _applyVoiceAiVisibility(dynamic response) {
+    if (!mounted || response is! Map) return;
+    final data = response['data'];
+    if (data is! Map) return;
+    final serviceEnabled = data['service_enabled'] == true;
+    if (_showVoiceAssistant == serviceEnabled) return;
+    setState(() => _showVoiceAssistant = serviceEnabled);
+  }
+
+  Future<void> _loadMenuPriceFilterConfig() async {
+    try {
+      final queryParams = <String, dynamic>{
+        'platform': 'app',
+        if (_currentLat != null && _currentLng != null) ...{
+          'lat': _currentLat,
+          'lng': _currentLng,
+          'radius': 100,
+        },
+      };
+      final response = await _api.get(
+        ApiConstants.homeSections,
+        queryParams: queryParams,
+        includeAuth: false,
+        cachePolicy: ApiCachePolicy.discovery,
+        cacheFirst: true,
+        refreshCached: true,
+      );
+      final sections = _extractHomeSectionList(response);
+      Map<String, dynamic>? config;
+      for (final section in sections) {
+        if (section['type']?.toString() != 'menu_price_filter_config') {
+          continue;
+        }
+        final items = section['items'];
+        final firstItem =
+            items is List && items.isNotEmpty && items.first is Map
+                ? Map<String, dynamic>.from(items.first as Map)
+                : <String, dynamic>{};
+        config = <String, dynamic>{
+          ...section,
+          ...firstItem,
+        };
+        break;
+      }
+      if (!mounted || config == null) return;
+      setState(() {
+        _menuPriceFilterConfig = config!;
+      });
+    } catch (_) {}
+  }
+
+  List<Map<String, dynamic>> _extractHomeSectionList(dynamic response) {
+    final raw = response is Map<String, dynamic> ? response['data'] : response;
+    final list = raw is List
+        ? raw
+        : raw is Map<String, dynamic> && raw['sections'] is List
+            ? raw['sections'] as List
+            : const <dynamic>[];
+    return list
+        .whereType<Map>()
+        .map((section) => Map<String, dynamic>.from(section))
+        .toList(growable: false);
+  }
+
+  void _openMenuPriceFilterScreen() {
+    final label = (_menuPriceFilterConfig['label'] ??
+            _menuPriceFilterConfig['title'] ??
+            'Filter')
+        .toString()
+        .trim();
+    final title = (_menuPriceFilterConfig['screen_title'] ??
+            _menuPriceFilterConfig['title'] ??
+            label)
+        .toString()
+        .trim();
+    final subtitle = (_menuPriceFilterConfig['screen_subtitle'] ??
+            _menuPriceFilterConfig['subtitle'] ??
+            'Menu items matched from restaurants near you')
+        .toString()
+        .trim();
+    final minPrice = _parseDouble(_menuPriceFilterConfig['min_price']);
+    final maxPrice = _parseDouble(_menuPriceFilterConfig['max_price']) ?? 250;
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => MenuPriceFilterScreen(
+          title: title.isEmpty ? (label.isEmpty ? 'Filter' : label) : title,
+          subtitle: subtitle,
+          minPrice: minPrice,
+          maxPrice: maxPrice,
+        ),
+      ),
+    );
+  }
+
+  void _openFloatingCart() {
+    final cart = context.read<CartProvider>();
+    if (cart.cartCount <= 1) {
+      _openCartTab();
+      return;
+    }
+    _showAllCartsSheet();
+  }
+
+  void _openActiveCartRestaurant() {
+    final cart = context.read<CartProvider>();
+    if (cart.cartCount > 1) {
+      _showAllCartsSheet();
+      return;
+    }
+    final restaurant = cart.restaurant ??
+        (cart.carts.length == 1 ? cart.carts.first.restaurant : null);
+    final id = restaurant?.id ?? 0;
+    if (id <= 0) return;
+    _openRestaurantById(id);
+  }
+
+  void _openRestaurantById(int id) {
+    if (id <= 0) return;
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => RestaurantDetailScreen(restaurantId: id),
+      ),
+    );
+  }
+
+  void _showAllCartsSheet() {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: const Color(0xFFF5F6FB),
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (sheetContext) {
+        return Consumer<CartProvider>(
+          builder: (context, cart, _) {
+            final carts = cart.carts;
+            return SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      width: 46,
+                      height: 46,
+                      decoration: const BoxDecoration(
+                        color: Color(0xFF1F2937),
+                        shape: BoxShape.circle,
+                      ),
+                      child: IconButton(
+                        onPressed: () => Navigator.pop(sheetContext),
+                        icon: const Icon(Icons.close, color: Colors.white),
+                      ),
+                    ),
+                    const SizedBox(height: 18),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            'Your Carts (${carts.length})',
+                            style: const TextStyle(
+                              color: FoodFlowTheme.ink,
+                              fontSize: 20,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                        ),
+                        TextButton(
+                          onPressed: () {
+                            cart.clearAllCarts();
+                            Navigator.pop(sheetContext);
+                          },
+                          child: const Text('Clear all'),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    for (final entry in carts) ...[
+                      _AllCartsSheetRow(
+                        cart: entry,
+                        onViewMenu: () {
+                          Navigator.pop(sheetContext);
+                          _openRestaurantById(entry.restaurant.id);
+                        },
+                        onViewCart: () {
+                          cart.setActiveCart(entry.restaurant.id);
+                          Navigator.pop(sheetContext);
+                          _openCartTab();
+                        },
+                        onRemove: () => cart.removeCart(entry.restaurant.id),
+                      ),
+                      const SizedBox(height: 12),
+                    ],
+                    const SizedBox(height: 8),
+                    OutlinedButton(
+                      onPressed: () {
+                        if (carts.isNotEmpty) {
+                          cart.setActiveCart(carts.first.restaurant.id);
+                        }
+                        Navigator.pop(sheetContext);
+                        _openCartTab();
+                      },
+                      style: OutlinedButton.styleFrom(
+                        backgroundColor: Colors.white,
+                        foregroundColor: FoodFlowTheme.brandSecondary(context),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 28,
+                          vertical: 14,
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                      ),
+                      child: const Text(
+                        'Checkout all',
+                        style: TextStyle(fontWeight: FontWeight.w900),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  void _setBottomNavVisible(bool visible) {
+    if (!mounted || _bottomNavVisible == visible) return;
+    setState(() => _bottomNavVisible = visible);
+  }
+
+  void _scheduleBottomNavReveal() {
+    _bottomNavRevealTimer?.cancel();
+    _bottomNavRevealTimer = Timer(const Duration(milliseconds: 650), () {
+      _setBottomNavVisible(true);
+    });
+  }
+
+  bool _handlePageScrollNotification(ScrollNotification notification) {
+    if (notification.metrics.axis != Axis.vertical) return false;
+    if (notification.depth > 2) return false;
+
+    if (notification is UserScrollNotification) {
+      switch (notification.direction) {
+        case ScrollDirection.reverse:
+          _bottomNavRevealTimer?.cancel();
+          _setBottomNavVisible(false);
+          break;
+        case ScrollDirection.forward:
+          _bottomNavRevealTimer?.cancel();
+          _setBottomNavVisible(true);
+          break;
+        case ScrollDirection.idle:
+          _scheduleBottomNavReveal();
+          break;
+      }
+      return false;
+    }
+
+    if (notification is ScrollEndNotification) {
+      _scheduleBottomNavReveal();
+    }
+
+    return false;
+  }
+
+  Widget _buildPage() {
+    switch (_currentIndex) {
+      case 1:
+        return const SearchScreen(embedded: true);
+      case 2:
+        return const OrdersScreen();
+      case 3:
+        return ProfileScreen(
+          onBackToHome: () {
+            setState(() {
+              _currentIndex = 0;
+            });
+          },
+        );
+      case 0:
+      default:
+        return _CustomerHomeFeed(
+          currentCity: _currentCity,
+          currentAddress: _currentAddress,
+          locationRevision: _locationRevision,
+          showDiningMode: _showDiningMode,
+          onDiningModeChanged: (value) {
+            setState(() {
+              _showDiningMode = value;
+            });
+          },
+          onLocationTap: _openLocationPicker,
+          onCartTap: _openCartTab,
+          onNotificationTap: () async {
+            if (!_openLoginForAccountFeature(context)) return;
+            await Navigator.pushNamed(context, '/notifications');
+            if (mounted) setState(() {});
+          },
+          onWalletTap: () {
+            if (!_openLoginForAccountFeature(context)) return;
+            Navigator.pushNamed(context, '/wallet');
+          },
+        );
+    }
+  }
+
+  DateTime? _lastBackPress;
+
+  @override
+  Widget build(BuildContext context) {
+    final bottomInset = MediaQuery.of(context).padding.bottom;
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) return;
+        // On a non-home tab, back returns to the home feed (never exits).
+        if (_currentIndex != 0) {
+          setState(() => _currentIndex = 0);
+          return;
+        }
+        // On the home feed, require a double-press to leave the app.
+        final now = DateTime.now();
+        if (_lastBackPress == null ||
+            now.difference(_lastBackPress!) > const Duration(seconds: 2)) {
+          _lastBackPress = now;
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Press back again to exit'),
+              duration: Duration(seconds: 2),
+            ),
+          );
+          return;
+        }
+        SystemNavigator.pop();
+      },
+      child: Scaffold(
+      extendBody: true,
+      backgroundColor: _homeBg,
+      body: Stack(
+        children: [
+          Positioned.fill(
+            child: NotificationListener<ScrollNotification>(
+              onNotification: _handlePageScrollNotification,
+              child: _buildPage(),
+            ),
+          ),
+          AnimatedPositioned(
+            duration: const Duration(milliseconds: 280),
+            curve: Curves.easeOutCubic,
+            left: 0,
+            right: 0,
+            bottom: bottomInset + (_bottomNavVisible ? 82 : 10),
+            child: _FloatingCartBar(
+              onTap: _openFloatingCart,
+              onViewMenu: _openActiveCartRestaurant,
+            ),
+          ),
+          if (_currentIndex == 0)
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              child: AnimatedSlide(
+                duration: const Duration(milliseconds: 320),
+                curve: Curves.easeInOutCubic,
+                offset: _bottomNavVisible ? Offset.zero : const Offset(0, 1.08),
+                child: AnimatedOpacity(
+                  duration: const Duration(milliseconds: 210),
+                  curve: Curves.easeOutCubic,
+                  opacity: _bottomNavVisible ? 1 : 0,
+                  child: IgnorePointer(
+                    ignoring: !_bottomNavVisible,
+                    child: _HomeBottomNavBar(
+                      currentIndex: _currentIndex,
+                      showVoiceAssistant: _showVoiceAssistant,
+                      onTap: (index) {
+                        _setBottomNavVisible(true);
+                        if (index == -1) {
+                          if (!_openLoginForAccountFeature(context)) {
+                            return;
+                          }
+                          Navigator.pushNamed(context, '/ai-voice');
+                          return;
+                        }
+                        if ((index == 2 || index == 3) &&
+                            !_openLoginForAccountFeature(context)) {
+                          return;
+                        }
+                        setState(() {
+                          _currentIndex = index;
+                        });
+                      },
+                    ),
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+      ),
+    );
+  }
+}
+
+class _CustomerHomeFeed extends StatefulWidget {
+  const _CustomerHomeFeed({
+    required this.currentCity,
+    required this.currentAddress,
+    required this.locationRevision,
+    required this.showDiningMode,
+    required this.onDiningModeChanged,
+    required this.onLocationTap,
+    required this.onCartTap,
+    required this.onNotificationTap,
+    required this.onWalletTap,
+  });
+
+  final String currentCity;
+  final String currentAddress;
+  final int locationRevision;
+  final bool showDiningMode;
+  final ValueChanged<bool> onDiningModeChanged;
+  final VoidCallback onLocationTap;
+  final VoidCallback onCartTap;
+  final VoidCallback onNotificationTap;
+  final VoidCallback onWalletTap;
+
+  @override
+  State<_CustomerHomeFeed> createState() => _CustomerHomeFeedState();
+}
+
+class _CustomerHomeFeedState extends State<_CustomerHomeFeed> {
+  final ApiService _api = ApiService();
+  final LocationService _locationService = LocationService();
+
+  bool _isLoading = true;
+  bool _isRefreshing = false;
+  bool _isLoadingRestaurantFeed = false;
+  bool _isLoadingPopularDishes = false;
+  bool _vegOnlyMode = false;
+  List<dynamic> _banners = [];
+  List<Map<String, dynamic>> _popupCampaigns = [];
+  List<dynamic> _categories = [];
+  List<dynamic> _offers = [];
+  List<dynamic> _restaurants = [];
+  List<Map<String, dynamic>> _homeSections = [];
+  List<_HomeDishCardData> _popularDishes = [];
+  List<Map<String, dynamic>> _filteredCategoryRestaurants = [];
+  List<_HomeDishCardData> _filteredCategoryDishes = [];
+  final Set<int> _savedRestaurantIds = <int>{};
+  String? _activeCategoryFilter;
+  bool _isLoadingCategoryItems = false;
+  bool _hasDeliveryLocation = false;
+  _HomeBlockingState? _blockingState;
+  int _notificationCount = 0;
+  Timer? _cacheRefreshDebounce;
+  int _homeLayoutRevision = 0;
+  int _renderableSectionsRevision = -1;
+  List<Map<String, dynamic>>? _renderableSectionsCache;
+  // Cached so the hero banner list keeps the SAME instance across unrelated
+  // rebuilds (e.g. the bottom-nav-visibility setState at the start of a
+  // fling). Otherwise the pinned-header delegate's shouldRebuild sees a new
+  // list every time and tears down + rebuilds the banner PageView mid-scroll.
+  int _heroBannerItemsRevision = -1;
+  List<dynamic>? _heroBannerItemsCache;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSavedRestaurantIds();
+    _loadNotificationCount();
+    _loadVegModePreference();
+    _loadHomeData();
+  }
+
+  @override
+  void dispose() {
+    _cacheRefreshDebounce?.cancel();
+    super.dispose();
+  }
+
+  void _scheduleCachedHomeRebuild() {
+    _cacheRefreshDebounce?.cancel();
+    _cacheRefreshDebounce = Timer(const Duration(milliseconds: 350), () {
+      if (mounted) {
+        unawaited(_loadHomeData(cacheFirst: true, refreshCached: false));
+      }
+    });
+  }
+
+  void _invalidateRenderableSections() {
+    _homeLayoutRevision++;
+    _renderableSectionsRevision = -1;
+    _renderableSectionsCache = null;
+    _heroBannerItemsRevision = -1;
+    _heroBannerItemsCache = null;
+  }
+
+  Future<void> _loadVegModePreference() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
+    setState(() {
+      _vegOnlyMode = prefs.getBool(_vegModePrefsKey) ?? false;
+      _invalidateRenderableSections();
+    });
+  }
+
+  Future<void> _setVegOnlyMode(bool value) async {
+    if (_vegOnlyMode == value) return;
+    setState(() {
+      _vegOnlyMode = value;
+      _invalidateRenderableSections();
+    });
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_vegModePrefsKey, value);
+  }
+
+  Future<void> _loadNotificationCount() async {
+    if (!_hasCustomerAccountAccess(context)) return;
+    try {
+      final response = await _api.get(
+        ApiConstants.notifications,
+        queryParams: const {'limit': 1, 'target_app': 'customer'},
+      );
+      final data = response['data'];
+      if (!mounted || data is! Map) return;
+      setState(() {
+        _notificationCount = int.tryParse('${data['unread_count'] ?? 0}') ?? 0;
+      });
+    } catch (_) {}
+  }
+
+  @override
+  void didUpdateWidget(covariant _CustomerHomeFeed oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.showDiningMode != widget.showDiningMode ||
+        oldWidget.currentCity != widget.currentCity ||
+        oldWidget.locationRevision != widget.locationRevision) {
+      _loadHomeData();
+    }
+  }
+
+  Future<void> _loadSavedRestaurantIds() async {
+    final prefs = await SharedPreferences.getInstance();
+    final saved =
+        prefs.getStringList('saved_restaurant_ids') ?? const <String>[];
+    if (!mounted) return;
+    setState(() {
+      _savedRestaurantIds
+        ..clear()
+        ..addAll(saved.map(int.tryParse).whereType<int>());
+    });
+  }
+
+  Future<void> _toggleSavedRestaurant(Map<String, dynamic> restaurant) async {
+    if (!_openLoginForAccountFeature(context)) return;
+    final restaurantId = _restaurantId(restaurant);
+    if (restaurantId <= 0) return;
+    final nextSaved = Set<int>.from(_savedRestaurantIds);
+    final shouldSave = !nextSaved.remove(restaurantId);
+    if (shouldSave) {
+      nextSaved.add(restaurantId);
+    }
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList(
+      'saved_restaurant_ids',
+      nextSaved.map((id) => id.toString()).toList(growable: false),
+    );
+
+    try {
+      if (shouldSave) {
+        await _api.post(ApiConstants.favoriteRestaurant(restaurantId));
+      } else {
+        await _api.post(ApiConstants.removeFavoriteRestaurant(restaurantId));
+      }
+    } catch (_) {}
+
+    if (!mounted) return;
+    setState(() {
+      _savedRestaurantIds
+        ..clear()
+        ..addAll(nextSaved);
+    });
+  }
+
+  Future<void> _loadHomeData({
+    bool cacheFirst = true,
+    bool refreshCached = true,
+  }) async {
+    final hasExistingContent = _hasHomeContent;
+    if (mounted) {
+      setState(() {
+        _isLoading = !hasExistingContent;
+        _blockingState = null;
+      });
+    }
+
+    try {
+      final savedLocation = await _locationService.getSavedLocation();
+      final lat = _parseDoubleOrNull(savedLocation?['lat']);
+      final lng = _parseDoubleOrNull(savedLocation?['lng']);
+
+      Future<dynamic> restaurantFeedRequest() {
+        if (lat == null || lng == null) {
+          return Future<dynamic>.value(
+            <String, dynamic>{'success': true, 'data': <dynamic>[]},
+          );
+        }
+
+        return _api.get(
+          widget.showDiningMode
+              ? ApiConstants.diningRestaurants
+              : ApiConstants.nearbyRestaurants,
+          queryParams: <String, dynamic>{
+            'lat': lat,
+            'lng': lng,
+            if (!widget.showDiningMode) 'radius': 100,
+          },
+          includeAuth: false,
+          cacheResponse: true,
+          cacheFirst: cacheFirst,
+          refreshCached: refreshCached,
+          onCacheRefreshed: (_) => _scheduleCachedHomeRebuild(),
+        );
+      }
+
+      final results = await Future.wait<dynamic>([
+        _safeHomeGet(
+          ApiConstants.homeSections,
+          queryParams: <String, dynamic>{
+            'platform': 'app',
+            if (lat != null && lng != null) ...<String, dynamic>{
+              'lat': lat,
+              'lng': lng,
+              'radius': 100,
+            },
+          },
+          cacheFirst: cacheFirst,
+          refreshCached: refreshCached,
+        ),
+        _safeHomeGet(
+          ApiConstants.popularCuisines,
+          cacheFirst: cacheFirst,
+          refreshCached: refreshCached,
+        ),
+      ]);
+
+      final homeSections = _extractList(results[0])
+          .whereType<Map>()
+          .map((item) => Map<String, dynamic>.from(item))
+          .where((item) => item['enabled'] != false)
+          .toList(growable: false);
+      final popularCuisines = _extractList(results[1])
+          .whereType<Map>()
+          .map((item) => _normalizeCuisineChip(
+                Map<String, dynamic>.from(item),
+                allowPlainCuisine: true,
+              ))
+          .where(_isCuisineChipItem)
+          .toList(growable: false);
+      final hasUsableHomeSections = homeSections.any(_sectionHasServerContent);
+      final hasDeliveryZoneContext = lat != null && lng != null;
+      final nextHomeSections = hasDeliveryZoneContext ||
+              hasUsableHomeSections ||
+              _homeSections.isEmpty
+          ? homeSections
+          : _homeSections;
+      final homeSectionsChanged =
+          !_jsonEquivalent(_homeSections, nextHomeSections);
+
+      if (!mounted) return;
+      setState(() {
+        final nextCategories = _resolveCuisineItems(
+          nextHomeSections,
+          popularCuisines,
+        );
+        final sectionRestaurants = _restaurantsFromHomeSections(
+          nextHomeSections,
+        );
+        _categories = nextCategories;
+        if (homeSectionsChanged) _homeSections = nextHomeSections;
+        final serverPopularDishes = nextHomeSections
+            .where((section) => section['type'] == 'popular_dishes')
+            .expand((section) => _mapList(section['items']))
+            .map(_dishDataFromSectionItem)
+            .whereType<_HomeDishCardData>()
+            .toList(growable: false);
+        if (serverPopularDishes.isNotEmpty) {
+          _popularDishes = serverPopularDishes;
+          _isLoadingPopularDishes = false;
+        }
+        if (sectionRestaurants.isNotEmpty && _restaurants.isEmpty) {
+          _restaurants = sectionRestaurants;
+        }
+        if (homeSectionsChanged) {
+          _activeCategoryFilter = null;
+          _filteredCategoryRestaurants = [];
+          _filteredCategoryDishes = [];
+        }
+        _isLoadingRestaurantFeed = true;
+        _isLoading = false;
+        _hasDeliveryLocation = lat != null && lng != null;
+        _blockingState = null;
+        _invalidateRenderableSections();
+      });
+
+      _precacheHomeImages(
+        banners: const <dynamic>[],
+        categories: _categories,
+        sections: nextHomeSections,
+        popupCampaigns: const <Map<String, dynamic>>[],
+      );
+      unawaited(_loadDeferredHomeContent(
+        nextHomeSections,
+        cacheFirst: cacheFirst,
+        refreshCached: refreshCached,
+      ));
+      unawaited(_loadRestaurantFeedAfterFirstPaint(restaurantFeedRequest()));
+    } catch (e) {
+      if (!mounted) return;
+      final offline = await _isOfflineNow();
+      if (!mounted) return;
+      setState(() {
+        _isLoading = false;
+        _isLoadingRestaurantFeed = false;
+        _blockingState = offline ? _HomeBlockingState.offline : null;
+        _invalidateRenderableSections();
+      });
+    }
+  }
+
+  Future<void> _loadDeferredHomeContent(List<Map<String, dynamic>> homeSections,
+      {bool cacheFirst = true, bool refreshCached = true}) async {
+    try {
+      final results = await Future.wait<dynamic>([
+        _safeHomeGet(
+          ApiConstants.campaigns,
+          queryParams: <String, dynamic>{'type': 'banner,popup'},
+          cacheFirst: cacheFirst,
+          refreshCached: refreshCached,
+        ),
+        _safeHomeGet(
+          '${ApiConstants.bannersByType}/home',
+          queryParams: const <String, dynamic>{'platform': 'app'},
+          cacheFirst: cacheFirst,
+          refreshCached: refreshCached,
+        ),
+        _safeHomeGet(
+          ApiConstants.activeOffers,
+          cacheFirst: cacheFirst,
+          refreshCached: refreshCached,
+        ),
+      ]);
+
+      final campaigns = _extractList(results[0])
+          .whereType<Map>()
+          .map((item) => Map<String, dynamic>.from(item))
+          .toList(growable: false);
+      final campaignBanners = campaigns
+          .where((item) => item['type']?.toString() == 'banner')
+          .toList(growable: false);
+      final popupCampaigns = campaigns
+          .where((item) => item['type']?.toString() == 'popup')
+          .toList(growable: false);
+      final banners = _extractList(results[1]);
+      final offers = _extractList(results[2])
+          .whereType<Map>()
+          .map((item) => Map<String, dynamic>.from(item))
+          .where(_isActiveOffer)
+          .toList(growable: false);
+      final bannerFallback =
+          banners.isNotEmpty ? banners : List<dynamic>.from(campaignBanners);
+      final resolvedBanners = _resolveBannerItems(homeSections, bannerFallback);
+
+      if (!mounted) return;
+      setState(() {
+        if (resolvedBanners.isNotEmpty || _banners.isEmpty) {
+          _banners = resolvedBanners;
+        }
+        _popupCampaigns = popupCampaigns;
+        _offers = offers;
+        _invalidateRenderableSections();
+      });
+
+      _precacheHomeImages(
+        banners: resolvedBanners,
+        categories: _categories,
+        sections: homeSections,
+        popupCampaigns: popupCampaigns,
+      );
+      _trackCampaignImpressions(campaignBanners);
+      _showNextPopupCampaign();
+    } catch (_) {}
+  }
+
+  bool get _hasHomeContent {
+    return _banners.isNotEmpty ||
+        _categories.isNotEmpty ||
+        _homeSections.isNotEmpty ||
+        _restaurants.isNotEmpty ||
+        _offers.isNotEmpty ||
+        _popularDishes.isNotEmpty;
+  }
+
+  bool _jsonEquivalent(dynamic left, dynamic right) {
+    try {
+      return jsonEncode(left) == jsonEncode(right);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  bool _sectionHasServerContent(Map<String, dynamic> section) {
+    final items = section['items'];
+    return items is List && items.isNotEmpty;
+  }
+
+  Future<dynamic> _safeHomeGet(
+    String endpoint, {
+    Map<String, dynamic>? queryParams,
+    bool cacheFirst = true,
+    bool refreshCached = true,
+  }) async {
+    try {
+      return await _api
+          .get(
+            endpoint,
+            queryParams: queryParams,
+            includeAuth: false,
+            cacheResponse: true,
+            cacheFirst: cacheFirst,
+            refreshCached: refreshCached,
+            onCacheRefreshed: (_) => _scheduleCachedHomeRebuild(),
+          )
+          .timeout(const Duration(seconds: 15));
+    } catch (_) {
+      return <String, dynamic>{'success': false, 'data': <dynamic>[]};
+    }
+  }
+
+  Future<bool> _isOfflineNow() async {
+    final result = await Connectivity().checkConnectivity();
+    return result.contains(ConnectivityResult.none);
+  }
+
+  Future<void> _refresh() async {
+    setState(() {
+      _isRefreshing = true;
+    });
+    await Future.wait([
+      _loadHomeData(cacheFirst: false, refreshCached: false),
+      _loadNotificationCount(),
+    ]);
+    if (!mounted) return;
+    setState(() {
+      _isRefreshing = false;
+    });
+  }
+
+  Future<void> _loadRestaurantFeedAfterFirstPaint(
+    Future<dynamic> restaurantResponse,
+  ) async {
+    try {
+      final response = await restaurantResponse.timeout(
+        const Duration(seconds: 18),
+      );
+      final restaurants = _extractList(response)
+          .whereType<Map>()
+          .map((item) => Map<String, dynamic>.from(item))
+          .toList();
+      restaurants.sort((a, b) {
+        final openCompare =
+            _restaurantOpenValue(b).compareTo(_restaurantOpenValue(a));
+        if (openCompare != 0) return openCompare;
+        return 0;
+      });
+
+      if (!mounted) return;
+      setState(() {
+        _restaurants = restaurants;
+        _isLoadingRestaurantFeed = false;
+        _blockingState = _shouldShowDeliveryUnavailable(restaurants)
+            ? _HomeBlockingState.deliveryUnavailable
+            : null;
+        _invalidateRenderableSections();
+      });
+
+      _precacheHomeImages(restaurants: restaurants);
+      final hasServerPopularDishes = _homeSections.any(
+        (section) =>
+            section['type'] == 'popular_dishes' &&
+            _mapList(section['items']).isNotEmpty,
+      );
+      if (mounted && !hasServerPopularDishes) {
+        setState(() {
+          _isLoadingPopularDishes = restaurants.isNotEmpty;
+          _invalidateRenderableSections();
+        });
+        unawaited(_loadPopularDishes(restaurants));
+      }
+    } catch (_) {
+      if (!mounted) return;
+      final offline = await _isOfflineNow();
+      if (!mounted) return;
+      final fallbackRestaurants = _restaurantsFromHomeSections(_homeSections);
+      if (_isLoading) {
+        setState(() {
+          if (fallbackRestaurants.isNotEmpty) {
+            _restaurants = fallbackRestaurants;
+          }
+          _isLoading = false;
+          _isLoadingRestaurantFeed = false;
+          _blockingState = offline ? _HomeBlockingState.offline : null;
+          _invalidateRenderableSections();
+        });
+      } else {
+        setState(() {
+          if (fallbackRestaurants.isNotEmpty && _restaurants.isEmpty) {
+            _restaurants = fallbackRestaurants;
+          }
+          _isLoadingRestaurantFeed = false;
+          _blockingState = offline ? _HomeBlockingState.offline : null;
+          _invalidateRenderableSections();
+        });
+      }
+    }
+  }
+
+  int _restaurantOpenValue(Map<String, dynamic> restaurant) {
+    final value = restaurant['is_open_now'] ?? restaurant['is_open'];
+    if (value is bool) return value ? 1 : 0;
+    final text = value?.toString().toLowerCase().trim();
+    return text == 'true' || text == '1' ? 1 : 0;
+  }
+
+  bool _shouldShowDeliveryUnavailable(List<Map<String, dynamic>> restaurants) {
+    return !widget.showDiningMode &&
+        _hasDeliveryLocation &&
+        restaurants.isEmpty &&
+        !_homeSections.any(_sectionHasServerContent) &&
+        !_isLoadingRestaurantFeed;
+  }
+
+  Future<void> _loadPopularDishes(
+      List<Map<String, dynamic>> restaurants) async {
+    final dishes = <_HomeDishCardData>[];
+    final seen = <String>{};
+    final restaurantBatch = restaurants.take(4).toList(growable: false);
+
+    final menuResponses = await Future.wait<List<MenuItem>>(
+      restaurantBatch.map((restaurant) async {
+        final restaurantId = _restaurantId(restaurant);
+        if (restaurantId <= 0) return <MenuItem>[];
+
+        try {
+          final response = await _api
+              .get(
+                '${ApiConstants.restaurantDetails}/$restaurantId/menu',
+                includeAuth: false,
+                cacheResponse: true,
+                cacheFirst: true,
+              )
+              .timeout(const Duration(seconds: 3));
+          final data = response['data'] is Map<String, dynamic>
+              ? response['data'] as Map<String, dynamic>
+              : <String, dynamic>{};
+          return ((data['menu_items'] ?? data['items'] ?? data['menu'])
+                      as List? ??
+                  const <dynamic>[])
+              .whereType<Map>()
+              .map((json) => MenuItem.fromJson(Map<String, dynamic>.from(json)))
+              .where((item) => item.isAvailable)
+              .toList()
+            ..sort((a, b) => b.totalOrders.compareTo(a.totalOrders));
+        } catch (_) {
+          return <MenuItem>[];
+        }
+      }),
+    );
+
+    for (var index = 0;
+        index < restaurantBatch.length && dishes.length < 10;
+        index++) {
+      final restaurant = restaurantBatch[index];
+      final restaurantId = _restaurantId(restaurant);
+      final items = menuResponses[index];
+      for (final item in items.take(3)) {
+        final key = '$restaurantId:${item.name.toLowerCase()}';
+        if (seen.contains(key)) continue;
+        seen.add(key);
+        dishes.add(
+          _HomeDishCardData(
+            name: item.name,
+            imageUrl: item.imageUrl,
+            price: item.finalPrice,
+            restaurantId: restaurantId,
+            restaurantName: restaurant['name']?.toString() ?? 'Restaurant',
+            isVeg: item.isVeg,
+            rating: _ratingOf(restaurant),
+            etaMinutes: _parseInt(
+              restaurant['delivery_time'] ?? restaurant['deliveryTime'],
+              fallback: 0,
+            ),
+            item: item,
+            restaurant: Restaurant.fromJson(restaurant),
+          ),
+        );
+        if (dishes.length >= 10) break;
+      }
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _popularDishes = dishes;
+      _isLoadingPopularDishes = false;
+      _invalidateRenderableSections();
+    });
+    _precacheHomeImages(dishes: dishes);
+  }
+
+  void _precacheHomeImages({
+    List<dynamic> banners = const <dynamic>[],
+    List<dynamic> categories = const <dynamic>[],
+    List<Map<String, dynamic>> sections = const <Map<String, dynamic>>[],
+    List<Map<String, dynamic>> restaurants = const <Map<String, dynamic>>[],
+    List<_HomeDishCardData> dishes = const <_HomeDishCardData>[],
+    List<Map<String, dynamic>> popupCampaigns = const <Map<String, dynamic>>[],
+  }) {
+    if (!mounted) return;
+
+    final urls = <String>{};
+    void add(String url, {dynamic item}) {
+      final trimmed = url.trim();
+      if (trimmed.isEmpty) return;
+      if (_isLottieUrl(trimmed)) return;
+      if (_isLottieMediaItem(item)) return;
+
+      final resolved = _resolveHomeAssetUrl(trimmed);
+      final uri = Uri.tryParse(resolved);
+      if (resolved.isNotEmpty && uri != null && uri.isAbsolute) {
+        urls.add(resolved);
+      }
+    }
+
+    for (final item in banners.take(4)) {
+      add(
+        _resolveImageUrl(
+          item,
+          const ['image_url', 'image', 'banner_image', 'hero_image', 'photo'],
+        ),
+        item: item,
+      );
+    }
+    for (final item in popupCampaigns.take(3)) {
+      add(_campaignHeroImageUrl(item), item: item);
+      add(_campaignLogoUrl(item), item: item);
+    }
+    for (final item in categories.take(8)) {
+      add(
+        _resolveImageUrl(item, const ['image_url', 'image', 'icon']),
+        item: item,
+      );
+    }
+    for (final restaurant in restaurants.take(6)) {
+      add(
+        _resolveImageUrl(
+          restaurant,
+          const ['logo_image', 'logo', 'image', 'banner_image'],
+        ),
+        item: restaurant,
+      );
+    }
+    for (final dish in dishes.take(6)) {
+      add(dish.imageUrl, item: dish.item);
+    }
+    for (final section in sections.take(5)) {
+      final items = section['items'];
+      if (items is! List) continue;
+      for (final item in items.take(4)) {
+        add(
+          _resolveImageUrl(
+            item,
+            const [
+              'logo_image',
+              'logo',
+              'promo_image',
+              'promo_image_url',
+              'promotion_image',
+              'promotion_image_url',
+              'image_url',
+              'image',
+              'banner_image',
+              'thumbnail',
+              'thumbnail_url',
+              'hero_image',
+              'photo',
+            ],
+          ),
+          item: item,
+        );
+        if (item is Map) {
+          add(_homeOfferImage(Map<String, dynamic>.from(item)), item: item);
+        }
+      }
+    }
+
+    if (urls.isEmpty) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      // Let visible cards claim network/decoder resources before warming a
+      // small number of upcoming images in the background.
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+      if (!mounted) return;
+      for (final url in urls.take(6)) {
+        _safePrecacheImage(url, context);
+      }
+    });
+  }
+
+  List<dynamic> _extractList(dynamic response) {
+    if (response is List) return response;
+    if (response is Map<String, dynamic>) {
+      final data = response['data'];
+      if (data is List) return data;
+      if (data is Map<String, dynamic>) {
+        if (data['data'] is List) return data['data'] as List<dynamic>;
+        if (data['items'] is List) return data['items'] as List<dynamic>;
+        if (data['sections'] is List) return data['sections'] as List<dynamic>;
+      }
+      if (response['items'] is List) return response['items'] as List<dynamic>;
+      if (response['sections'] is List) {
+        return response['sections'] as List<dynamic>;
+      }
+      if (response['restaurants'] is List) {
+        return response['restaurants'] as List<dynamic>;
+      }
+      if (response['categories'] is List) {
+        return response['categories'] as List<dynamic>;
+      }
+      if (response['banners'] is List)
+        return response['banners'] as List<dynamic>;
+      if (response['offers'] is List)
+        return response['offers'] as List<dynamic>;
+    }
+    return const <dynamic>[];
+  }
+
+  bool _isActiveOffer(Map<String, dynamic> offer) {
+    final code = offer['code'] ?? offer['coupon_code'] ?? offer['title'];
+    if (code == null || code.toString().trim().isEmpty) return false;
+    final active = offer['is_active'];
+    if (active is bool && !active) return false;
+    final status = offer['status']?.toString().toLowerCase();
+    return status != 'inactive';
+  }
+
+  int _campaignId(Map<String, dynamic> campaign) {
+    final id = campaign['id'];
+    if (id is int) return id;
+    if (id is num) return id.toInt();
+    return int.tryParse(id?.toString() ?? '') ?? 0;
+  }
+
+  void _trackCampaignImpressions(List<Map<String, dynamic>> campaigns) {
+    for (final campaign in campaigns) {
+      final id = _campaignId(campaign);
+      if (id <= 0) continue;
+      unawaited(
+        _api
+            .post(ApiConstants.campaignTrackImpression(id), includeAuth: false)
+            .catchError((_) {}),
+      );
+    }
+  }
+
+  void _trackCampaignClick(Map<String, dynamic> campaign) {
+    final id = _campaignId(campaign);
+    if (id <= 0) return;
+    unawaited(
+      _api
+          .post(ApiConstants.campaignTrackClick(id), includeAuth: false)
+          .catchError((_) {}),
+    );
+  }
+
+  void _showNextPopupCampaign() {
+    if (_popupCampaigns.isEmpty) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final campaign = _popupCampaigns.firstWhere(
+        (item) {
+          final id = _campaignId(item);
+          return id > 0 && !_sessionShownPopupCampaignIds.contains(id);
+        },
+        orElse: () => const <String, dynamic>{},
+      );
+      if (campaign.isEmpty) return;
+      final id = _campaignId(campaign);
+      _sessionShownPopupCampaignIds.add(id);
+      _trackCampaignImpressions(<Map<String, dynamic>>[campaign]);
+      _showCampaignPopup(campaign);
+    });
+  }
+
+  void _showCampaignPopup(Map<String, dynamic> campaign) {
+    final primary = Theme.of(context).colorScheme.primary;
+    final accent = Theme.of(context).colorScheme.secondary;
+    final title = _campaignTitle(campaign);
+    final restaurantName = _campaignRestaurantName(campaign);
+    final imageUrl = _campaignHeroImageUrl(campaign);
+    final logoUrl = _campaignLogoUrl(campaign);
+    final badgeText = _campaignBadgeText(campaign);
+    final details = campaign['discount_details'] is Map
+        ? Map<String, dynamic>.from(campaign['discount_details'] as Map)
+        : <String, dynamic>{};
+    final offerLabel = _campaignOfferLabel(details);
+    final description = campaign['description']?.toString().trim() ??
+        _campaignSubtitle(details);
+    final tags = _campaignTags(campaign);
+    final metrics = _campaignMetrics(campaign);
+    final deliveryTime = _campaignDeliveryTime(campaign);
+    final primaryButton = _campaignButtonText(campaign, primary: true);
+    final secondaryButton = _campaignButtonText(campaign, primary: false);
+    final maxWidth = min(340.0, MediaQuery.of(context).size.width - 32);
+    final maxHeight = min(650.0, MediaQuery.of(context).size.height * 0.92);
+
+    showGeneralDialog<void>(
+      context: context,
+      barrierDismissible: true,
+      barrierLabel: 'Campaign Popup',
+      barrierColor: Colors.black.withOpacity(0.45),
+      transitionDuration: const Duration(milliseconds: 320),
+      pageBuilder: (dialogContext, animation, secondaryAnimation) {
+        return Center(
+          child: SizedBox(
+            width: maxWidth,
+            child: ConstrainedBox(
+              constraints: BoxConstraints(maxHeight: maxHeight),
+              child: BackdropFilter(
+                filter: ui.ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+                child: Material(
+                  color: Colors.white,
+                  elevation: 24,
+                  borderRadius: BorderRadius.circular(28),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(28),
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(28),
+                        boxShadow: const [
+                          BoxShadow(
+                            color: Color(0x1A000000),
+                            blurRadius: 40,
+                            offset: Offset(0, 18),
+                          ),
+                        ],
+                      ),
+                      child: SingleChildScrollView(
+                        physics: const BouncingScrollPhysics(),
+                        child: Column(
+                          children: <Widget>[
+                            Padding(
+                              padding: const EdgeInsets.fromLTRB(18, 18, 18, 0),
+                              child: Stack(
+                                alignment: Alignment.center,
+                                children: <Widget>[
+                                  Align(
+                                    alignment: Alignment.topLeft,
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: <Widget>[
+                                        Container(
+                                          width: 56,
+                                          height: 56,
+                                          decoration: BoxDecoration(
+                                            color: accent.withOpacity(0.14),
+                                            borderRadius:
+                                                BorderRadius.circular(20),
+                                          ),
+                                          child: ClipRRect(
+                                            borderRadius:
+                                                BorderRadius.circular(20),
+                                            child: _buildHomeNetworkImage(
+                                              logoUrl,
+                                              fit: BoxFit.cover,
+                                              width: 56,
+                                              height: 56,
+                                              placeholder: Container(
+                                                color: accent.withOpacity(0.12),
+                                                child: Icon(
+                                                  Icons.restaurant_menu_rounded,
+                                                  color: accent,
+                                                  size: 28,
+                                                ),
+                                              ),
+                                              errorWidget: Container(
+                                                color: accent.withOpacity(0.12),
+                                                child: Icon(
+                                                  Icons.restaurant_menu_rounded,
+                                                  color: accent,
+                                                  size: 28,
+                                                ),
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                        if (badgeText.isNotEmpty) ...<Widget>[
+                                          const SizedBox(width: 10),
+                                          Container(
+                                            padding: const EdgeInsets.symmetric(
+                                              horizontal: 12,
+                                              vertical: 8,
+                                            ),
+                                            decoration: BoxDecoration(
+                                              color: accent.withOpacity(0.14),
+                                              borderRadius:
+                                                  BorderRadius.circular(999),
+                                            ),
+                                            child: Text(
+                                              badgeText,
+                                              style: TextStyle(
+                                                color: accent,
+                                                fontSize: 12,
+                                                fontWeight: FontWeight.w700,
+                                              ),
+                                            ),
+                                          ),
+                                        ],
+                                      ],
+                                    ),
+                                  ),
+                                  Positioned(
+                                    right: 0,
+                                    child: Material(
+                                      color: Colors.white,
+                                      shape: const CircleBorder(),
+                                      elevation: 3,
+                                      child: IconButton(
+                                        icon: const Icon(Icons.close_rounded),
+                                        onPressed: () =>
+                                            Navigator.of(dialogContext).pop(),
+                                      ),
+                                    ),
+                                  ),
+                                  Positioned(
+                                    left: 24,
+                                    top: 68,
+                                    child: Container(
+                                      width: 12,
+                                      height: 12,
+                                      decoration: BoxDecoration(
+                                        color: accent.withOpacity(0.22),
+                                        shape: BoxShape.circle,
+                                      ),
+                                    ),
+                                  ),
+                                  Positioned(
+                                    right: 20,
+                                    top: 90,
+                                    child: Container(
+                                      width: 16,
+                                      height: 16,
+                                      decoration: BoxDecoration(
+                                        color: primary.withOpacity(0.22),
+                                        shape: BoxShape.circle,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(height: 16),
+                            Padding(
+                              padding:
+                                  const EdgeInsets.symmetric(horizontal: 18),
+                              child: SizedBox(
+                                height: (maxHeight * 0.32)
+                                    .clamp(160.0, 220.0)
+                                    .toDouble(),
+                                child: Stack(
+                                  children: <Widget>[
+                                    Positioned.fill(
+                                      child: ClipRRect(
+                                        borderRadius: BorderRadius.circular(24),
+                                        child: _buildHomeNetworkImage(
+                                          imageUrl,
+                                          fit: BoxFit.cover,
+                                          placeholder: Container(
+                                            decoration: BoxDecoration(
+                                              color: accent.withOpacity(0.12),
+                                              borderRadius:
+                                                  BorderRadius.circular(24),
+                                            ),
+                                            child: Center(
+                                              child: Icon(
+                                                Icons.local_dining_rounded,
+                                                color: accent,
+                                                size: 68,
+                                              ),
+                                            ),
+                                          ),
+                                          errorWidget: Container(
+                                            decoration: BoxDecoration(
+                                              color: accent.withOpacity(0.12),
+                                              borderRadius:
+                                                  BorderRadius.circular(24),
+                                            ),
+                                            child: Center(
+                                              child: Icon(
+                                                Icons.local_dining_rounded,
+                                                color: accent,
+                                                size: 68,
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                    if (offerLabel.isNotEmpty)
+                                      Positioned(
+                                        right: 16,
+                                        top: 16,
+                                        child: Container(
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 14,
+                                            vertical: 12,
+                                          ),
+                                          decoration: BoxDecoration(
+                                            borderRadius:
+                                                BorderRadius.circular(999),
+                                            gradient: LinearGradient(
+                                              colors: [
+                                                accent,
+                                                Color.lerp(accent, Colors.red,
+                                                        0.36) ??
+                                                    accent,
+                                              ],
+                                              begin: Alignment.topLeft,
+                                              end: Alignment.bottomRight,
+                                            ),
+                                            boxShadow: [
+                                              BoxShadow(
+                                                color: accent.withOpacity(0.34),
+                                                blurRadius: 24,
+                                                offset: const Offset(0, 12),
+                                              ),
+                                            ],
+                                          ),
+                                          child: Text(
+                                            offerLabel,
+                                            style: const TextStyle(
+                                              color: Colors.white,
+                                              fontSize: 12,
+                                              fontWeight: FontWeight.w800,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    Positioned(
+                                      left: 16,
+                                      bottom: 16,
+                                      child: Container(
+                                        width: 80,
+                                        height: 80,
+                                        decoration: BoxDecoration(
+                                          color: Colors.white.withOpacity(0.18),
+                                          borderRadius:
+                                              BorderRadius.circular(24),
+                                          border: Border.all(
+                                            color:
+                                                Colors.white.withOpacity(0.36),
+                                          ),
+                                          boxShadow: [
+                                            BoxShadow(
+                                              color: Colors.black
+                                                  .withOpacity(0.08),
+                                              blurRadius: 18,
+                                              offset: const Offset(0, 8),
+                                            ),
+                                          ],
+                                        ),
+                                        child: const Center(
+                                          child: Icon(
+                                            Icons.emoji_food_beverage_rounded,
+                                            color: Colors.white,
+                                            size: 28,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                    Positioned(
+                                      right: 16,
+                                      bottom: 12,
+                                      child: Container(
+                                        width: 52,
+                                        height: 52,
+                                        decoration: BoxDecoration(
+                                          gradient: LinearGradient(
+                                            colors: [
+                                              Colors.white.withOpacity(0.72),
+                                              Colors.white.withOpacity(0.24),
+                                            ],
+                                            begin: Alignment.topLeft,
+                                            end: Alignment.bottomRight,
+                                          ),
+                                          borderRadius:
+                                              BorderRadius.circular(18),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 20),
+                            Padding(
+                              padding:
+                                  const EdgeInsets.symmetric(horizontal: 20),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: <Widget>[
+                                  if (title.isNotEmpty)
+                                    Text(
+                                      title,
+                                      style: const TextStyle(
+                                        color: _homeText,
+                                        fontSize: 24,
+                                        fontWeight: FontWeight.w800,
+                                        height: 1.08,
+                                      ),
+                                    ),
+                                  if (restaurantName.isNotEmpty) ...<Widget>[
+                                    const SizedBox(height: 8),
+                                    Text(
+                                      restaurantName,
+                                      style: TextStyle(
+                                        color: _homeMuted,
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
+                                  ],
+                                  if (description.isNotEmpty) ...<Widget>[
+                                    const SizedBox(height: 10),
+                                    Text(
+                                      description,
+                                      style: const TextStyle(
+                                        color: _homeMuted,
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w500,
+                                        height: 1.5,
+                                      ),
+                                    ),
+                                  ],
+                                  if (tags.isNotEmpty) ...<Widget>[
+                                    const SizedBox(height: 14),
+                                    Wrap(
+                                      runSpacing: 8,
+                                      spacing: 8,
+                                      children: tags
+                                          .map(
+                                            (tag) => Container(
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                horizontal: 12,
+                                                vertical: 8,
+                                              ),
+                                              decoration: BoxDecoration(
+                                                color: _homePeach,
+                                                borderRadius:
+                                                    BorderRadius.circular(16),
+                                              ),
+                                              child: Text(
+                                                tag,
+                                                style: const TextStyle(
+                                                  color: _homeText,
+                                                  fontSize: 12,
+                                                  fontWeight: FontWeight.w700,
+                                                ),
+                                              ),
+                                            ),
+                                          )
+                                          .toList(),
+                                    ),
+                                  ],
+                                  if (metrics.isNotEmpty) ...<Widget>[
+                                    const SizedBox(height: 18),
+                                    Row(
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.spaceBetween,
+                                      children: metrics
+                                          .map(
+                                            (item) => Expanded(
+                                              child: Container(
+                                                margin: const EdgeInsets.only(
+                                                    right: 8),
+                                                padding:
+                                                    const EdgeInsets.symmetric(
+                                                  vertical: 14,
+                                                  horizontal: 12,
+                                                ),
+                                                decoration: BoxDecoration(
+                                                  color: _homeBg,
+                                                  borderRadius:
+                                                      BorderRadius.circular(18),
+                                                ),
+                                                child: Column(
+                                                  children: <Widget>[
+                                                    Icon(
+                                                      item['icon'] as IconData,
+                                                      size: 18,
+                                                      color: primary,
+                                                    ),
+                                                    const SizedBox(height: 8),
+                                                    Text(
+                                                      item['label'] as String,
+                                                      textAlign:
+                                                          TextAlign.center,
+                                                      style: const TextStyle(
+                                                        color: _homeText,
+                                                        fontSize: 13,
+                                                        fontWeight:
+                                                            FontWeight.w700,
+                                                      ),
+                                                    ),
+                                                    const SizedBox(height: 4),
+                                                    Text(
+                                                      item['subtitle']
+                                                          as String,
+                                                      textAlign:
+                                                          TextAlign.center,
+                                                      style: const TextStyle(
+                                                        color: _homeMuted,
+                                                        fontSize: 11,
+                                                        fontWeight:
+                                                            FontWeight.w600,
+                                                      ),
+                                                    ),
+                                                  ],
+                                                ),
+                                              ),
+                                            ),
+                                          )
+                                          .toList(),
+                                    ),
+                                  ],
+                                  const SizedBox(height: 18),
+                                  Row(
+                                    children: <Widget>[
+                                      _buildBenefitCard(
+                                        icon: Icons.local_shipping_rounded,
+                                        title: _campaignFreeDelivery(campaign)
+                                            ? 'Free Delivery'
+                                            : 'Delivery',
+                                        subtitle:
+                                            _campaignFreeDelivery(campaign)
+                                                ? 'Zero delivery fee'
+                                                : 'Reliable service',
+                                        color: accent,
+                                      ),
+                                      const SizedBox(width: 10),
+                                      _buildBenefitCard(
+                                        icon: Icons.local_offer_rounded,
+                                        title: offerLabel.isNotEmpty
+                                            ? 'Exclusive Offer'
+                                            : 'Special Promo',
+                                        subtitle: offerLabel.isNotEmpty
+                                            ? offerLabel
+                                            : 'Tap to explore',
+                                        color: primary,
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 10),
+                                  Row(
+                                    children: <Widget>[
+                                      _buildBenefitCard(
+                                        icon: Icons.flash_on_rounded,
+                                        title: deliveryTime.isNotEmpty
+                                            ? 'Fast Delivery'
+                                            : 'Quick Service',
+                                        subtitle: deliveryTime.isNotEmpty
+                                            ? deliveryTime
+                                            : 'Ready soon',
+                                        color: Color.lerp(
+                                                primary, Colors.orange, 0.5) ??
+                                            primary,
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 22),
+                                  Column(
+                                    children: <Widget>[
+                                      SizedBox(
+                                        width: double.infinity,
+                                        height: 56,
+                                        child: ElevatedButton(
+                                          onPressed: () {
+                                            Navigator.of(dialogContext).pop();
+                                            _trackCampaignClick(campaign);
+                                            final link =
+                                                campaign['link']?.toString() ??
+                                                    campaign['link_url']
+                                                        ?.toString() ??
+                                                    '';
+                                            if (link
+                                                .contains('/restaurants/')) {
+                                              final match =
+                                                  RegExp(r'/restaurants/(\d+)')
+                                                      .firstMatch(link);
+                                              final restaurantId = int.tryParse(
+                                                  match?.group(1) ?? '');
+                                              if (restaurantId != null) {
+                                                _openRestaurant(<String,
+                                                    dynamic>{
+                                                  'id': restaurantId
+                                                });
+                                                return;
+                                              }
+                                            }
+                                            Navigator.pushNamed(
+                                                context, '/search');
+                                          },
+                                          style: ElevatedButton.styleFrom(
+                                            backgroundColor: primary,
+                                            shape: RoundedRectangleBorder(
+                                              borderRadius:
+                                                  BorderRadius.circular(16),
+                                            ),
+                                          ),
+                                          child: Text(
+                                            primaryButton,
+                                            style: const TextStyle(
+                                              color: Colors.white,
+                                              fontSize: 16,
+                                              fontWeight: FontWeight.w800,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                      const SizedBox(height: 12),
+                                      SizedBox(
+                                        width: double.infinity,
+                                        height: 56,
+                                        child: OutlinedButton(
+                                          onPressed: () =>
+                                              Navigator.of(dialogContext).pop(),
+                                          style: OutlinedButton.styleFrom(
+                                            foregroundColor: _homeText,
+                                            side: BorderSide(
+                                              color: _homeBorder,
+                                            ),
+                                            shape: RoundedRectangleBorder(
+                                              borderRadius:
+                                                  BorderRadius.circular(16),
+                                            ),
+                                          ),
+                                          child: Text(
+                                            secondaryButton,
+                                            style: const TextStyle(
+                                              fontSize: 16,
+                                              fontWeight: FontWeight.w700,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 18),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+      transitionBuilder: (dialogContext, animation, secondaryAnimation, child) {
+        return FadeTransition(
+          opacity: CurvedAnimation(
+            parent: animation,
+            curve: Curves.easeOut,
+          ),
+          child: ScaleTransition(
+            scale: Tween<double>(begin: 0.92, end: 1.0).animate(
+              CurvedAnimation(parent: animation, curve: Curves.easeOutBack),
+            ),
+            child: child,
+          ),
+        );
+      },
+    );
+  }
+
+  String _campaignTitle(Map<String, dynamic> campaign) {
+    final title = campaign['title']?.toString().trim();
+    if (title?.isNotEmpty == true) return title!;
+    final name = campaign['name']?.toString().trim();
+    if (name?.isNotEmpty == true) return name!;
+    return campaign['headline']?.toString().trim() ?? '';
+  }
+
+  String _campaignRestaurantName(Map<String, dynamic> campaign) {
+    return campaign['restaurant_name']?.toString().trim() ??
+        campaign['brand_name']?.toString().trim() ??
+        campaign['merchant_name']?.toString().trim() ??
+        '';
+  }
+
+  String _campaignHeroImageUrl(Map<String, dynamic> campaign) {
+    return _resolveImageUrl(
+      campaign,
+      const ['image_url', 'image', 'banner_image', 'hero_image', 'photo'],
+    );
+  }
+
+  String _campaignLogoUrl(Map<String, dynamic> campaign) {
+    return _resolveImageUrl(
+      campaign,
+      const ['logo', 'restaurant_logo', 'brand_logo', 'store_logo'],
+    );
+  }
+
+  String _campaignBadgeText(Map<String, dynamic> campaign) {
+    final badge = campaign['badge_label']?.toString().trim() ??
+        campaign['badge']?.toString().trim() ??
+        campaign['campaign_type']?.toString().trim() ??
+        campaign['tag']?.toString().trim() ??
+        '';
+    return badge.toUpperCase();
+  }
+
+  List<String> _campaignTags(Map<String, dynamic> campaign) {
+    final tags = <String>{};
+
+    void addTag(dynamic raw) {
+      if (raw == null) return;
+      if (raw is String) {
+        for (final part in raw.split(',')) {
+          final trimmed = part.trim();
+          if (trimmed.isNotEmpty) tags.add(trimmed);
+        }
+      } else if (raw is List) {
+        for (final entry in raw) {
+          final trimmed = entry?.toString().trim();
+          if (trimmed?.isNotEmpty == true) tags.add(trimmed!);
+        }
+      }
+    }
+
+    addTag(campaign['tags']);
+    addTag(campaign['cuisines']);
+    addTag(campaign['categories']);
+    addTag(campaign['category_tags']);
+
+    if (tags.isEmpty) {
+      addTag(campaign['style']);
+    }
+
+    return tags.take(3).toList();
+  }
+
+  List<Map<String, dynamic>> _campaignMetrics(Map<String, dynamic> campaign) {
+    final metrics = <Map<String, dynamic>>[];
+    final rating = campaign['rating']?.toString().trim();
+    if (rating?.isNotEmpty == true) {
+      metrics.add(<String, dynamic>{
+        'icon': Icons.star_rounded,
+        'label': rating!,
+        'subtitle': 'Rating',
+      });
+    }
+
+    final deliveryTime = _campaignDeliveryTime(campaign);
+    if (deliveryTime.isNotEmpty) {
+      metrics.add(<String, dynamic>{
+        'icon': Icons.timer_rounded,
+        'label': deliveryTime,
+        'subtitle': 'Delivery',
+      });
+    }
+
+    if (_campaignFreeDelivery(campaign)) {
+      metrics.add(<String, dynamic>{
+        'icon': Icons.local_shipping_rounded,
+        'label': 'Free',
+        'subtitle': 'Delivery',
+      });
+    }
+
+    return metrics;
+  }
+
+  bool _campaignFreeDelivery(Map<String, dynamic> campaign) {
+    final freeDelivery = campaign['free_delivery'];
+    if (freeDelivery is bool) return freeDelivery;
+    final fee = campaign['delivery_fee']?.toString().trim();
+    if (fee?.isNotEmpty == true) {
+      return fee == '0' || fee == '0.0';
+    }
+    return false;
+  }
+
+  String _campaignDeliveryTime(Map<String, dynamic> campaign) {
+    return campaign['delivery_time']?.toString().trim() ??
+        campaign['delivery_estimate']?.toString().trim() ??
+        campaign['eta']?.toString().trim() ??
+        '';
+  }
+
+  String _campaignButtonText(Map<String, dynamic> campaign,
+      {required bool primary}) {
+    if (primary) {
+      return campaign['primary_cta']?.toString().trim() ??
+          campaign['action_text']?.toString().trim() ??
+          'Order Now';
+    }
+    return campaign['secondary_cta']?.toString().trim() ??
+        campaign['dismiss_text']?.toString().trim() ??
+        'Maybe Later';
+  }
+
+  Widget _buildBenefitCard({
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    required Color color,
+  }) {
+    return Expanded(
+      child: Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: _homeBg,
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Container(
+              width: 32,
+              height: 32,
+              decoration: BoxDecoration(
+                color: color.withOpacity(0.2),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Icon(icon, size: 18, color: color),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              title,
+              style: TextStyle(
+                color: _homeText,
+                fontSize: 13,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              subtitle,
+              style: const TextStyle(
+                color: _homeMuted,
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _campaignSubtitle(Map<String, dynamic> details) {
+    final type = details['type']?.toString();
+    final value = details['value']?.toString();
+    final minOrder = details['min_order']?.toString();
+    if (type == null || type.isEmpty || value == null || value.isEmpty) {
+      return 'A new offer is live. Open it before it ends.';
+    }
+    final label = type == 'percentage' ? '$value% off' : 'Flat $value off';
+    return minOrder != null && minOrder.isNotEmpty
+        ? '$label on orders above $minOrder.'
+        : '$label for a limited time.';
+  }
+
+  String _campaignOfferLabel(Map<String, dynamic> details) {
+    final type = details['type']?.toString();
+    final value = details['value']?.toString();
+    if (type == null || type.isEmpty || value == null || value.isEmpty) {
+      return '';
+    }
+    if (type == 'percentage') {
+      return 'UP TO $value% OFF';
+    }
+    return 'UP TO $value OFF';
+  }
+
+  bool _isPromoBannerItem(dynamic item) {
+    if (item is! Map) return false;
+    final layoutMode = (item['layout_mode'] ?? item['layoutMode'] ?? '')
+        .toString()
+        .toLowerCase()
+        .trim();
+    final bannerType = (item['banner_type'] ?? item['bannerType'] ?? '')
+        .toString()
+        .toLowerCase()
+        .trim();
+    return layoutMode == 'promo_card' || bannerType == 'promo';
+  }
+
+  List<dynamic> _regularBannerItems(Iterable<dynamic> items) =>
+      items.where((item) => !_isPromoBannerItem(item)).toList(growable: false);
+
+  List<dynamic> _resolveBannerItems(
+    List<Map<String, dynamic>> sections,
+    List<dynamic> fallback,
+  ) {
+    for (final section in sections) {
+      if (section['type']?.toString() == 'banner_carousel' &&
+          section['items'] is List &&
+          (section['items'] as List).isNotEmpty) {
+        final items = _regularBannerItems(section['items'] as List);
+        if (items.isNotEmpty) return items;
+      }
+    }
+    for (final section in sections) {
+      if (section['type']?.toString() == 'hero_banner' &&
+          section['items'] is List &&
+          (section['items'] as List).isNotEmpty) {
+        final items = _regularBannerItems(section['items'] as List);
+        if (items.isNotEmpty) return items;
+      }
+    }
+    return _regularBannerItems(fallback);
+  }
+
+  List<dynamic> _resolveCuisineItems(
+    List<Map<String, dynamic>> sections,
+    List<Map<String, dynamic>> fallbackCuisines,
+  ) {
+    final merged = <dynamic>[];
+    final seen = <String>{};
+
+    void addItem(dynamic item, {bool allowPlainCuisine = false}) {
+      if (item is! Map) return;
+      final cuisine = _normalizeCuisineChip(
+        Map<String, dynamic>.from(item),
+        allowPlainCuisine: allowPlainCuisine,
+      );
+      if (!_isCuisineChipItem(cuisine)) return;
+      final key =
+          '${cuisine['cuisine_id'] ?? cuisine['id'] ?? ''}|${cuisine['slug'] ?? ''}|${cuisine['name'] ?? cuisine['title'] ?? ''}';
+      if (key.trim().isEmpty || !seen.add(key)) return;
+      merged.add(cuisine);
+    }
+
+    for (final section in sections) {
+      if (section['type']?.toString() == 'cuisine_grid' &&
+          section['items'] is List &&
+          (section['items'] as List).isNotEmpty) {
+        for (final item in section['items'] as List) {
+          addItem(item);
+        }
+      }
+    }
+    if (merged.isEmpty) {
+      for (final item in fallbackCuisines) {
+        addItem(item, allowPlainCuisine: true);
+      }
+    }
+    return merged;
+  }
+
+  Map<String, dynamic> _normalizeCuisineChip(
+    Map<String, dynamic> item, {
+    bool allowPlainCuisine = false,
+  }) {
+    final type = (item['type'] ?? item['source'] ?? item['taxonomy_type'])
+        ?.toString()
+        .toLowerCase()
+        .trim();
+    final hasCuisineHint = type?.contains('cuisine') == true ||
+        item.containsKey('cuisine_id') ||
+        item.containsKey('cuisine_name');
+    if (!hasCuisineHint && !allowPlainCuisine) return item;
+    if (!hasCuisineHint && item.containsKey('category_id')) return item;
+
+    final id = item['cuisine_id'] ?? item['id'];
+    final name = item['cuisine_name'] ?? item['name'] ?? item['title'];
+    return <String, dynamic>{
+      ...item,
+      'type': 'cuisine',
+      'cuisine_id': id,
+      if (item['id'] == null) 'id': id,
+      if (name != null) 'name': name,
+      if (item['title'] == null && name != null) 'title': name,
+    };
+  }
+
+  bool _isCuisineChipItem(dynamic item) {
+    if (item is! Map) return false;
+    final type = (item['type'] ?? item['source'] ?? item['taxonomy_type'])
+        ?.toString()
+        .toLowerCase()
+        .trim();
+    final name = (item['name'] ?? item['title'] ?? item['cuisine_name'])
+        ?.toString()
+        .trim();
+    if (name == null || name.isEmpty) return false;
+    return type?.contains('cuisine') == true ||
+        item.containsKey('cuisine_id') ||
+        item.containsKey('cuisine_name');
+  }
+
+  List<Map<String, dynamic>> _restaurantsFromHomeSections(
+    List<Map<String, dynamic>> sections,
+  ) {
+    final restaurants = <Map<String, dynamic>>[];
+    final seen = <int>{};
+
+    for (final section in sections) {
+      final type = section['type']?.toString() ?? '';
+      if (!_sectionUsesRestaurantFeed(type) && type != 'recommended_for_you') {
+        continue;
+      }
+
+      final items = section['items'];
+      if (items is! List) continue;
+
+      for (final item in items) {
+        if (item is! Map) continue;
+        final restaurant = Map<String, dynamic>.from(item);
+        if (!_looksLikeRestaurantSectionItem(restaurant)) continue;
+        final id = _restaurantId(restaurant);
+        if (id > 0 && !seen.add(id)) continue;
+        restaurants.add(restaurant);
+      }
+    }
+
+    return _scopeRestaurants(restaurants);
+  }
+
+  List<Map<String, dynamic>> _renderableSections() {
+    final cached = _renderableSectionsCache;
+    if (cached != null && _renderableSectionsRevision == _homeLayoutRevision) {
+      return cached;
+    }
+
+    if (_homeSections.isEmpty) {
+      final fallback = _fallbackSections();
+      _renderableSectionsCache = fallback;
+      _renderableSectionsRevision = _homeLayoutRevision;
+      return fallback;
+    }
+    final sections = <Map<String, dynamic>>[];
+    final primaryHeroToken = _primaryHeroToken();
+    final primaryBannerToken = _primaryBannerToken();
+    final primaryCategoryToken = _primaryCategoryToken();
+    for (final section in _homeSections) {
+      final type = section['type']?.toString() ?? '';
+      final token = section['token']?.toString();
+      if ((type == 'hero_banner' && token == primaryHeroToken) ||
+          (type == 'banner_carousel' && token == primaryBannerToken) ||
+          (type == 'categories' && token == primaryCategoryToken)) {
+        continue;
+      }
+      final items = _resolveSectionItems(section);
+      if (items.isEmpty) {
+        if (_isLoadingRestaurantFeed && _sectionUsesRestaurantFeed(type)) {
+          sections.add(<String, dynamic>{
+            ...section,
+            'resolved_items': items,
+          });
+        }
+        continue;
+      }
+      sections.add(<String, dynamic>{
+        ...section,
+        'resolved_items': items,
+      });
+    }
+    final resolved = _consolidatePromotionSections(
+      sections.isEmpty ? _fallbackSections() : sections,
+    );
+    _renderableSectionsCache = resolved;
+    _renderableSectionsRevision = _homeLayoutRevision;
+    return resolved;
+  }
+
+  /// Fold every promo section (`deals_for_you`, `promotion_type_section`, …)
+  /// into at most two: one "Offers & Coupons" strip for banner-only offers,
+  /// and one "Deals on Dishes" product rail for offers that map menu items.
+  /// Keeps the position of the first promo section.
+  List<Map<String, dynamic>> _consolidatePromotionSections(
+    List<Map<String, dynamic>> sections,
+  ) {
+    bool isPromo(String t) =>
+        t == 'deals_for_you' || t == 'promotion_type_section';
+
+    final firstPromoIndex = sections.indexWhere(
+      (s) => isPromo(s['type']?.toString() ?? ''),
+    );
+    if (firstPromoIndex < 0) return sections;
+
+    final bannerOffers = <Map<String, dynamic>>[];
+    final itemOffers = <Map<String, dynamic>>[];
+    final seenBanner = <String>{};
+    final seenItem = <String>{};
+
+    for (final s in sections) {
+      if (!isPromo(s['type']?.toString() ?? '')) continue;
+      final items = s['resolved_items'];
+      if (items is! List) continue;
+      for (final raw in items.whereType<Map>()) {
+        final offer = Map<String, dynamic>.from(raw);
+        final key = (offer['display_id'] ??
+                offer['id'] ??
+                offer['coupon_code'] ??
+                offer['title'] ??
+                offer.hashCode)
+            .toString();
+        if (_offerHasShoppableItems(offer)) {
+          if (seenItem.add(key)) itemOffers.add(offer);
+        } else {
+          if (seenBanner.add(key)) bannerOffers.add(offer);
+        }
+      }
+    }
+
+    final out = <Map<String, dynamic>>[];
+    var injected = false;
+    for (var i = 0; i < sections.length; i++) {
+      final s = sections[i];
+      if (!isPromo(s['type']?.toString() ?? '')) {
+        out.add(s);
+        continue;
+      }
+      if (injected) continue; // drop the other promo section shells
+      injected = true;
+      if (bannerOffers.isNotEmpty) {
+        out.add(<String, dynamic>{
+          'token': 'offers_strip',
+          'type': 'offers_strip',
+          'title': 'Offers & Coupons',
+          'subtitle': 'All active offers and coupons in one place',
+          'resolved_items': bannerOffers,
+        });
+      }
+      if (itemOffers.isNotEmpty) {
+        out.add(<String, dynamic>{
+          'token': 'promotion_dish_deals',
+          'type': 'promotion_type_section',
+          'card_mode': 'menu_cards',
+          'title': 'Deals on Dishes',
+          'subtitle': 'Discounts, combos and free items on dishes',
+          'resolved_items': itemOffers,
+        });
+      }
+    }
+    return out;
+  }
+
+  String? _primaryBannerToken() {
+    for (final section in _homeSections) {
+      final type = section['type']?.toString();
+      if ((type == 'banner_carousel' || type == 'hero_banner') &&
+          section['items'] is List &&
+          _regularBannerItems(section['items'] as List).isNotEmpty) {
+        return section['token']?.toString();
+      }
+    }
+    return null;
+  }
+
+  String? _primaryHeroToken() {
+    for (final section in _homeSections) {
+      if (section['type']?.toString() == 'hero_banner' &&
+          section['items'] is List &&
+          (section['items'] as List).isNotEmpty) {
+        return section['token']?.toString();
+      }
+    }
+    return null;
+  }
+
+  List<dynamic> _heroBannerItems() {
+    final cached = _heroBannerItemsCache;
+    if (cached != null && _heroBannerItemsRevision == _homeLayoutRevision) {
+      return cached;
+    }
+    final resolved = _resolveHeroBannerItems();
+    _heroBannerItemsCache = resolved;
+    _heroBannerItemsRevision = _homeLayoutRevision;
+    return resolved;
+  }
+
+  List<dynamic> _resolveHeroBannerItems() {
+    final banners = _regularBannerItems(_banners);
+    if (banners.isNotEmpty) return banners;
+    for (final section in _homeSections) {
+      if (section['type']?.toString() == 'banner_carousel' &&
+          section['items'] is List &&
+          (section['items'] as List).isNotEmpty) {
+        final items = _regularBannerItems(section['items'] as List);
+        if (items.isNotEmpty) return items;
+      }
+    }
+    for (final section in _homeSections) {
+      if (section['type']?.toString() == 'hero_banner' &&
+          section['items'] is List &&
+          (section['items'] as List).isNotEmpty) {
+        final items = _regularBannerItems(section['items'] as List);
+        if (items.isNotEmpty) return items;
+      }
+    }
+    return const <dynamic>[];
+  }
+
+  String? _primaryCategoryToken() {
+    for (final section in _homeSections) {
+      final type = section['type']?.toString();
+      if (type == 'categories' &&
+          section['items'] is List &&
+          (section['items'] as List).isNotEmpty) {
+        return section['token']?.toString();
+      }
+    }
+    return null;
+  }
+
+  List<Map<String, dynamic>> _fallbackSections() {
+    final restaurants = _scopeRestaurants(_restaurants);
+    final dishes = _scopeDishes(_popularDishes);
+
+    final candidates = <String, Map<String, dynamic>>{};
+    if (restaurants.isNotEmpty) {
+      candidates['nearby_restaurants'] = <String, dynamic>{
+        'type': 'nearby_restaurants',
+        'title': 'Popular Near You',
+        'subtitle': 'Discover restaurants in your area',
+        'resolved_items': restaurants,
+      };
+    } else if (_isLoadingRestaurantFeed) {
+      candidates['nearby_restaurants'] = <String, dynamic>{
+        'type': 'nearby_restaurants',
+        'title': 'Popular Near You',
+        'subtitle': 'Finding restaurants around your location',
+        'resolved_items': const <dynamic>[],
+      };
+    }
+    if (dishes.isNotEmpty) {
+      candidates['recommended_for_you'] = <String, dynamic>{
+        'type': 'recommended_for_you',
+        'title': 'Recommended For You',
+        'subtitle': 'Menu items loved around you',
+        'resolved_items': dishes,
+      };
+      candidates['popular_dishes'] = <String, dynamic>{
+        'type': 'popular_dishes',
+        'title': 'Popular Dishes',
+        'subtitle': 'Top ordered items from nearby restaurants',
+        'resolved_items': dishes,
+      };
+    }
+    if (candidates.isEmpty) return const <Map<String, dynamic>>[];
+
+    // Order by the admin's real configured section order where possible
+    // (even though none of those sections had matching server items right
+    // now), so "nothing matched for this location" doesn't also reshuffle
+    // the home page into a different layout than usual.
+    final ordered = <Map<String, dynamic>>[];
+    final used = <String>{};
+    for (final section in _homeSections) {
+      final type = section['type']?.toString() ?? '';
+      final candidate = candidates[type];
+      if (candidate != null && used.add(type)) {
+        ordered.add(candidate);
+      }
+    }
+    for (final entry in candidates.entries) {
+      if (used.add(entry.key)) {
+        ordered.add(entry.value);
+      }
+    }
+    return ordered;
+  }
+
+  List<dynamic> _resolveSectionItems(Map<String, dynamic> section) {
+    final type = section['type']?.toString() ?? '';
+    final usesClientFeed = section['client_feed'] == true;
+    final hasServerItems = section['items'] is List;
+    final hasNonEmptyServerItems =
+        hasServerItems && (section['items'] as List).isNotEmpty;
+    final strictServerItems = section['strict_items'] == true ||
+        (hasNonEmptyServerItems &&
+            !usesClientFeed &&
+            type != 'banner_carousel' &&
+            type != 'categories' &&
+            type != 'cuisine_grid');
+    switch (type) {
+      case 'restaurant_discovery':
+        return _scopeRestaurants(_restaurants);
+      case 'nearby_restaurants':
+        final serverItems = _mapList(section['items']);
+        return serverItems.isNotEmpty
+            ? _scopeSectionItemsForVegMode(type, serverItems)
+            : _scopeRestaurants(_restaurants);
+      case 'popular_restaurants':
+        final serverItems =
+            _restaurantItemsFromSection(_mapList(section['items']));
+        if (strictServerItems)
+          return _scopeSectionItemsForVegMode(type, serverItems);
+        return serverItems.isNotEmpty
+            ? _scopeSectionItemsForVegMode(type, serverItems)
+            : _bestRatedRestaurants(_scopeRestaurants(_restaurants));
+      case 'new_arrivals':
+        final serverItems = _mapList(section['items']);
+        if (strictServerItems)
+          return _scopeSectionItemsForVegMode(type, serverItems);
+        return serverItems.isNotEmpty
+            ? _scopeSectionItemsForVegMode(type, serverItems)
+            : _newArrivalRestaurants(_scopeRestaurants(_restaurants));
+      case 'trending_near_you':
+        final serverItems =
+            _restaurantItemsFromSection(_mapList(section['items']));
+        if (strictServerItems)
+          return _scopeSectionItemsForVegMode(type, serverItems);
+        return serverItems.isNotEmpty
+            ? _scopeSectionItemsForVegMode(type, serverItems)
+            : _trendingRestaurants(_scopeRestaurants(_restaurants));
+      case 'featured_restaurants':
+      case 'restaurant_grid':
+        final serverItems =
+            _restaurantItemsFromSection(_mapList(section['items']));
+        if (strictServerItems)
+          return _scopeSectionItemsForVegMode(type, serverItems);
+        return serverItems.isNotEmpty
+            ? _scopeSectionItemsForVegMode(type, serverItems)
+            : _featuredRestaurants(_scopeRestaurants(_restaurants));
+      case 'recommended_for_you':
+        final serverItems = _mapList(section['items']);
+        final restaurantItems = _dedupeRestaurants(serverItems
+            .where(_looksLikeRestaurantSectionItem)
+            .toList(growable: false));
+        if (restaurantItems.isNotEmpty) {
+          return _scopeSectionItemsForVegMode(
+            type,
+            restaurantItems,
+          );
+        }
+        final dishItems = _recommendedItemsFromSection(serverItems);
+        final fallbackDishes = _scopeDishes(_popularDishes)
+            .where((dish) => dish.effectiveRestaurantId > 0)
+            .toList(growable: false);
+        if (strictServerItems)
+          return _scopeSectionItemsForVegMode(type, dishItems);
+        if (dishItems.isNotEmpty) {
+          return _scopeSectionItemsForVegMode(type, dishItems);
+        }
+        final fallbackRestaurants = _scopeRestaurants(_restaurants);
+        return fallbackRestaurants.isNotEmpty
+            ? fallbackRestaurants
+            : fallbackDishes;
+      case 'popular_dishes':
+        final serverItems = _mapList(section['items'])
+            .map(_dishDataFromSectionItem)
+            .whereType<_HomeDishCardData>()
+            .toList(growable: false);
+        if (strictServerItems)
+          return _scopeSectionItemsForVegMode(type, serverItems);
+        return serverItems.isNotEmpty
+            ? _scopeSectionItemsForVegMode(type, serverItems)
+            : _scopeDishes(_popularDishes);
+      case 'deals_for_you':
+      case 'promotion_type_section':
+        final serverItems = _mapList(section['items'])
+            .where(
+                (offer) => (offer['source_type'] ?? 'promotion') == 'promotion')
+            .where((offer) =>
+                type != 'deals_for_you' || !_isScratchOnlyHomePromotion(offer))
+            .toList(growable: false);
+        if (type == 'promotion_type_section') return serverItems;
+        if (strictServerItems) return serverItems;
+        final promotionOffers = _offers
+            .whereType<Map>()
+            .map((offer) => Map<String, dynamic>.from(offer))
+            .where(
+                (offer) => (offer['source_type'] ?? 'promotion') == 'promotion')
+            .where((offer) => !_isScratchOnlyHomePromotion(offer))
+            .toList(growable: false);
+        return serverItems.isNotEmpty ? serverItems : promotionOffers;
+      case 'quick_filter_shortcuts':
+      case 'menu_price_filter_config':
+        return const <dynamic>[];
+      case 'admin_offers':
+      case 'promotion_types':
+        return const <dynamic>[];
+      case 'shop_by_brand':
+        final serverItems = _mapList(section['items']);
+        if (strictServerItems)
+          return _scopeSectionItemsForVegMode(type, serverItems);
+        return serverItems.isNotEmpty
+            ? _scopeSectionItemsForVegMode(type, serverItems)
+            : _brandItemsFromRestaurants(
+                _featuredRestaurants(_scopeRestaurants(_restaurants)),
+              );
+      default:
+        return _scopeSectionItemsForVegMode(type, _mapList(section['items']));
+    }
+  }
+
+  bool _looksLikeRestaurantSectionItem(Map<String, dynamic> item) {
+    if (item.containsKey('restaurant_id') ||
+        item.containsKey('master_menu_item_id') ||
+        item.containsKey('price') ||
+        item.containsKey('discounted_price')) {
+      return false;
+    }
+
+    return item.containsKey('delivery_time') ||
+        item.containsKey('delivery_fee') ||
+        item.containsKey('min_order_amount') ||
+        item.containsKey('is_open') ||
+        item.containsKey('is_open_now') ||
+        item.containsKey('restaurant_type') ||
+        item.containsKey('cuisine_text') ||
+        item.containsKey('logo_image') ||
+        item.containsKey('banner_image');
+  }
+
+  List<Map<String, dynamic>> _restaurantItemsFromSection(
+    List<Map<String, dynamic>> items,
+  ) {
+    return _dedupeRestaurants(
+      items
+          .where((item) =>
+              _looksLikeRestaurantSectionItem(item) ||
+              _sectionItemLooksLikeRestaurant(item))
+          .toList(growable: false),
+    );
+  }
+
+  List<Map<String, dynamic>> _dedupeRestaurants(
+    List<Map<String, dynamic>> restaurants,
+  ) {
+    final seen = <int>{};
+    final deduped = <Map<String, dynamic>>[];
+    for (final restaurant in restaurants) {
+      final id = _restaurantId(restaurant);
+      if (id > 0 && !seen.add(id)) continue;
+      deduped.add(restaurant);
+    }
+    return deduped;
+  }
+
+  List<Map<String, dynamic>> _mapList(dynamic items) {
+    if (items is! List) return const <Map<String, dynamic>>[];
+    return items
+        .whereType<Map>()
+        .map((item) => Map<String, dynamic>.from(item))
+        .toList(growable: false);
+  }
+
+  _HomeDishCardData? _dishDataFromSectionItem(Map<String, dynamic> item) {
+    final name = (item['name'] ?? item['title'] ?? '').toString().trim();
+    if (name.isEmpty) return null;
+    final nestedRestaurant = item['restaurant'];
+    final restaurantMap = nestedRestaurant is Map
+        ? Map<String, dynamic>.from(nestedRestaurant)
+        : const <String, dynamic>{};
+    final restaurantId = _parseInt(
+      item['restaurant_id'] ??
+          item['restaurantId'] ??
+          restaurantMap['id'] ??
+          restaurantMap['restaurant_id'],
+    );
+    final price = _minimumMenuItemPrice(item);
+
+    return _HomeDishCardData(
+      name: name,
+      imageUrl: _resolveImageUrl(
+        item,
+        const [
+          'image_url',
+          'image',
+          'photo',
+          'banner_image',
+          'image_path',
+          'thumbnail',
+        ],
+      ),
+      price: price,
+      restaurantId: restaurantId,
+      restaurantName: (item['restaurant_name'] ??
+              item['restaurantName'] ??
+              restaurantMap['name'] ??
+              item['category_name'] ??
+              'Global Menu')
+          .toString(),
+      isVeg: _parseBool(item['is_veg'] ?? item['is_available'], fallback: true),
+      rating: _parseDouble(
+        item['rating'] ??
+            item['avg_rating'] ??
+            item['average_rating'] ??
+            item['review_rating'] ??
+            restaurantMap['rating'] ??
+            restaurantMap['avg_rating'],
+        fallback: 0,
+      ),
+      etaMinutes: _parseInt(
+        item['preparation_time'] ??
+            item['preparationTime'] ??
+            item['prep_time'] ??
+            item['eta'] ??
+            item['delivery_time'] ??
+            restaurantMap['delivery_time'] ??
+            restaurantMap['deliveryTime'],
+        fallback: 0,
+      ),
+      item: _menuItemFromDishSectionItem(item),
+      restaurant: _restaurantFromDishSectionItem(item),
+      restaurantOpen: _parseBool(
+        item['restaurant_is_open'] ??
+            item['restaurant_open'] ??
+            (item['restaurant'] is Map
+                ? (item['restaurant'] as Map)['is_open_now'] ??
+                    (item['restaurant'] as Map)['is_open']
+                : null),
+        fallback: true,
+      ),
+      available: _parseBool(
+        item['is_available'] ?? item['available'],
+        fallback: true,
+      ),
+    );
+  }
+
+  List<_HomeDishCardData> _recommendedItemsFromSection(
+    List<Map<String, dynamic>> items,
+  ) {
+    return items
+        .map((item) => _sectionItemLooksLikeRestaurant(item)
+            ? _restaurantDataFromSectionItem(item)
+            : _dishDataFromSectionItem(item))
+        .whereType<_HomeDishCardData>()
+        .where((dish) => dish.effectiveRestaurantId > 0)
+        .toList(growable: false);
+  }
+
+  bool _sectionItemLooksLikeRestaurant(Map<String, dynamic> item) {
+    final hasMenuIdentity =
+        item.containsKey('menu_item_id') || item.containsKey('menuItemId');
+    if (hasMenuIdentity) return false;
+    if (item.containsKey('restaurant_id') || item.containsKey('restaurantId')) {
+      final hasDishSignals = item.containsKey('is_veg') ||
+          item.containsKey('veg') ||
+          item.containsKey('preparation_time') ||
+          item.containsKey('preparationTime') ||
+          item.containsKey('category_id') ||
+          item.containsKey('categoryId') ||
+          item.containsKey('final_price') ||
+          item.containsKey('discounted_price') ||
+          item.containsKey('base_price') ||
+          item.containsKey('variants');
+      final hasRestaurantSignals = item.containsKey('is_open') ||
+          item.containsKey('is_open_now') ||
+          item.containsKey('delivery_time') ||
+          item.containsKey('deliveryTime') ||
+          item.containsKey('cuisines') ||
+          item.containsKey('cuisine') ||
+          item.containsKey('address') ||
+          item.containsKey('logo_image') ||
+          item.containsKey('banner_image');
+      if (hasDishSignals && !hasRestaurantSignals) return false;
+      return true;
+    }
+    return _restaurantId(item) > 0;
+  }
+
+  _HomeDishCardData? _restaurantDataFromSectionItem(
+    Map<String, dynamic> item,
+  ) {
+    final restaurantId = _sectionRestaurantId(item);
+    if (restaurantId <= 0) return null;
+    final name = (item['name'] ??
+            item['restaurant_name'] ??
+            item['restaurantName'] ??
+            'Restaurant')
+        .toString()
+        .trim();
+    if (name.isEmpty) return null;
+    final price = _restaurantMinimumMenuItemPrice(item, restaurantId);
+
+    try {
+      return _HomeDishCardData(
+        name: name,
+        imageUrl: _restaurantBannerImageUrl(item, restaurantId),
+        price: price,
+        restaurantId: restaurantId,
+        restaurantName: name,
+        isVeg: _restaurantIsVegFriendly(item),
+        rating: _ratingOf(item),
+        etaMinutes: _parseInt(
+          item['delivery_time'] ?? item['deliveryTime'] ?? item['eta'],
+          fallback: 0,
+        ),
+        restaurant: Restaurant.fromJson(item),
+      );
+    } catch (_) {
+      return _HomeDishCardData(
+        name: name,
+        imageUrl: _restaurantBannerImageUrl(item, restaurantId),
+        price: price,
+        restaurantId: restaurantId,
+        restaurantName: name,
+        isVeg: _restaurantIsVegFriendly(item),
+        rating: _ratingOf(item),
+        etaMinutes: _parseInt(
+          item['delivery_time'] ?? item['deliveryTime'] ?? item['eta'],
+          fallback: 0,
+        ),
+      );
+    }
+  }
+
+  String _restaurantBannerImageUrl(
+    Map<String, dynamic> item,
+    int restaurantId,
+  ) {
+    const bannerKeys = <String>[
+      'banner_image',
+      'bannerImage',
+      'cover_image',
+      'coverImage',
+      'cover_photo',
+      'coverPhoto',
+      'hero_image',
+      'heroImage',
+      'background_image',
+      'backgroundImage',
+    ];
+    final sectionBanner = _resolveImageUrl(item, bannerKeys);
+    if (sectionBanner.isNotEmpty) return sectionBanner;
+
+    for (final restaurant in _restaurants.whereType<Map>()) {
+      final restaurantMap = Map<String, dynamic>.from(restaurant);
+      if (_restaurantId(restaurantMap) != restaurantId) continue;
+      final feedBanner = _resolveImageUrl(restaurantMap, bannerKeys);
+      if (feedBanner.isNotEmpty) return feedBanner;
+      break;
+    }
+
+    return _resolveImageUrl(
+      item,
+      const ['image_url', 'image', 'photo', 'logo_image', 'logo'],
+    );
+  }
+
+  int _sectionRestaurantId(Map<String, dynamic> item) {
+    return _parseInt(
+      item['restaurant_id'] ?? item['restaurantId'] ?? item['id'],
+    );
+  }
+
+  double _restaurantMinimumMenuPrice(
+    Map<String, dynamic> item,
+    int restaurantId,
+  ) {
+    final directPrice = _restaurantAmountField(item);
+    if (directPrice > 0) return directPrice;
+
+    final nestedPrice = _homeMinimumNestedMenuPrice(item);
+    if (nestedPrice > 0) return nestedPrice;
+
+    for (final restaurant in _restaurants) {
+      if (_restaurantId(restaurant) != restaurantId) continue;
+      final feedPrice = _restaurantAmountField(restaurant);
+      if (feedPrice > 0) return feedPrice;
+      final feedNestedPrice = _homeMinimumNestedMenuPrice(restaurant);
+      if (feedNestedPrice > 0) return feedNestedPrice;
+      break;
+    }
+
+    final dishPrices = _popularDishes
+        .where((dish) => dish.effectiveRestaurantId == restaurantId)
+        .map((dish) => dish.price)
+        .where((price) => price > 0)
+        .toList(growable: false);
+    if (dishPrices.isEmpty) return 0;
+    dishPrices.sort();
+    return dishPrices.first;
+  }
+
+  double _restaurantMinimumMenuItemPrice(
+    Map<String, dynamic> item,
+    int restaurantId,
+  ) {
+    final nestedPrice = _homeMinimumNestedMenuPrice(item);
+    if (nestedPrice > 0) return nestedPrice;
+
+    for (final restaurant in _restaurants) {
+      if (_restaurantId(restaurant) != restaurantId) continue;
+      final feedNestedPrice = _homeMinimumNestedMenuPrice(restaurant);
+      if (feedNestedPrice > 0) return feedNestedPrice;
+      break;
+    }
+
+    final dishPrices = _popularDishes
+        .where((dish) => dish.effectiveRestaurantId == restaurantId)
+        .map((dish) => dish.price)
+        .where((price) => price > 0)
+        .toList(growable: false);
+    if (dishPrices.isEmpty) return 0;
+    dishPrices.sort();
+    return dishPrices.first;
+  }
+
+  double _restaurantAmountField(Map<String, dynamic> item) {
+    for (final value in <dynamic>[
+      item['minimum_menu_price'],
+      item['minimumMenuPrice'],
+      item['min_menu_price'],
+      item['minMenuPrice'],
+      item['lowest_menu_price'],
+      item['lowestMenuPrice'],
+      item['starting_price'],
+      item['startingPrice'],
+      item['price_from'],
+      item['priceFrom'],
+      item['amount_for_one'],
+      item['amountForOne'],
+      item['min_price'],
+      item['minPrice'],
+      item['minimum_price'],
+      item['minimumPrice'],
+      item['minimum_order'],
+      item['minimumOrder'],
+      item['minimum_order_amount'],
+      item['minimumOrderAmount'],
+      item['min_order_amount'],
+      item['minOrderAmount'],
+      item['price_for_one'],
+      item['priceForOne'],
+    ]) {
+      final parsed = _parsePriceValue(value);
+      if (parsed > 0) return parsed;
+    }
+
+    final priceForTwo = _parsePriceValue(
+      item['price_for_two'] ?? item['priceForTwo'],
+    );
+    return priceForTwo > 0 ? priceForTwo / 2 : 0;
+  }
+
+  Map<String, dynamic> _restaurantWithLoadedMenuItems(
+    Map<String, dynamic> restaurant,
+  ) {
+    final hasMenuItems = const <String>[
+      'menu_items',
+      'items',
+      'popular_items',
+      'featured_items',
+      'recommended_items',
+      'matched_menu_items',
+      'matchedMenuItems',
+    ].any(
+      (key) => restaurant[key] is List && (restaurant[key] as List).isNotEmpty,
+    );
+    if (hasMenuItems) return restaurant;
+
+    final restaurantId = _restaurantId(restaurant);
+    if (restaurantId <= 0 || _popularDishes.isEmpty) return restaurant;
+
+    final menuItems = _popularDishes
+        .where(
+          (dish) =>
+              dish.effectiveRestaurantId == restaurantId &&
+              dish.imageUrl.trim().isNotEmpty,
+        )
+        .take(6)
+        .map(
+          (dish) => <String, dynamic>{
+            'name': dish.name,
+            'image_url': dish.imageUrl,
+            'price': dish.price,
+            'is_veg': dish.isVeg,
+          },
+        )
+        .toList(growable: false);
+    if (menuItems.isEmpty) return restaurant;
+    return <String, dynamic>{
+      ...restaurant,
+      'popular_items': menuItems,
+    };
+  }
+
+  MenuItem? _menuItemFromDishSectionItem(Map<String, dynamic> item) {
+    final itemId = _parseInt(item['menu_item_id'] ?? item['id']);
+    final nestedRestaurant = item['restaurant'];
+    final restaurantMap = nestedRestaurant is Map
+        ? Map<String, dynamic>.from(nestedRestaurant)
+        : const <String, dynamic>{};
+    final restaurantId = _parseInt(
+      item['restaurant_id'] ??
+          item['restaurantId'] ??
+          restaurantMap['id'] ??
+          restaurantMap['restaurant_id'],
+    );
+    if (itemId <= 0 || restaurantId <= 0) return null;
+    final price = _menuItemPrice(item);
+    final discountedPrice = _parseDoubleOrNull(
+      item['discounted_price'] ??
+          item['discountedPrice'] ??
+          item['sale_price'] ??
+          item['offer_price'],
+    );
+
+    try {
+      return MenuItem.fromJson(<String, dynamic>{
+        ...item,
+        'id': itemId,
+        'restaurant_id': restaurantId,
+        'name': (item['name'] ?? item['title'] ?? '').toString(),
+        'price': price,
+        if (discountedPrice != null && discountedPrice > 0)
+          'discounted_price': discountedPrice,
+        'is_available': item['is_available'] ?? true,
+        'images': item['images'] ??
+            [
+              _resolveImageUrl(
+                item,
+                const [
+                  'image_url',
+                  'image',
+                  'photo',
+                  'banner_image',
+                  'image_path',
+                  'thumbnail',
+                ],
+              ),
+            ],
+      });
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Restaurant? _restaurantFromDishSectionItem(Map<String, dynamic> item) {
+    final nested = item['restaurant'];
+    final restaurantMap =
+        nested is Map ? Map<String, dynamic>.from(nested) : null;
+    final restaurantId = _parseInt(
+      item['restaurant_id'] ??
+          item['restaurantId'] ??
+          restaurantMap?['id'] ??
+          restaurantMap?['restaurant_id'],
+    );
+    if (restaurantId <= 0) return null;
+
+    final data = restaurantMap ??
+        <String, dynamic>{
+          'id': restaurantId,
+          'name': item['restaurant_name'] ?? 'Restaurant',
+        };
+
+    try {
+      return Restaurant.fromJson(<String, dynamic>{
+        ...data,
+        'id': restaurantId,
+      });
+    } catch (_) {
+      return null;
+    }
+  }
+
+  double _menuItemPrice(Map<String, dynamic> item) {
+    for (final value in <dynamic>[
+      item['final_price'],
+      item['finalPrice'],
+      item['discounted_price'],
+      item['discountedPrice'],
+      item['sale_price'],
+      item['offer_price'],
+      item['price'],
+      item['base_price'],
+      item['regular_price'],
+      item['item_price'],
+      item['menu_price'],
+      item['unit_price'],
+      item['mrp'],
+      item['selling_price'],
+      item['amount'],
+    ]) {
+      final parsed = _parsePriceValue(value);
+      if (parsed > 0) return parsed;
+    }
+
+    for (final key in const [
+      'variant',
+      'default_variant',
+      'selected_variant'
+    ]) {
+      final value = item[key];
+      if (value is Map) {
+        final parsed = _parsePriceValue(value['price'] ?? value['final_price']);
+        if (parsed > 0) return parsed;
+      }
+    }
+
+    final variants = item['variants'];
+    if (variants is List) {
+      final prices = variants
+          .whereType<Map>()
+          .map((variant) => _parsePriceValue(
+                variant['price'] ?? variant['final_price'] ?? variant['amount'],
+              ))
+          .where((value) => value > 0)
+          .toList();
+      if (prices.isNotEmpty) {
+        prices.sort();
+        return prices.first;
+      }
+    }
+
+    return 0;
+  }
+
+  double _minimumMenuItemPrice(dynamic value) {
+    final prices = <double>[];
+
+    void collectPrice(dynamic candidate) {
+      if (candidate == null) return;
+      if (candidate is Map) {
+        final map = Map<String, dynamic>.from(candidate);
+        final directPrice = _menuItemPrice(map);
+        if (directPrice > 0) prices.add(directPrice);
+
+        for (final key in const [
+          'items',
+          'menu_items',
+          'matched_menu_items',
+          'matchedMenuItems',
+          'popular_items',
+          'popular_dishes',
+          'recommended_items',
+          'products',
+        ]) {
+          collectPrice(map[key]);
+        }
+        return;
+      }
+      if (candidate is List) {
+        for (final item in candidate) {
+          collectPrice(item);
+        }
+      }
+    }
+
+    collectPrice(value);
+    if (prices.isEmpty) return 0;
+    prices.sort();
+    return prices.first;
+  }
+
+  double _parsePriceValue(dynamic value) {
+    if (value == null) return 0;
+    if (value is num) return value.toDouble();
+    if (value is String) {
+      final cleaned = value.replaceAll(RegExp(r'[^0-9.\-]'), '');
+      if (cleaned.isEmpty || cleaned == '-' || cleaned == '.') return 0;
+      return double.tryParse(cleaned) ?? 0;
+    }
+    if (value is Map) {
+      for (final key in const ['amount', 'value', 'price', 'final_price']) {
+        final parsed = _parsePriceValue(value[key]);
+        if (parsed > 0) return parsed;
+      }
+    }
+    return 0;
+  }
+
+  List<Map<String, dynamic>> _featuredRestaurants(List<dynamic> restaurants) {
+    return restaurants
+        .whereType<Map<String, dynamic>>()
+        .where((restaurant) =>
+            _parseBool(restaurant['is_featured']) &&
+            (!_vegOnlyMode || _restaurantIsVegFriendly(restaurant)))
+        .toList(growable: false);
+  }
+
+  List<Map<String, dynamic>> _bestRatedRestaurants(List<dynamic> restaurants) {
+    final sorted = restaurants.whereType<Map<String, dynamic>>().toList();
+    sorted.removeWhere(
+      (restaurant) => _vegOnlyMode && !_restaurantIsVegFriendly(restaurant),
+    );
+    sorted.sort((a, b) => _ratingOf(b).compareTo(_ratingOf(a)));
+    return sorted;
+  }
+
+  List<Map<String, dynamic>> _newArrivalRestaurants(List<dynamic> restaurants) {
+    final sorted = restaurants.whereType<Map<String, dynamic>>().toList();
+    sorted.removeWhere(
+      (restaurant) => _vegOnlyMode && !_restaurantIsVegFriendly(restaurant),
+    );
+    sorted.sort((a, b) {
+      final left = DateTime.tryParse(a['created_at']?.toString() ?? '');
+      final right = DateTime.tryParse(b['created_at']?.toString() ?? '');
+      if (left == null && right == null) return 0;
+      if (left == null) return 1;
+      if (right == null) return -1;
+      return right.compareTo(left);
+    });
+    return sorted;
+  }
+
+  List<Map<String, dynamic>> _trendingRestaurants(List<dynamic> restaurants) {
+    final sorted = restaurants.whereType<Map<String, dynamic>>().toList();
+    sorted.removeWhere(
+      (restaurant) => _vegOnlyMode && !_restaurantIsVegFriendly(restaurant),
+    );
+    sorted.sort((a, b) {
+      final orderCompare =
+          _parseInt(b['orders_count']).compareTo(_parseInt(a['orders_count']));
+      if (orderCompare != 0) return orderCompare;
+      return _ratingOf(b).compareTo(_ratingOf(a));
+    });
+    return sorted;
+  }
+
+  List<Map<String, dynamic>> _brandItemsFromRestaurants(
+      List<dynamic> restaurants) {
+    return restaurants
+        .whereType<Map<String, dynamic>>()
+        .where((restaurant) => _resolveImageUrl(
+              restaurant,
+              const ['logo_image', 'logo', 'image', 'banner_image'],
+            ).isNotEmpty)
+        .where((restaurant) =>
+            !_vegOnlyMode || _restaurantIsVegFriendly(restaurant))
+        .map((restaurant) => <String, dynamic>{
+              'id': _restaurantId(restaurant),
+              'restaurant_id': _restaurantId(restaurant),
+              'name': restaurant['name']?.toString() ?? 'Brand',
+              'logo_image': _resolveImageUrl(
+                restaurant,
+                const ['logo_image', 'logo', 'image', 'banner_image'],
+              ),
+            })
+        .toList(growable: false);
+  }
+
+  int _restaurantId(Map<String, dynamic> restaurant) {
+    return _parseInt(restaurant['id'] ?? restaurant['restaurant_id']);
+  }
+
+  double _ratingOf(Map<String, dynamic> restaurant) {
+    return _parseDouble(
+      restaurant['rating'] ??
+          restaurant['avg_rating'] ??
+          restaurant['review_rating'] ??
+          restaurant['rating_value'],
+      fallback: 0,
+    );
+  }
+
+  double _parseDouble(dynamic value, {double fallback = 0}) {
+    if (value is double) return value;
+    if (value is int) return value.toDouble();
+    if (value is String) return double.tryParse(value) ?? fallback;
+    return fallback;
+  }
+
+  double? _parseDoubleOrNull(dynamic value) {
+    if (value is double) return value;
+    if (value is int) return value.toDouble();
+    if (value is String) return double.tryParse(value);
+    return null;
+  }
+
+  int _parseInt(dynamic value, {int fallback = 0}) {
+    if (value is int) return value;
+    if (value is double) return value.toInt();
+    if (value is String) {
+      return int.tryParse(value) ?? double.tryParse(value)?.toInt() ?? fallback;
+    }
+    return fallback;
+  }
+
+  bool _parseBool(dynamic value, {bool fallback = false}) {
+    if (value is bool) return value;
+    if (value is int) return value != 0;
+    if (value is String) {
+      final normalized = value.trim().toLowerCase();
+      return normalized == 'true' ||
+          normalized == '1' ||
+          normalized == 'yes' ||
+          normalized == 'y';
+    }
+    return fallback;
+  }
+
+  String _resolveImageUrl(dynamic item, List<String> keys) {
+    if (item is! Map) return '';
+    for (final key in keys) {
+      final value = item[key];
+      if (value is String && value.trim().isNotEmpty) {
+        return _resolveHomeAssetUrl(value);
+      }
+    }
+    return '';
+  }
+
+  String _restaurantCuisineText(Map<String, dynamic> restaurant) {
+    List<String> namesFrom(dynamic value) {
+      if (value is String && value.trim().isNotEmpty) {
+        return value
+            .split(',')
+            .map((item) => item.trim())
+            .where((item) => item.isNotEmpty && int.tryParse(item) == null)
+            .toList();
+      }
+      if (value is List) {
+        return value
+            .map((item) {
+              if (item is Map) {
+                return (item['name'] ??
+                        item['title'] ??
+                        item['cuisine_name'] ??
+                        '')
+                    .toString()
+                    .trim();
+              }
+              final text = item?.toString().trim() ?? '';
+              return int.tryParse(text) == null ? text : '';
+            })
+            .where((item) => item.isNotEmpty)
+            .take(3)
+            .toList();
+      }
+      return const <String>[];
+    }
+
+    for (final key in const [
+      'cuisine_text',
+      'cuisine_names',
+      'cuisines',
+      'cuisine',
+    ]) {
+      final names = namesFrom(restaurant[key]);
+      if (names.isNotEmpty) return names.join(', ');
+    }
+    return 'Various cuisines';
+  }
+
+  String _restaurantOfferText(Map<String, dynamic> restaurant) {
+    final discount = restaurant['discount']?.toString().trim() ?? '';
+    if (discount.isNotEmpty) return discount;
+    final offer = restaurant['offer']?.toString().trim() ?? '';
+    if (offer.isNotEmpty) return offer;
+    final promos = restaurant['active_promos'];
+    if (promos is List && promos.isNotEmpty) {
+      final first = promos.first;
+      if (first is Map) {
+        final value = first['discount_value']?.toString().trim() ?? '';
+        if (value.isNotEmpty) {
+          final type =
+              first['discount_type']?.toString().trim() ?? 'percentage';
+          return type == 'percentage' ? '$value% OFF' : '$value OFF';
+        }
+      }
+    }
+    return '';
+  }
+
+  void _trackSponsoredRestaurantClick(
+    Map<String, dynamic> restaurant, {
+    String surface = 'home',
+  }) {
+    final campaignId = _parseInt(
+      restaurant['ad_campaign_id'] ?? restaurant['adCampaignId'],
+    );
+    final sponsored = _parseBool(
+      restaurant['is_sponsored'] ?? restaurant['isSponsored'],
+    );
+    if (!sponsored || campaignId <= 0) return;
+
+    unawaited(
+      _api.post(ApiConstants.adClicks, data: <String, dynamic>{
+        'campaign_id': campaignId,
+        'surface': surface,
+      }).catchError((Object error) {
+        debugPrint('Ad click tracking error: $error');
+      }),
+    );
+  }
+
+  void _openRestaurant(Map<String, dynamic> restaurant) {
+    final id = _restaurantId(restaurant);
+    if (id <= 0) return;
+    _trackSponsoredRestaurantClick(restaurant);
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => RestaurantDetailScreen(restaurantId: id),
+      ),
+    );
+  }
+
+  void _openCategory(dynamic category) {
+    final title = (category is Map
+            ? category['name'] ??
+                category['title'] ??
+                category['subcategory_name']
+            : null)
+        ?.toString()
+        .trim();
+    if (title == null || title.isEmpty) return;
+    final taxonomyId = category is Map
+        ? _parseInt(
+            category['cuisine_id'] ??
+                category['category_id'] ??
+                category['subcategory_id'] ??
+                category['id'],
+            fallback: 0,
+          )
+        : 0;
+    final typeText = category is Map
+        ? (category['type'] ?? category['source'] ?? 'category')
+            .toString()
+            .toLowerCase()
+        : 'category';
+    final isCuisine = typeText.contains('cuisine') ||
+        (category is Map &&
+            (category.containsKey('cuisine_id') ||
+                category.containsKey('cuisine_name')));
+    final imageUrl = category is Map
+        ? _resolveImageUrl(category, const [
+            'image_url',
+            'image',
+            'icon',
+            'icon_url',
+            'thumbnail',
+            'media_url',
+            'photo',
+          ])
+        : '';
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => MenuTaxonomyFilterScreen(
+          title: title,
+          subtitle: 'Popular $title items from restaurants near you',
+          filterType: isCuisine
+              ? 'cuisine'
+              : typeText.contains('subcategory')
+                  ? 'subcategory'
+                  : 'category',
+          filterId: taxonomyId > 0 ? taxonomyId : null,
+          imageUrl: imageUrl,
+        ),
+      ),
+    );
+  }
+
+  void _clearCategoryFilter() {
+    setState(() {
+      _activeCategoryFilter = null;
+      _filteredCategoryRestaurants = [];
+      _filteredCategoryDishes = [];
+      _isLoadingCategoryItems = false;
+    });
+  }
+
+  bool _restaurantIsVegFriendly(Map<String, dynamic> restaurant) {
+    final analysis = restaurant['_menu_analysis'];
+    final menuAnalysis = analysis is Map
+        ? Map<String, dynamic>.from(analysis)
+        : const <String, dynamic>{};
+    return _parseBool(
+          restaurant['is_pure_veg'] ??
+              restaurant['pure_veg'] ??
+              restaurant['is_veg'] ??
+              restaurant['vegetarian'] ??
+              menuAnalysis['is_pure_veg_menu'],
+        ) ||
+        _parseBool(menuAnalysis['is_pure_veg_menu']);
+  }
+
+  List<Map<String, dynamic>> _scopeRestaurants(
+    Iterable<dynamic> restaurants, {
+    bool applyVegFilter = true,
+  }) {
+    final items = restaurants
+        .whereType<Map>()
+        .map((item) => Map<String, dynamic>.from(item))
+        .where((restaurant) =>
+            !applyVegFilter ||
+            !_vegOnlyMode ||
+            _restaurantIsVegFriendly(restaurant))
+        .toList(growable: false);
+    return items;
+  }
+
+  List<_HomeDishCardData> _scopeDishes(Iterable<_HomeDishCardData> dishes) {
+    if (!_vegOnlyMode) return dishes.toList(growable: false);
+    return dishes.where((dish) => dish.isVeg).toList(growable: false);
+  }
+
+  List<dynamic> _scopeSectionItemsForVegMode(
+    String type,
+    List<dynamic> items,
+  ) {
+    if (!_vegOnlyMode || items.isEmpty) return items;
+    if (type == 'popular_dishes') {
+      return items.where((item) {
+        if (item is _HomeDishCardData) return item.isVeg;
+        if (item is Map) {
+          return _parseBool(item['is_veg'] ?? item['veg'], fallback: false);
+        }
+        return false;
+      }).toList(growable: false);
+    }
+
+    const restaurantSectionTypes = <String>{
+      'trending_near_you',
+      'featured_restaurants',
+      'recommended_for_you',
+      'restaurant_grid',
+      'restaurant_discovery',
+      'nearby_restaurants',
+      'popular_restaurants',
+      'new_arrivals',
+      'shop_by_brand',
+    };
+    if (!restaurantSectionTypes.contains(type)) return items;
+
+    return items.where((item) {
+      if (item is Map) {
+        return _restaurantIsVegFriendly(Map<String, dynamic>.from(item));
+      }
+      return true;
+    }).toList(growable: false);
+  }
+
+  String _normalizeFilterText(String value) {
+    return value.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]+'), ' ').trim();
+  }
+
+  bool _containsFilterText(String value, String filter) {
+    final normalizedValue = _normalizeFilterText(value);
+    final normalizedFilter = _normalizeFilterText(filter);
+    if (normalizedFilter.isEmpty) return false;
+    return normalizedValue.contains(normalizedFilter);
+  }
+
+  bool _restaurantMatchesCategory(
+      Map<String, dynamic> restaurant, String filter) {
+    final values = <String>[
+      restaurant['name']?.toString() ?? '',
+      restaurant['category_name']?.toString() ?? '',
+      restaurant['subcategory_name']?.toString() ?? '',
+      restaurant['category'] is String ? restaurant['category'].toString() : '',
+      restaurant['subcategory'] is String
+          ? restaurant['subcategory'].toString()
+          : '',
+    ];
+    return values.any((value) => _containsFilterText(value, filter));
+  }
+
+  bool _menuItemMatchesCategory(MenuItem item, String filter) {
+    return _containsFilterText(item.name, filter) ||
+        _containsFilterText(item.categoryName ?? '', filter) ||
+        _containsFilterText(item.subcategoryName ?? '', filter);
+  }
+
+  Future<void> _applyCategoryFilter(String title) async {
+    final matchingRestaurants = _scopeRestaurants(_restaurants)
+        .where((restaurant) => _restaurantMatchesCategory(restaurant, title))
+        .toList(growable: false);
+
+    setState(() {
+      _activeCategoryFilter = title;
+      _filteredCategoryRestaurants = matchingRestaurants;
+      _filteredCategoryDishes = [];
+      _isLoadingCategoryItems = true;
+    });
+
+    await _loadCategoryDishes(title, matchingRestaurants);
+  }
+
+  Future<void> _loadCategoryDishes(
+    String title,
+    List<Map<String, dynamic>> matchingRestaurants,
+  ) async {
+    final sourceRestaurants = matchingRestaurants.isNotEmpty
+        ? matchingRestaurants
+        : _scopeRestaurants(_restaurants);
+    final dishes = <_HomeDishCardData>[];
+    final seen = <String>{};
+
+    for (final restaurant in sourceRestaurants.take(10)) {
+      final restaurantId = _restaurantId(restaurant);
+      if (restaurantId <= 0) continue;
+      try {
+        final response = await _api
+            .get(
+              '${ApiConstants.restaurantDetails}/$restaurantId/menu',
+              includeAuth: false,
+              cacheResponse: true,
+              cacheFirst: true,
+            )
+            .timeout(const Duration(seconds: 5));
+        final data = response['data'] is Map<String, dynamic>
+            ? response['data'] as Map<String, dynamic>
+            : <String, dynamic>{};
+        final items = ((data['menu_items'] ?? data['items'] ?? data['menu'])
+                    as List? ??
+                const <dynamic>[])
+            .whereType<Map>()
+            .map((json) => MenuItem.fromJson(Map<String, dynamic>.from(json)))
+            .where((item) =>
+                item.isAvailable &&
+                _menuItemMatchesCategory(item, title) &&
+                (!_vegOnlyMode || item.isVeg))
+            .toList()
+          ..sort((a, b) => b.totalOrders.compareTo(a.totalOrders));
+
+        for (final item in items.take(4)) {
+          final key = '$restaurantId:${item.id}:${item.name.toLowerCase()}';
+          if (!seen.add(key)) continue;
+          dishes.add(
+            _HomeDishCardData(
+              name: item.name,
+              imageUrl: item.imageUrl,
+              price: item.finalPrice,
+              restaurantId: restaurantId,
+              restaurantName: restaurant['name']?.toString() ?? 'Restaurant',
+              isVeg: item.isVeg,
+              rating: _ratingOf(restaurant),
+              etaMinutes: _parseInt(
+                restaurant['delivery_time'] ?? restaurant['deliveryTime'],
+                fallback: 0,
+              ),
+              item: item,
+              restaurant: Restaurant.fromJson(restaurant),
+            ),
+          );
+          if (dishes.length >= 16) break;
+        }
+      } catch (_) {}
+      if (dishes.length >= 16) break;
+    }
+
+    if (!mounted || _activeCategoryFilter != title) return;
+    setState(() {
+      _filteredCategoryDishes = dishes;
+      _isLoadingCategoryItems = false;
+    });
+  }
+
+  void _showAllCategoriesSheet() {
+    if (_categories.isEmpty) return;
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: _homeBg,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      builder: (context) {
+        return SafeArea(
+          top: false,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 10, 20, 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 54,
+                  height: 6,
+                  margin: const EdgeInsets.only(bottom: 18),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFD7DCE4),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                ),
+                Row(
+                  children: [
+                    const Expanded(
+                      child: Text(
+                        'All Cuisines',
+                        style: TextStyle(
+                          color: _homeText,
+                          fontSize: 20,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      onPressed: () => Navigator.pop(context),
+                      icon: const Icon(Icons.close_rounded),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                Flexible(
+                  child: GridView.builder(
+                    shrinkWrap: true,
+                    padding: const EdgeInsets.only(top: 4),
+                    gridDelegate:
+                        const SliverGridDelegateWithFixedCrossAxisCount(
+                      crossAxisCount: 4,
+                      crossAxisSpacing: 12,
+                      mainAxisSpacing: 18,
+                      childAspectRatio: 0.78,
+                    ),
+                    itemCount: _categories.length,
+                    itemBuilder: (context, index) => _CategoryPill(
+                      category: _categories[index],
+                      onTap: () {
+                        Navigator.pop(context);
+                        _openCategory(_categories[index]);
+                      },
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildLoadingView() {
+    return Center(
+      child: CircularProgressIndicator(
+        color: Theme.of(context).colorScheme.primary,
+      ),
+    );
+  }
+
+  Widget _buildBlockingView(_HomeBlockingState state) {
+    if (state == _HomeBlockingState.deliveryUnavailable) {
+      return Scaffold(
+        backgroundColor: _homeBg,
+        body: SafeArea(
+          child: _NoRestaurantsFoundView(
+            onChangeLocation: widget.onLocationTap,
+            onTryAgain: _refresh,
+          ),
+        ),
+      );
+    }
+    return Scaffold(
+      backgroundColor: _homeBg,
+      body: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(24, 28, 24, 28),
+          child: _HomeAnimatedState(
+            icon: Icons.wifi_off_rounded,
+            accent: const Color(0xFF2563EB),
+            title: 'Connect to the internet',
+            subtitle: 'Please connect to the internet and try again.',
+            primaryLabel: 'Try again',
+            onPrimary: _refresh,
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final notificationCount = _notificationCount;
+    final currentUser = context.watch<AuthProvider>().currentUser;
+    final userName = currentUser?.name ?? '';
+    final profileImage = currentUser?.profileImage?.trim() ?? '';
+    final profileInitial =
+        userName.trim().isNotEmpty ? userName.trim()[0].toUpperCase() : 'S';
+    final hasCategoryFilter = _activeCategoryFilter != null;
+    final sections = _renderableSections();
+    final heroItems = _heroBannerItems();
+
+    if (_isLoading && !_isRefreshing) {
+      return Scaffold(
+        backgroundColor: _homeBg,
+        body: SafeArea(child: _buildLoadingView()),
+      );
+    }
+
+    final blockingState = _blockingState;
+    if (blockingState != null && !_isRefreshing) {
+      return _buildBlockingView(blockingState);
+    }
+
+    return DefaultTextStyle.merge(
+      style: GoogleFonts.nunitoSans(),
+      child: Scaffold(
+        backgroundColor: _homeBg,
+        body: RefreshIndicator(
+          onRefresh: _refresh,
+          color: Theme.of(context).colorScheme.primary,
+          child: CustomScrollView(
+            physics: const BouncingScrollPhysics(
+              parent: AlwaysScrollableScrollPhysics(),
+            ),
+            slivers: <Widget>[
+              SliverPersistentHeader(
+                pinned: true,
+                delegate: _HomeHeroPinnedDelegate(
+                  topInset: MediaQuery.of(context).padding.top,
+                  banners: heroItems,
+                  categories: _categories,
+                  currentCity: widget.currentCity,
+                  currentAddress: widget.currentAddress,
+                  notificationCount: notificationCount,
+                  profileInitial: profileInitial,
+                  profileImage: profileImage,
+                  vegOnlyMode: _vegOnlyMode,
+                  onLocationTap: widget.onLocationTap,
+                  onWalletTap: widget.onWalletTap,
+                  onNotificationTap: () {
+                    widget.onNotificationTap();
+                    Future<void>.delayed(
+                      const Duration(milliseconds: 400),
+                      _loadNotificationCount,
+                    );
+                  },
+                  onSearchTap: () => Navigator.pushNamed(context, '/search'),
+                  onVoiceTap: () => Navigator.pushNamed(
+                    context,
+                    '/search',
+                    arguments: <String, dynamic>{'startVoiceSearch': true},
+                  ),
+                  onVegModeChanged: _setVegOnlyMode,
+                  onTapRestaurant: _openRestaurant,
+                  onTapCategory: _openCategory,
+                  onMore: _showAllCategoriesSheet,
+                ),
+              ),
+              // Scoped to a Consumer so only this card rebuilds when
+              // OrderProvider notifies (e.g. the 12s active-order poll) —
+              // the rest of the feed (sections/banners) must not rebuild
+              // on every order tick, which was causing scroll jank.
+              Consumer<OrderProvider>(
+                builder: (context, orderProvider, _) {
+                  final activeOrders = orderProvider.orders
+                      .where(_isRunningOrder)
+                      .toList(growable: false);
+                  if (activeOrders.isEmpty) {
+                    return const SliverToBoxAdapter(child: SizedBox.shrink());
+                  }
+                  return SliverToBoxAdapter(
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 14, 20, 0),
+                      child: _RunningOrderCard(order: activeOrders.first),
+                    ),
+                  );
+                },
+              ),
+              if (hasCategoryFilter)
+                SliverToBoxAdapter(
+                  child: Padding(
+                    padding: const EdgeInsets.only(top: 20),
+                    child: RepaintBoundary(
+                      child: _HomeSectionContainer(
+                        child: _buildCategoryFilterContent(),
+                      ),
+                    ),
+                  ),
+                ),
+              if (!hasCategoryFilter)
+                // Lazily built: only sections near the viewport are
+                // constructed, so a scroll-start rebuild and the first frame
+                // don't pay for every section's subtree at once.
+                SliverList(
+                  delegate: SliverChildBuilderDelegate(
+                    (context, index) => Padding(
+                      padding: EdgeInsets.only(top: index == 0 ? 18 : 20),
+                      child: RepaintBoundary(
+                        child: _HomeSectionContainer(
+                          section: sections[index],
+                          child: _buildSectionContent(sections[index]),
+                        ),
+                      ),
+                    ),
+                    childCount: sections.length,
+                  ),
+                ),
+              SliverToBoxAdapter(
+                child: SizedBox(
+                  height: MediaQuery.of(context).padding.bottom + 110,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCategoryFilterContent() {
+    final title = _activeCategoryFilter ?? '';
+    final restaurantItems = _scopeRestaurants(_filteredCategoryRestaurants);
+    final dishItems = _scopeDishes(_filteredCategoryDishes);
+    final hasResults = restaurantItems.isNotEmpty || dishItems.isNotEmpty;
+
+    return Column(
+      children: <Widget>[
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+          child: Row(
+            children: <Widget>[
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    Text(
+                      title,
+                      style: const TextStyle(
+                        color: _homeText,
+                        fontSize: 24,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      _isLoadingCategoryItems
+                          ? 'Finding matching restaurants and dishes...'
+                          : '${restaurantItems.length} restaurants • ${dishItems.length} dishes',
+                      style: const TextStyle(
+                        color: _homeMuted,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              TextButton.icon(
+                onPressed: _clearCategoryFilter,
+                icon: const Icon(Icons.close_rounded, size: 18),
+                label: const Text('Clear'),
+              ),
+            ],
+          ),
+        ),
+        if (_isLoadingCategoryItems && !hasResults)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 36),
+            child: CircularProgressIndicator(
+              color: Theme.of(context).colorScheme.primary,
+            ),
+          )
+        else if (!hasResults)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(28, 28, 28, 34),
+            child: Column(
+              children: <Widget>[
+                Icon(
+                  Icons.search_off_rounded,
+                  size: 48,
+                  color: Theme.of(context).colorScheme.primary,
+                ),
+                const SizedBox(height: 12),
+                const Text(
+                  'No matching restaurants or dishes found',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: _homeText,
+                    fontSize: 17,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                const Text(
+                  'Try another category or clear the filter.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: _homeMuted,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+            ),
+          )
+        else ...[
+          if (dishItems.isNotEmpty) ...[
+            _SectionHeader(
+              title: 'Matching Dishes',
+              subtitle: 'Items available under $title',
+            ),
+            SizedBox(
+              height: 156,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                itemCount: dishItems.length,
+                separatorBuilder: (_, __) => const SizedBox(width: 14),
+                itemBuilder: (context, index) => _DishPreviewCard(
+                  dish: dishItems[index],
+                  onTap: () => _openRestaurant(
+                    <String, dynamic>{
+                      'id': dishItems[index].effectiveRestaurantId,
+                      'name': dishItems[index].restaurantName,
+                    },
+                  ),
+                  onAdd: () => _addDishToCart(dishItems[index]),
+                ),
+              ),
+            ),
+            const SizedBox(height: 18),
+          ],
+          if (restaurantItems.isNotEmpty) ...[
+            _SectionHeader(
+              title: 'Matching Restaurants',
+              subtitle: 'Restaurants serving $title',
+              actionLabel: restaurantItems.length > 4 ? 'See All' : null,
+              onAction: restaurantItems.length > 4
+                  ? () => _showRestaurantListSheet(
+                        '$title restaurants',
+                        restaurantItems,
+                      )
+                  : null,
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              child: Column(
+                children: List<Widget>.generate(
+                  min(restaurantItems.length, 6),
+                  (index) => Padding(
+                    padding: EdgeInsets.only(
+                      bottom:
+                          index == min(restaurantItems.length, 6) - 1 ? 0 : 12,
+                    ),
+                    child: _RestaurantListTileModern(
+                      restaurant: restaurantItems[index],
+                      isSaved: _savedRestaurantIds.contains(
+                        _restaurantId(restaurantItems[index]),
+                      ),
+                      onTap: () => _openRestaurant(restaurantItems[index]),
+                      onSaveToggle: () =>
+                          _toggleSavedRestaurant(restaurantItems[index]),
+                      cuisineTextBuilder: _restaurantCuisineText,
+                      ratingBuilder: _ratingOf,
+                      parseDouble: _parseDouble,
+                      parseInt: _parseInt,
+                      imageResolver: _resolveImageUrl,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ],
+      ],
+    );
+  }
+
+  Widget _buildSectionContent(Map<String, dynamic> section) {
+    final type = section['type']?.toString() ?? '';
+    final rawItems = section['resolved_items'];
+    final items = rawItems is List
+        ? List<dynamic>.from(rawItems)
+        : const <dynamic>[];
+    if (items.isEmpty) {
+      if (_isLoadingRestaurantFeed && _sectionUsesRestaurantFeed(type)) {
+        return _buildSectionLoading(section);
+      }
+      return const SizedBox.shrink();
+    }
+
+    switch (type) {
+      case 'banner_carousel':
+        final bannerItems = items
+            .whereType<Map>()
+            .map((item) => Map<String, dynamic>.from(item))
+            .toList(growable: false);
+        final isPromoCarousel = bannerItems.isNotEmpty &&
+            bannerItems.every((banner) {
+              final layoutMode =
+                  (banner['layout_mode'] ?? banner['layoutMode'] ?? '')
+                      .toString()
+                      .toLowerCase()
+                      .trim();
+              final bannerType =
+                  (banner['banner_type'] ?? banner['bannerType'] ?? '')
+                      .toString()
+                      .toLowerCase()
+                      .trim();
+              return layoutMode == 'promo_card' || bannerType == 'promo';
+            });
+        return Column(
+          children: <Widget>[
+            if (!isPromoCarousel)
+              _SectionHeader(
+                title: section['title']?.toString() ?? 'Special Offers',
+                subtitle: section['subtitle']?.toString(),
+              ),
+            Padding(
+              padding: EdgeInsets.fromLTRB(20, isPromoCarousel ? 18 : 0, 20, 0),
+              child: _HomePromoBanner(
+                banners: items,
+                onTapRestaurant: _openRestaurant,
+              ),
+            ),
+          ],
+        );
+      case 'cuisine_grid':
+        final visibleItems = items.where(_isCuisineChipItem).toList();
+        if (visibleItems.isEmpty) return const SizedBox.shrink();
+        return Column(
+          children: <Widget>[
+            _SectionHeader(
+              title: section['title']?.toString() ?? 'Explore Cuisines',
+              subtitle: section['subtitle']?.toString(),
+              actionLabel: 'More',
+              onAction: _showAllCategoriesSheet,
+            ),
+            SizedBox(
+              height: 96,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                itemBuilder: (context, index) => _CategoryPill(
+                  category: visibleItems[index],
+                  onTap: () => _openCategory(visibleItems[index]),
+                ),
+                separatorBuilder: (_, __) => const SizedBox(width: 18),
+                itemCount: visibleItems.length,
+              ),
+            ),
+          ],
+        );
+      case 'categories':
+        return const SizedBox.shrink();
+      case 'quick_filter_shortcuts':
+      case 'menu_price_filter_config':
+        return const SizedBox.shrink();
+      case 'recommended_for_you':
+        final recommendedDishes = items.whereType<_HomeDishCardData>().toList();
+        final recommendedRestaurants = items
+            .whereType<Map>()
+            .map((item) => Map<String, dynamic>.from(item))
+            .toList(growable: false);
+        if (recommendedDishes.isEmpty && recommendedRestaurants.isEmpty) {
+          return const SizedBox.shrink();
+        }
+        if (recommendedRestaurants.isNotEmpty) {
+          final recommendedCardWidth =
+              ((MediaQuery.sizeOf(context).width - 44) / 3)
+                  .clamp(115.0, 140.0)
+                  .toDouble();
+          return Column(
+            children: <Widget>[
+              _SectionHeader(
+                title: section['title']?.toString() ?? 'Recommended For You',
+                subtitle: section['subtitle']?.toString(),
+                actionLabel:
+                    recommendedRestaurants.length > 4 ? 'See All' : null,
+                onAction: recommendedRestaurants.length > 4
+                    ? () => _showRestaurantListSheet(
+                          _plainText(
+                            section['title']?.toString() ?? 'Recommended',
+                          ),
+                          recommendedRestaurants,
+                        )
+                    : null,
+              ),
+              SizedBox(
+                height: 2 * (recommendedCardWidth / 1.25 + 69) + 16,
+                child: GridView.builder(
+                  scrollDirection: Axis.horizontal,
+                  padding: const EdgeInsets.symmetric(horizontal: 20),
+                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 2,
+                    mainAxisSpacing: 12,
+                    crossAxisSpacing: 16,
+                    mainAxisExtent: recommendedCardWidth,
+                  ),
+                  itemCount: recommendedRestaurants.length,
+                  itemBuilder: (context, index) =>
+                      _RecommendedRestaurantGridCard(
+                    restaurant: recommendedRestaurants[index],
+                    onTap: () => _openRestaurant(recommendedRestaurants[index]),
+                    ratingBuilder: _ratingOf,
+                    parseDouble: _parseDouble,
+                    parseInt: _parseInt,
+                    imageResolver: _resolveImageUrl,
+                  ),
+                ),
+              ),
+            ],
+          );
+        }
+        return Column(
+          children: <Widget>[
+            _SectionHeader(
+              title: section['title']?.toString() ?? 'Recommended For You',
+              subtitle: section['subtitle']?.toString(),
+              actionLabel: 'See All',
+              onAction: () => _showDishSheet(
+                _plainText(section['title']?.toString() ?? 'Recommended'),
+                recommendedDishes,
+              ),
+            ),
+            SizedBox(
+              height: 390,
+              child: GridView.builder(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: 2,
+                  mainAxisSpacing: 18,
+                  crossAxisSpacing: 24,
+                  childAspectRatio: 1,
+                ),
+                itemCount: recommendedDishes.length,
+                itemBuilder: (context, index) {
+                  final dish = recommendedDishes[index];
+                  return _RecommendedDishCard(
+                    dish: dish,
+                    isMenuPricePending: dish.price <= 0 &&
+                        (_isLoadingRestaurantFeed || _isLoadingPopularDishes),
+                    onTap: () => _openRestaurant(
+                      <String, dynamic>{
+                        'id': dish.effectiveRestaurantId,
+                        'name': dish.restaurantName,
+                      },
+                    ),
+                  );
+                },
+              ),
+            ),
+          ],
+        );
+      case 'featured_restaurants':
+      case 'trending_near_you':
+        return Column(
+          children: <Widget>[
+            _SectionHeader(
+              title: section['title']?.toString() ?? 'Recommended For You',
+              subtitle: section['subtitle']?.toString(),
+              actionLabel: 'See All',
+              onAction: () => _showRestaurantListSheet(
+                _plainText(section['title']?.toString() ?? 'Restaurants'),
+                items
+                    .whereType<Map>()
+                    .map((e) => Map<String, dynamic>.from(e))
+                    .toList(),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              child: Row(
+                children: List<Widget>.generate(
+                  min(items.length, 2),
+                  (index) => Expanded(
+                    child: Padding(
+                      padding: EdgeInsets.only(
+                        right: index == 0 && min(items.length, 2) > 1 ? 12 : 0,
+                      ),
+                      child: SizedBox(
+                        height: 278,
+                        child: _FeaturedStaticCard(
+                          restaurant:
+                              Map<String, dynamic>.from(items[index] as Map),
+                          isSaved: _savedRestaurantIds.contains(
+                            _restaurantId(
+                                Map<String, dynamic>.from(items[index] as Map)),
+                          ),
+                          onTap: () => _openRestaurant(
+                            Map<String, dynamic>.from(items[index] as Map),
+                          ),
+                          onSaveToggle: () => _toggleSavedRestaurant(
+                            Map<String, dynamic>.from(items[index] as Map),
+                          ),
+                          cuisineTextBuilder: _restaurantCuisineText,
+                          ratingBuilder: _ratingOf,
+                          parseDouble: _parseDouble,
+                          parseInt: _parseInt,
+                          imageResolver: _resolveImageUrl,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        );
+      case 'restaurant_discovery':
+      case 'nearby_restaurants':
+        final rdItems = _interleaveSponsoredRestaurants(items);
+        return Column(
+          children: <Widget>[
+            _SectionHeader(
+              title: section['title']?.toString() ?? 'Restaurants Near You',
+              subtitle: section['subtitle']?.toString(),
+              actionLabel: 'See All',
+              onAction: () => _showRestaurantListSheet(
+                _plainText(
+                    section['title']?.toString() ?? 'Restaurants Near You'),
+                rdItems
+                    .whereType<Map>()
+                    .map((e) => Map<String, dynamic>.from(e))
+                    .toList(),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              child: Column(
+                children: List<Widget>.generate(
+                  rdItems.length,
+                  (index) {
+                    final restaurant = _restaurantWithLoadedMenuItems(
+                      Map<String, dynamic>.from(rdItems[index] as Map),
+                    );
+                    return Padding(
+                      padding: EdgeInsets.only(
+                        bottom: index == rdItems.length - 1 ? 0 : 12,
+                      ),
+                      child: _RestaurantListTileModern(
+                        restaurant: restaurant,
+                        isSaved: _savedRestaurantIds.contains(
+                          _restaurantId(restaurant),
+                        ),
+                        onTap: () => _openRestaurant(restaurant),
+                        onSaveToggle: () => _toggleSavedRestaurant(restaurant),
+                        cuisineTextBuilder: _restaurantCuisineText,
+                        ratingBuilder: _ratingOf,
+                        parseDouble: _parseDouble,
+                        parseInt: _parseInt,
+                        imageResolver: _resolveImageUrl,
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ),
+          ],
+        );
+      case 'popular_restaurants':
+      case 'new_arrivals':
+        return Column(
+          children: <Widget>[
+            _SectionHeader(
+              title: section['title']?.toString() ?? 'Restaurants',
+              subtitle: section['subtitle']?.toString(),
+              actionLabel: 'See All',
+              onAction: () => _showRestaurantListSheet(
+                _plainText(section['title']?.toString() ?? 'Restaurants'),
+                items
+                    .whereType<Map>()
+                    .map((e) => Map<String, dynamic>.from(e))
+                    .toList(),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              child: Column(
+                children: List<Widget>.generate(
+                  min(items.length, 4),
+                  (index) => Padding(
+                    padding: EdgeInsets.only(
+                      bottom: index == min(items.length, 4) - 1 ? 0 : 12,
+                    ),
+                    child: _RestaurantListTileModern(
+                      restaurant:
+                          Map<String, dynamic>.from(items[index] as Map),
+                      isSaved: _savedRestaurantIds.contains(
+                        _restaurantId(
+                            Map<String, dynamic>.from(items[index] as Map)),
+                      ),
+                      onTap: () => _openRestaurant(
+                        Map<String, dynamic>.from(items[index] as Map),
+                      ),
+                      onSaveToggle: () => _toggleSavedRestaurant(
+                        Map<String, dynamic>.from(items[index] as Map),
+                      ),
+                      cuisineTextBuilder: _restaurantCuisineText,
+                      ratingBuilder: _ratingOf,
+                      parseDouble: _parseDouble,
+                      parseInt: _parseInt,
+                      imageResolver: _resolveImageUrl,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        );
+      case 'restaurant_grid':
+        return Column(
+          children: <Widget>[
+            _SectionHeader(
+              title: section['title']?.toString() ?? 'Restaurants',
+              subtitle: section['subtitle']?.toString(),
+              actionLabel: 'See All',
+              onAction: () => _showRestaurantListSheet(
+                _plainText(section['title']?.toString() ?? 'Restaurants'),
+                items
+                    .whereType<Map>()
+                    .map((e) => Map<String, dynamic>.from(e))
+                    .toList(),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              child: Column(
+                children: List<Widget>.generate(
+                  min(items.length, 4),
+                  (index) => Padding(
+                    padding: EdgeInsets.only(
+                      bottom: index == min(items.length, 4) - 1 ? 0 : 12,
+                    ),
+                    child: _RestaurantListTileModern(
+                      restaurant:
+                          Map<String, dynamic>.from(items[index] as Map),
+                      isSaved: _savedRestaurantIds.contains(
+                        _restaurantId(
+                            Map<String, dynamic>.from(items[index] as Map)),
+                      ),
+                      onTap: () => _openRestaurant(
+                        Map<String, dynamic>.from(items[index] as Map),
+                      ),
+                      onSaveToggle: () => _toggleSavedRestaurant(
+                        Map<String, dynamic>.from(items[index] as Map),
+                      ),
+                      cuisineTextBuilder: _restaurantCuisineText,
+                      ratingBuilder: _ratingOf,
+                      parseDouble: _parseDouble,
+                      parseInt: _parseInt,
+                      imageResolver: _resolveImageUrl,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        );
+      case 'popular_dishes':
+        return Column(
+          children: <Widget>[
+            _SectionHeader(
+              title: section['title']?.toString() ?? 'Popular Dishes',
+              subtitle: section['subtitle']?.toString(),
+              actionLabel: 'See All',
+              onAction: () => _showDishSheet(
+                _plainText(section['title']?.toString() ?? 'Popular Dishes'),
+                items.whereType<_HomeDishCardData>().toList(),
+              ),
+            ),
+            SizedBox(
+              height: 156,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                itemCount: min(items.length, 10),
+                separatorBuilder: (_, __) => const SizedBox(width: 14),
+                itemBuilder: (context, index) {
+                  final dish = items[index] as _HomeDishCardData;
+                  return _DishPreviewCard(
+                    dish: dish,
+                    onTap: () => _showDishDetailsPopup(dish),
+                    onAdd: () => _addDishToCart(dish),
+                  );
+                },
+              ),
+            ),
+          ],
+        );
+      case 'offers_strip':
+        // Consolidated banner-only offers & coupons (free delivery, cashback,
+        // flat cart discounts, coupons with no product mapping).
+        final stripOffers = _homePromotionDisplayOffers(
+          items,
+          splitItemRewards: false,
+          vegOnly: _vegOnlyMode,
+        );
+        if (stripOffers.isEmpty) return const SizedBox.shrink();
+        return Column(
+          children: <Widget>[
+            _SectionHeader(
+              title: section['title']?.toString() ?? 'Offers & Coupons',
+              subtitle: section['subtitle']?.toString(),
+              actionLabel: 'See All',
+              onAction: () => Navigator.pushNamed(context, '/offers'),
+            ),
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final cardWidth =
+                    max(150.0, (constraints.maxWidth - 50) / 2);
+                return SizedBox(
+                  height: 154,
+                  child: ListView.separated(
+                    scrollDirection: Axis.horizontal,
+                    padding: const EdgeInsets.symmetric(horizontal: 20),
+                    itemCount: min(stripOffers.length, 12),
+                    separatorBuilder: (_, __) => const SizedBox(width: 10),
+                    itemBuilder: (context, index) {
+                      final offer = stripOffers[index];
+                      return _OfferTile(
+                        offer: offer,
+                        width: cardWidth,
+                        compact: true,
+                        showCoupon: false,
+                        showText: false,
+                        showRewardAndValidityOnly: true,
+                        onTap: () => _openPromotionOfferItems(section, offer),
+                      );
+                    },
+                  ),
+                );
+              },
+            ),
+          ],
+        );
+      case 'deals_for_you':
+      case 'promotion_type_section':
+        final isCombinedDealsSection = type == 'deals_for_you';
+        final promotionOffers = _homePromotionDisplayOffers(
+          items,
+          splitItemRewards: !isCombinedDealsSection,
+          vegOnly: _vegOnlyMode,
+        );
+        final usesMenuCards = type == 'promotion_type_section' &&
+            _homePromotionSectionUsesMenuCards(section, promotionOffers);
+        if (usesMenuCards) {
+          return _buildPromotionMenuCardSection(section, promotionOffers);
+        }
+        return Column(
+          children: <Widget>[
+            _SectionHeader(
+              title: section['title']?.toString() ?? 'Deals for You',
+              subtitle: section['subtitle']?.toString(),
+              actionLabel: 'See All',
+              onAction: () => isCombinedDealsSection
+                  ? _showPromotionOffersSheet(section, promotionOffers)
+                  : _openPromotionProductGrid(section, promotionOffers),
+            ),
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final cardWidth = max(
+                  148.0,
+                  (constraints.maxWidth - 50) / 2,
+                );
+                return SizedBox(
+                  height: 154,
+                  child: ListView.separated(
+                    scrollDirection: Axis.horizontal,
+                    padding: const EdgeInsets.symmetric(horizontal: 20),
+                    itemCount: min(promotionOffers.length, 10),
+                    separatorBuilder: (_, __) => const SizedBox(width: 10),
+                    itemBuilder: (context, index) {
+                      final offer = promotionOffers[index];
+                      return _OfferTile(
+                        offer: offer,
+                        width: cardWidth,
+                        compact: true,
+                        showCoupon: false,
+                        showText: false,
+                        showRewardAndValidityOnly: true,
+                        onTap: () => _openPromotionOfferItems(section, offer),
+                      );
+                    },
+                  ),
+                );
+              },
+            ),
+          ],
+        );
+      case 'admin_offers':
+      case 'promotion_types':
+        return const SizedBox.shrink();
+      case 'shop_by_brand':
+        return Column(
+          children: <Widget>[
+            _SectionHeader(
+              title: section['title']?.toString() ?? 'Shop By Brand',
+              subtitle: section['subtitle']?.toString(),
+              actionLabel: 'See All',
+              onAction: () => _showBrandSheet(
+                items
+                    .whereType<Map>()
+                    .map((e) => Map<String, dynamic>.from(e))
+                    .toList(),
+              ),
+            ),
+            SizedBox(
+              height: 118,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                itemCount: min(items.length, 12),
+                separatorBuilder: (_, __) => const SizedBox(width: 18),
+                itemBuilder: (context, index) => _BrandBadge(
+                  brand: Map<String, dynamic>.from(items[index] as Map),
+                  imageResolver: _resolveImageUrl,
+                  onTap: () => _openRestaurant(
+                    <String, dynamic>{
+                      'id': _parseInt(
+                        (items[index] as Map)['restaurant_id'] ??
+                            (items[index] as Map)['id'],
+                      ),
+                    },
+                  ),
+                ),
+              ),
+            ),
+          ],
+        );
+      default:
+        return Column(
+          children: <Widget>[
+            _SectionHeader(
+              title: section['title']?.toString() ?? 'Section',
+              subtitle: section['subtitle']?.toString(),
+              actionLabel: 'See All',
+              onAction: () => _showRestaurantListSheet(
+                _plainText(section['title']?.toString() ?? 'Section'),
+                items
+                    .whereType<Map>()
+                    .map((e) => Map<String, dynamic>.from(e))
+                    .toList(),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              child: Column(
+                children: List<Widget>.generate(
+                  min(items.length, 4),
+                  (index) => Padding(
+                    padding: EdgeInsets.only(
+                      bottom: index == min(items.length, 4) - 1 ? 0 : 12,
+                    ),
+                    child: _RestaurantListTileModern(
+                      restaurant:
+                          Map<String, dynamic>.from(items[index] as Map),
+                      isSaved: _savedRestaurantIds.contains(
+                        _restaurantId(
+                            Map<String, dynamic>.from(items[index] as Map)),
+                      ),
+                      onTap: () => _openRestaurant(
+                        Map<String, dynamic>.from(items[index] as Map),
+                      ),
+                      onSaveToggle: () => _toggleSavedRestaurant(
+                        Map<String, dynamic>.from(items[index] as Map),
+                      ),
+                      cuisineTextBuilder: _restaurantCuisineText,
+                      ratingBuilder: _ratingOf,
+                      parseDouble: _parseDouble,
+                      parseInt: _parseInt,
+                      imageResolver: _resolveImageUrl,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        );
+    }
+  }
+
+  Widget _buildPromotionMenuCardSection(
+    Map<String, dynamic> section,
+    List<Map<String, dynamic>> allOffers,
+  ) {
+    // Only render menu cards for offers that actually map items; a mixed
+    // section drops its order-level (banner) offers from the rail.
+    final offers =
+        allOffers.where(_offerHasShoppableItems).toList(growable: false);
+    if (offers.isEmpty) return const SizedBox.shrink();
+
+    return Column(
+      children: <Widget>[
+        _SectionHeader(
+          title: section['title']?.toString() ?? 'Combo Deals',
+          subtitle: section['subtitle']?.toString(),
+          actionLabel: 'See All',
+          onAction: () => _openPromotionProductGrid(section, offers),
+        ),
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final cardWidth =
+                ((constraints.maxWidth - 52) / 2).clamp(154.0, 184.0);
+            return SizedBox(
+              height: 252,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                itemCount: min(offers.length, 10),
+                separatorBuilder: (_, __) => const SizedBox(width: 12),
+                itemBuilder: (context, index) {
+                  final offer = offers[index];
+                  return _HomePromotionMenuCard(
+                    offer: offer,
+                    width: cardWidth.toDouble(),
+                    onTap: () => _openPromotionOfferItems(section, offer),
+                    onAdd: () => _addPromotionOfferToCart(section, offer),
+                    onRemove: () => _decrementPromotionOfferFromCart(offer),
+                  );
+                },
+              ),
+            );
+          },
+        ),
+      ],
+    );
+  }
+
+  void _openPromotionProductGrid(
+    Map<String, dynamic> section,
+    List<dynamic> items,
+  ) {
+    final offers = items
+        .whereType<Map>()
+        .map((item) => Map<String, dynamic>.from(item))
+        .toList(growable: false);
+    final shoppable = offers
+        .where(_offerHasShoppableItems)
+        .toList(growable: false);
+
+    // No mapped products anywhere in this section -> it's banner-only.
+    // Show the offer(s) as a detail sheet, never an empty product grid.
+    if (shoppable.isEmpty) {
+      if (offers.length == 1) {
+        _openPromotionOfferItems(section, offers.first);
+      } else {
+        _showPromotionOffersSheet(section, offers);
+      }
+      return;
+    }
+
+    Navigator.pushNamed(
+      context,
+      '/promotion-products',
+      arguments: {
+        'title': section['title']?.toString() ?? 'Promotion Items',
+        'subtitle': section['subtitle']?.toString(),
+        'promotion_type': section['promotion_type']?.toString(),
+        'veg_only': _vegOnlyMode,
+        'offers': shoppable,
+      },
+    );
+  }
+
+  bool _offerHasShoppableItems(Map<String, dynamic> offer) {
+    bool hasRealItems(dynamic v) {
+      if (v is! List) return false;
+      return v.whereType<Map>().any((m) {
+        final id = m['menu_item_id'] ?? m['id'] ?? m['item_id'];
+        final name = (m['name'] ?? m['title'] ?? '').toString().trim();
+        return (int.tryParse('${id ?? ''}') ?? 0) > 0 || name.isNotEmpty;
+      });
+    }
+
+    return hasRealItems(offer['menu_items']) ||
+        hasRealItems(offer['reward_menu_items']);
+  }
+
+  void _showPromotionOffersSheet(
+    Map<String, dynamic> section,
+    List<dynamic> items,
+  ) {
+    final offers = _homePromotionDisplayOffers(
+      items,
+      splitItemRewards: false,
+      vegOnly: _vegOnlyMode,
+    );
+    if (offers.isEmpty) return;
+
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) {
+        final title = section['title']?.toString() ?? 'Deals for You';
+        final subtitle = section['subtitle']?.toString();
+        return DraggableScrollableSheet(
+          initialChildSize: 0.72,
+          minChildSize: 0.45,
+          maxChildSize: 0.92,
+          expand: false,
+          builder: (context, scrollController) {
+            return Container(
+              decoration: const BoxDecoration(
+                color: Color(0xFFF7F8FA),
+                borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+              ),
+              child: Column(
+                children: <Widget>[
+                  const SizedBox(height: 10),
+                  Container(
+                    width: 42,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFD1D5DB),
+                      borderRadius: BorderRadius.circular(99),
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 16, 12, 12),
+                    child: Row(
+                      children: <Widget>[
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: <Widget>[
+                              Text(
+                                title,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  color: _homeText,
+                                  fontSize: 20,
+                                  fontWeight: FontWeight.w900,
+                                ),
+                              ),
+                              if (subtitle != null &&
+                                  subtitle.trim().isNotEmpty)
+                                Padding(
+                                  padding: const EdgeInsets.only(top: 3),
+                                  child: Text(
+                                    subtitle,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      color: _homeMuted,
+                                      fontSize: 12.5,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ),
+                        IconButton(
+                          onPressed: () => Navigator.pop(sheetContext),
+                          icon: const Icon(Icons.close_rounded),
+                          color: _homeMuted,
+                        ),
+                      ],
+                    ),
+                  ),
+                  Expanded(
+                    child: GridView.builder(
+                      controller: scrollController,
+                      padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
+                      itemCount: offers.length,
+                      gridDelegate:
+                          const SliverGridDelegateWithFixedCrossAxisCount(
+                        crossAxisCount: 2,
+                        crossAxisSpacing: 10,
+                        mainAxisSpacing: 12,
+                        childAspectRatio: 1.08,
+                      ),
+                      itemBuilder: (context, index) {
+                        final offer = offers[index];
+                        return _OfferTile(
+                          offer: offer,
+                          width: double.infinity,
+                          compact: true,
+                          showCoupon: false,
+                          showText: false,
+                          showRewardAndValidityOnly: true,
+                          onTap: () {
+                            Navigator.pop(sheetContext);
+                            _openPromotionOfferItems(section, offer);
+                          },
+                        );
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  void _openPromotionOfferItems(
+    Map<String, dynamic> section,
+    Map<String, dynamic> offer,
+  ) {
+    if (_homeOfferType(offer) == 'scratch_card') {
+      Navigator.pushNamed(context, '/scratch-cards');
+      return;
+    }
+
+    // Banner-only offer (free delivery, cashback, flat cart coupon, …) —
+    // open the detail sheet instead of an empty product screen.
+    if (!_offerHasShoppableItems(offer)) {
+      final restaurantId = _parseInt(offer['restaurant_id']);
+      showPromotionDetailSheet(
+        context,
+        offer,
+        onPrimaryAction: restaurantId != null && restaurantId > 0
+            ? () => _openRestaurant(<String, dynamic>{'id': restaurantId})
+            : null,
+      );
+      return;
+    }
+
+    Navigator.pushNamed(
+      context,
+      '/promotion-products',
+      arguments: {
+        'title': (offer['title'] ?? section['title'] ?? 'Promotion Items')
+            .toString(),
+        'subtitle':
+            (offer['subtitle'] ?? offer['description'] ?? section['subtitle'])
+                ?.toString(),
+        'promotion_type':
+            offer['promotion_type']?.toString() ?? section['promotion_type'],
+        'veg_only': _vegOnlyMode,
+        'offers': [offer],
+      },
+    );
+  }
+
+  bool _sectionUsesRestaurantFeed(String type) {
+    return const <String>{
+      'restaurant_discovery',
+      'nearby_restaurants',
+      'popular_restaurants',
+      'new_arrivals',
+      'trending_near_you',
+      'featured_restaurants',
+      'recommended_for_you',
+      'restaurant_grid',
+      'popular_dishes',
+      'shop_by_brand',
+    }.contains(type);
+  }
+
+  Widget _buildSectionLoading(Map<String, dynamic> section) {
+    return Column(
+      children: <Widget>[
+        _SectionHeader(
+          title: section['title']?.toString() ?? 'Restaurants Near You',
+          subtitle: section['subtitle']?.toString(),
+        ),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 20),
+          child: Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(vertical: 26),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(color: _homeBorder),
+            ),
+            child: Center(
+              child: CircularProgressIndicator(
+                color: Theme.of(context).colorScheme.primary,
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  bool _isRunningOrder(Order order) {
+    return !order.isDelivered &&
+        !order.isCancelled &&
+        const <String>{
+          'pending',
+          'confirmed',
+          'preparing',
+          'ready_for_pickup',
+          'reached_pickup',
+          'picked_up',
+          'on_the_way',
+        }.contains(order.status);
+  }
+
+  void _showRestaurantListSheet(
+    String title,
+    List<Map<String, dynamic>> restaurantsRaw,
+  ) {
+    final restaurants = _interleaveSponsoredRestaurants(restaurantsRaw)
+        .whereType<Map>()
+        .map((e) => Map<String, dynamic>.from(e))
+        .toList();
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: _homeBg,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      builder: (context) {
+        return SafeArea(
+          top: false,
+          child: SizedBox(
+            height: MediaQuery.of(context).size.height * 0.82,
+            child: Column(
+              children: <Widget>[
+                Container(
+                  width: 54,
+                  height: 6,
+                  margin: const EdgeInsets.only(top: 10, bottom: 18),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFD7DCE4),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 0, 10, 12),
+                  child: Row(
+                    children: <Widget>[
+                      Expanded(
+                        child: Text(
+                          title,
+                          style: const TextStyle(
+                            color: _homeText,
+                            fontSize: 18,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        onPressed: () => Navigator.pop(context),
+                        icon: const Icon(Icons.close_rounded),
+                      ),
+                    ],
+                  ),
+                ),
+                Expanded(
+                  child: ListView.separated(
+                    padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
+                    itemBuilder: (context, index) => _RestaurantListTileModern(
+                      restaurant: restaurants[index],
+                      isSaved: _savedRestaurantIds.contains(
+                        _restaurantId(restaurants[index]),
+                      ),
+                      onTap: () {
+                        Navigator.pop(context);
+                        _openRestaurant(restaurants[index]);
+                      },
+                      onSaveToggle: () =>
+                          _toggleSavedRestaurant(restaurants[index]),
+                      cuisineTextBuilder: _restaurantCuisineText,
+                      ratingBuilder: _ratingOf,
+                      parseDouble: _parseDouble,
+                      parseInt: _parseInt,
+                      imageResolver: _resolveImageUrl,
+                    ),
+                    separatorBuilder: (_, __) => const SizedBox(height: 12),
+                    itemCount: restaurants.length,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  void _showDishSheet(String title, List<_HomeDishCardData> dishes) {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: _homeBg,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      builder: (context) {
+        return SafeArea(
+          top: false,
+          child: SizedBox(
+            height: MediaQuery.of(context).size.height * 0.75,
+            child: Column(
+              children: <Widget>[
+                Container(
+                  width: 54,
+                  height: 6,
+                  margin: const EdgeInsets.only(top: 10, bottom: 18),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFD7DCE4),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 0, 10, 12),
+                  child: Row(
+                    children: <Widget>[
+                      Expanded(
+                        child: Text(
+                          title,
+                          style: const TextStyle(
+                            color: _homeText,
+                            fontSize: 18,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        onPressed: () => Navigator.pop(context),
+                        icon: const Icon(Icons.close_rounded),
+                      ),
+                    ],
+                  ),
+                ),
+                Expanded(
+                  child: ListView.separated(
+                    padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
+                    itemBuilder: (context, index) => _DishListTile(
+                      dish: dishes[index],
+                      onAdd: () => _addDishToCart(dishes[index]),
+                      onTap: () {
+                        Navigator.pop(context);
+                        _openRestaurant(
+                          <String, dynamic>{
+                            'id': dishes[index].effectiveRestaurantId,
+                          },
+                        );
+                      },
+                    ),
+                    separatorBuilder: (_, __) => const SizedBox(height: 12),
+                    itemCount: dishes.length,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  void _showDishDetailsPopup(_HomeDishCardData dish) {
+    final etaText = dish.etaMinutes > 0
+        ? '${dish.etaMinutes}-${dish.etaMinutes + 5} mins'
+        : 'Ready near you';
+    final priceText =
+        dish.price > 0 ? formatCurrency(context, dish.price) : 'Menu price';
+
+    Widget infoChip(IconData icon, String label) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+        decoration: BoxDecoration(
+          color: _homeLightGreen,
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(color: _homeGreen.withOpacity(0.16)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            Icon(icon, size: 15, color: _homeGreen),
+            const SizedBox(width: 5),
+            Text(
+              label,
+              style: const TextStyle(
+                color: _homeText,
+                fontSize: 12,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    Widget fallback() {
+      return Container(
+        color: _homePeach,
+        child: const Center(
+          child: Icon(Icons.fastfood_rounded, size: 46, color: _homeAccent),
+        ),
+      );
+    }
+
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      builder: (sheetContext) {
+        return SafeArea(
+          top: false,
+          child: SingleChildScrollView(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(20, 10, 20, 24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Center(
+                    child: Container(
+                      width: 54,
+                      height: 6,
+                      margin: const EdgeInsets.only(bottom: 18),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFD7DCE4),
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                    ),
+                  ),
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(20),
+                        child: SizedBox(
+                          width: 118,
+                          height: 118,
+                          child: _buildImageOrFallback(
+                            dish.imageUrl,
+                            fit: BoxFit.cover,
+                            placeholder: fallback(),
+                            errorWidget: fallback(),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: <Widget>[
+                            Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: <Widget>[
+                                Expanded(
+                                  child: Text(
+                                    dish.name,
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      color: _homeText,
+                                      fontSize: 20,
+                                      height: 1.1,
+                                      fontWeight: FontWeight.w900,
+                                    ),
+                                  ),
+                                ),
+                                IconButton(
+                                  visualDensity: VisualDensity.compact,
+                                  onPressed: () => Navigator.pop(sheetContext),
+                                  icon: const Icon(Icons.close_rounded),
+                                ),
+                              ],
+                            ),
+                            if (dish.restaurantName.trim().isNotEmpty) ...[
+                              const SizedBox(height: 6),
+                              Text(
+                                dish.restaurantName,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  color: _homeMuted,
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ],
+                            const SizedBox(height: 10),
+                            Wrap(
+                              spacing: 8,
+                              runSpacing: 8,
+                              children: <Widget>[
+                                infoChip(
+                                  dish.isVeg
+                                      ? Icons.eco_rounded
+                                      : Icons.restaurant_rounded,
+                                  dish.isVeg ? 'Veg' : 'Dish',
+                                ),
+                                infoChip(Icons.timer_outlined, etaText),
+                                if (dish.rating > 0)
+                                  infoChip(
+                                    Icons.star_rounded,
+                                    dish.rating.toStringAsFixed(1),
+                                  ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 22),
+                  Row(
+                    children: <Widget>[
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: <Widget>[
+                            const Text(
+                              'Price',
+                              style: TextStyle(
+                                color: _homeMuted,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            const SizedBox(height: 3),
+                            Text(
+                              priceText,
+                              style: const TextStyle(
+                                color: _homeText,
+                                fontSize: 22,
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      _DishAddButton(
+                        dish: dish,
+                        onAdd: () => _addDishToCart(dish),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  void _addDishToCart(_HomeDishCardData dish) {
+    final item = dish.item;
+    final restaurant = dish.restaurant;
+    if (item == null || restaurant == null) {
+      _openRestaurant(<String, dynamic>{'id': dish.effectiveRestaurantId});
+      return;
+    }
+
+    if (item.hasCustomizations) {
+      showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        backgroundColor: FoodFlowTheme.canvas,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+        ),
+        builder: (_) => MenuCustomizationSheet(
+          item: item,
+          onAdd: (result) {
+            final cart = context.read<CartProvider>();
+            for (var i = 0; i < result.quantity; i++) {
+              cart.addItem(
+                item,
+                restaurant,
+                selectedVariant: result.variant,
+                selectedAddOns: result.addOns,
+              );
+            }
+            Navigator.of(context).pop();
+            _showHomeMessage('${item.name} added to cart');
+          },
+        ),
+      );
+      return;
+    }
+
+    context.read<CartProvider>().addItem(item, restaurant);
+    _showHomeMessage('${item.name} added to cart');
+  }
+
+  void _addPromotionOfferToCart(
+    Map<String, dynamic> section,
+    Map<String, dynamic> offer,
+  ) {
+    final items = _homePromotionOfferPaidMenuItems(offer);
+    if (items.isEmpty) {
+      _openPromotionOfferItems(section, offer);
+      return;
+    }
+
+    if (items.any((item) => item.hasCustomizations)) {
+      _openPromotionOfferItems(section, offer);
+      _showHomeMessage('Choose item options before adding this promotion.');
+      return;
+    }
+
+    final restaurant = _restaurantFromPromotionOffer(offer, items.first);
+    if (restaurant == null) {
+      _openPromotionOfferItems(section, offer);
+      return;
+    }
+
+    final cart = context.read<CartProvider>();
+    final promotionId = _homePromotionId(offer);
+    final promotionTitle =
+        (offer['title'] ?? offer['name'] ?? 'Combo deal').toString();
+    final promotionCouponCode = _homePromotionCouponCode(offer);
+    final promotionGroupKey = _homePromotionGroupKey(offer);
+    final promotionGroupSize = items.length;
+    final usesDealPrice = _homePromotionUsesEmbeddedDealPrice(offer);
+    final dealPrice =
+        usesDealPrice ? _homePromotionDealPrice(offer, items) : 0.0;
+    final originalPrice =
+        usesDealPrice ? _homePromotionOriginalPrice(offer, items) : 0.0;
+    for (final item in items) {
+      cart.addItem(
+        item,
+        restaurant,
+        promotionId: promotionId,
+        promotionTitle: promotionTitle,
+        promotionCouponCode: promotionCouponCode,
+        promotionGroupKey: promotionGroupKey,
+        promotionGroupSize: promotionGroupSize,
+        promotionDealPrice: dealPrice > 0 ? dealPrice : null,
+        promotionOriginalPrice: originalPrice > 0 ? originalPrice : null,
+      );
+    }
+
+    _showHomeMessage('$promotionTitle added to cart');
+  }
+
+  void _decrementPromotionOfferFromCart(Map<String, dynamic> offer) {
+    final items = _homePromotionOfferPaidMenuItems(offer);
+    if (items.isEmpty) return;
+
+    final cart = context.read<CartProvider>();
+    for (final item in items) {
+      cart.decrementQuantity(item.id);
+    }
+  }
+
+  Restaurant? _restaurantFromPromotionOffer(
+    Map<String, dynamic> offer,
+    MenuItem item,
+  ) {
+    final restaurantMap = offer['restaurant'] is Map
+        ? Map<String, dynamic>.from(offer['restaurant'] as Map)
+        : <String, dynamic>{};
+    final restaurantId = _parseInt(
+      offer['restaurant_id'] ??
+          offer['owner_id'] ??
+          restaurantMap['id'] ??
+          restaurantMap['restaurant_id'] ??
+          item.restaurantId,
+    );
+    if (restaurantId <= 0) return null;
+
+    return Restaurant.fromJson({
+      ...restaurantMap,
+      'id': restaurantId,
+      'name': _homePromotionRestaurantName(offer, [item]),
+      'logo_image': restaurantMap['logo_image'] ?? offer['restaurant_logo'],
+      'image': restaurantMap['image'] ?? offer['restaurant_logo'],
+      'is_open': restaurantMap['is_open'] ?? true,
+      'is_open_now': restaurantMap['is_open_now'] ?? true,
+      'delivery_radius': restaurantMap['delivery_radius'] ?? 10,
+      'min_order_amount': restaurantMap['min_order_amount'] ?? 0,
+      'delivery_fee': restaurantMap['delivery_fee'] ?? 0,
+      'delivery_time': restaurantMap['delivery_time'] ?? 30,
+      'cuisine': restaurantMap['cuisine'] ?? const <String>[],
+      'created_at':
+          restaurantMap['created_at'] ?? DateTime.now().toIso8601String(),
+    });
+  }
+
+  void _showHomeMessage(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+          content: Text(message), duration: const Duration(milliseconds: 900)),
+    );
+  }
+
+  void _showBrandSheet(List<Map<String, dynamic>> brands) {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: _homeBg,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      builder: (context) {
+        return SafeArea(
+          top: false,
+          child: SizedBox(
+            height: MediaQuery.of(context).size.height * 0.62,
+            child: Column(
+              children: <Widget>[
+                Container(
+                  width: 54,
+                  height: 6,
+                  margin: const EdgeInsets.only(top: 10, bottom: 18),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFD7DCE4),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                ),
+                const Padding(
+                  padding: EdgeInsets.fromLTRB(20, 0, 20, 12),
+                  child: Row(
+                    children: <Widget>[
+                      Expanded(
+                        child: Text(
+                          'Shop By Brand',
+                          style: TextStyle(
+                            color: _homeText,
+                            fontSize: 18,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Expanded(
+                  child: GridView.builder(
+                    padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
+                    gridDelegate:
+                        const SliverGridDelegateWithFixedCrossAxisCount(
+                      crossAxisCount: 3,
+                      mainAxisSpacing: 18,
+                      crossAxisSpacing: 16,
+                      childAspectRatio: 0.82,
+                    ),
+                    itemCount: brands.length,
+                    itemBuilder: (context, index) => _BrandBadge(
+                      brand: brands[index],
+                      imageResolver: _resolveImageUrl,
+                      onTap: () {
+                        Navigator.pop(context);
+                        _openRestaurant(
+                          <String, dynamic>{
+                            'id': _parseInt(
+                              brands[index]['restaurant_id'] ??
+                                  brands[index]['id'],
+                            ),
+                          },
+                        );
+                      },
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  String _plainText(String value) {
+    return value
+        .replaceAll(
+          RegExp(
+            r'<span\s+style=\\?"color:\s*#[0-9A-Fa-f]{6}\s*;?\\?">',
+            caseSensitive: false,
+          ),
+          '',
+        )
+        .replaceAll('</span>', '')
+        .trim();
+  }
+}
+
+class _ManualLocationResult {
+  const _ManualLocationResult({
+    required this.city,
+    required this.address,
+    required this.latitude,
+    required this.longitude,
+  });
+
+  final String city;
+  final String address;
+  final double latitude;
+  final double longitude;
+}
+
+class _ManualLocationSearchSheet extends StatefulWidget {
+  const _ManualLocationSearchSheet({
+    required this.loadSuggestions,
+  });
+
+  final Future<List<Map<String, dynamic>>> Function(String query)
+      loadSuggestions;
+
+  @override
+  State<_ManualLocationSearchSheet> createState() =>
+      _ManualLocationSearchSheetState();
+}
+
+class _ManualLocationSearchSheetState
+    extends State<_ManualLocationSearchSheet> {
+  final TextEditingController _controller = TextEditingController();
+  Timer? _debounce;
+  bool _isLoading = false;
+  String _query = '';
+  String? _error;
+  List<Map<String, dynamic>> _suggestions = const <Map<String, dynamic>>[];
+
+  @override
+  void dispose() {
+    _debounce?.cancel();
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _onQueryChanged(String value) {
+    _debounce?.cancel();
+    final query = value.trim();
+    setState(() {
+      _query = query;
+      _error = null;
+    });
+    if (query.length < 3) {
+      setState(() {
+        _isLoading = false;
+        _suggestions = const <Map<String, dynamic>>[];
+      });
+      return;
+    }
+    _debounce = Timer(const Duration(milliseconds: 450), () {
+      _load(query);
+    });
+  }
+
+  Future<void> _load(String query) async {
+    setState(() {
+      _isLoading = true;
+      _error = null;
+    });
+    try {
+      final results = await widget.loadSuggestions(query);
+      if (!mounted || query != _query) return;
+      setState(() {
+        _suggestions = results;
+        _isLoading = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _isLoading = false;
+        _error = 'Unable to search locations right now.';
+      });
+    }
+  }
+
+  void _select(Map<String, dynamic> item) {
+    final lat = _parseDouble(item['lat']);
+    final lng = _parseDouble(item['lng']);
+    if (lat == null || lng == null) return;
+    final displayName = item['display_name']?.toString().trim();
+    final city = item['city']?.toString().trim();
+    Navigator.pop(
+      context,
+      _ManualLocationResult(
+        city: city?.isNotEmpty == true
+            ? city!
+            : displayName?.split(',').first.trim() ?? _query,
+        address: displayName?.isNotEmpty == true ? displayName! : _query,
+        latitude: lat,
+        longitude: lng,
+      ),
+    );
+  }
+
+  double? _parseDouble(dynamic value) {
+    if (value is num) return value.toDouble();
+    return double.tryParse(value?.toString() ?? '');
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bottomInset = MediaQuery.of(context).viewInsets.bottom;
+    final primary = FoodFlowTheme.brandPrimary(context);
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(16, 10, 16, 18 + bottomInset),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.of(context).size.height * 0.82,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Center(
+                child: Container(
+                  width: 48,
+                  height: 5,
+                  margin: const EdgeInsets.only(bottom: 16),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFD9DDE5),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                ),
+              ),
+              Row(
+                children: <Widget>[
+                  IconButton(
+                    tooltip: 'Back',
+                    onPressed: () => Navigator.pop(context),
+                    icon: const Icon(Icons.arrow_back_rounded),
+                    style: FoodFlowTheme.softIconButton(
+                      backgroundColor: Colors.white,
+                      foregroundColor: FoodFlowTheme.ink,
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  const Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: <Widget>[
+                        Text(
+                          'Search location',
+                          style: TextStyle(
+                            color: FoodFlowTheme.ink,
+                            fontSize: 20,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                        SizedBox(height: 2),
+                        Text(
+                          'Area, street, landmark, or pincode',
+                          style: TextStyle(
+                            color: FoodFlowTheme.muted,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 18),
+              Container(
+                height: 56,
+                padding: const EdgeInsets.symmetric(horizontal: 14),
+                decoration: FoodFlowTheme.softSurface(radius: 20),
+                child: Row(
+                  children: <Widget>[
+                    Icon(
+                      Icons.search_rounded,
+                      color: primary,
+                      size: 22,
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: TextField(
+                        controller: _controller,
+                        autofocus: true,
+                        textInputAction: TextInputAction.search,
+                        onChanged: _onQueryChanged,
+                        onSubmitted: (value) {
+                          final query = value.trim();
+                          if (query.length >= 3) _load(query);
+                        },
+                        decoration: const InputDecoration(
+                          border: InputBorder.none,
+                          hintText: 'Search delivery location',
+                          hintStyle: TextStyle(
+                            color: FoodFlowTheme.faint,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ),
+                    if (_controller.text.isNotEmpty)
+                      IconButton(
+                        tooltip: 'Clear',
+                        onPressed: () {
+                          _controller.clear();
+                          _onQueryChanged('');
+                        },
+                        icon: const Icon(Icons.close_rounded, size: 18),
+                      ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 18),
+              Flexible(child: _buildResults()),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildResults() {
+    final primary = FoodFlowTheme.brandPrimary(context);
+    if (_query.length < 3) {
+      return const _ManualSearchState(
+        icon: Icons.travel_explore_rounded,
+        title: 'Start typing',
+        message: 'Enter at least 3 characters to find your delivery area.',
+      );
+    }
+
+    if (_isLoading) {
+      return Padding(
+        padding: EdgeInsets.symmetric(vertical: 30),
+        child: Center(
+          child: CircularProgressIndicator(
+            color: primary,
+          ),
+        ),
+      );
+    }
+
+    if (_error != null) {
+      return _ManualSearchState(
+        icon: Icons.wifi_off_rounded,
+        title: 'Search failed',
+        message: _error!,
+      );
+    }
+
+    if (_suggestions.isEmpty) {
+      return const _ManualSearchState(
+        icon: Icons.location_off_outlined,
+        title: 'No locations found',
+        message: 'Try a nearby landmark, area name, or pincode.',
+      );
+    }
+
+    return ListView.separated(
+      shrinkWrap: true,
+      itemCount: _suggestions.length,
+      separatorBuilder: (_, __) => const SizedBox(height: 10),
+      itemBuilder: (context, index) {
+        final item = _suggestions[index];
+        final title = item['city']?.toString().trim().isNotEmpty == true
+            ? item['city'].toString().trim()
+            : item['display_name']?.toString().split(',').first.trim() ??
+                'Location';
+        final subtitle = item['display_name']?.toString() ?? '';
+        return _ManualLocationSuggestionTile(
+          title: title,
+          subtitle: subtitle,
+          onTap: () => _select(item),
+        );
+      },
+    );
+  }
+}
+
+class _ManualSearchState extends StatelessWidget {
+  const _ManualSearchState({
+    required this.icon,
+    required this.title,
+    required this.message,
+  });
+
+  final IconData icon;
+  final String title;
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    final primary = FoodFlowTheme.brandPrimary(context);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 28),
+      child: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            Container(
+              width: 64,
+              height: 64,
+              decoration: BoxDecoration(
+                color: primary.withOpacity(0.08),
+                borderRadius: BorderRadius.circular(22),
+              ),
+              child: Icon(icon, color: primary, size: 30),
+            ),
+            const SizedBox(height: 14),
+            Text(
+              title,
+              style: const TextStyle(
+                color: FoodFlowTheme.ink,
+                fontSize: 17,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 26),
+              child: Text(
+                message,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: FoodFlowTheme.muted,
+                  fontSize: 13,
+                  height: 1.35,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ManualLocationSuggestionTile extends StatelessWidget {
+  const _ManualLocationSuggestionTile({
+    required this.title,
+    required this.subtitle,
+    required this.onTap,
+  });
+
+  final String title;
+  final String subtitle;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final primary = FoodFlowTheme.brandPrimary(context);
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(20),
+      child: Container(
+        padding: const EdgeInsets.all(14),
+        decoration: FoodFlowTheme.softSurface(radius: 20),
+        child: Row(
+          children: <Widget>[
+            Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: primary.withOpacity(0.08),
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Icon(
+                Icons.location_on_outlined,
+                color: primary,
+                size: 21,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Text(
+                    title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: FoodFlowTheme.ink,
+                      fontSize: 14.5,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  if (subtitle.isNotEmpty) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      subtitle,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: FoodFlowTheme.muted,
+                        fontSize: 12.5,
+                        height: 1.3,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            const SizedBox(width: 10),
+            const Icon(
+              Icons.chevron_right_rounded,
+              color: FoodFlowTheme.faint,
+              size: 22,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _LocationPickerSheet extends StatefulWidget {
+  const _LocationPickerSheet({
+    required this.loadSavedAddresses,
+    required this.onUseCurrentLocation,
+    required this.onManualSearch,
+    required this.onSavedAddressSelected,
+    required this.onManageAddresses,
+    required this.onAddAddress,
+  });
+
+  final Future<List<app_address.Address>> Function() loadSavedAddresses;
+  final Future<void> Function() onUseCurrentLocation;
+  final Future<void> Function() onManualSearch;
+  final Future<void> Function(app_address.Address address)
+      onSavedAddressSelected;
+  final Future<void> Function() onManageAddresses;
+  final Future<void> Function() onAddAddress;
+
+  @override
+  State<_LocationPickerSheet> createState() => _LocationPickerSheetState();
+}
+
+class _LocationPickerSheetState extends State<_LocationPickerSheet> {
+  bool _isSyncingLocation = false;
+
+  Future<void> _syncCurrentLocation() async {
+    if (_isSyncingLocation) return;
+    setState(() => _isSyncingLocation = true);
+    try {
+      await widget.onUseCurrentLocation();
+    } finally {
+      if (mounted) setState(() => _isSyncingLocation = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bottomInset = MediaQuery.of(context).viewInsets.bottom;
+    final primary = FoodFlowTheme.brandPrimary(context);
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(16, 10, 16, 18 + bottomInset),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.of(context).size.height * 0.82,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Center(
+                child: Container(
+                  width: 48,
+                  height: 5,
+                  margin: const EdgeInsets.only(bottom: 16),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFD9DDE5),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                ),
+              ),
+              Row(
+                children: <Widget>[
+                  Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(
+                      color: primary.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(15),
+                    ),
+                    child: Icon(
+                      Icons.location_on_rounded,
+                      color: primary,
+                      size: 22,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  const Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: <Widget>[
+                        Text(
+                          'Select location',
+                          style: TextStyle(
+                            color: FoodFlowTheme.ink,
+                            fontSize: 20,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                        SizedBox(height: 2),
+                        Text(
+                          'Delivery address',
+                          style: TextStyle(
+                            color: FoodFlowTheme.muted,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: 'Close',
+                    onPressed: () => Navigator.pop(context),
+                    icon: const Icon(Icons.close_rounded),
+                    style: FoodFlowTheme.softIconButton(
+                      backgroundColor: Colors.white,
+                      foregroundColor: FoodFlowTheme.ink,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 18),
+              _LocationActionTile(
+                icon: Icons.search_rounded,
+                label: 'Search location manually',
+                subtitle: 'Area, street, landmark, or pincode',
+                onTap: () async {
+                  Navigator.pop(context);
+                  await widget.onManualSearch();
+                },
+              ),
+              const SizedBox(height: 10),
+              _LocationActionTile(
+                icon: Icons.my_location_rounded,
+                label: _isSyncingLocation
+                    ? 'Syncing current location...'
+                    : 'Use current location',
+                subtitle: _isSyncingLocation
+                    ? 'Please wait while GPS and address sync'
+                    : 'Detect from GPS and keep full address',
+                isLoading: _isSyncingLocation,
+                onTap: _syncCurrentLocation,
+              ),
+              const SizedBox(height: 10),
+              _LocationActionTile(
+                icon: Icons.add_location_alt_outlined,
+                label: 'Add new saved address',
+                subtitle: 'Home, work, or another place',
+                onTap: widget.onAddAddress,
+              ),
+              const SizedBox(height: 22),
+              Row(
+                children: <Widget>[
+                  const Expanded(
+                    child: Text(
+                      'SAVED LOCATIONS',
+                      style: TextStyle(
+                        color: FoodFlowTheme.muted,
+                        fontSize: 12,
+                        letterSpacing: 0.8,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ),
+                  TextButton.icon(
+                    onPressed: widget.onManageAddresses,
+                    icon: const Icon(Icons.tune_rounded, size: 16),
+                    label: const Text('Manage'),
+                    style: TextButton.styleFrom(
+                      foregroundColor: primary,
+                      textStyle: const TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              Flexible(
+                child: FutureBuilder<List<app_address.Address>>(
+                  future: widget.loadSavedAddresses(),
+                  builder: (context, snapshot) {
+                    if (snapshot.connectionState == ConnectionState.waiting) {
+                      return Padding(
+                        padding: EdgeInsets.symmetric(vertical: 24),
+                        child: Center(
+                          child: CircularProgressIndicator(
+                            color: primary,
+                          ),
+                        ),
+                      );
+                    }
+
+                    if (snapshot.hasError) {
+                      return Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 18),
+                        child: Text(
+                          'Saved addresses could not be loaded.',
+                          style: const TextStyle(
+                            color: FoodFlowTheme.danger,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      );
+                    }
+
+                    final addresses =
+                        snapshot.data ?? const <app_address.Address>[];
+                    if (addresses.isEmpty) {
+                      return Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 18),
+                        child: Text(
+                          'No saved addresses yet.',
+                          style: TextStyle(
+                            color: FoodFlowTheme.muted.withOpacity(0.9),
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      );
+                    }
+
+                    return ListView.separated(
+                      shrinkWrap: true,
+                      itemCount: addresses.length,
+                      separatorBuilder: (_, __) => const SizedBox(height: 10),
+                      itemBuilder: (context, index) {
+                        final address = addresses[index];
+                        return _SavedAddressTile(
+                          address: address,
+                          onTap: () => widget.onSavedAddressSelected(address),
+                        );
+                      },
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _LocationActionTile extends StatelessWidget {
+  const _LocationActionTile({
+    required this.icon,
+    required this.label,
+    required this.subtitle,
+    required this.onTap,
+    this.isLoading = false,
+  });
+
+  final IconData icon;
+  final String label;
+  final String subtitle;
+  final Future<void> Function() onTap;
+  final bool isLoading;
+
+  @override
+  Widget build(BuildContext context) {
+    final primary = FoodFlowTheme.brandPrimary(context);
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(20),
+      child: Container(
+        constraints: const BoxConstraints(minHeight: 64),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        decoration: FoodFlowTheme.softSurface(radius: 20),
+        child: Row(
+          children: <Widget>[
+            Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: primary.withOpacity(0.08),
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Icon(icon, color: primary, size: 21),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Text(
+                    label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: FoodFlowTheme.ink,
+                      fontSize: 14.5,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    subtitle,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: FoodFlowTheme.muted,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 10),
+            if (isLoading)
+              SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2.2,
+                  color: primary,
+                ),
+              )
+            else
+              const Icon(
+                Icons.chevron_right_rounded,
+                color: FoodFlowTheme.faint,
+                size: 22,
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SavedAddressTile extends StatelessWidget {
+  const _SavedAddressTile({
+    required this.address,
+    required this.onTap,
+  });
+
+  final app_address.Address address;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final primary = FoodFlowTheme.brandPrimary(context);
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(22),
+      child: Container(
+        padding: const EdgeInsets.all(14),
+        decoration: FoodFlowTheme.elevatedCard(
+          radius: 22,
+          borderColor: address.isDefault
+              ? primary.withOpacity(0.32)
+              : FoodFlowTheme.line,
+        ),
+        child: Row(
+          children: <Widget>[
+            Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: primary.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Icon(
+                address.isDefault
+                    ? Icons.home_rounded
+                    : Icons.location_on_outlined,
+                color: primary,
+                size: 21,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Row(
+                    children: <Widget>[
+                      Flexible(
+                        child: Text(
+                          address.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: FoodFlowTheme.ink,
+                            fontSize: 14.5,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                      ),
+                      if (address.isDefault) ...[
+                        const SizedBox(width: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 3,
+                          ),
+                          decoration: BoxDecoration(
+                            color: primary.withOpacity(0.08),
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                          child: Text(
+                            'Default',
+                            style: TextStyle(
+                              color: primary,
+                              fontSize: 10.5,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    address.fullAddress,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: FoodFlowTheme.muted,
+                      fontSize: 12.5,
+                      height: 1.3,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 10),
+            const Icon(
+              Icons.chevron_right_rounded,
+              color: FoodFlowTheme.faint,
+              size: 22,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _NoRestaurantsFoundView extends StatelessWidget {
+  const _NoRestaurantsFoundView({
+    required this.onChangeLocation,
+    required this.onTryAgain,
+  });
+
+  final VoidCallback onChangeLocation;
+  final VoidCallback onTryAgain;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: SingleChildScrollView(
+        physics: const BouncingScrollPhysics(),
+        padding: const EdgeInsets.fromLTRB(32, 28, 32, 28),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            Container(
+              width: 196,
+              height: 196,
+              padding: const EdgeInsets.all(40),
+              decoration: const BoxDecoration(
+                shape: BoxShape.circle,
+                color: _homePeach,
+              ),
+              child: Image.asset(
+                'assets/images/no-restaurant.png',
+                fit: BoxFit.contain,
+              ),
+            ),
+            const SizedBox(height: 28),
+            const Text(
+              'No Restaurants Nearby',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: _homeText,
+                fontSize: 22,
+                height: 1.2,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+            const SizedBox(height: 10),
+            const Text(
+              "We don't have any restaurants delivering to this location yet. "
+              "Try a different address, or check back soon as we're expanding fast.",
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: _homeMuted,
+                fontSize: 14,
+                height: 1.45,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 28),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: onChangeLocation,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: _homeAccent,
+                  foregroundColor: Colors.white,
+                  elevation: 0,
+                  padding: const EdgeInsets.symmetric(vertical: 15),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  textStyle: const TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                child: const Text('Change Location'),
+              ),
+            ),
+            const SizedBox(height: 10),
+            TextButton(
+              onPressed: onTryAgain,
+              child: const Text('Try Again'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _HomeAnimatedState extends StatefulWidget {
+  const _HomeAnimatedState({
+    required this.icon,
+    required this.accent,
+    required this.title,
+    required this.subtitle,
+    required this.primaryLabel,
+    required this.onPrimary,
+  });
+
+  final IconData icon;
+  final Color accent;
+  final String title;
+  final String subtitle;
+  final String primaryLabel;
+  final VoidCallback onPrimary;
+
+  @override
+  State<_HomeAnimatedState> createState() => _HomeAnimatedStateState();
+}
+
+class _HomeAnimatedStateState extends State<_HomeAnimatedState>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+  late final Animation<double> _float;
+  late final Animation<double> _pulse;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1600),
+    )..repeat(reverse: true);
+    _float = Tween<double>(begin: -8, end: 8).animate(
+      CurvedAnimation(parent: _controller, curve: Curves.easeInOut),
+    );
+    _pulse = Tween<double>(begin: 0.88, end: 1.08).animate(
+      CurvedAnimation(parent: _controller, curve: Curves.easeInOutCubic),
+    );
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: SingleChildScrollView(
+        physics: const BouncingScrollPhysics(),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            SizedBox(
+              width: 190,
+              height: 190,
+              child: AnimatedBuilder(
+                animation: _controller,
+                builder: (context, child) {
+                  return Stack(
+                    alignment: Alignment.center,
+                    children: <Widget>[
+                      Transform.scale(
+                        scale: _pulse.value,
+                        child: Container(
+                          width: 150,
+                          height: 150,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: widget.accent.withOpacity(0.11),
+                          ),
+                        ),
+                      ),
+                      Transform.scale(
+                        scale: 1.12 - ((_pulse.value - 0.88) * 0.34),
+                        child: Container(
+                          width: 112,
+                          height: 112,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: widget.accent.withOpacity(0.16),
+                          ),
+                        ),
+                      ),
+                      Transform.translate(
+                        offset: Offset(0, _float.value),
+                        child: Container(
+                          width: 94,
+                          height: 94,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: widget.accent,
+                            boxShadow: <BoxShadow>[
+                              BoxShadow(
+                                color: widget.accent.withOpacity(0.26),
+                                blurRadius: 24,
+                                offset: const Offset(0, 14),
+                              ),
+                            ],
+                          ),
+                          child: Icon(
+                            widget.icon,
+                            color: Colors.white,
+                            size: 44,
+                          ),
+                        ),
+                      ),
+                    ],
+                  );
+                },
+              ),
+            ),
+            const SizedBox(height: 18),
+            Text(
+              widget.title,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                color: _homeText,
+                fontSize: 21,
+                height: 1.2,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              widget.subtitle,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                color: _homeMuted,
+                fontSize: 14,
+                height: 1.45,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 24),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: widget.onPrimary,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: widget.accent,
+                  foregroundColor: Colors.white,
+                  elevation: 0,
+                  padding: const EdgeInsets.symmetric(vertical: 15),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  textStyle: const TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                child: Text(widget.primaryLabel),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _HomeHeader extends StatelessWidget {
+  const _HomeHeader({
+    required this.currentCity,
+    required this.currentAddress,
+    required this.notificationCount,
+    required this.profileInitial,
+    required this.profileImage,
+    required this.onLocationTap,
+    required this.onWalletTap,
+    required this.onNotificationTap,
+  });
+
+  final String currentCity;
+  final String currentAddress;
+  final int notificationCount;
+  final String profileInitial;
+  final String profileImage;
+  final VoidCallback onLocationTap;
+  final VoidCallback onWalletTap;
+  final VoidCallback onNotificationTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 72,
+      child: Row(
+        children: <Widget>[
+          Expanded(
+            child: InkWell(
+              onTap: onLocationTap,
+              borderRadius: BorderRadius.circular(18),
+              child: Row(
+                children: <Widget>[
+                  Icon(
+                    Icons.location_on_rounded,
+                    size: 24,
+                    color: Colors.white,
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: <Widget>[
+                        Row(
+                          children: <Widget>[
+                            Flexible(
+                              child: Text(
+                                currentCity,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 18.5,
+                                  fontWeight: FontWeight.w900,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 4),
+                            const Icon(
+                              Icons.keyboard_arrow_down_rounded,
+                              color: Colors.white,
+                              size: 20,
+                            ),
+                          ],
+                        ),
+                        Text(
+                          currentAddress,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Colors.white70,
+                            fontSize: 12.5,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          InkWell(
+            onTap: onWalletTap,
+            borderRadius: BorderRadius.circular(16),
+            child: Container(
+              width: 44,
+              height: 44,
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(16),
+                boxShadow: <BoxShadow>[
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.07),
+                    blurRadius: 18,
+                    offset: const Offset(0, 8),
+                  ),
+                ],
+              ),
+              child: const Icon(
+                Icons.account_balance_wallet_outlined,
+                color: _homeText,
+                size: 21,
+              ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Stack(
+            clipBehavior: Clip.none,
+            children: <Widget>[
+              InkWell(
+                onTap: onNotificationTap,
+                borderRadius: BorderRadius.circular(16),
+                child: Container(
+                  width: 44,
+                  height: 44,
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(16),
+                    boxShadow: <BoxShadow>[
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.07),
+                        blurRadius: 18,
+                        offset: const Offset(0, 8),
+                      ),
+                    ],
+                  ),
+                  child: const Icon(
+                    Icons.notifications_none_rounded,
+                    color: _homeText,
+                    size: 22,
+                  ),
+                ),
+              ),
+              if (notificationCount > 0)
+                Positioned(
+                  right: -2,
+                  top: -2,
+                  child: Container(
+                    width: 16,
+                    height: 16,
+                    decoration: BoxDecoration(
+                      color: _homeRed,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.white, width: 2),
+                    ),
+                    alignment: Alignment.center,
+                    child: Text(
+                      notificationCount > 9 ? '9+' : '$notificationCount',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 8,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(width: 10),
+          InkWell(
+            onTap: () => Navigator.pushNamed(context, '/profile'),
+            borderRadius: BorderRadius.circular(22),
+            child: Container(
+              width: 44,
+              height: 44,
+              decoration: BoxDecoration(
+                color: const Color(0xFFFFF7DA),
+                shape: BoxShape.circle,
+                border: Border.all(color: Colors.white, width: 2),
+                boxShadow: <BoxShadow>[
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.08),
+                    blurRadius: 18,
+                    offset: const Offset(0, 8),
+                  ),
+                ],
+              ),
+              alignment: Alignment.center,
+              clipBehavior: Clip.antiAlias,
+              child: profileImage.isNotEmpty
+                  ? AppCachedImage(
+                      imageUrl: _resolveHomeAssetUrl(profileImage),
+                      fit: BoxFit.cover,
+                      width: 44,
+                      height: 44,
+                      errorBuilder: (_, __, ___) => _ProfileInitialAvatar(
+                        initial: profileInitial,
+                      ),
+                    )
+                  : _ProfileInitialAvatar(initial: profileInitial),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ProfileInitialAvatar extends StatelessWidget {
+  const _ProfileInitialAvatar({required this.initial});
+
+  final String initial;
+
+  @override
+  Widget build(BuildContext context) {
+    return ColoredBox(
+      color: const Color(0xFFFFF7DA),
+      child: Center(
+        child: Text(
+          initial,
+          style: const TextStyle(
+            color: Color(0xFF8A5A00),
+            fontSize: 18,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _HomeHeroPinnedDelegate extends SliverPersistentHeaderDelegate {
+  _HomeHeroPinnedDelegate({
+    required this.topInset,
+    required this.banners,
+    required this.categories,
+    required this.currentCity,
+    required this.currentAddress,
+    required this.notificationCount,
+    required this.profileInitial,
+    required this.profileImage,
+    required this.vegOnlyMode,
+    required this.onLocationTap,
+    required this.onWalletTap,
+    required this.onNotificationTap,
+    required this.onSearchTap,
+    required this.onVoiceTap,
+    required this.onVegModeChanged,
+    required this.onTapRestaurant,
+    required this.onTapCategory,
+    required this.onMore,
+  });
+
+  final double topInset;
+  final List<dynamic> banners;
+  final List<dynamic> categories;
+  final String currentCity;
+  final String currentAddress;
+  final int notificationCount;
+  final String profileInitial;
+  final String profileImage;
+  final bool vegOnlyMode;
+  final VoidCallback onLocationTap;
+  final VoidCallback onWalletTap;
+  final VoidCallback onNotificationTap;
+  final VoidCallback onSearchTap;
+  final VoidCallback onVoiceTap;
+  final ValueChanged<bool> onVegModeChanged;
+  final ValueChanged<Map<String, dynamic>> onTapRestaurant;
+  final void Function(dynamic category) onTapCategory;
+  final VoidCallback onMore;
+
+  double get _panelHeight => categories.isNotEmpty ? 178 : 74;
+
+  double get _expandedCuisineBandHeight => categories.isNotEmpty ? 112 : 0;
+
+  // ---- per-scroll-frame widget caches -------------------------------------
+  // `build(context, shrinkOffset, ...)` is called on every scroll pixel while
+  // the header is visible. The delegate itself is only recreated when
+  // `_HomeState.build()` runs, so caching the heavy children here means a
+  // scroll frame only rebuilds the cheap Positioned/Opacity wrappers instead
+  // of the PageView + Lottie + cuisine rows underneath.
+  Widget? _bannerCache;
+  Widget? _headerCache;
+  Widget? _expandedBandCache;
+  Widget? _pinnedStripCache;
+  bool? _pinnedStripTransparent;
+
+  Widget _banner() => _bannerCache ??= RepaintBoundary(
+        child: _HomePromoBanner(
+          banners: banners,
+          onTapRestaurant: onTapRestaurant,
+          height: maxExtent - _expandedCuisineBandHeight,
+          borderRadius: 0,
+          showIndicators: false,
+        ),
+      );
+
+  Widget _header() => _headerCache ??= RepaintBoundary(
+        child: _HomeHeader(
+          currentCity: currentCity,
+          currentAddress: currentAddress,
+          notificationCount: notificationCount,
+          profileInitial: profileInitial,
+          profileImage: profileImage,
+          onLocationTap: onLocationTap,
+          onWalletTap: onWalletTap,
+          onNotificationTap: onNotificationTap,
+        ),
+      );
+
+  Widget _expandedBand() => _expandedBandCache ??= RepaintBoundary(
+        child: _ExpandedCuisineBand(
+          categories: categories,
+          onTapCategory: onTapCategory,
+          onMore: onMore,
+        ),
+      );
+
+  Widget _pinnedStrip({required bool transparent}) {
+    if (_pinnedStripCache == null || _pinnedStripTransparent != transparent) {
+      _pinnedStripTransparent = transparent;
+      _pinnedStripCache = RepaintBoundary(
+        child: _PinnedSearchCuisineStrip(
+          categories: const <dynamic>[],
+          vegOnlyMode: vegOnlyMode,
+          onSearchTap: onSearchTap,
+          onVoiceTap: onVoiceTap,
+          onVegModeChanged: onVegModeChanged,
+          onTapCategory: onTapCategory,
+          onMore: onMore,
+          transparent: transparent,
+        ),
+      );
+    }
+    return _pinnedStripCache!;
+  }
+
+  @override
+  double get minExtent => topInset + _panelHeight;
+
+  @override
+  double get maxExtent => topInset + 448;
+
+  @override
+  Widget build(
+      BuildContext context, double shrinkOffset, bool overlapsContent) {
+    final range = maxExtent - minExtent;
+    final progress =
+        range <= 0 ? 1.0 : (shrinkOffset / range).clamp(0.0, 1.0).toDouble();
+    final heroOpacity = 1.0 - progress;
+    final hasCategories = categories.isNotEmpty;
+    final bandHeight = _expandedCuisineBandHeight;
+    // Current painted height of the header (shrinks maxExtent -> minExtent).
+    final currentExtent = (maxExtent - shrinkOffset).clamp(minExtent, maxExtent);
+    const searchStripHeight = 74.0;
+    // Anchor the search strip just above the cuisine band and let it ride up
+    // with the band as the header collapses — clamped so at rest it stays at
+    // its normal spot near the top, and never slides under the status bar.
+    // This closes the gap between search and categories by ~2/3 of the scroll
+    // instead of leaving a stranded band mid-collapse.
+    final bandTop = hasCategories ? currentExtent - bandHeight : currentExtent;
+    final searchTop = (bandTop - searchStripHeight)
+        .clamp(topInset, topInset + 78)
+        .toDouble();
+
+    return ClipRect(
+      child: Stack(
+        fit: StackFit.expand,
+        children: <Widget>[
+          // Promo banner — fixed height, painted first. Where the collapsing
+          // header shrinks over it, the opaque cuisine band (last child) and
+          // the white overlay cover it, so it never bleeds through the
+          // categories the way a faded overlapping layer used to.
+          Positioned(
+            left: 0,
+            right: 0,
+            top: 0,
+            height: (maxExtent - bandHeight).clamp(0.0, maxExtent),
+            child: _fade(heroOpacity, _banner()),
+          ),
+          if (progress < 1)
+            _fade(
+              heroOpacity,
+              const DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: <Color>[
+                      Color(0x61000000),
+                      Color(0x1A000000),
+                      Color(0x00000000),
+                    ],
+                    stops: <double>[0, 0.42, 1],
+                  ),
+                ),
+              ),
+            ),
+          if (progress > 0.22)
+            Positioned.fill(
+              child: ColoredBox(
+                color: Colors.white
+                    .withOpacity(((progress - 0.22) / 0.32).clamp(0.0, 1.0)),
+              ),
+            ),
+          if (progress < 0.34)
+            Positioned(
+              left: 20,
+              right: 20,
+              top: topInset + 8,
+              // Fade the location row out quickly so it doesn't linger as a
+              // ghost over the search bar for most of the scroll.
+              child: _fade(
+                ((0.34 - progress) / 0.34).clamp(0.0, 1.0),
+                _header(),
+              ),
+            ),
+          // Search strip slides up with the collapsing header.
+          Positioned(
+            left: 0,
+            right: 0,
+            top: searchTop,
+            child: _pinnedStrip(transparent: progress < 0.2),
+          ),
+          // Cuisine band — glued to the bottom of the header, ALWAYS opaque
+          // and fully visible. As the header collapses it becomes the pinned
+          // category row; there is no fade-out / re-pop, so nothing "freezes".
+          if (hasCategories)
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              height: bandHeight,
+              child: _expandedBand(),
+            ),
+        ],
+      ),
+    );
+  }
+
+  /// Keeps the element tree stable (so the cached child is never remounted)
+  /// while fading. `RenderOpacity` already short-circuits compositing at
+  /// alpha 0 and 255, and every child here is a RepaintBoundary, so a
+  /// mid-fade frame is just a cached-layer alpha blend.
+  static Widget _fade(double opacity, Widget child) =>
+      Opacity(opacity: opacity.clamp(0.0, 1.0), child: child);
+
+  @override
+  bool shouldRebuild(covariant _HomeHeroPinnedDelegate oldDelegate) {
+    return topInset != oldDelegate.topInset ||
+        banners != oldDelegate.banners ||
+        categories != oldDelegate.categories ||
+        currentCity != oldDelegate.currentCity ||
+        currentAddress != oldDelegate.currentAddress ||
+        notificationCount != oldDelegate.notificationCount ||
+        profileInitial != oldDelegate.profileInitial ||
+        profileImage != oldDelegate.profileImage ||
+        vegOnlyMode != oldDelegate.vegOnlyMode;
+  }
+}
+
+class _PinnedSearchCuisineStrip extends StatelessWidget {
+  const _PinnedSearchCuisineStrip({
+    required this.categories,
+    required this.vegOnlyMode,
+    required this.onSearchTap,
+    required this.onVoiceTap,
+    required this.onVegModeChanged,
+    required this.onTapCategory,
+    required this.onMore,
+    this.transparent = false,
+  });
+
+  final List<dynamic> categories;
+  final bool vegOnlyMode;
+  final VoidCallback onSearchTap;
+  final VoidCallback onVoiceTap;
+  final ValueChanged<bool> onVegModeChanged;
+  final void Function(dynamic category) onTapCategory;
+  final VoidCallback onMore;
+  final bool transparent;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: transparent ? Colors.transparent : Colors.white,
+        border: Border(
+          bottom: BorderSide(
+            color: transparent
+                ? Colors.transparent
+                : _homeBorder.withOpacity(0.65),
+          ),
+        ),
+        boxShadow: transparent
+            ? const <BoxShadow>[]
+            : <BoxShadow>[
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.06),
+                  blurRadius: 18,
+                  offset: const Offset(0, 8),
+                ),
+              ],
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(14, 5, 14, 8),
+        child: Column(
+          children: <Widget>[
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: <Widget>[
+                Expanded(
+                  child: _HomeSearchBar(
+                    onTap: onSearchTap,
+                    onVoiceTap: onVoiceTap,
+                    showVoiceInside: true,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                _HomeVegToggle(
+                  vegOnlyMode: vegOnlyMode,
+                  onChanged: onVegModeChanged,
+                  onHero: transparent,
+                ),
+              ],
+            ),
+            if (categories.isNotEmpty) ...<Widget>[
+              const SizedBox(height: 8),
+              SizedBox(
+                height: 86,
+                child: Row(
+                  children: <Widget>[
+                    Expanded(
+                      child: ListView.separated(
+                        scrollDirection: Axis.horizontal,
+                        padding: EdgeInsets.zero,
+                        itemBuilder: (context, index) {
+                          final category = categories[index];
+                          return _CategoryPill(
+                            category: category,
+                            onTap: () => onTapCategory(category),
+                          );
+                        },
+                        separatorBuilder: (_, __) => const SizedBox(width: 12),
+                        itemCount: categories.length,
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: 'More',
+                      onPressed: onMore,
+                      icon: const Icon(Icons.tune_rounded, size: 20),
+                      color: _homeGreen,
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ExpandedCuisineBand extends StatelessWidget {
+  const _ExpandedCuisineBand({
+    required this.categories,
+    required this.onTapCategory,
+    required this.onMore,
+  });
+
+  final List<dynamic> categories;
+  final void Function(dynamic category) onTapCategory;
+  final VoidCallback onMore;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: Border(
+          bottom: BorderSide(color: _homeBorder.withOpacity(0.6)),
+        ),
+        boxShadow: <BoxShadow>[
+          BoxShadow(
+            color: Colors.black.withOpacity(0.04),
+            blurRadius: 12,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(14, 8, 14, 8),
+        child: Row(
+          children: <Widget>[
+            Expanded(
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                padding: EdgeInsets.zero,
+                itemBuilder: (context, index) {
+                  final category = categories[index];
+                  return _CategoryPill(
+                    category: category,
+                    onTap: () => onTapCategory(category),
+                  );
+                },
+                separatorBuilder: (_, __) => const SizedBox(width: 12),
+                itemCount: categories.length,
+              ),
+            ),
+            IconButton(
+              tooltip: 'More',
+              onPressed: onMore,
+              icon: const Icon(Icons.tune_rounded, size: 20),
+              color: _homeGreen,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _HomeSearchBar extends StatelessWidget {
+  const _HomeSearchBar({
+    required this.onTap,
+    required this.onVoiceTap,
+    this.showVoiceInside = true,
+  });
+
+  final VoidCallback onTap;
+  final VoidCallback onVoiceTap;
+  final bool showVoiceInside;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 56,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(20),
+        child: Container(
+          height: 56,
+          padding: const EdgeInsets.symmetric(horizontal: 18),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: const Color(0xFFF1F1F1)),
+            boxShadow: <BoxShadow>[
+              BoxShadow(
+                color: Colors.black.withOpacity(0.06),
+                blurRadius: 12,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: Row(
+            children: <Widget>[
+              const Icon(
+                Icons.search_rounded,
+                size: 22,
+                color: Color(0xFF00A651),
+              ),
+              const SizedBox(width: 12),
+              const Expanded(
+                child: Text(
+                  'Search restaurants, dishes...',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: Color(0xFF686B78),
+                    fontSize: 15,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+              if (showVoiceInside) ...<Widget>[
+                Container(
+                  width: 1,
+                  height: 24,
+                  color: const Color(0xFFEAEAEA),
+                ),
+                const SizedBox(width: 8),
+                InkWell(
+                  onTap: onVoiceTap,
+                  borderRadius: BorderRadius.circular(16),
+                  child: const SizedBox(
+                    width: 34,
+                    height: 34,
+                    child: Icon(
+                      Icons.mic_none_rounded,
+                      size: 20,
+                      color: Color(0xFF1C1C1C),
+                    ),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _HomeModeToggle extends StatelessWidget {
+  const _HomeModeToggle({
+    required this.showDiningMode,
+    required this.onChanged,
+  });
+
+  final bool showDiningMode;
+  final ValueChanged<bool> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 48,
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: _homeBorder),
+      ),
+      child: Row(
+        children: <Widget>[
+          Expanded(
+            child: _HomeModeChip(
+              label: 'Delivery',
+              icon: Icons.delivery_dining_rounded,
+              selected: !showDiningMode,
+              onTap: () => onChanged(false),
+            ),
+          ),
+          const SizedBox(width: 6),
+          Expanded(
+            child: _HomeModeChip(
+              label: 'Dining',
+              icon: Icons.restaurant_rounded,
+              selected: showDiningMode,
+              onTap: () => onChanged(true),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _HomeVegToggle extends StatelessWidget {
+  const _HomeVegToggle({
+    required this.vegOnlyMode,
+    required this.onChanged,
+    required this.onHero,
+  });
+
+  final bool vegOnlyMode;
+  final ValueChanged<bool> onChanged;
+  final bool onHero;
+
+  @override
+  Widget build(BuildContext context) {
+    final titleColor = onHero ? Colors.white : _homeText;
+    final labelColor = onHero ? Colors.white : _homeMuted;
+    final inactiveTrackColor =
+        onHero ? Colors.white.withOpacity(0.45) : const Color(0xFFD1D5DB);
+    return SizedBox(
+      width: 58,
+      height: 52,
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: <Widget>[
+          Text(
+            'VEG',
+            style: TextStyle(
+              color: titleColor,
+              fontSize: 11,
+              height: 1,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          Text(
+            'MODE',
+            style: TextStyle(
+              color: labelColor,
+              fontSize: 9.5,
+              height: 1,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          SizedBox(
+            height: 28,
+            child: FittedBox(
+              fit: BoxFit.contain,
+              child: Switch.adaptive(
+                value: vegOnlyMode,
+                activeColor: _homeGreen,
+                activeTrackColor: _homeGreen.withOpacity(0.45),
+                inactiveThumbColor: Colors.white,
+                inactiveTrackColor: inactiveTrackColor,
+                onChanged: onChanged,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _HomeModeChip extends StatelessWidget {
+  const _HomeModeChip({
+    required this.label,
+    required this.icon,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final IconData icon;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final primary = Theme.of(context).colorScheme.primary;
+    final secondary = Theme.of(context).colorScheme.secondary;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(20),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 220),
+        decoration: BoxDecoration(
+          gradient: selected
+              ? LinearGradient(
+                  colors: <Color>[
+                    primary,
+                    Color.lerp(primary, secondary, 0.24) ?? primary,
+                  ],
+                )
+              : null,
+          color: selected ? null : Colors.transparent,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: <Widget>[
+            Icon(
+              icon,
+              size: 18,
+              color: selected ? Colors.white : _homeMuted,
+            ),
+            const SizedBox(width: 8),
+            Text(
+              label,
+              style: TextStyle(
+                color: selected ? Colors.white : _homeMuted,
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _HomePromoBanner extends StatefulWidget {
+  const _HomePromoBanner({
+    required this.banners,
+    required this.onTapRestaurant,
+    this.height,
+    this.borderRadius = 24,
+    this.showIndicators = true,
+  });
+
+  final List<dynamic> banners;
+  final ValueChanged<Map<String, dynamic>> onTapRestaurant;
+  final double? height;
+  final double borderRadius;
+  final bool showIndicators;
+
+  @override
+  State<_HomePromoBanner> createState() => _HomePromoBannerState();
+}
+
+class _HomePromoBannerState extends State<_HomePromoBanner> {
+  final PageController _controller = PageController(viewportFraction: 1);
+  Timer? _timer;
+  final Map<int, Duration> _mediaDurations = <int, Duration>{};
+  final Set<int> _loadingGifDurations = <int>{};
+  int _currentPage = 0;
+  // Drives ONLY the indicator dots — page changes must not rebuild the whole
+  // PageView (that re-runs every itemBuilder and, mid vertical scroll, causes
+  // the visible stutter the hero banner was blamed for).
+  final ValueNotifier<int> _pageNotifier = ValueNotifier<int>(0);
+  DateTime _pageShownAt = DateTime.now();
+
+  @override
+  void initState() {
+    super.initState();
+    _startTimer();
+  }
+
+  @override
+  void didUpdateWidget(covariant _HomePromoBanner oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.banners != widget.banners) {
+      _currentPage = widget.banners.isEmpty
+          ? 0
+          : _currentPage.clamp(0, widget.banners.length - 1).toInt();
+      _mediaDurations.clear();
+      _loadingGifDurations.clear();
+      _pageShownAt = DateTime.now();
+      _scheduleNextSlide();
+    }
+  }
+
+  void _startTimer() {
+    if (widget.banners.length <= 1) return;
+    _scheduleNextSlide();
+  }
+
+  void _scheduleNextSlide() {
+    _timer?.cancel();
+    if (!mounted || widget.banners.length <= 1) return;
+
+    final targetDuration = _durationForPage(_currentPage);
+    final elapsed = DateTime.now().difference(_pageShownAt);
+    final remaining = targetDuration - elapsed;
+    final delay = remaining > const Duration(milliseconds: 250)
+        ? remaining
+        : const Duration(milliseconds: 250);
+
+    _timer = Timer(delay, () {
+      if (!_controller.hasClients || !mounted) return;
+      // Don't drive the carousel (and the rebuild it triggers) while another
+      // route is on top or the banner is scrolled out of view.
+      final route = ModalRoute.of(context);
+      if (route != null && !route.isCurrent) {
+        _scheduleNextSlide();
+        return;
+      }
+      final position = _controller.position;
+      if (!position.hasContentDimensions || position.isScrollingNotifier.value) {
+        _scheduleNextSlide();
+        return;
+      }
+      // Also hold off while the page itself is being scrolled vertically —
+      // advancing the PageView mid-fling rebuilds every banner page and shows
+      // as a stutter in the hero. Only auto-advance when the feed is at rest
+      // and the hero is still near the top.
+      final vertical = Scrollable.maybeOf(context)?.position;
+      if (vertical != null &&
+          (vertical.isScrollingNotifier.value || vertical.pixels > 40)) {
+        _scheduleNextSlide();
+        return;
+      }
+      final next = (_currentPage + 1) % widget.banners.length;
+      _controller.animateToPage(
+        next,
+        duration: const Duration(milliseconds: 420),
+        curve: Curves.easeInOutCubic,
+      );
+    });
+  }
+
+  Duration _durationForPage(int index) {
+    if (index < 0 || index >= widget.banners.length) {
+      return const Duration(seconds: 5);
+    }
+
+    final fallback = _configuredDuration(widget.banners[index]);
+    final mediaDuration = _mediaDurations[index];
+    if (mediaDuration == null) return fallback;
+    return mediaDuration > fallback ? mediaDuration : fallback;
+  }
+
+  Duration _configuredDuration(dynamic item) {
+    if (item is Map) {
+      for (final key in const <String>[
+        'animation_duration_seconds',
+        'gif_duration_seconds',
+        'lottie_duration_seconds',
+        'duration_seconds',
+        'banner_duration_seconds',
+        'duration',
+        'slide_duration_seconds',
+      ]) {
+        final raw = item[key];
+        final parsed = raw is num
+            ? raw.toDouble()
+            : double.tryParse(raw?.toString() ?? '');
+        if (parsed != null && parsed > 0) {
+          final seconds = parsed.clamp(2, 30).toDouble();
+          return Duration(milliseconds: (seconds * 1000).round());
+        }
+      }
+    }
+    return const Duration(seconds: 5);
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    _controller.dispose();
+    _pageNotifier.dispose();
+    super.dispose();
+  }
+
+  String _resolveBannerLottieUrl(dynamic item) {
+    if (item is! Map) return '';
+
+    for (final key in const <String>[
+      'lottie_url',
+      'animation_url',
+      'json_url',
+      'media_url',
+      'asset_url',
+      'hero_image',
+      'image',
+      'banner_image',
+      'image_url',
+      'photo'
+    ]) {
+      final value = item[key];
+      if (value is String && value.trim().isNotEmpty) {
+        final normalizedValue = value.trim().toLowerCase();
+        if (normalizedValue.contains('lottie') ||
+            normalizedValue.contains('animation') ||
+            normalizedValue.contains('.json') ||
+            normalizedValue.contains('.txt')) {
+          return _resolveHomeAssetUrl(value);
+        }
+      }
+    }
+    return '';
+  }
+
+  String _resolveImageUrl(dynamic item) {
+    if (item is! Map) return '';
+
+    final lottieUrl = _resolveBannerLottieUrl(item);
+    if (lottieUrl.isNotEmpty) {
+      return lottieUrl;
+    }
+
+    for (final key in const <String>[
+      'animation_url',
+      'lottie_url',
+      'json_url',
+      'media_url',
+      'asset_url',
+      'webp_url',
+      'hero_image',
+      'image',
+      'banner_image',
+      'image_url',
+      'photo'
+    ]) {
+      final value = item[key];
+      if (value is String && value.trim().isNotEmpty) {
+        return _resolveHomeAssetUrl(value);
+      }
+    }
+    return '';
+  }
+
+  bool _isLottieUrl(String url) {
+    final normalized = url.trim().toLowerCase();
+    if (normalized.isEmpty) return false;
+    final uri = Uri.tryParse(normalized);
+    final path = uri?.path.toLowerCase() ?? normalized.split('?').first;
+    final format = uri?.queryParameters['format']?.toLowerCase();
+    final type = uri?.queryParameters['type']?.toLowerCase();
+    final filename = path.split('/').last;
+
+    return filename.endsWith('.json') ||
+        path.contains('.json/') ||
+        normalized.contains('.json') ||
+        normalized.contains('.txt') ||
+        format == 'json' ||
+        type == 'lottie' ||
+        normalized.contains('lottie') ||
+        normalized.contains('animation');
+  }
+
+  bool _isLottieBanner(dynamic banner) {
+    if (banner is! Map<String, dynamic>) return false;
+
+    final mediaType = banner['media_type']?.toString().toLowerCase();
+    if (mediaType == 'lottie' ||
+        mediaType == 'animation' ||
+        mediaType == 'json') {
+      return true;
+    }
+
+    final type = banner['type']?.toString().toLowerCase();
+    if (type == 'lottie' || type == 'animation' || type == 'json') {
+      return true;
+    }
+
+    final format = banner['format']?.toString().toLowerCase();
+    if (format == 'json') return true;
+
+    final lottieUrl = banner['lottie_url']?.toString().trim();
+    if (lottieUrl != null && lottieUrl.isNotEmpty) {
+      return true;
+    }
+
+    final image = banner['image']?.toString().trim().toLowerCase();
+    if (image != null && image.endsWith('.json')) {
+      return true;
+    }
+
+    for (final key in const <String>[
+      'animation_url',
+      'lottie_url',
+      'json_url',
+      'media_url',
+      'asset_url',
+      'webp_url',
+      'hero_image',
+      'image',
+      'banner_image',
+      'image_url',
+      'photo'
+    ]) {
+      final value = banner[key];
+      if (value is String && value.trim().isNotEmpty) {
+        final normalizedValue = value.trim().toLowerCase();
+        if (normalizedValue.contains('lottie') ||
+            normalizedValue.contains('animation') ||
+            normalizedValue.contains('.json')) {
+          return true;
+        }
+      }
+    }
+
+    return false;
+  }
+
+  bool _isLottieMediaItem(dynamic item) {
+    if (item is! Map<String, dynamic>) return false;
+
+    final mediaType = item['media_type']?.toString().toLowerCase();
+    if (mediaType == 'lottie' ||
+        mediaType == 'json' ||
+        mediaType == 'animation') {
+      return true;
+    }
+
+    final type = item['type']?.toString().toLowerCase();
+    if (type == 'lottie' || type == 'json' || type == 'animation') {
+      return true;
+    }
+
+    if (item.containsKey('lottie_url') ||
+        item.containsKey('animation_url') ||
+        item.containsKey('json_url')) {
+      return true;
+    }
+
+    for (final key in const <String>[
+      'animation_url',
+      'lottie_url',
+      'json_url',
+      'media_url',
+      'asset_url',
+      'webp_url',
+      'hero_image',
+      'image',
+      'banner_image',
+      'image_url',
+      'photo'
+    ]) {
+      final value = item[key];
+      if (value is String && value.trim().isNotEmpty && _isLottieUrl(value)) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  bool _isGifUrl(String url) {
+    final normalized = url.trim().toLowerCase();
+    if (normalized.isEmpty) return false;
+    final uri = Uri.tryParse(normalized);
+    final path = uri?.path.toLowerCase() ?? normalized.split('?').first;
+    final format = uri?.queryParameters['format']?.toLowerCase();
+    final type = uri?.queryParameters['type']?.toLowerCase();
+    return path.endsWith('.gif') || format == 'gif' || type == 'gif';
+  }
+
+  void _rememberMediaDuration(int index, Duration duration) {
+    if (duration <= Duration.zero) return;
+    final bounded = duration > const Duration(minutes: 2)
+        ? const Duration(minutes: 2)
+        : duration;
+    if (_mediaDurations[index] == bounded) return;
+    _mediaDurations[index] = bounded;
+    if (index == _currentPage) {
+      _scheduleNextSlide();
+    }
+  }
+
+  Future<void> _loadGifDuration(int index, String url) async {
+    if (!_isGifUrl(url) ||
+        _mediaDurations.containsKey(index) ||
+        _loadingGifDurations.contains(index)) {
+      return;
+    }
+
+    _loadingGifDurations.add(index);
+    try {
+      final file = await AppImageCache.instance.getSingleFile(
+        AppImageCache.resolveUrl(url),
+      );
+      final bytes = await file.readAsBytes();
+      final buffer = await ui.ImmutableBuffer.fromUint8List(bytes);
+      final descriptor = await ui.ImageDescriptor.encoded(buffer);
+      final codec = await descriptor.instantiateCodec();
+      var total = Duration.zero;
+      try {
+        for (var frame = 0; frame < codec.frameCount; frame++) {
+          final frameInfo = await codec.getNextFrame();
+          total += frameInfo.duration;
+          frameInfo.image.dispose();
+        }
+      } finally {
+        codec.dispose();
+        descriptor.dispose();
+        buffer.dispose();
+      }
+      if (mounted) {
+        _rememberMediaDuration(index, total);
+      }
+    } catch (_) {
+      // Keep the configured banner duration if metadata cannot be decoded.
+    } finally {
+      _loadingGifDurations.remove(index);
+    }
+  }
+
+  String _bannerText(Map<String, dynamic> banner, List<String> keys) {
+    for (final key in keys) {
+      final value = banner[key]?.toString().trim();
+      if (value != null && value.isNotEmpty) return value;
+    }
+    return '';
+  }
+
+  bool _isImageOnlyBanner(Map<String, dynamic> banner) {
+    final layoutMode = banner['layout_mode']?.toString().trim().toLowerCase();
+    return layoutMode == 'full_image' || layoutMode == 'image_only';
+  }
+
+  bool _isPromoCardBanner(Map<String, dynamic> banner) {
+    final mode = (banner['layout_mode'] ?? banner['layoutMode'] ?? '')
+        .toString()
+        .trim()
+        .toLowerCase();
+    final type = (banner['banner_type'] ?? banner['bannerType'] ?? '')
+        .toString()
+        .trim()
+        .toLowerCase();
+    return mode == 'promo_card' || type == 'promo';
+  }
+
+  String _badgeImageUrl(Map<String, dynamic> banner) {
+    for (final key in const <String>[
+      'badge_image_url',
+      'badge_image',
+      'badge',
+      'logo_image',
+      'logo_url',
+      'logo',
+    ]) {
+      final value = banner[key];
+      if (value is String && value.trim().isNotEmpty) {
+        return _resolveHomeAssetUrl(value);
+      }
+    }
+    return '';
+  }
+
+  String _promoCtaLabel(Map<String, dynamic> banner) => _bannerText(
+        banner,
+        const <String>[
+          'cta_label',
+          'ctaLabel',
+          'cta',
+          'cta_text',
+          'button_text',
+          'action_text',
+        ],
+      );
+
+  Widget _buildPromoCardBanner(
+    Map<String, dynamic> banner,
+    String mediaUrl, {
+    required int index,
+    required bool isActive,
+    required double height,
+  }) {
+    final title =
+        _bannerText(banner, const <String>['headline', 'title', 'name']);
+    final subtitle = _bannerText(
+      banner,
+      const <String>['subtitle', 'description', 'caption'],
+    );
+    final ctaLabel = _promoCtaLabel(banner);
+    final badgeUrl = _badgeImageUrl(banner);
+    final compact = height < 150;
+
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(widget.borderRadius),
+      child: Container(
+        width: double.infinity,
+        height: height,
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(widget.borderRadius),
+          border: Border.all(color: const Color(0xFFE8E8EE)),
+          boxShadow: <BoxShadow>[
+            BoxShadow(
+              color: Colors.black.withOpacity(0.08),
+              blurRadius: 18,
+              offset: const Offset(0, 8),
+            ),
+          ],
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: Stack(
+          children: <Widget>[
+            Row(
+              children: <Widget>[
+                Expanded(
+                  flex: 52,
+                  child: Padding(
+                    padding: EdgeInsets.fromLTRB(
+                      compact ? 14 : 18,
+                      compact ? 10 : 14,
+                      compact ? 10 : 14,
+                      compact ? 10 : 14,
+                    ),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: <Widget>[
+                        if (title.isNotEmpty)
+                          Text(
+                            title,
+                            maxLines: compact ? 2 : 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: const Color(0xFF111827),
+                              fontSize: compact ? 20 : 24,
+                              height: 1.02,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                        if (subtitle.isNotEmpty) ...<Widget>[
+                          SizedBox(height: compact ? 5 : 7),
+                          Text(
+                            subtitle,
+                            maxLines: compact ? 2 : 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: const Color(0xFF6B7280),
+                              fontSize: compact ? 12 : 14,
+                              height: 1.22,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                        if (ctaLabel.isNotEmpty) ...<Widget>[
+                          SizedBox(height: compact ? 8 : 10),
+                          Container(
+                            padding: EdgeInsets.symmetric(
+                              horizontal: compact ? 14 : 18,
+                              vertical: compact ? 7 : 9,
+                            ),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF111827),
+                              borderRadius: BorderRadius.circular(999),
+                            ),
+                            child: Text(
+                              ctaLabel.toUpperCase(),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ),
+                Expanded(
+                  flex: 48,
+                  child: ClipPath(
+                    clipper: _PromoTornEdgeClipper(),
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: <Widget>[
+                        const DecoratedBox(
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
+                              colors: <Color>[
+                                Color(0xFFB91C1C),
+                                Color(0xFF7F1D1D),
+                              ],
+                            ),
+                          ),
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.only(left: 16),
+                          child: _buildBannerMedia(
+                            mediaUrl,
+                            banner,
+                            index: index,
+                            isActive: isActive,
+                            fit: BoxFit.cover,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            if (badgeUrl.isNotEmpty)
+              Positioned(
+                right: 12,
+                top: 12,
+                child: Container(
+                  width: compact ? 34 : 40,
+                  height: compact ? 34 : 40,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: Colors.white,
+                    border:
+                        Border.all(color: const Color(0xFFB91C1C), width: 1.5),
+                    boxShadow: <BoxShadow>[
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.18),
+                        blurRadius: 6,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                  clipBehavior: Clip.antiAlias,
+                  child: _buildHomeNetworkImage(
+                    badgeUrl,
+                    fit: BoxFit.cover,
+                    errorWidget: const SizedBox.shrink(),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBannerMedia(
+    String mediaUrl,
+    Map<String, dynamic> banner, {
+    required int index,
+    required bool isActive,
+    BoxFit fit = BoxFit.cover,
+  }) {
+    final fallback = Container(
+      color: const Color(0x14000000),
+      child: Icon(
+        Icons.restaurant_rounded,
+        size: 72,
+        color: Colors.white.withOpacity(0.92),
+      ),
+    );
+    if (mediaUrl.isEmpty) return fallback;
+
+    final lottieUrl = _resolveBannerLottieUrl(banner);
+    final isLottie = lottieUrl.isNotEmpty ||
+        _isLottieBanner(banner) ||
+        _isLottieUrl(mediaUrl);
+    final effectiveUrl = lottieUrl.isNotEmpty ? lottieUrl : mediaUrl;
+    if (isLottie) {
+      return Lottie.network(
+        effectiveUrl,
+        // Key on the URL only. Including $isActive/$index tore the widget down
+        // and RE-DOWNLOADED + re-parsed the Lottie on every page change — the
+        // multi-hundred-ms hitch that froze scrolling.
+        key: ValueKey<String>('home-promo-lottie-$effectiveUrl'),
+        fit: BoxFit.contain,
+        animate: true,
+        repeat: false,
+        frameRate: const FrameRate(30),
+        width: double.infinity,
+        height: double.infinity,
+        onLoaded: (composition) {
+          _rememberMediaDuration(index, composition.duration);
+        },
+        errorBuilder: (context, error, stackTrace) {
+          return fallback;
+        },
+      );
+    }
+    if (_isGifUrl(mediaUrl)) {
+      unawaited(_loadGifDuration(index, mediaUrl));
+    }
+    return _buildHomeNetworkImage(
+      mediaUrl,
+      fit: fit,
+      errorWidget: fallback,
+    );
+  }
+
+  Future<void> _handleBannerTap(Map<String, dynamic> banner) async {
+    final campaignId = banner['id'] is int
+        ? banner['id'] as int
+        : int.tryParse(banner['id']?.toString() ?? '') ?? 0;
+    if (campaignId > 0 &&
+        (banner['type']?.toString() == 'banner' ||
+            banner.containsKey('discount_details'))) {
+      unawaited(
+        ApiService()
+            .post(ApiConstants.campaignTrackClick(campaignId),
+                includeAuth: false)
+            .catchError((_) {}),
+      );
+    }
+
+    final redirect = banner['redirect'] is Map
+        ? Map<String, dynamic>.from(banner['redirect'] as Map)
+        : <String, dynamic>{
+            'type': banner['redirect_type'] ??
+                banner['target_type'] ??
+                banner['action_type'],
+            'id': banner['redirect_menu_item_id'] ??
+                banner['redirect_restaurant_id'] ??
+                banner['redirect_category_id'] ??
+                banner['target_id'] ??
+                banner['collection_id'] ??
+                banner['offer_id'],
+            'url':
+                banner['external_url'] ?? banner['link_url'] ?? banner['link'],
+          };
+    final redirectType = redirect['type']?.toString().toLowerCase();
+    final redirectId = _parseBannerInt(redirect['id']);
+    if (redirectType == 'restaurant' && redirectId != null) {
+      widget.onTapRestaurant(<String, dynamic>{'id': redirectId});
+      return;
+    }
+    if (redirectType == 'menu_item' && redirectId != null) {
+      final restaurantId = _parseBannerInt(redirect['restaurant_id']);
+      if (restaurantId != null) {
+        Navigator.pushNamed(
+          context,
+          '/restaurant/detail',
+          arguments: <String, dynamic>{
+            'restaurantId': restaurantId,
+            'menuItemId': redirectId,
+          },
+        );
+        return;
+      }
+    }
+    if (redirectType == 'category' && redirectId != null) {
+      final name = (redirect['name'] ?? banner['title'] ?? '').toString();
+      Navigator.pushNamed(
+        context,
+        '/menu-taxonomy-filter',
+        arguments: <String, dynamic>{
+          'title': name.isNotEmpty ? name : 'Category',
+          'filter_type': 'category',
+          'category_id': redirectId,
+          'image_url': _resolveImageUrl(banner),
+        },
+      );
+      return;
+    }
+    if (redirectType == 'collection') {
+      Navigator.pushNamed(
+        context,
+        '/search',
+        arguments: <String, dynamic>{
+          'source': 'collection',
+          if (redirectId != null) 'collection_id': redirectId,
+          'title': banner['title']?.toString() ?? 'Collection',
+        },
+      );
+      return;
+    }
+    if (redirectType == 'offer' || redirectType == 'offers') {
+      Navigator.pushNamed(context, '/offers');
+      return;
+    }
+
+    final rawLink = (redirect['url'] ??
+                banner['external_url'] ??
+                banner['link_url'] ??
+                banner['link'])
+            ?.toString()
+            .trim() ??
+        '';
+    final match = RegExp(r'/restaurants/(\d+)').firstMatch(rawLink);
+    if (match != null) {
+      widget.onTapRestaurant(
+        <String, dynamic>{'id': int.tryParse(match.group(1) ?? '')},
+      );
+      return;
+    }
+    if (rawLink.startsWith('/offers')) {
+      Navigator.pushNamed(context, '/offers');
+      return;
+    }
+    if (rawLink.startsWith('/search')) {
+      Navigator.pushNamed(context, '/search');
+      return;
+    }
+    final uri = Uri.tryParse(rawLink);
+    if (uri != null && uri.hasScheme) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+      return;
+    }
+    Navigator.pushNamed(context, '/search');
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final availableWidth = max(0.0, MediaQuery.sizeOf(context).width - 40);
+    final isPromoCarousel = widget.banners.isNotEmpty &&
+        widget.banners.every((banner) {
+          final item = banner is Map<String, dynamic>
+              ? banner
+              : Map<String, dynamic>.from(banner as Map);
+          return _isPromoCardBanner(item);
+        });
+    final bannerHeight = widget.height ??
+        (isPromoCarousel
+            ? (availableWidth / 3.0).clamp(118.0, 150.0).toDouble()
+            : (availableWidth / 3.0).clamp(128.0, 190.0).toDouble());
+    if (widget.banners.isEmpty) {
+      return Container(
+        width: double.infinity,
+        height: bannerHeight,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(widget.borderRadius),
+          color: Colors.white,
+        ),
+        child: Center(
+          child: Icon(Icons.lunch_dining_rounded, color: _homeGreen, size: 96),
+        ),
+      );
+    }
+
+    return Column(
+      children: <Widget>[
+        SizedBox(
+          height: bannerHeight,
+          child: PageView.builder(
+            controller: _controller,
+            itemCount: widget.banners.length,
+            onPageChanged: (index) {
+              if (!mounted) return;
+              // No setState — only the dots listen to _pageNotifier.
+              _currentPage = index;
+              _pageShownAt = DateTime.now();
+              _pageNotifier.value = index;
+              _scheduleNextSlide();
+            },
+            itemBuilder: (context, index) {
+              final banner = widget.banners[index] is Map<String, dynamic>
+                  ? widget.banners[index] as Map<String, dynamic>
+                  : Map<String, dynamic>.from(widget.banners[index] as Map);
+              final mediaUrl = _resolveImageUrl(banner);
+              if (_isPromoCardBanner(banner)) {
+                return RepaintBoundary(
+                  child: GestureDetector(
+                    onTap: () => _handleBannerTap(banner),
+                    child: _buildPromoCardBanner(
+                      banner,
+                      mediaUrl,
+                      index: index,
+                      isActive: true,
+                      height: bannerHeight,
+                    ),
+                  ),
+                );
+              }
+              final eyebrow = _bannerText(
+                banner,
+                const ['eyebrow', 'badge', 'tag', 'label'],
+              ).toUpperCase();
+              final headline = _bannerText(
+                banner,
+                const ['headline', 'title', 'name'],
+              );
+              final subtitle = _bannerText(
+                banner,
+                const ['subtitle', 'description', 'caption'],
+              );
+              final cta = _bannerText(
+                banner,
+                const ['cta', 'cta_text', 'button_text', 'action_text'],
+              );
+              final isJsonBanner = _resolveBannerLottieUrl(banner).isNotEmpty ||
+                  _isLottieBanner(banner) ||
+                  _isLottieUrl(mediaUrl);
+              final hasText = !_isImageOnlyBanner(banner) &&
+                  !isJsonBanner &&
+                  (eyebrow.isNotEmpty ||
+                      headline.isNotEmpty ||
+                      subtitle.isNotEmpty ||
+                      cta.isNotEmpty);
+              return RepaintBoundary(
+                child: GestureDetector(
+                onTap: () => _handleBannerTap(banner),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(widget.borderRadius),
+                  child: Container(
+                    width: double.infinity,
+                    height: bannerHeight,
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(widget.borderRadius),
+                      color: Colors.white,
+                      boxShadow: <BoxShadow>[
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.10),
+                          blurRadius: 24,
+                          offset: const Offset(0, 12),
+                        ),
+                      ],
+                    ),
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: <Widget>[
+                        _buildBannerMedia(
+                          mediaUrl,
+                          banner,
+                          index: index,
+                          isActive: true,
+                          fit: BoxFit.cover,
+                        ),
+                        if (hasText)
+                          DecoratedBox(
+                            decoration: BoxDecoration(
+                              gradient: LinearGradient(
+                                begin: Alignment.topCenter,
+                                end: Alignment.bottomCenter,
+                                colors: const <Color>[
+                                  Colors.transparent,
+                                  Colors.transparent,
+                                ],
+                              ),
+                            ),
+                          ),
+                        if (hasText)
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(20, 20, 20, 18),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              mainAxisAlignment: MainAxisAlignment.end,
+                              children: <Widget>[
+                                if (eyebrow.isNotEmpty) ...<Widget>[
+                                  Text(
+                                    eyebrow,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w900,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 6),
+                                ],
+                                if (headline.isNotEmpty)
+                                  Text(
+                                    headline,
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 27,
+                                      height: 1.0,
+                                      fontWeight: FontWeight.w900,
+                                    ),
+                                  ),
+                                if (subtitle.isNotEmpty) ...<Widget>[
+                                  const SizedBox(height: 6),
+                                  Text(
+                                    subtitle,
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 14,
+                                      height: 1.25,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ],
+                                if (cta.isNotEmpty) ...<Widget>[
+                                  const SizedBox(height: 12),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 16,
+                                      vertical: 9,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: Colors.black,
+                                      borderRadius: BorderRadius.circular(999),
+                                    ),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: <Widget>[
+                                        Text(
+                                          cta,
+                                          style: const TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 13,
+                                            fontWeight: FontWeight.w900,
+                                          ),
+                                        ),
+                                        const SizedBox(width: 6),
+                                        const Icon(
+                                          Icons.arrow_forward_ios_rounded,
+                                          color: Colors.white,
+                                          size: 12,
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ],
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              );
+            },
+          ),
+        ),
+        if (widget.banners.length > 1 && widget.showIndicators) ...<Widget>[
+          const SizedBox(height: 10),
+          ValueListenableBuilder<int>(
+            valueListenable: _pageNotifier,
+            builder: (context, current, _) => Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: List<Widget>.generate(
+                widget.banners.length,
+                (index) => Container(
+                  width: index == current ? 10 : 8,
+                  height: index == current ? 10 : 8,
+                  margin: const EdgeInsets.symmetric(horizontal: 4),
+                  decoration: BoxDecoration(
+                    color: index == current
+                        ? _homeGreen
+                        : const Color(0xFFD7DCE4),
+                    shape: BoxShape.circle,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  int? _parseBannerInt(dynamic value) {
+    if (value is int) return value;
+    return int.tryParse(value?.toString() ?? '');
+  }
+}
+
+class _PromoTornEdgeClipper extends CustomClipper<Path> {
+  static const List<Offset> _points = <Offset>[
+    Offset(1.0, 1.0),
+    Offset(0.3, 0.86),
+    Offset(0.78, 0.72),
+    Offset(0.18, 0.58),
+    Offset(0.82, 0.44),
+    Offset(0.28, 0.3),
+    Offset(0.85, 0.16),
+    Offset(0.0, 0.0),
+  ];
+
+  @override
+  Path getClip(Size size) {
+    final notch = size.width * 0.22;
+    final path = Path()
+      ..moveTo(size.width, 0)
+      ..lineTo(size.width, size.height);
+    for (final point in _points) {
+      path.lineTo(point.dx * notch, point.dy * size.height);
+    }
+    path.close();
+    return path;
+  }
+
+  @override
+  bool shouldReclip(covariant CustomClipper<Path> oldClipper) => false;
+}
+
+const double _sectionArtworkHeight = 170;
+const double _sectionArtworkHeaderOffset = 48;
+
+class _HomeSectionContainer extends StatelessWidget {
+  const _HomeSectionContainer({
+    required this.child,
+    this.section,
+  });
+
+  final Widget child;
+  final Map<String, dynamic>? section;
+
+  @override
+  Widget build(BuildContext context) {
+    final backgroundImageUrl = _sectionBackgroundImage(section);
+    final backgroundColor = _sectionBackgroundColor(section);
+    final backgroundOpacity =
+        _sectionBackgroundOpacity(section).clamp(0.0, 1.0).toDouble();
+
+    if (backgroundImageUrl.isEmpty && backgroundColor == null) return child;
+
+    final hasArtwork = backgroundImageUrl.isNotEmpty;
+    final tintColor = backgroundColor ?? Colors.white;
+    final colorLayer = tintColor.withOpacity(backgroundOpacity);
+    final backgroundLayer = IgnorePointer(
+      child: ClipPath(
+        clipper: const _SectionArtworkClipper(),
+        child: Stack(
+          fit: StackFit.expand,
+          children: <Widget>[
+            ColoredBox(color: backgroundColor ?? _homeBg),
+            if (hasArtwork)
+              _buildHomeNetworkImage(
+                backgroundImageUrl,
+                fit: BoxFit.cover,
+                placeholder: ColoredBox(color: backgroundColor ?? _homeBg),
+                errorWidget: ColoredBox(color: backgroundColor ?? _homeBg),
+              ),
+            DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: hasArtwork
+                      ? <Color>[
+                          colorLayer.withOpacity(
+                            min(backgroundOpacity * 0.62, 0.72),
+                          ),
+                          colorLayer,
+                        ]
+                      : <Color>[colorLayer, colorLayer],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    return Stack(
+      children: <Widget>[
+        if (hasArtwork)
+          const SizedBox(height: _sectionArtworkHeight)
+        else
+          Positioned.fill(child: backgroundLayer),
+        if (hasArtwork)
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            height: _sectionArtworkHeight,
+            child: backgroundLayer,
+          ),
+        Padding(
+          padding: hasArtwork
+              ? const EdgeInsets.only(top: _sectionArtworkHeaderOffset)
+              : EdgeInsets.zero,
+          child: child,
+        ),
+      ],
+    );
+  }
+
+  static String _sectionBackgroundImage(Map<String, dynamic>? section) {
+    const keys = <String>[
+      'background_image',
+      'backgroundImage',
+      'section_background_image',
+      'sectionBackgroundImage',
+      'background_url',
+      'backgroundUrl',
+      'artwork_image',
+      'artworkImage',
+      'cover_image',
+      'coverImage',
+      'hero_image',
+      'heroImage',
+      'banner_image',
+      'bannerImage',
+    ];
+    for (final map in _sectionMaps(section)) {
+      final value = _stringForKeys(map, keys);
+      if (value.isNotEmpty) return _resolveHomeAssetUrl(value);
+    }
+    return '';
+  }
+
+  static Color? _sectionBackgroundColor(Map<String, dynamic>? section) {
+    const keys = <String>[
+      'background_color',
+      'backgroundColor',
+      'section_background_color',
+      'sectionBackgroundColor',
+      'artwork_color',
+      'artworkColor',
+    ];
+    for (final map in _sectionMaps(section)) {
+      final value = _stringForKeys(map, keys);
+      if (value.isNotEmpty) {
+        final color = _tryParseColor(value);
+        if (color != null) return color;
+      }
+    }
+    return null;
+  }
+
+  static double _sectionBackgroundOpacity(Map<String, dynamic>? section) {
+    const keys = <String>[
+      'background_opacity',
+      'backgroundOpacity',
+      'section_background_opacity',
+      'sectionBackgroundOpacity',
+      'artwork_opacity',
+      'artworkOpacity',
+    ];
+    for (final map in _sectionMaps(section)) {
+      for (final key in keys) {
+        final value = _tryParseDouble(map[key]);
+        if (value != null) return value > 1 ? value / 100 : value;
+      }
+    }
+    return 0.86;
+  }
+
+  static Iterable<Map<String, dynamic>> _sectionMaps(
+    Map<String, dynamic>? section,
+  ) sync* {
+    final root = _asMap(section);
+    if (root == null) return;
+    yield root;
+    for (final key in <String>[
+      'style',
+      'styles',
+      'settings',
+      'appearance',
+      'metadata',
+      'meta',
+      'config',
+      'configuration',
+    ]) {
+      final nested = _asMap(root[key]);
+      if (nested != null) yield nested;
+    }
+  }
+
+  static Map<String, dynamic>? _asMap(dynamic value) {
+    if (value is Map<String, dynamic>) return value;
+    if (value is Map) {
+      return value.map((key, dynamic value) => MapEntry(key.toString(), value));
+    }
+    return null;
+  }
+
+  static String _stringForKeys(Map<String, dynamic> map, List<String> keys) {
+    for (final key in keys) {
+      final value = map[key];
+      if (value == null) continue;
+      final text = value.toString().trim();
+      if (text.isNotEmpty && text.toLowerCase() != 'null') return text;
+    }
+    return '';
+  }
+
+  static Color? _tryParseColor(String value) {
+    final normalized = value.trim().replaceFirst('#', '');
+    if (normalized.length != 6 && normalized.length != 8) return null;
+    final argb = normalized.length == 6 ? 'FF$normalized' : normalized;
+    final parsed = int.tryParse(argb, radix: 16);
+    return parsed == null ? null : Color(parsed);
+  }
+
+  static double? _tryParseDouble(dynamic value) {
+    if (value is num) return value.toDouble();
+    if (value is String)
+      return double.tryParse(value.trim().replaceAll('%', ''));
+    return null;
+  }
+}
+
+class _SectionArtworkClipper extends CustomClipper<Path> {
+  const _SectionArtworkClipper();
+
+  @override
+  Path getClip(Size size) {
+    final path = Path()..lineTo(0, 16);
+    final segment = size.width / 8;
+    for (var i = 0; i < 8; i++) {
+      final start = segment * i;
+      path.quadraticBezierTo(
+        start + segment / 2,
+        i.isEven ? 0 : 32,
+        start + segment,
+        16,
+      );
+    }
+    path
+      ..lineTo(size.width, size.height)
+      ..lineTo(0, size.height)
+      ..close();
+    return path;
+  }
+
+  @override
+  bool shouldReclip(covariant CustomClipper<Path> oldClipper) => false;
+}
+
+class _SectionHeader extends StatelessWidget {
+  const _SectionHeader({
+    required this.title,
+    this.subtitle,
+    this.actionLabel,
+    this.onAction,
+  });
+
+  final String title;
+  final String? subtitle;
+  final String? actionLabel;
+  final VoidCallback? onAction;
+
+  Color? _tryParseColor(String value) {
+    final hex = value.trim().replaceFirst('#', '');
+    if (hex.length != 6 && hex.length != 8) return null;
+    final normalized = hex.length == 6 ? 'FF$hex' : hex;
+    final parsed = int.tryParse(normalized, radix: 16);
+    if (parsed == null) return null;
+    return Color(parsed);
+  }
+
+  InlineSpan _styledTitle() {
+    final pattern = RegExp(
+      r'<span\s+style=\\?"color:\s*(#[0-9A-Fa-f]{6})\s*;?\\?">(.*?)</span>',
+      caseSensitive: false,
+    );
+    final matches = pattern.allMatches(title).toList(growable: false);
+    if (matches.isEmpty) {
+      final plainText = _plainTitle(title);
+      final words = plainText
+          .split(RegExp(r'\s+'))
+          .where((word) => word.isNotEmpty)
+          .toList();
+      if (words.isEmpty) {
+        return const TextSpan();
+      }
+      final highlightedCount = words.length >= 3 ? 2 : 1;
+      final splitIndex = words.length - highlightedCount;
+      final leading = words.take(splitIndex).join(' ');
+      final trailing = words.skip(splitIndex).join(' ');
+      return TextSpan(
+        children: [
+          if (leading.isNotEmpty)
+            TextSpan(
+              text: '$leading ',
+              style: const TextStyle(
+                color: _homeText,
+                fontSize: 21,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+          TextSpan(
+            text: trailing,
+            style: TextStyle(
+              color: _accentColor(),
+              fontSize: 21,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+        ],
+      );
+    }
+
+    final spans = <InlineSpan>[];
+    var cursor = 0;
+    for (final match in matches) {
+      if (match.start > cursor) {
+        spans.add(
+          TextSpan(
+            text: title.substring(cursor, match.start),
+            style: const TextStyle(
+              color: _homeText,
+              fontSize: 21,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+        );
+      }
+      spans.add(
+        TextSpan(
+          text: match.group(2) ?? '',
+          style: TextStyle(
+            color: _tryParseColor(match.group(1) ?? '') ?? _homeAccent,
+            fontSize: 21,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+      );
+      cursor = match.end;
+    }
+    if (cursor < title.length) {
+      spans.add(
+        TextSpan(
+          text: title.substring(cursor),
+          style: const TextStyle(
+            color: _homeText,
+            fontSize: 21,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+      );
+    }
+    return TextSpan(children: spans);
+  }
+
+  String _plainTitle(String value) {
+    return value
+        .replaceAll(
+          RegExp(r'<[^>]+>', caseSensitive: false),
+          '',
+        )
+        .trim();
+  }
+
+  Color _accentColor() {
+    final colors = <Color>[
+      const Color(0xFFFF6B00),
+      const Color(0xFFFF914D),
+      const Color(0xFFFF9F1C),
+    ];
+    return colors[title.length % colors.length];
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 0, 20, 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Row(
+            children: <Widget>[
+              Expanded(
+                child: SizedBox(
+                  height: 30,
+                  child: RichText(
+                    text: TextSpan(children: <InlineSpan>[_styledTitle()]),
+                  ),
+                ),
+              ),
+              if (actionLabel != null && onAction != null)
+                GestureDetector(
+                  onTap: onAction,
+                  child: Row(
+                    children: <Widget>[
+                      Text(
+                        actionLabel!,
+                        style: const TextStyle(
+                          color: _homeMuted,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      const Icon(
+                        Icons.chevron_right_rounded,
+                        size: 18,
+                        color: _homeMuted,
+                      ),
+                    ],
+                  ),
+                ),
+            ],
+          ),
+          if (subtitle != null && subtitle!.trim().isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 2),
+              child: Text(
+                subtitle!,
+                style: const TextStyle(
+                  color: _homeMuted,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _CategoryPill extends StatelessWidget {
+  const _CategoryPill({
+    required this.category,
+    required this.onTap,
+  });
+
+  final dynamic category;
+  final VoidCallback onTap;
+
+  String _resolveImageUrl(dynamic item) {
+    if (item is! Map) return '';
+
+    String resolve(dynamic value) {
+      if (value is String && value.trim().isNotEmpty) {
+        return _resolveHomeAssetUrl(value);
+      }
+      if (value is Map) {
+        for (final key in const <String>[
+          'url',
+          'image_url',
+          'path',
+          'file',
+          'src',
+        ]) {
+          final resolved = resolve(value[key]);
+          if (resolved.isNotEmpty) return resolved;
+        }
+      }
+      if (value is List) {
+        for (final child in value) {
+          final resolved = resolve(child);
+          if (resolved.isNotEmpty) return resolved;
+        }
+      }
+      return '';
+    }
+
+    for (final key in const <String>[
+      'image_url',
+      'icon_url',
+      'thumbnail_url',
+      'thumb_url',
+      'photo_url',
+      'asset_url',
+      'media_url',
+      'image',
+      'icon',
+      'thumbnail',
+      'thumb',
+      'photo',
+      'url',
+      'images',
+      'media',
+    ]) {
+      final resolved = resolve(item[key]);
+      if (resolved.isNotEmpty) return resolved;
+    }
+    return '';
+  }
+
+  Color _accentColor(String seed) {
+    const palette = <Color>[
+      Color(0xFFFF7A00),
+      Color(0xFFFFC857),
+      Color(0xFFB8E986),
+      Color(0xFFDAB6FC),
+      Color(0xFFFFC6D9),
+      Color(0xFFBDE7FF),
+    ];
+    if (seed.isEmpty) return palette.first;
+    return palette[seed.codeUnits.fold<int>(0, (sum, code) => sum + code) %
+        palette.length];
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final name = category is Map
+        ? (category['name'] ?? category['title'] ?? '').toString()
+        : '';
+    final imageUrl = _resolveImageUrl(category);
+    final accent = _accentColor(name);
+
+    return GestureDetector(
+      onTap: onTap,
+      child: SizedBox(
+        width: 72,
+        child: Column(
+          children: <Widget>[
+            Container(
+              width: 64,
+              height: 64,
+              decoration: BoxDecoration(
+                color: Colors.white,
+                shape: BoxShape.circle,
+                border: Border.all(color: const Color(0xFFF2F2F2)),
+                boxShadow: <BoxShadow>[
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.06),
+                    blurRadius: 12,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
+              ),
+              child: ClipOval(
+                child: _buildHomeNetworkImage(
+                  imageUrl,
+                  fit: BoxFit.cover,
+                  width: 64,
+                  height: 64,
+                  placeholder: ColoredBox(
+                    color: Colors.white,
+                    child: Icon(
+                      Icons.restaurant_menu_rounded,
+                      color: accent,
+                      size: 28,
+                    ),
+                  ),
+                  errorWidget: ColoredBox(
+                    color: Colors.white,
+                    child: Icon(
+                      Icons.restaurant_menu_rounded,
+                      color: accent,
+                      size: 28,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              name,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                color: Color(0xFF1C1C1C),
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _RestaurantCarouselCard extends StatelessWidget {
+  const _RestaurantCarouselCard({
+    required this.restaurant,
+    required this.isSaved,
+    required this.onTap,
+    required this.onSaveToggle,
+    required this.cuisineTextBuilder,
+    required this.offerTextBuilder,
+    required this.ratingBuilder,
+    required this.parseDouble,
+    required this.parseInt,
+  });
+
+  final Map<String, dynamic> restaurant;
+  final bool isSaved;
+  final VoidCallback onTap;
+  final VoidCallback onSaveToggle;
+  final String Function(Map<String, dynamic>) cuisineTextBuilder;
+  final String Function(Map<String, dynamic>) offerTextBuilder;
+  final double Function(Map<String, dynamic>) ratingBuilder;
+  final double Function(dynamic, {double fallback}) parseDouble;
+  final int Function(dynamic, {int fallback}) parseInt;
+
+  String _resolveImageUrl(Map<String, dynamic> item) {
+    for (final key in const <String>[
+      'logo_image',
+      'logo',
+      'banner_image',
+      'banner_url',
+      'image_url',
+      'image',
+      'photo'
+    ]) {
+      final value = item[key];
+      if (value is String && value.trim().isNotEmpty) {
+        return _resolveHomeAssetUrl(value);
+      }
+    }
+    return '';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final imageUrl = _resolveImageUrl(restaurant);
+    final rating = ratingBuilder(restaurant);
+    final cuisine = cuisineTextBuilder(restaurant);
+    final delivery = parseInt(
+      restaurant['delivery_time'] ?? restaurant['deliveryTime'],
+      fallback: 30,
+    );
+    final distance = parseDouble(restaurant['distance'], fallback: -1);
+    final offerText = offerTextBuilder(restaurant);
+    final amountForOne = parseDouble(
+      restaurant['amount_for_one'] ??
+          restaurant['amountForOne'] ??
+          restaurant['price_for_one'] ??
+          restaurant['cost_for_one'] ??
+          restaurant['lowest_price'] ??
+          restaurant['min_price'],
+      fallback: 0,
+    );
+    final displayAmount = amountForOne > 0
+        ? amountForOne
+        : _homeMinimumNestedMenuPrice(restaurant);
+
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(22),
+      child: SizedBox(
+        width: 190,
+        height: 266,
+        child: Container(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(22),
+            boxShadow: <BoxShadow>[
+              BoxShadow(
+                color: Colors.black.withOpacity(0.08),
+                blurRadius: 20,
+                offset: const Offset(0, 6),
+              ),
+            ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Stack(
+                children: <Widget>[
+                  ClipRRect(
+                    borderRadius: const BorderRadius.vertical(
+                      top: Radius.circular(22),
+                    ),
+                    child: SizedBox(
+                      width: 190,
+                      height: 130,
+                      child: imageUrl.isNotEmpty
+                          ? _buildHomeNetworkImage(
+                              imageUrl,
+                              fit: BoxFit.cover,
+                              width: 190,
+                              height: 130,
+                              errorWidget: _cardFallback(),
+                            )
+                          : _cardFallback(),
+                    ),
+                  ),
+                  if (offerText.isNotEmpty)
+                    Positioned(
+                      left: 12,
+                      top: 12,
+                      child: Container(
+                        width: 64,
+                        height: 28,
+                        decoration: BoxDecoration(
+                          color: _homeGreen,
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        alignment: Alignment.center,
+                        child: Text(
+                          offerText.length > 10
+                              ? offerText.substring(0, 10)
+                              : offerText,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                    ),
+                  Positioned(
+                    right: 12,
+                    top: 12,
+                    child: GestureDetector(
+                      onTap: onSaveToggle,
+                      child: Container(
+                        width: 34,
+                        height: 34,
+                        decoration: BoxDecoration(
+                          color: Colors.black.withOpacity(0.4),
+                          shape: BoxShape.circle,
+                        ),
+                        child: Icon(
+                          isSaved
+                              ? Icons.favorite
+                              : Icons.favorite_border_rounded,
+                          color: Colors.white,
+                          size: 18,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      Row(
+                        children: <Widget>[
+                          Expanded(
+                            child: Text(
+                              restaurant['name']?.toString() ?? 'Restaurant',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: _homeText,
+                                fontSize: 18,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                          if (rating > 0)
+                            Text(
+                              '★ ${rating.toStringAsFixed(1)}',
+                              style: const TextStyle(
+                                color: _homeGreen,
+                                fontSize: 14,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          if (rating <= 0)
+                            _restaurantRatingOrNewBadge(rating, fontSize: 12),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        distance >= 0
+                            ? '$delivery-${delivery + 5} mins  •  ${distance.toStringAsFixed(distance >= 10 ? 0 : 1)} km'
+                            : '$delivery-${delivery + 5} mins',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: _homeMuted,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        cuisine,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: _homeMuted,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                      const Spacer(),
+                      Text(
+                        displayAmount > 0
+                            ? 'From ${formatCurrency(context, displayAmount)}'
+                            : 'Order now',
+                        style: const TextStyle(
+                          color: _homeText,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _cardFallback() {
+    return Container(
+      color: _homePeach,
+      child: const Center(
+        child: Icon(Icons.storefront_rounded, size: 52, color: _homeAccent),
+      ),
+    );
+  }
+}
+
+class _RecommendedRestaurantGridCard extends StatelessWidget {
+  const _RecommendedRestaurantGridCard({
+    required this.restaurant,
+    required this.onTap,
+    required this.ratingBuilder,
+    required this.parseDouble,
+    required this.parseInt,
+    required this.imageResolver,
+  });
+
+  final Map<String, dynamic> restaurant;
+  final VoidCallback onTap;
+  final double Function(Map<String, dynamic>) ratingBuilder;
+  final double Function(dynamic, {double fallback}) parseDouble;
+  final int Function(dynamic, {int fallback}) parseInt;
+  final String Function(dynamic, List<String>) imageResolver;
+
+  @override
+  Widget build(BuildContext context) {
+    final imageUrl = imageResolver(restaurant, const <String>[
+      'banner_image',
+      'banner_url',
+      'image_url',
+      'image',
+      'photo',
+      'logo_image',
+      'logo',
+    ]);
+    final rating = ratingBuilder(restaurant);
+    final delivery = parseInt(
+      restaurant['eta_minutes'] ??
+          restaurant['delivery_time'] ??
+          restaurant['deliveryTime'],
+      fallback: 30,
+    );
+    final nearAndFastValue = restaurant['is_near_and_fast'];
+    final isNearAndFast = nearAndFastValue == true ||
+        nearAndFastValue == 1 ||
+        nearAndFastValue?.toString().toLowerCase() == 'true';
+    final etaRange = restaurant['eta_range']?.toString().trim() ?? '';
+    final deliveryLabel = isNearAndFast
+        ? 'Near & Fast'
+        : etaRange.isNotEmpty
+            ? etaRange
+            : '$delivery-${delivery + 5} mins';
+    final minimumPrice = parseDouble(
+      restaurant['minimum_menu_price'] ??
+          restaurant['min_menu_price'] ??
+          restaurant['amount_for_one'],
+      fallback: 0,
+    );
+
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Stack(
+            clipBehavior: Clip.none,
+            children: <Widget>[
+              AspectRatio(
+                aspectRatio: 1.25,
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(20),
+                  child: _RestaurantMediaCarousel(
+                    restaurant: restaurant,
+                    fallbackImageUrl: imageUrl,
+                    parseDouble: parseDouble,
+                    fallback: _fallback(),
+                    rating: rating,
+                    deliveryMinutes: delivery,
+                    displayAmount: minimumPrice,
+                    isSaved: false,
+                    onSaveToggle: () {},
+                    compact: true,
+                  ),
+                ),
+              ),
+              Positioned(
+                left: 0,
+                bottom: -16,
+                child: Container(
+                  padding: const EdgeInsets.fromLTRB(8, 5, 10, 5),
+                  decoration: BoxDecoration(
+                    color: _homeGreen,
+                    borderRadius: BorderRadius.circular(999),
+                    border: Border.all(color: Colors.white, width: 4),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: <Widget>[
+                      const Icon(Icons.star_rounded,
+                          color: Colors.white, size: 16),
+                      const SizedBox(width: 3),
+                      Text(
+                        rating > 0 ? rating.toStringAsFixed(1) : 'New',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 13,
+                          height: 1,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 22),
+          Text(
+            restaurant['name']?.toString() ?? 'Restaurant',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: _homeText,
+              fontSize: 16,
+              height: 1.08,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: <Widget>[
+              Icon(
+                isNearAndFast ? Icons.bolt_rounded : Icons.timer_outlined,
+                color: isNearAndFast ? _homeGreen : _homeMuted,
+                size: 21,
+              ),
+              const SizedBox(width: 5),
+              Expanded(
+                child: Text(
+                  deliveryLabel,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: isNearAndFast ? _homeGreen : _homeMuted,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _fallback() {
+    return Container(
+      color: _homePeach,
+      alignment: Alignment.center,
+      child: const Icon(
+        Icons.storefront_rounded,
+        size: 42,
+        color: _homeAccent,
+      ),
+    );
+  }
+}
+
+class _RecommendedRestaurantCard extends StatelessWidget {
+  const _RecommendedRestaurantCard({
+    required this.restaurant,
+    required this.isSaved,
+    required this.onTap,
+    required this.onSaveToggle,
+    required this.cuisineTextBuilder,
+    required this.offerTextBuilder,
+    required this.ratingBuilder,
+    required this.parseDouble,
+    required this.parseInt,
+  });
+
+  final Map<String, dynamic> restaurant;
+  final bool isSaved;
+  final VoidCallback onTap;
+  final VoidCallback onSaveToggle;
+  final String Function(Map<String, dynamic>) cuisineTextBuilder;
+  final String Function(Map<String, dynamic>) offerTextBuilder;
+  final double Function(Map<String, dynamic>) ratingBuilder;
+  final double Function(dynamic, {double fallback}) parseDouble;
+  final int Function(dynamic, {int fallback}) parseInt;
+
+  String _resolveImageUrl(Map<String, dynamic> item) {
+    for (final key in const <String>[
+      'logo_image',
+      'logo',
+      'banner_image',
+      'banner_url',
+      'image_url',
+      'image',
+      'photo'
+    ]) {
+      final value = item[key];
+      if (value is String && value.trim().isNotEmpty) {
+        return _resolveHomeAssetUrl(value);
+      }
+    }
+    return '';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final primary = Theme.of(context).colorScheme.primary;
+    final imageUrl = _resolveImageUrl(restaurant);
+    final rating = ratingBuilder(restaurant);
+    final cuisine = cuisineTextBuilder(restaurant);
+    final delivery = parseInt(
+      restaurant['delivery_time'] ?? restaurant['deliveryTime'],
+      fallback: 25,
+    );
+    final amountForOne = parseDouble(
+      restaurant['amount_for_one'] ??
+          restaurant['amountForOne'] ??
+          restaurant['price_for_one'] ??
+          restaurant['cost_for_one'] ??
+          restaurant['lowest_price'] ??
+          restaurant['min_price'],
+      fallback: 0,
+    );
+    final displayAmount = amountForOne > 0
+        ? amountForOne
+        : _homeMinimumNestedMenuPrice(restaurant);
+    final offerText = offerTextBuilder(restaurant);
+
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(20),
+      child: SizedBox(
+        width: 158,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Stack(
+              children: <Widget>[
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(20),
+                  child: SizedBox(
+                    width: 158,
+                    height: 108,
+                    child: _buildHomeNetworkImage(
+                      imageUrl,
+                      fit: BoxFit.cover,
+                      width: 154,
+                      height: 104,
+                      placeholder: _fallback(),
+                      errorWidget: _fallback(),
+                    ),
+                  ),
+                ),
+                if (offerText.isNotEmpty)
+                  Positioned(
+                    left: 6,
+                    top: 6,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 7,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: _homeGreen,
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: Text(
+                        offerText.length > 8
+                            ? offerText.substring(0, 8)
+                            : offerText,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 9,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  ),
+                if (restaurant['is_sponsored'] == true ||
+                    restaurant['is_sponsored'] == 1 ||
+                    restaurant['is_sponsored'] == '1')
+                  Positioned(
+                    left: 6,
+                    bottom: 6,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 6,
+                        vertical: 3,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withOpacity(0.6),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: const Text(
+                        'Ad',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 9.5,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  ),
+                Positioned(
+                  right: 6,
+                  top: 6,
+                  child: GestureDetector(
+                    onTap: onSaveToggle,
+                    child: Container(
+                      width: 28,
+                      height: 28,
+                      decoration: BoxDecoration(
+                        color: Colors.black.withOpacity(0.32),
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      child: Icon(
+                        isSaved
+                            ? Icons.favorite
+                            : Icons.favorite_border_rounded,
+                        color: Colors.white,
+                        size: 16,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Expanded(
+                  child: Text(
+                    restaurant['name']?.toString() ?? 'Restaurant',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: _homeText,
+                      fontSize: 14.5,
+                      height: 1.05,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+                if (rating > 0) ...<Widget>[
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFEFFAF1),
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: Row(
+                      children: <Widget>[
+                        const Icon(Icons.star_rounded,
+                            color: _homeGreen, size: 12),
+                        const SizedBox(width: 2),
+                        Text(
+                          rating.toStringAsFixed(1),
+                          style: const TextStyle(
+                            color: _homeGreen,
+                            fontSize: 10.5,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+                if (rating <= 0)
+                  _restaurantRatingOrNewBadge(rating, fontSize: 10.5),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              displayAmount > 0
+                  ? '$delivery-${delivery + 5} mins  |  From ${formatCurrency(context, displayAmount)}'
+                  : '$delivery-${delivery + 5} mins',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: _homeMuted,
+                fontSize: 10.8,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              cuisine,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: _homeMuted,
+                fontSize: 10.8,
+                height: 1.16,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 2),
+            Text(
+              isSaved ? 'Saved for later' : 'Tap to explore',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: primary.withOpacity(0.82),
+                fontSize: 10.2,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _fallback() {
+    return Container(
+      color: _homePeach,
+      child: const Center(
+        child: Icon(Icons.storefront_rounded, size: 34, color: _homeAccent),
+      ),
+    );
+  }
+}
+
+class _FeaturedStaticCard extends StatelessWidget {
+  const _FeaturedStaticCard({
+    required this.restaurant,
+    required this.isSaved,
+    required this.onTap,
+    required this.onSaveToggle,
+    required this.cuisineTextBuilder,
+    required this.ratingBuilder,
+    required this.parseDouble,
+    required this.parseInt,
+    required this.imageResolver,
+  });
+
+  final Map<String, dynamic> restaurant;
+  final bool isSaved;
+  final VoidCallback onTap;
+  final VoidCallback onSaveToggle;
+  final String Function(Map<String, dynamic>) cuisineTextBuilder;
+  final double Function(Map<String, dynamic>) ratingBuilder;
+  final double Function(dynamic, {double fallback}) parseDouble;
+  final int Function(dynamic, {int fallback}) parseInt;
+  final String Function(dynamic, List<String>) imageResolver;
+
+  @override
+  Widget build(BuildContext context) {
+    final imageUrl = imageResolver(
+      restaurant,
+      const [
+        'logo_image',
+        'logo',
+        'banner_image',
+        'banner_url',
+        'image_url',
+        'image',
+        'photo',
+      ],
+    );
+    final rating = ratingBuilder(restaurant);
+    final cuisine = cuisineTextBuilder(restaurant);
+    final delivery = parseInt(
+      restaurant['delivery_time'] ?? restaurant['deliveryTime'],
+      fallback: 30,
+    );
+    final amountForOne = parseDouble(
+      restaurant['amount_for_one'] ??
+          restaurant['amountForOne'] ??
+          restaurant['price_for_one'] ??
+          restaurant['cost_for_one'] ??
+          restaurant['lowest_price'] ??
+          restaurant['min_price'],
+      fallback: 0,
+    );
+    final displayAmount = amountForOne > 0
+        ? amountForOne
+        : _homeMinimumNestedMenuPrice(restaurant);
+
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          AspectRatio(
+            aspectRatio: 1,
+            child: Stack(
+              children: <Widget>[
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(24),
+                  child: SizedBox.expand(
+                    child: _buildHomeNetworkImage(
+                      imageUrl,
+                      fit: BoxFit.cover,
+                      placeholder: _fallback(),
+                      errorWidget: _fallback(),
+                    ),
+                  ),
+                ),
+                Positioned(
+                  right: 8,
+                  top: 8,
+                  child: GestureDetector(
+                    onTap: onSaveToggle,
+                    child: Container(
+                      width: 30,
+                      height: 30,
+                      decoration: BoxDecoration(
+                        color: Colors.black.withOpacity(0.28),
+                        borderRadius: BorderRadius.circular(15),
+                      ),
+                      child: Icon(
+                        isSaved
+                            ? Icons.favorite
+                            : Icons.favorite_border_rounded,
+                        color: Colors.white,
+                        size: 17,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Expanded(
+                child: Text(
+                  restaurant['name']?.toString() ?? 'Restaurant',
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: _homeText,
+                    fontSize: 14.8,
+                    fontWeight: FontWeight.w800,
+                    height: 1.05,
+                  ),
+                ),
+              ),
+              if (rating > 0) ...<Widget>[
+                const SizedBox(width: 6),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFEFFAF1),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Row(
+                    children: <Widget>[
+                      const Icon(Icons.star_rounded,
+                          color: _homeGreen, size: 12),
+                      const SizedBox(width: 2),
+                      Text(
+                        rating.toStringAsFixed(1),
+                        style: const TextStyle(
+                          color: _homeGreen,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+              if (rating <= 0) ...<Widget>[
+                const SizedBox(width: 6),
+                _restaurantRatingOrNewBadge(rating, fontSize: 11),
+              ],
+            ],
+          ),
+          const SizedBox(height: 5),
+          Text(
+            displayAmount > 0
+                ? '$delivery-${delivery + 5} mins | From ${formatCurrency(context, displayAmount)}'
+                : '$delivery-${delivery + 5} mins',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: _homeMuted,
+              fontSize: 11.8,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Expanded(
+            child: Align(
+              alignment: Alignment.topLeft,
+              child: Text(
+                cuisine,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: _homeMuted,
+                  fontSize: 11.8,
+                  fontWeight: FontWeight.w600,
+                  height: 1.14,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _fallback() {
+    return Container(
+      color: _homePeach,
+      child: const Center(
+        child: Icon(Icons.storefront_rounded, size: 40, color: _homeAccent),
+      ),
+    );
+  }
+}
+
+class _RestaurantCarouselCardModern extends StatelessWidget {
+  const _RestaurantCarouselCardModern({
+    required this.restaurant,
+    required this.isSaved,
+    required this.onTap,
+    required this.onSaveToggle,
+    required this.cuisineTextBuilder,
+    required this.offerTextBuilder,
+    required this.ratingBuilder,
+    required this.parseDouble,
+    required this.parseInt,
+  });
+
+  final Map<String, dynamic> restaurant;
+  final bool isSaved;
+  final VoidCallback onTap;
+  final VoidCallback onSaveToggle;
+  final String Function(Map<String, dynamic>) cuisineTextBuilder;
+  final String Function(Map<String, dynamic>) offerTextBuilder;
+  final double Function(Map<String, dynamic>) ratingBuilder;
+  final double Function(dynamic, {double fallback}) parseDouble;
+  final int Function(dynamic, {int fallback}) parseInt;
+
+  String _resolveImageUrl(Map<String, dynamic> item) {
+    for (final key in const <String>[
+      'logo_image',
+      'logo',
+      'banner_image',
+      'banner_url',
+      'image_url',
+      'image',
+      'photo'
+    ]) {
+      final value = item[key];
+      if (value is String && value.trim().isNotEmpty) {
+        return _resolveHomeAssetUrl(value);
+      }
+    }
+    return '';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final primary = Theme.of(context).colorScheme.primary;
+    final imageUrl = _resolveImageUrl(restaurant);
+    final rating = ratingBuilder(restaurant);
+    final cuisine = cuisineTextBuilder(restaurant);
+    final delivery = parseInt(
+      restaurant['delivery_time'] ?? restaurant['deliveryTime'],
+      fallback: 30,
+    );
+    final distance = parseDouble(restaurant['distance'], fallback: -1);
+    final offerText = offerTextBuilder(restaurant);
+    final amountForOne = parseDouble(
+      restaurant['amount_for_one'] ??
+          restaurant['amountForOne'] ??
+          restaurant['price_for_one'] ??
+          restaurant['cost_for_one'] ??
+          restaurant['lowest_price'] ??
+          restaurant['min_price'],
+      fallback: 0,
+    );
+    final displayAmount = amountForOne > 0
+        ? amountForOne
+        : _homeMinimumNestedMenuPrice(restaurant);
+
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(24),
+      child: SizedBox(
+        width: 194,
+        height: 252,
+        child: Container(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(24),
+            border: Border.all(color: _homeBorder),
+            boxShadow: <BoxShadow>[
+              BoxShadow(
+                color: Colors.black.withOpacity(0.06),
+                blurRadius: 18,
+                offset: const Offset(0, 8),
+              ),
+            ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Stack(
+                children: <Widget>[
+                  ClipRRect(
+                    borderRadius: const BorderRadius.vertical(
+                      top: Radius.circular(22),
+                    ),
+                    child: SizedBox(
+                      width: 194,
+                      height: 132,
+                      child: imageUrl.isNotEmpty
+                          ? _buildHomeNetworkImage(
+                              imageUrl,
+                              fit: BoxFit.cover,
+                              width: 194,
+                              height: 132,
+                              errorWidget: _fallback(),
+                            )
+                          : _fallback(),
+                    ),
+                  ),
+                  if (offerText.isNotEmpty)
+                    Positioned(
+                      left: 12,
+                      top: 12,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 9, vertical: 5),
+                        decoration: BoxDecoration(
+                          color: primary,
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                        child: Text(
+                          offerText.length > 12
+                              ? offerText.substring(0, 12)
+                              : offerText,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 10.5,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ),
+                    ),
+                  Positioned(
+                    right: 12,
+                    top: 12,
+                    child: GestureDetector(
+                      onTap: onSaveToggle,
+                      child: Container(
+                        width: 32,
+                        height: 32,
+                        decoration: BoxDecoration(
+                          color: Colors.black.withOpacity(0.34),
+                          shape: BoxShape.circle,
+                        ),
+                        child: Icon(
+                          isSaved
+                              ? Icons.favorite
+                              : Icons.favorite_border_rounded,
+                          color: Colors.white,
+                          size: 18,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      Row(
+                        children: <Widget>[
+                          Expanded(
+                            child: Text(
+                              restaurant['name']?.toString() ?? 'Restaurant',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: _homeText,
+                                fontSize: 16.2,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                          ),
+                          if (rating > 0)
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 6, vertical: 3),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFEFFAF1),
+                                borderRadius: BorderRadius.circular(999),
+                              ),
+                              child: Row(
+                                children: <Widget>[
+                                  const Icon(
+                                    Icons.star_rounded,
+                                    color: _homeGreen,
+                                    size: 12,
+                                  ),
+                                  const SizedBox(width: 2),
+                                  Text(
+                                    rating.toStringAsFixed(1),
+                                    style: const TextStyle(
+                                      color: _homeGreen,
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w800,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          if (rating <= 0)
+                            _restaurantRatingOrNewBadge(rating, fontSize: 11),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        distance >= 0
+                            ? '$delivery-${delivery + 5} mins  |  ${distance.toStringAsFixed(distance >= 10 ? 0 : 1)} km'
+                            : '$delivery-${delivery + 5} mins',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: _homeMuted,
+                          fontSize: 11.6,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        cuisine,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: _homeMuted,
+                          fontSize: 11.6,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const Spacer(),
+                      Text(
+                        displayAmount > 0
+                            ? 'From ${formatCurrency(context, displayAmount)}'
+                            : 'Order now',
+                        style: TextStyle(
+                          color: primary,
+                          fontSize: 11.6,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _fallback() {
+    return Container(
+      color: _homePeach,
+      child: const Center(
+        child: Icon(Icons.storefront_rounded, size: 52, color: _homeAccent),
+      ),
+    );
+  }
+}
+
+class _OfferTile extends StatelessWidget {
+  const _OfferTile({
+    required this.offer,
+    this.onTap,
+    this.width = 310,
+    this.compact = false,
+    this.showCoupon = true,
+    this.showText = true,
+    this.showRewardAndValidityOnly = false,
+  });
+
+  final Map<String, dynamic> offer;
+  final VoidCallback? onTap;
+  final double width;
+  final bool compact;
+  final bool showCoupon;
+  final bool showText;
+  final bool showRewardAndValidityOnly;
+
+  @override
+  Widget build(BuildContext context) {
+    final style = _offerVisualStyle(offer);
+    final title =
+        (offer['title'] ?? offer['code'] ?? 'Special offer').toString().trim();
+    final code =
+        (offer['code'] ?? offer['coupon_code'] ?? '').toString().trim();
+    final imageUrl = _homeOfferImage(offer);
+    final menuLabel = _homeOfferMenuLabel(offer);
+    final rewardLabel = _homeOfferRewardText(context, offer).trim();
+
+    return GestureDetector(
+      onTap: onTap ?? () => Navigator.pushNamed(context, '/offers'),
+      child: Container(
+        width: width,
+        decoration: BoxDecoration(
+          color: style.colors.last,
+          borderRadius: BorderRadius.circular(compact ? 16 : 18),
+          boxShadow: [
+            BoxShadow(
+              color: style.colors.last.withOpacity(0.24),
+              blurRadius: compact ? 12 : 18,
+              offset: Offset(0, compact ? 7 : 10),
+            ),
+          ],
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: Stack(
+          children: <Widget>[
+            Positioned.fill(
+              child: imageUrl.isNotEmpty
+                  ? AppCachedImage(
+                      imageUrl: imageUrl,
+                      // cover so the artwork fills the whole card (no
+                      // letterbox gap); the text overlay sits on the gradient.
+                      fit: BoxFit.cover,
+                      width: width.isFinite ? width : null,
+                      height: compact ? 154 : 220,
+                      loadingBuilder: (context, _, __) =>
+                          _OfferBackdropFallback(style: style),
+                      errorBuilder: (_, __, ___) =>
+                          _OfferBackdropFallback(style: style),
+                    )
+                  : _OfferBackdropFallback(style: style),
+            ),
+            if (showText)
+              Positioned.fill(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.centerLeft,
+                      end: Alignment.centerRight,
+                      colors: [
+                        Colors.black.withOpacity(0.72),
+                        Colors.black.withOpacity(0.25),
+                        Colors.black.withOpacity(0.08),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            if (showText)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(14, 13, 14, 10),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    _OfferBannerBadge(style: style),
+                    const SizedBox(height: 12),
+                    if (rewardLabel.isNotEmpty) ...[
+                      Text(
+                        rewardLabel.toUpperCase(),
+                        maxLines: 3,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 28,
+                          height: 0.92,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                      const SizedBox(height: 5),
+                    ],
+                    Text(
+                      menuLabel.isEmpty ? title : menuLabel,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.92),
+                        fontSize: 12,
+                        height: 1.15,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    if (showCoupon) ...[
+                      const SizedBox(height: 9),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 10, vertical: 7),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withOpacity(0.94),
+                          borderRadius: BorderRadius.circular(9),
+                        ),
+                        child: Text(
+                          code.isEmpty ? '+ FREE ITEM' : 'CODE $code',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: style.colors.last,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                      ),
+                    ],
+                    const Spacer(),
+                    Row(
+                      children: [
+                        const Icon(Icons.timer_outlined,
+                            color: Colors.white, size: 16),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: Text(
+                            _homeOfferValidity(offer).toUpperCase(),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                        ),
+                        Text(
+                          _homeOfferEndDate(offer),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: Colors.white.withOpacity(0.92),
+                            fontSize: 11,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                        const SizedBox(width: 4),
+                        const Icon(Icons.chevron_right_rounded,
+                            color: Colors.white, size: 17),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            if (showRewardAndValidityOnly) ...[
+              if (rewardLabel.isNotEmpty)
+                Positioned(
+                  left: compact ? 8 : 12,
+                  top: compact ? 8 : 12,
+                  right: compact ? 8 : 12,
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: Container(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: compact ? 7 : 10,
+                        vertical: compact ? 5 : 7,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withOpacity(0.56),
+                        borderRadius: BorderRadius.circular(compact ? 9 : 12),
+                      ),
+                      child: Text(
+                        rewardLabel.toUpperCase(),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: compact ? 9.2 : 12,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              Positioned(
+                left: compact ? 8 : 12,
+                right: compact ? 8 : 12,
+                bottom: compact ? 8 : 12,
+                child: Container(
+                  padding: EdgeInsets.symmetric(
+                    horizontal: compact ? 7 : 10,
+                    vertical: compact ? 6 : 8,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withOpacity(0.50),
+                    borderRadius: BorderRadius.circular(compact ? 10 : 12),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.timer_outlined,
+                        color: Colors.white,
+                        size: compact ? 12 : 15,
+                      ),
+                      SizedBox(width: compact ? 4 : 6),
+                      Expanded(
+                        child: Text(
+                          _homeOfferValidity(offer).toUpperCase(),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: compact ? 8.6 : 10.5,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                      ),
+                      if (!compact) ...[
+                        Text(
+                          _homeOfferEndDate(offer),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: Colors.white.withOpacity(0.92),
+                            fontSize: 10.5,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                        const SizedBox(width: 2),
+                      ],
+                      Icon(
+                        Icons.chevron_right_rounded,
+                        color: Colors.white,
+                        size: compact ? 13 : 16,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _OfferBannerBadge extends StatelessWidget {
+  const _OfferBannerBadge({required this.style});
+
+  final _HomeOfferStyle style;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(colors: style.colors),
+        borderRadius: BorderRadius.circular(9),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(style.icon, color: Colors.white, size: 13),
+          const SizedBox(width: 5),
+          Text(
+            style.label.toUpperCase(),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 10,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _OfferBackdropFallback extends StatelessWidget {
+  const _OfferBackdropFallback({required this.style});
+
+  final _HomeOfferStyle style;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: style.colors,
+        ),
+      ),
+      child: Align(
+        alignment: Alignment.centerRight,
+        child: Padding(
+          padding: const EdgeInsets.only(right: 26),
+          child: Icon(
+            style.icon,
+            color: Colors.white.withOpacity(0.26),
+            size: 104,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _OfferIconBadge extends StatelessWidget {
+  const _OfferIconBadge({required this.style});
+
+  final _HomeOfferStyle style;
+
+  @override
+  Widget build(BuildContext context) {
+    const size = 32.0;
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.2),
+        borderRadius: BorderRadius.circular(11),
+        border: Border.all(color: Colors.white.withOpacity(0.18)),
+      ),
+      child: Icon(
+        style.icon,
+        color: Colors.white,
+        size: 17,
+      ),
+    );
+  }
+}
+
+class _HomeOfferStyle {
+  const _HomeOfferStyle({
+    required this.label,
+    required this.icon,
+    required this.colors,
+  });
+
+  final String label;
+  final IconData icon;
+  final List<Color> colors;
+}
+
+_HomeOfferStyle _offerVisualStyle(Map<String, dynamic> offer) {
+  final type = _homeOfferType(offer);
+  if (type.contains('delivery')) {
+    return const _HomeOfferStyle(
+      label: 'Delivery',
+      icon: Icons.delivery_dining_rounded,
+      colors: [Color(0xFF0891B2), Color(0xFF0E7490)],
+    );
+  }
+  if (type.contains('packaging')) {
+    return const _HomeOfferStyle(
+      label: 'Packaging',
+      icon: Icons.inventory_2_rounded,
+      colors: [Color(0xFF7C3AED), Color(0xFF5B21B6)],
+    );
+  }
+  if (type.contains('wallet') || type.contains('cashback')) {
+    return const _HomeOfferStyle(
+      label: 'Cashback',
+      icon: Icons.account_balance_wallet_rounded,
+      colors: [Color(0xFF059669), Color(0xFF047857)],
+    );
+  }
+  if (type.contains('reward_points')) {
+    return const _HomeOfferStyle(
+      label: 'Points',
+      icon: Icons.stars_rounded,
+      colors: [Color(0xFFF59E0B), Color(0xFFD97706)],
+    );
+  }
+  if (type.contains('scratch')) {
+    return const _HomeOfferStyle(
+      label: '',
+      icon: Icons.confirmation_number_rounded,
+      colors: [Color(0xFFDB2777), Color(0xFFBE185D)],
+    );
+  }
+  if (type.contains('voucher') || type.contains('gift')) {
+    return const _HomeOfferStyle(
+      label: 'Gift',
+      icon: Icons.card_giftcard_rounded,
+      colors: [Color(0xFFE11D48), Color(0xFFBE123C)],
+    );
+  }
+  if (type.contains('referral')) {
+    return const _HomeOfferStyle(
+      label: 'Referral',
+      icon: Icons.group_add_rounded,
+      colors: [Color(0xFF2563EB), Color(0xFF1D4ED8)],
+    );
+  }
+  if (type.contains('festival')) {
+    return const _HomeOfferStyle(
+      label: 'Festival',
+      icon: Icons.celebration_rounded,
+      colors: [Color(0xFFEA580C), Color(0xFFDC2626)],
+    );
+  }
+  if (type.contains('flash')) {
+    return const _HomeOfferStyle(
+      label: 'Flash Sale',
+      icon: Icons.flash_on_rounded,
+      colors: [Color(0xFF111827), Color(0xFFEF4444)],
+    );
+  }
+  if (type.contains('bogo') ||
+      type.contains('buy_') ||
+      type.contains('free_item') ||
+      type.contains('free_drink') ||
+      type.contains('free_dessert')) {
+    return const _HomeOfferStyle(
+      label: 'Free Item',
+      icon: Icons.redeem_rounded,
+      colors: [Color(0xFF16A34A), Color(0xFF15803D)],
+    );
+  }
+  if (type.contains('combo') || type.contains('meal')) {
+    return const _HomeOfferStyle(
+      label: 'Combo Deal',
+      icon: Icons.fastfood_rounded,
+      colors: [Color(0xFFFF6B00), Color(0xFFEA580C)],
+    );
+  }
+  if (type.contains('custom')) {
+    return const _HomeOfferStyle(
+      label: 'Special Rule',
+      icon: Icons.auto_awesome_rounded,
+      colors: [Color(0xFF4F46E5), Color(0xFF7C3AED)],
+    );
+  }
+  return const _HomeOfferStyle(
+    label: 'Offer',
+    icon: Icons.local_offer_rounded,
+    colors: [Color(0xFFFF7A00), Color(0xFFE53935)],
+  );
+}
+
+String _homeOfferType(Map<String, dynamic> offer) {
+  final reward = offer['rewards'] is Map
+      ? Map<String, dynamic>.from(offer['rewards'] as Map)
+      : offer['reward_config'] is Map
+          ? Map<String, dynamic>.from(offer['reward_config'] as Map)
+          : const <String, dynamic>{};
+  return (offer['reward_type'] ??
+          reward['type'] ??
+          offer['promotion_type'] ??
+          offer['discount_type'] ??
+          '')
+      .toString()
+      .toLowerCase();
+}
+
+bool _isScratchOnlyHomePromotion(Map<String, dynamic> offer) {
+  final type = _homeOfferType(offer);
+  final title = (offer['title'] ?? '').toString().trim().toLowerCase();
+  final metadata = offer['metadata'] is Map
+      ? Map<String, dynamic>.from(offer['metadata'] as Map)
+      : const <String, dynamic>{};
+  final couponType = (offer['coupon_type'] ?? metadata['coupon_type'])
+      ?.toString()
+      .toLowerCase();
+
+  return type == 'scratch_card' ||
+      type.contains('scratch_card') ||
+      title.startsWith('scratch reward') ||
+      couponType == 'scratch_card_reward';
+}
+
+List<Map<String, dynamic>> _homePromotionDisplayOffers(
+  List<dynamic> items, {
+  bool splitItemRewards = true,
+  bool vegOnly = false,
+}) {
+  final displayOffers = <Map<String, dynamic>>[];
+  final seen = <String>{};
+
+  for (final rawOffer in items.whereType<Map>()) {
+    final offer = Map<String, dynamic>.from(rawOffer);
+    final type = _homeOfferType(offer);
+    final rawItems = offer['menu_items'];
+    final rawRewardItems = offer['reward_menu_items'];
+    if (vegOnly &&
+        ((rawItems is List &&
+                !rawItems.whereType<Map>().every(_homeRawPromotionItemIsVeg)) ||
+            (rawRewardItems is List &&
+                !rawRewardItems
+                    .whereType<Map>()
+                    .every(_homeRawPromotionItemIsVeg)))) {
+      continue;
+    }
+    final shouldSplitItemReward = splitItemRewards &&
+        _isHomeItemRewardPromotionType(type) &&
+        rawItems is List;
+
+    if (shouldSplitItemReward) {
+      final allItems = rawItems.whereType<Map>().toList(growable: false);
+      final eligibleItems = allItems
+          .where((item) => item['is_reward_item'] != true)
+          .toList(growable: false);
+      final rewardItems = allItems
+          .where((item) => item['is_reward_item'] == true)
+          .toList(growable: false);
+      final displayItems = eligibleItems.isNotEmpty ? eligibleItems : allItems;
+
+      if (displayItems.length > 1) {
+        for (final item in displayItems) {
+          final itemId = (item['menu_item_id'] ?? item['id'] ?? '').toString();
+          final key =
+              '${offer['display_id'] ?? offer['id'] ?? 'promotion'}:item:$itemId';
+          if (itemId.trim().isEmpty || !seen.add(key)) continue;
+          displayOffers.add({
+            ...offer,
+            'display_id': key,
+            'display_item_id': itemId,
+            'title': item['name'] ?? item['title'] ?? offer['title'],
+            'name': item['name'] ?? item['title'] ?? offer['name'],
+            'subtitle':
+                offer['title'] ?? offer['subtitle'] ?? offer['description'],
+            'menu_items': [item],
+            'reward_menu_items': rewardItems,
+          });
+        }
+        continue;
+      }
+    }
+
+    final key = (offer['display_id'] ?? offer['id'] ?? offer['title'] ?? '')
+        .toString()
+        .trim();
+    if (key.isEmpty || !seen.add(key)) continue;
+    displayOffers.add(offer);
+  }
+
+  return displayOffers;
+}
+
+bool _homePromotionSectionUsesMenuCards(
+  Map<String, dynamic> section,
+  List<Map<String, dynamic>> offers,
+) {
+  final cardMode = section['card_mode']?.toString();
+  final displayMode = section['display_mode']?.toString();
+  if (cardMode == 'menu_cards' || displayMode == 'menu_cards') return true;
+
+  // Any offer that actually maps menu items -> show the section as a product
+  // rail. Order-level offers (free delivery, cashback, flat cart coupon) stay
+  // as banner offer cards.
+  final anyShoppable = offers.any((o) {
+    final mi = o['menu_items'];
+    return mi is List && mi.whereType<Map>().isNotEmpty;
+  });
+  if (anyShoppable) return true;
+
+  final promotionTypes = <String>[
+    section['promotion_type']?.toString() ?? '',
+    ...((section['promotion_types'] is List
+            ? section['promotion_types'] as List
+            : const [])
+        .map((type) => type.toString())),
+    ...offers.map(_homeOfferType),
+  ].map((type) => type.toLowerCase().trim()).where((type) {
+    return type.isNotEmpty;
+  }).toList(growable: false);
+
+  return promotionTypes.any((type) {
+    return type.contains('combo') ||
+        type.contains('meal') ||
+        _isHomeItemRewardPromotionType(type);
+  });
+}
+
+bool _isHomeItemRewardPromotionType(String type) {
+  final normalized = type.toLowerCase().trim();
+  return normalized == 'bogo' ||
+      normalized == 'buy_x_get_y' ||
+      normalized == 'buy_x_get_x' ||
+      normalized == 'buy_2_get_1' ||
+      normalized == 'buy_3_get_1' ||
+      normalized == 'buy_3_get_2' ||
+      normalized == 'free_quantity';
+}
+
+bool _homeRawPromotionItemIsVeg(Map<dynamic, dynamic> item) {
+  final value = item['is_veg'] ?? item['veg'] ?? item['isVegetarian'];
+  if (value is bool) return value;
+  if (value is num) return value != 0;
+  final normalized = value?.toString().toLowerCase().trim();
+  return normalized == '1' || normalized == 'true' || normalized == 'yes';
+}
+
+String _homeOfferImage(Map<String, dynamic> offer) {
+  for (final key in const [
+    'promo_image',
+    'promo_image_url',
+    'promotion_image',
+    'promotion_image_url',
+    'image_url',
+    'image',
+    'banner_image',
+    'banner_image_url',
+    'thumbnail',
+    'thumbnail_url',
+  ]) {
+    final value = offer[key]?.toString().trim() ?? '';
+    if (value.isNotEmpty && value != 'null') return value;
+  }
+
+  for (final nestedKey in const ['visibility', 'media', 'assets']) {
+    final nested = offer[nestedKey];
+    if (nested is! Map) continue;
+    final nestedMap = Map<String, dynamic>.from(nested);
+    for (final key in const [
+      'promo_image',
+      'promotion_image',
+      'image_url',
+      'image',
+      'banner_image',
+      'thumbnail',
+    ]) {
+      final value = nestedMap[key]?.toString().trim() ?? '';
+      if (value.isNotEmpty && value != 'null') return value;
+    }
+  }
+
+  final menuItems = offer['menu_items'];
+  if (menuItems is List) {
+    for (final item in menuItems.whereType<Map>()) {
+      final images = item['images'];
+      if (images is List) {
+        for (final image in images) {
+          final value = image?.toString().trim() ?? '';
+          if (value.isNotEmpty && value != 'null') return value;
+        }
+      }
+
+      for (final key in const [
+        'image_url',
+        'image',
+        'thumbnail_url',
+        'photo_url'
+      ]) {
+        final value = item[key]?.toString().trim() ?? '';
+        if (value.isNotEmpty && value != 'null') return value;
+      }
+    }
+  }
+
+  return '';
+}
+
+String _homeOfferMenuLabel(Map<String, dynamic> offer) {
+  final menuItems = offer['menu_items'];
+  if (menuItems is! List) return '';
+
+  final names = menuItems
+      .whereType<Map>()
+      .map((item) => (item['name'] ?? item['title'] ?? '').toString().trim())
+      .where((name) => name.isNotEmpty && name != 'null')
+      .take(2)
+      .toList(growable: false);
+
+  if (names.isEmpty) return '';
+  if (names.length == 1) return 'On ${names.first}';
+  return names.join(' + ');
+}
+
+String _homeOfferValidity(Map<String, dynamic> offer) {
+  final raw = (offer['valid_to'] ?? offer['end_date'] ?? offer['ends_at'] ?? '')
+      .toString();
+  final parsed = DateTime.tryParse(raw);
+  if (parsed == null) return 'Limited time';
+
+  final remaining = parsed.difference(DateTime.now());
+  if (remaining.inMinutes <= 0) return 'Ending soon';
+  if (remaining.inHours < 1) return '${remaining.inMinutes} mins left';
+  if (remaining.inHours < 24) return '${remaining.inHours} hrs left';
+  if (remaining.inDays == 1) return '1 day left';
+  return '${remaining.inDays} days left';
+}
+
+String _homeOfferEndDate(Map<String, dynamic> offer) {
+  final raw = (offer['valid_to'] ?? offer['end_date'] ?? offer['ends_at'] ?? '')
+      .toString();
+  final parsed = DateTime.tryParse(raw);
+  if (parsed == null) return 'Limited time';
+
+  const months = [
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dec',
+  ];
+
+  return 'Valid till ${parsed.day} ${months[parsed.month - 1]}';
+}
+
+String _homeOfferRewardText(BuildContext context, Map<String, dynamic> offer) {
+  final type = _homeOfferType(offer);
+  final reward = offer['rewards'] is Map
+      ? Map<String, dynamic>.from(offer['rewards'] as Map)
+      : offer['reward_config'] is Map
+          ? Map<String, dynamic>.from(offer['reward_config'] as Map)
+          : const <String, dynamic>{};
+  final value = _homePriceValue(
+    offer['discount_value'] ?? offer['value'] ?? reward['value'] ?? 0,
+  );
+
+  if (type == 'free_delivery') return 'Free Delivery';
+  if (type == 'delivery_discount')
+    return _percentOrMoney(context, value, 'Delivery');
+  if (type == 'packaging_discount')
+    return _percentOrMoney(context, value, 'Packaging');
+  if (type == 'wallet_credit' || type == 'wallet_cashback') {
+    return value > 0
+        ? '${formatCurrency(context, value)} Wallet'
+        : 'Wallet Cashback';
+  }
+  if (type == 'cashback') {
+    return value > 0 ? '${_trimNumber(value)}% Cashback' : 'Cashback';
+  }
+  if (type == 'reward_points') {
+    return value > 0 ? '${_trimNumber(value)} Points' : 'Reward Points';
+  }
+  if (type == 'scratch_card') return '';
+  if (type == 'gift_voucher') {
+    return value > 0
+        ? '${formatCurrency(context, value)} Voucher'
+        : 'Gift Voucher';
+  }
+  if (type == 'referral_bonus') {
+    return value > 0
+        ? '${formatCurrency(context, value)} Referral'
+        : 'Referral Bonus';
+  }
+  if (type == 'festival_offer') {
+    return value > 0 ? '${_trimNumber(value)}% Festival' : 'Festival Offer';
+  }
+  if (type == 'flash_sale') {
+    return value > 0 ? '${_trimNumber(value)}% Flash' : 'Flash Sale';
+  }
+  if (type == 'bogo') return 'Buy 1 Get 1';
+  if (type == 'buy_3_get_1') return 'Buy 3 Get 1';
+  if (type.startsWith('buy_')) {
+    final buy = (reward['buy_quantity'] ?? '').toString();
+    final free = (reward['free_quantity'] ?? '').toString();
+    if (buy.isNotEmpty && free.isNotEmpty) return 'Buy $buy Get $free';
+    return 'Buy More Get More';
+  }
+  if (type.startsWith('free_')) return 'Free Item';
+  if (type.contains('combo') || type.contains('meal')) {
+    return value > 0 ? '${formatCurrency(context, value)} Deal' : 'Combo Deal';
+  }
+  if (type.contains('custom')) return 'Special Rule';
+  if (type.contains('percentage')) return '${_trimNumber(value)}% OFF';
+  return value > 0 ? '${formatCurrency(context, value)} OFF' : 'Live Offer';
+}
+
+String _percentOrMoney(BuildContext context, double value, String suffix) {
+  if (value <= 0) return '$suffix Off';
+  if (value <= 100) return '${_trimNumber(value)}% $suffix';
+  return '${formatCurrency(context, value)} $suffix';
+}
+
+String _trimNumber(double value) {
+  return value == value.roundToDouble()
+      ? value.toStringAsFixed(0)
+      : value.toStringAsFixed(1);
+}
+
+class _BrandBadge extends StatelessWidget {
+  const _BrandBadge({
+    required this.brand,
+    required this.imageResolver,
+    required this.onTap,
+  });
+
+  final Map<String, dynamic> brand;
+  final String Function(dynamic, List<String>) imageResolver;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final imageUrl = imageResolver(
+        brand, const ['logo_image', 'logo', 'image', 'banner_image']);
+    final name = brand['name']?.toString() ?? 'Brand';
+
+    return GestureDetector(
+      onTap: onTap,
+      child: SizedBox(
+        width: 72,
+        child: Column(
+          children: <Widget>[
+            Container(
+              width: 72,
+              height: 72,
+              decoration: BoxDecoration(
+                color: Colors.white,
+                shape: BoxShape.circle,
+                border: Border.all(color: const Color(0xFFF2DFD2)),
+              ),
+              child: ClipOval(
+                child: _buildHomeNetworkImage(
+                  imageUrl,
+                  fit: BoxFit.cover,
+                  width: 58,
+                  height: 58,
+                  placeholder: _fallback(name),
+                  errorWidget: _fallback(name),
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              name,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                color: _homeText,
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _fallback(String name) {
+    final initial = name.trim().isNotEmpty ? name.trim()[0].toUpperCase() : 'B';
+    return Container(
+      color: _homePeach,
+      child: Center(
+        child: Text(
+          initial,
+          style: const TextStyle(
+            color: _homeAccent,
+            fontSize: 24,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _RecommendedDishCard extends StatelessWidget {
+  const _RecommendedDishCard({
+    required this.dish,
+    required this.onTap,
+    this.isMenuPricePending = false,
+  });
+
+  final _HomeDishCardData dish;
+  final VoidCallback onTap;
+  final bool isMenuPricePending;
+
+  @override
+  Widget build(BuildContext context) {
+    final etaText = dish.etaMinutes > 0
+        ? '${dish.etaMinutes}-${dish.etaMinutes + 5} mins'
+        : 'Near & Fast';
+    final title = dish.restaurantName.trim().isNotEmpty &&
+            dish.restaurantName.trim().toLowerCase() != 'global menu'
+        ? dish.restaurantName.trim()
+        : dish.name;
+    final priceText = dish.price > 0
+        ? 'From ${formatCurrency(context, dish.price)}'
+        : isMenuPricePending
+            ? 'Menu'
+            : 'No menu';
+
+    return GestureDetector(
+      onTap: onTap,
+      child: SizedBox.expand(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            SizedBox(
+              height: 116,
+              width: double.infinity,
+              child: Stack(
+                clipBehavior: Clip.none,
+                children: <Widget>[
+                  Positioned.fill(
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(16),
+                      child: _buildImageOrFallback(
+                        dish.imageUrl,
+                        fit: BoxFit.contain,
+                        placeholder: _fallback(),
+                        errorWidget: _fallback(),
+                      ),
+                    ),
+                  ),
+                  Positioned(
+                    left: 0,
+                    top: 10,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 9,
+                        vertical: 5,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withOpacity(0.72),
+                        borderRadius: const BorderRadius.only(
+                          topRight: Radius.circular(6),
+                          bottomRight: Radius.circular(6),
+                        ),
+                        boxShadow: <BoxShadow>[
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.18),
+                            blurRadius: 6,
+                            offset: const Offset(0, 2),
+                          ),
+                        ],
+                      ),
+                      child: Text(
+                        priceText,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                    ),
+                  ),
+                  Positioned(
+                    left: 10,
+                    bottom: -14,
+                    child: _restaurantRatingOrNewBadge(
+                      dish.rating,
+                      fontSize: 11,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 18),
+            Text(
+              title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: _homeText,
+                fontSize: 16,
+                height: 1.1,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: <Widget>[
+                Icon(
+                  dish.etaMinutes > 0
+                      ? Icons.timer_outlined
+                      : Icons.bolt_rounded,
+                  size: 16,
+                  color: dish.etaMinutes > 0 ? _homeMuted : _homeGreen,
+                ),
+                const SizedBox(width: 5),
+                Expanded(
+                  child: Text(
+                    etaText,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: dish.etaMinutes > 0 ? _homeMuted : _homeGreen,
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _fallback() {
+    return Container(
+      color: _homePeach,
+      child: const Center(
+        child: Icon(Icons.fastfood_rounded, size: 42, color: _homeAccent),
+      ),
+    );
+  }
+}
+
+class _HomePromotionMenuCard extends StatelessWidget {
+  const _HomePromotionMenuCard({
+    required this.offer,
+    required this.width,
+    required this.onTap,
+    required this.onAdd,
+    required this.onRemove,
+  });
+
+  final Map<String, dynamic> offer;
+  final double width;
+  final VoidCallback onTap;
+  final VoidCallback onAdd;
+  final VoidCallback onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    final items = _homePromotionOfferMenuItems(offer);
+    final paidItems = _homePromotionOfferPaidMenuItems(offer);
+    final title = (offer['title'] ?? offer['name'] ?? 'Combo Deal').toString();
+    final subtitle = items.isNotEmpty
+        ? items.take(3).map((item) => item.name).join(' + ')
+        : (offer['subtitle'] ?? offer['description'] ?? '').toString();
+    final restaurantName = _homePromotionRestaurantName(offer, items);
+    final priceItems = paidItems.isNotEmpty ? paidItems : items;
+    final dealPrice = _homePromotionDealPrice(offer, priceItems);
+    final originalPrice = _homePromotionOriginalPrice(offer, priceItems);
+    final savings = (originalPrice - dealPrice).clamp(0, double.infinity);
+    final tag = _homePromotionTypeLabel(offer);
+    final orderable = _homePromotionOfferOrderable(offer);
+
+    return _unavailableWrap(
+      orderable: orderable,
+      radius: 22,
+      label: 'Closed',
+      child: InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(22),
+      child: Container(
+        width: width,
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(22),
+          boxShadow: <BoxShadow>[
+            BoxShadow(
+              color: Colors.black.withOpacity(0.08),
+              blurRadius: 18,
+              offset: const Offset(0, 8),
+            ),
+          ],
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            SizedBox(
+              height: 112,
+              child: Stack(
+                fit: StackFit.expand,
+                children: <Widget>[
+                  _HomePromotionImageStrip(items: items, offer: offer),
+                  Positioned(
+                    left: 8,
+                    top: 8,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 5,
+                      ),
+                      decoration: BoxDecoration(
+                        color: _homeAccent,
+                        borderRadius: BorderRadius.circular(999),
+                        boxShadow: <BoxShadow>[
+                          BoxShadow(
+                            color: _homeAccent.withOpacity(0.28),
+                            blurRadius: 12,
+                            offset: const Offset(0, 5),
+                          ),
+                        ],
+                      ),
+                      child: Text(
+                        tag,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 9,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                    ),
+                  ),
+                  if (_homePromotionDiscountPercent(
+                          offer, originalPrice, dealPrice) >
+                      0)
+                    Positioned(
+                      right: 8,
+                      bottom: 8,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 6,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(12),
+                          boxShadow: <BoxShadow>[
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.12),
+                              blurRadius: 10,
+                              offset: const Offset(0, 4),
+                            ),
+                          ],
+                        ),
+                        child: Text(
+                          '${_homePromotionDiscountPercent(offer, originalPrice, dealPrice).round()}% OFF',
+                          style: const TextStyle(
+                            color: _homeAccent,
+                            fontSize: 10,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    Text(
+                      title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: _homeText,
+                        fontSize: 12.5,
+                        height: 1.08,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    if (restaurantName.isNotEmpty) ...[
+                      const SizedBox(height: 3),
+                      Text(
+                        restaurantName,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: _homeMuted,
+                          fontSize: 10.2,
+                          height: 1.08,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 3),
+                    Text(
+                      subtitle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: _homeMuted,
+                        fontSize: 9.6,
+                        height: 1.16,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const Spacer(),
+                    Row(
+                      children: <Widget>[
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
+                            children: <Widget>[
+                              Row(
+                                children: <Widget>[
+                                  Expanded(
+                                    child: FittedBox(
+                                      fit: BoxFit.scaleDown,
+                                      alignment: Alignment.centerLeft,
+                                      child: Text(
+                                        formatCurrency(context, dealPrice),
+                                        maxLines: 1,
+                                        style: const TextStyle(
+                                          color: _homeText,
+                                          fontSize: 15,
+                                          fontWeight: FontWeight.w900,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                  if (originalPrice > dealPrice) ...[
+                                    const SizedBox(width: 4),
+                                    Flexible(
+                                      child: Text(
+                                        formatCurrency(context, originalPrice),
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(
+                                          color: _homeMuted,
+                                          fontSize: 9,
+                                          fontWeight: FontWeight.w700,
+                                          decoration:
+                                              TextDecoration.lineThrough,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ],
+                              ),
+                              if (savings > 0)
+                                Text(
+                                  'Save ${formatCurrency(context, savings)}',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    color: _homeGreen,
+                                    fontSize: 9,
+                                    fontWeight: FontWeight.w900,
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        _HomePromotionAddControl(
+                          offer: offer,
+                          items: paidItems.isNotEmpty ? paidItems : items,
+                          onAdd: onAdd,
+                          onRemove: onRemove,
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+      ),
+    );
+  }
+}
+
+class _HomePromotionImageStrip extends StatelessWidget {
+  const _HomePromotionImageStrip({required this.items, required this.offer});
+
+  final List<MenuItem> items;
+  final Map<String, dynamic> offer;
+
+  @override
+  Widget build(BuildContext context) {
+    final imageUrls = items
+        .expand((item) => item.images)
+        .map(AppImageCache.resolveUrl)
+        .where((url) => url.trim().isNotEmpty)
+        .toSet()
+        .toList(growable: false);
+    final offerImage = _resolveHomeAssetUrl(
+      (offer['image_url'] ?? offer['image'] ?? offer['promo_image'] ?? '')
+          .toString(),
+    );
+    final urls = imageUrls.isNotEmpty
+        ? imageUrls
+        : (offerImage.isNotEmpty ? <String>[offerImage] : const <String>[]);
+
+    final type = _homeOfferType(offer);
+    final shouldSlideFullImage =
+        urls.length > 1 && (type.contains('combo') || type.contains('meal'));
+
+    if (shouldSlideFullImage) {
+      return _HomePromotionImageCarousel(
+        urls: urls,
+        fallback: _fallback(),
+      );
+    }
+
+    return _buildImageOrFallback(
+      urls.isEmpty ? '' : urls.first,
+      fit: BoxFit.contain,
+      placeholder: _fallback(),
+      errorWidget: _fallback(),
+    );
+  }
+
+  Widget _fallback() {
+    return Container(
+      color: _homePeach,
+      child: const Center(
+        child: Icon(Icons.restaurant_menu_rounded, color: _homeAccent),
+      ),
+    );
+  }
+}
+
+class _HomePromotionImageCarousel extends StatefulWidget {
+  const _HomePromotionImageCarousel({
+    required this.urls,
+    required this.fallback,
+  });
+
+  final List<String> urls;
+  final Widget fallback;
+
+  @override
+  State<_HomePromotionImageCarousel> createState() =>
+      _HomePromotionImageCarouselState();
+}
+
+class _HomePromotionImageCarouselState
+    extends State<_HomePromotionImageCarousel> {
+  late final PageController _controller;
+  Timer? _timer;
+  int _index = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = PageController();
+    _startTimer();
+  }
+
+  @override
+  void didUpdateWidget(covariant _HomePromotionImageCarousel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.urls.length != widget.urls.length ||
+        oldWidget.urls.join('|') != widget.urls.join('|')) {
+      _index = 0;
+      if (_controller.hasClients) {
+        _controller.jumpToPage(0);
+      }
+      _startTimer();
+    }
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _startTimer() {
+    _timer?.cancel();
+    if (widget.urls.length < 2) return;
+    _timer = Timer.periodic(const Duration(seconds: 3), (_) {
+      if (!mounted || !_controller.hasClients) return;
+      final next = (_index + 1) % widget.urls.length;
+      _controller.animateToPage(
+        next,
+        duration: const Duration(milliseconds: 420),
+        curve: Curves.easeOutCubic,
+      );
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      fit: StackFit.expand,
+      children: <Widget>[
+        IgnorePointer(
+          child: PageView.builder(
+            controller: _controller,
+            itemCount: widget.urls.length,
+            onPageChanged: (value) => setState(() => _index = value),
+            itemBuilder: (context, index) {
+              return _buildImageOrFallback(
+                widget.urls[index],
+                fit: BoxFit.contain,
+                placeholder: widget.fallback,
+                errorWidget: widget.fallback,
+              );
+            },
+          ),
+        ),
+        if (widget.urls.length > 1)
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 6,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: List<Widget>.generate(widget.urls.length, (dotIndex) {
+                final active = dotIndex == _index;
+                return AnimatedContainer(
+                  duration: const Duration(milliseconds: 180),
+                  margin: const EdgeInsets.symmetric(horizontal: 2),
+                  width: active ? 12 : 4,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(active ? 0.95 : 0.58),
+                    borderRadius: BorderRadius.circular(999),
+                    boxShadow: active
+                        ? <BoxShadow>[
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.18),
+                              blurRadius: 5,
+                              offset: const Offset(0, 1),
+                            ),
+                          ]
+                        : null,
+                  ),
+                );
+              }),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _HomePromotionAddControl extends StatelessWidget {
+  const _HomePromotionAddControl({
+    required this.offer,
+    required this.items,
+    required this.onAdd,
+    required this.onRemove,
+  });
+
+  final Map<String, dynamic> offer;
+  final List<MenuItem> items;
+  final VoidCallback onAdd;
+  final VoidCallback onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    return Consumer<CartProvider>(
+      builder: (context, cart, _) {
+        final quantity = items.isEmpty ? 0 : cart.quantityFor(items.first.id);
+        if (quantity > 0) {
+          return Container(
+            height: 32,
+            width: 82,
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                colors: [_homeAccent, _homeAccentDeep],
+              ),
+              borderRadius: BorderRadius.circular(14),
+              boxShadow: <BoxShadow>[
+                BoxShadow(
+                  color: _homeAccent.withOpacity(0.25),
+                  blurRadius: 12,
+                  offset: const Offset(0, 7),
+                ),
+              ],
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: <Widget>[
+                InkWell(
+                  onTap: onRemove,
+                  borderRadius: BorderRadius.circular(12),
+                  child: const SizedBox(
+                    width: 24,
+                    height: 32,
+                    child: Icon(Icons.remove_rounded,
+                        color: Colors.white, size: 16),
+                  ),
+                ),
+                Text(
+                  quantity.toString(),
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                InkWell(
+                  onTap: onAdd,
+                  borderRadius: BorderRadius.circular(12),
+                  child: const SizedBox(
+                    width: 24,
+                    height: 32,
+                    child:
+                        Icon(Icons.add_rounded, color: Colors.white, size: 16),
+                  ),
+                ),
+              ],
+            ),
+          );
+        }
+
+        return InkWell(
+          onTap: onAdd,
+          borderRadius: BorderRadius.circular(14),
+          child: Container(
+            height: 32,
+            width: 64,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                colors: [_homeAccent, _homeAccentDeep],
+              ),
+              borderRadius: BorderRadius.circular(14),
+              boxShadow: <BoxShadow>[
+                BoxShadow(
+                  color: _homeAccent.withOpacity(0.25),
+                  blurRadius: 12,
+                  offset: const Offset(0, 7),
+                ),
+              ],
+            ),
+            child: const Text(
+              'Add +',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 11,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// A promo dish card is orderable only if at least one of its (paid) menu
+/// items is available and its restaurant is open.
+bool _homePromotionOfferOrderable(Map<String, dynamic> offer) {
+  bool flag(dynamic v) {
+    if (v == null) return true; // absent -> assume ok
+    if (v is bool) return v;
+    if (v is num) return v != 0;
+    final s = v.toString().toLowerCase().trim();
+    return s == 'true' || s == '1' || s == 'yes';
+  }
+
+  final raw = <dynamic>[
+    if (offer['menu_items'] is List) ...(offer['menu_items'] as List),
+  ];
+  final maps = raw.whereType<Map>().toList(growable: false);
+  if (maps.isEmpty) return true;
+  return maps.any((m) =>
+      m['is_reward_item'] != true &&
+      flag(m['is_available'] ?? m['available']) &&
+      flag(m['restaurant_is_open'] ?? m['restaurant_open']));
+}
+
+List<MenuItem> _homePromotionOfferMenuItems(Map<String, dynamic> offer) {
+  final rawItems = <dynamic>[
+    if (offer['menu_items'] is List) ...(offer['menu_items'] as List),
+    if (offer['reward_menu_items'] is List)
+      ...(offer['reward_menu_items'] as List),
+  ];
+  if (rawItems.isEmpty) return const <MenuItem>[];
+
+  return rawItems
+      .whereType<Map>()
+      .map((item) => MenuItem.fromJson(Map<String, dynamic>.from(item)))
+      .where((item) => item.id > 0)
+      .toList(growable: false);
+}
+
+List<MenuItem> _homePromotionOfferPaidMenuItems(Map<String, dynamic> offer) {
+  final rawItems = offer['menu_items'];
+  if (rawItems is! List) return const <MenuItem>[];
+
+  return rawItems
+      .whereType<Map>()
+      .where((item) => item['is_reward_item'] != true)
+      .map((item) => MenuItem.fromJson(Map<String, dynamic>.from(item)))
+      .where((item) => item.id > 0)
+      .toList(growable: false);
+}
+
+bool _homePromotionUsesEmbeddedDealPrice(Map<String, dynamic> offer) {
+  final type = _homeOfferType(offer);
+  return type.contains('combo') || type.contains('meal');
+}
+
+String _homePromotionRestaurantName(
+  Map<String, dynamic> offer,
+  List<MenuItem> items,
+) {
+  final restaurant = offer['restaurant'];
+  final restaurantMap =
+      restaurant is Map ? Map<String, dynamic>.from(restaurant) : null;
+  final explicit = (offer['restaurant_name'] ??
+          offer['restaurantName'] ??
+          restaurantMap?['name'] ??
+          '')
+      .toString()
+      .trim();
+  if (explicit.isNotEmpty && explicit.toLowerCase() != 'restaurant') {
+    return explicit;
+  }
+
+  final rawItems = offer['menu_items'];
+  if (rawItems is List) {
+    for (final rawItem in rawItems.whereType<Map>()) {
+      final item = Map<String, dynamic>.from(rawItem);
+      final name = (item['restaurant_name'] ??
+              item['restaurantName'] ??
+              item['restaurant']?['name'] ??
+              '')
+          .toString()
+          .trim();
+      if (name.isNotEmpty && name.toLowerCase() != 'restaurant') {
+        return name;
+      }
+    }
+  }
+
+  return '';
+}
+
+double _homePromotionDealPrice(
+  Map<String, dynamic> offer,
+  List<MenuItem> items,
+) {
+  final reward = offer['rewards'] is Map
+      ? Map<String, dynamic>.from(offer['rewards'] as Map)
+      : offer['reward_config'] is Map
+          ? Map<String, dynamic>.from(offer['reward_config'] as Map)
+          : const <String, dynamic>{};
+  final groupPrice = _homePromotionNumber(
+    offer['effective_price'] ??
+        offer['combo_price'] ??
+        offer['price'] ??
+        reward['effective_price'] ??
+        reward['price'],
+  );
+  if (groupPrice > 0) return groupPrice;
+
+  final rewardValue = _homePromotionNumber(
+    offer['discount_value'] ?? offer['value'] ?? reward['value'],
+  );
+  if (rewardValue > 0) return rewardValue;
+
+  return items.fold<double>(0, (total, item) => total + item.finalPrice);
+}
+
+double _homePromotionOriginalPrice(
+  Map<String, dynamic> offer,
+  List<MenuItem> items,
+) {
+  final reward = offer['rewards'] is Map
+      ? Map<String, dynamic>.from(offer['rewards'] as Map)
+      : offer['reward_config'] is Map
+          ? Map<String, dynamic>.from(offer['reward_config'] as Map)
+          : const <String, dynamic>{};
+  final groupActual = _homePromotionNumber(
+    offer['actual_price'] ??
+        offer['original_price'] ??
+        reward['actual_price'] ??
+        reward['original_price'],
+  );
+  if (groupActual > 0) return groupActual;
+
+  return items.fold<double>(0, (total, item) => total + item.price);
+}
+
+int? _homePromotionId(Map<String, dynamic> offer) {
+  final value = offer['id'] ?? offer['promotion_id'];
+  if (value is num) return value.toInt();
+  return int.tryParse(value?.toString() ?? '');
+}
+
+String? _homePromotionCouponCode(Map<String, dynamic> offer) {
+  final code = (offer['coupon_code'] ?? offer['code'] ?? '').toString().trim();
+  return code.isEmpty || code == 'null' ? null : code;
+}
+
+String? _homePromotionGroupKey(Map<String, dynamic> offer) {
+  final key = (offer['display_id'] ??
+          offer['group_key'] ??
+          offer['key'] ??
+          offer['id'] ??
+          '')
+      .toString()
+      .trim();
+  return key.isEmpty || key == 'null' ? null : key;
+}
+
+double _homePromotionDiscountPercent(
+  Map<String, dynamic> offer,
+  double originalPrice,
+  double dealPrice,
+) {
+  final reward = offer['rewards'] is Map
+      ? Map<String, dynamic>.from(offer['rewards'] as Map)
+      : offer['reward_config'] is Map
+          ? Map<String, dynamic>.from(offer['reward_config'] as Map)
+          : const <String, dynamic>{};
+  final configured = _homePromotionNumber(
+    offer['discount_percent'] ?? reward['discount_percent'],
+  );
+  if (configured > 0) return configured;
+  if (originalPrice <= 0 || dealPrice >= originalPrice) return 0;
+  return ((originalPrice - dealPrice) / originalPrice) * 100;
+}
+
+String _homePromotionTypeLabel(Map<String, dynamic> offer) {
+  final type = _homeOfferType(offer);
+  if (type.contains('meal')) return 'MEAL DEAL';
+  if (type.contains('combo')) return 'COMBO';
+  if (type == 'bogo') return 'BOGO';
+  if (type.startsWith('buy_')) return 'BUY MORE';
+  if (type.contains('free_item')) return 'FREE ITEM';
+  if (type.contains('flash')) return 'FLASH';
+  if (type.contains('festival')) return 'FESTIVE';
+  return 'OFFER';
+}
+
+double _homePromotionNumber(dynamic value) {
+  if (value is num) return value.toDouble();
+  return double.tryParse(value?.toString() ?? '') ?? 0;
+}
+
+class _DishPreviewCard extends StatelessWidget {
+  const _DishPreviewCard({
+    required this.dish,
+    required this.onTap,
+    required this.onAdd,
+  });
+
+  static const double _cardWidth = 110;
+  static const double _imageHeight = 70;
+
+  final _HomeDishCardData dish;
+  final VoidCallback onTap;
+  final VoidCallback onAdd;
+
+  @override
+  Widget build(BuildContext context) {
+    return _unavailableWrap(
+      orderable: dish.orderable,
+      label: dish.restaurantOpen ? 'Unavailable' : 'Closed',
+      child: GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: _cardWidth,
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(20),
+          boxShadow: <BoxShadow>[
+            BoxShadow(
+              color: Colors.black.withOpacity(0.06),
+              blurRadius: 14,
+              offset: const Offset(0, 6),
+            ),
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            ClipRRect(
+              borderRadius:
+                  const BorderRadius.vertical(top: Radius.circular(20)),
+              child: SizedBox(
+                height: _imageHeight,
+                width: _cardWidth,
+                child: _buildImageOrFallback(
+                  dish.imageUrl,
+                  fit: BoxFit.cover,
+                  width: _cardWidth,
+                  height: _imageHeight,
+                  placeholder: _fallback(),
+                  errorWidget: _fallback(),
+                ),
+              ),
+            ),
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(9, 5, 9, 7),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    if (dish.isVeg)
+                      const Icon(Icons.eco_rounded,
+                          color: _homeGreen, size: 12),
+                    const SizedBox(height: 2),
+                    Text(
+                      dish.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: _homeText,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 1),
+                    Text(
+                      dish.restaurantName,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: _homeMuted,
+                        fontSize: 9.5,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                    const Spacer(),
+                    Row(
+                      children: <Widget>[
+                        Expanded(
+                          child: Text(
+                            formatCurrency(context, dish.price),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: _homeText,
+                              fontSize: 10.5,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                        _DishAddButton(
+                          dish: dish,
+                          onAdd: onAdd,
+                          compact: true,
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+      ),
+    );
+  }
+
+  Widget _fallback() {
+    return Container(
+      color: _homePeach,
+      child: const Center(
+        child: Icon(Icons.fastfood_rounded, size: 42, color: _homeAccent),
+      ),
+    );
+  }
+}
+
+class _DishAddButton extends StatelessWidget {
+  const _DishAddButton({
+    required this.dish,
+    required this.onAdd,
+    this.compact = false,
+  });
+
+  final _HomeDishCardData dish;
+  final VoidCallback onAdd;
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context) {
+    return Consumer<CartProvider>(
+      builder: (context, cart, _) {
+        final quantity =
+            dish.item == null ? 0 : cart.quantityFor(dish.item!.id);
+        final size = compact ? 30.0 : 36.0;
+        if (quantity > 0 && dish.item != null) {
+          return Material(
+            color: _homeAccent,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(999),
+              side: const BorderSide(color: _homeAccent),
+            ),
+            child: SizedBox(
+              width: compact ? 82 : 96,
+              height: size,
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: <Widget>[
+                  InkWell(
+                    onTap: () => cart.decrementQuantity(dish.item!.id),
+                    borderRadius: BorderRadius.circular(999),
+                    child: SizedBox(
+                      width: compact ? 26 : 30,
+                      height: size,
+                      child: Icon(
+                        Icons.remove_rounded,
+                        size: compact ? 16 : 18,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ),
+                  Text(
+                    quantity > 99 ? '99+' : quantity.toString(),
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  InkWell(
+                    onTap: onAdd,
+                    borderRadius: BorderRadius.circular(999),
+                    child: SizedBox(
+                      width: compact ? 26 : 30,
+                      height: size,
+                      child: Icon(
+                        Icons.add_rounded,
+                        size: compact ? 16 : 18,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        }
+        return Material(
+          color: Colors.white,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(999),
+            side: BorderSide(
+              color: _homeAccent.withOpacity(0.55),
+            ),
+          ),
+          child: InkWell(
+            onTap: onAdd,
+            borderRadius: BorderRadius.circular(999),
+            child: SizedBox(
+              width: size,
+              height: size,
+              child: Center(
+                child: Icon(
+                  Icons.add_rounded,
+                  size: compact ? 18 : 22,
+                  color: _homeAccent,
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _RestaurantListTile extends StatelessWidget {
+  const _RestaurantListTile({
+    required this.restaurant,
+    required this.isSaved,
+    required this.onTap,
+    required this.onSaveToggle,
+    required this.cuisineTextBuilder,
+    required this.ratingBuilder,
+    required this.parseDouble,
+    required this.parseInt,
+    required this.imageResolver,
+  });
+
+  final Map<String, dynamic> restaurant;
+  final bool isSaved;
+  final VoidCallback onTap;
+  final VoidCallback onSaveToggle;
+  final String Function(Map<String, dynamic>) cuisineTextBuilder;
+  final double Function(Map<String, dynamic>) ratingBuilder;
+  final double Function(dynamic, {double fallback}) parseDouble;
+  final int Function(dynamic, {int fallback}) parseInt;
+  final String Function(dynamic, List<String>) imageResolver;
+
+  @override
+  Widget build(BuildContext context) {
+    final imageUrl = imageResolver(
+      restaurant,
+      const [
+        'logo_image',
+        'logo',
+        'banner_image',
+        'banner_url',
+        'image_url',
+        'image',
+        'photo',
+      ],
+    );
+    final rating = ratingBuilder(restaurant);
+    final delivery = parseInt(
+      restaurant['delivery_time'] ?? restaurant['deliveryTime'],
+      fallback: 30,
+    );
+    final cuisine = cuisineTextBuilder(restaurant);
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(18),
+      child: Container(
+        padding: const EdgeInsets.all(10),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: _homeBorder),
+        ),
+        child: Row(
+          children: <Widget>[
+            ClipRRect(
+              borderRadius: BorderRadius.circular(14),
+              child: SizedBox(
+                width: 96,
+                height: 84,
+                child: _buildHomeNetworkImage(
+                  imageUrl,
+                  fit: BoxFit.cover,
+                  width: 96,
+                  height: 84,
+                  placeholder: _fallback(),
+                  errorWidget: _fallback(),
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Row(
+                    children: <Widget>[
+                      Expanded(
+                        child: Text(
+                          restaurant['name']?.toString() ?? 'Restaurant',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: _homeText,
+                            fontSize: 18,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                      if (rating > 0)
+                        Text(
+                          '★ ${rating.toStringAsFixed(1)}',
+                          style: const TextStyle(
+                            color: _homeGreen,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      if (rating <= 0)
+                        _restaurantRatingOrNewBadge(rating, fontSize: 12),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    '$delivery-${delivery + 8} mins',
+                    style: const TextStyle(
+                      color: _homeMuted,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    cuisine,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: _homeMuted,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            GestureDetector(
+              onTap: onSaveToggle,
+              child: Icon(
+                isSaved ? Icons.favorite : Icons.favorite_border_rounded,
+                color: isSaved ? _homeAccent : _homeMuted,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _fallback() {
+    return Container(
+      color: _homePeach,
+      child: const Center(
+        child: Icon(Icons.storefront_rounded, size: 40, color: _homeAccent),
+      ),
+    );
+  }
+}
+
+class _DishListTile extends StatelessWidget {
+  const _DishListTile({
+    required this.dish,
+    required this.onTap,
+    required this.onAdd,
+  });
+
+  final _HomeDishCardData dish;
+  final VoidCallback onTap;
+  final VoidCallback onAdd;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(18),
+      child: Container(
+        padding: const EdgeInsets.all(10),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: _homeBorder),
+        ),
+        child: Row(
+          children: <Widget>[
+            ClipRRect(
+              borderRadius: BorderRadius.circular(14),
+              child: SizedBox(
+                width: 84,
+                height: 72,
+                child: _buildImageOrFallback(
+                  dish.imageUrl,
+                  fit: BoxFit.contain,
+                  width: 84,
+                  height: 72,
+                  placeholder: _fallback(),
+                  errorWidget: _fallback(),
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Text(
+                    dish.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: _homeText,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    dish.restaurantName,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: _homeMuted,
+                      fontSize: 12,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    formatCurrency(context, dish.price),
+                    style: const TextStyle(
+                      color: _homeText,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 10),
+            _DishAddButton(
+              dish: dish,
+              onAdd: onAdd,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _fallback() {
+    return Container(
+      color: _homePeach,
+      child: const Center(
+        child: Icon(Icons.fastfood_rounded, size: 34, color: _homeAccent),
+      ),
+    );
+  }
+}
+
+class _HomeFeatureStrip extends StatelessWidget {
+  const _HomeFeatureStrip();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.primary.withOpacity(0.08),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: const Row(
+        children: <Widget>[
+          Expanded(
+            child: _FeatureItem(
+              icon: Icons.delivery_dining_rounded,
+              title: 'FREE DELIVERY',
+              subtitle: 'On selected orders',
+            ),
+          ),
+          _FeatureDivider(),
+          Expanded(
+            child: _FeatureItem(
+              icon: Icons.shopping_bag_outlined,
+              title: 'NO CONTACT',
+              subtitle: 'Safe delivery',
+            ),
+          ),
+          _FeatureDivider(),
+          Expanded(
+            child: _FeatureItem(
+              icon: Icons.verified_user_outlined,
+              title: 'SAFE & HYGIENIC',
+              subtitle: 'Verified partners',
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _FeatureItem extends StatelessWidget {
+  const _FeatureItem({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+
+  @override
+  Widget build(BuildContext context) {
+    final primary = Theme.of(context).colorScheme.primary;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: <Widget>[
+        Icon(icon, size: 20, color: primary),
+        const SizedBox(width: 5),
+        Expanded(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Text(
+                title,
+                maxLines: 2,
+                style: TextStyle(
+                  color: primary,
+                  fontSize: 9.4,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              Text(
+                subtitle,
+                maxLines: 2,
+                style: const TextStyle(
+                  color: _homeText,
+                  fontSize: 9.3,
+                  height: 1.15,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _FeatureDivider extends StatelessWidget {
+  const _FeatureDivider();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 1,
+      margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
+      color: Theme.of(context).colorScheme.primary.withOpacity(0.16),
+    );
+  }
+}
+
+Widget _restaurantRatingOrNewBadge(
+  double rating, {
+  EdgeInsetsGeometry? margin,
+  double fontSize = 11,
+}) {
+  if (rating <= 0) {
+    return Container(
+      margin: margin,
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0A9443),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          const Icon(
+            Icons.star_rounded,
+            color: Colors.white,
+            size: 12,
+          ),
+          const SizedBox(width: 4),
+          Text(
+            'New',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: fontSize,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  return Container(
+    margin: margin,
+    padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+    decoration: BoxDecoration(
+      color: const Color(0xFFEFFAF1),
+      borderRadius: BorderRadius.circular(999),
+    ),
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: <Widget>[
+        const Icon(
+          Icons.star_rounded,
+          color: _homeGreen,
+          size: 13,
+        ),
+        const SizedBox(width: 2),
+        Text(
+          rating.toStringAsFixed(1),
+          style: TextStyle(
+            color: _homeGreen,
+            fontSize: fontSize,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+const List<double> _kGrayscaleMatrix = <double>[
+  0.2126, 0.7152, 0.0722, 0, 0, //
+  0.2126, 0.7152, 0.0722, 0, 0, //
+  0.2126, 0.7152, 0.0722, 0, 0, //
+  0, 0, 0, 1, 0, //
+];
+
+/// Greys + dims a card and stamps a corner label when the item/restaurant
+/// can't be ordered right now — matches the closed-restaurant treatment.
+Widget _unavailableWrap({
+  required bool orderable,
+  required Widget child,
+  String label = 'Unavailable',
+  double radius = 20,
+}) {
+  if (orderable) return child;
+  return ClipRRect(
+    borderRadius: BorderRadius.circular(radius),
+    child: Stack(
+      children: <Widget>[
+        Opacity(
+          opacity: 0.55,
+          child: ColorFiltered(
+            colorFilter: const ColorFilter.matrix(_kGrayscaleMatrix),
+            child: child,
+          ),
+        ),
+        Positioned(
+          left: 6,
+          top: 6,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+            decoration: BoxDecoration(
+              color: Colors.black.withOpacity(0.62),
+              borderRadius: BorderRadius.circular(7),
+            ),
+            child: Text(
+              label.toUpperCase(),
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 8.5,
+                letterSpacing: 0.4,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+bool _isSponsoredRestaurant(Map<dynamic, dynamic> m) {
+  final v = m['is_sponsored'] ?? m['isSponsored'];
+  return v == true || v == 1 || v == '1' || v.toString().toLowerCase() == 'true';
+}
+
+/// Re-lays a restaurant list so a sponsored ("Ad") restaurant appears after
+/// every [every] organic cards. Sponsored entries are pulled out first, then
+/// slotted back in; leftovers go at the end. No-op when nothing is sponsored.
+List<dynamic> _interleaveSponsoredRestaurants(List<dynamic> items,
+    {int every = 2}) {
+  final maps = items
+      .whereType<Map>()
+      .map((e) => Map<String, dynamic>.from(e))
+      .toList(growable: false);
+  final sponsored = maps.where(_isSponsoredRestaurant).toList();
+  if (sponsored.isEmpty) return items;
+  final organic = maps.where((m) => !_isSponsoredRestaurant(m)).toList();
+
+  final out = <dynamic>[];
+  var s = 0;
+  for (var i = 0; i < organic.length; i++) {
+    out.add(organic[i]);
+    if ((i + 1) % every == 0 && s < sponsored.length) {
+      out.add(sponsored[s++]);
+    }
+  }
+  while (s < sponsored.length) {
+    out.add(sponsored[s++]);
+  }
+  return out;
+}
+
+bool _restaurantAcceptsOrders(Map<String, dynamic> restaurant) {
+  final value = restaurant['is_open_now'] ?? restaurant['is_open'];
+  if (value == null) return true;
+  if (value is bool) return value;
+  if (value is num) return value != 0;
+  final normalized = value.toString().trim().toLowerCase();
+  return normalized == 'true' ||
+      normalized == '1' ||
+      normalized == 'yes' ||
+      normalized == 'y';
+}
+
+String _restaurantClosedMessage(Map<String, dynamic> restaurant) {
+  for (final key in const [
+    'next_opening_label',
+    'next_opening_text',
+    'nextOpenLabel',
+  ]) {
+    final value = restaurant[key]?.toString().trim();
+    if (value != null && value.isNotEmpty) return value;
+  }
+  return 'Currently closed';
+}
+
+Widget _restaurantStatusBadge(bool isOpen) {
+  return Container(
+    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+    decoration: BoxDecoration(
+      color: isOpen ? const Color(0xFF0A9443) : const Color(0xFFD14343),
+      borderRadius: BorderRadius.circular(999),
+      boxShadow: <BoxShadow>[
+        BoxShadow(
+          color: Colors.black.withOpacity(0.18),
+          blurRadius: 8,
+          offset: const Offset(0, 2),
+        ),
+      ],
+    ),
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: <Widget>[
+        Icon(
+          isOpen ? Icons.check_circle_rounded : Icons.lock_clock_rounded,
+          color: Colors.white,
+          size: 12,
+        ),
+        const SizedBox(width: 4),
+        Text(
+          isOpen ? 'Open' : 'Closed',
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 10.5,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+class _ScaleOnPress extends StatefulWidget {
+  const _ScaleOnPress({
+    required this.child,
+    required this.onTap,
+  });
+
+  final Widget child;
+  final VoidCallback onTap;
+
+  @override
+  State<_ScaleOnPress> createState() => _ScaleOnPressState();
+}
+
+class _ScaleOnPressState extends State<_ScaleOnPress> {
+  bool _pressed = false;
+
+  void _setPressed(bool value) {
+    if (_pressed == value) return;
+    setState(() => _pressed = value);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: widget.onTap,
+      onTapDown: (_) => _setPressed(true),
+      onTapCancel: () => _setPressed(false),
+      onTapUp: (_) => _setPressed(false),
+      child: AnimatedScale(
+        scale: _pressed ? 0.985 : 1,
+        duration: const Duration(milliseconds: 250),
+        curve: Curves.easeOutCubic,
+        child: widget.child,
+      ),
+    );
+  }
+}
+
+class _RestaurantListTileModern extends StatelessWidget {
+  const _RestaurantListTileModern({
+    required this.restaurant,
+    required this.isSaved,
+    required this.onTap,
+    required this.onSaveToggle,
+    required this.cuisineTextBuilder,
+    required this.ratingBuilder,
+    required this.parseDouble,
+    required this.parseInt,
+    required this.imageResolver,
+  });
+
+  final Map<String, dynamic> restaurant;
+  final bool isSaved;
+  final VoidCallback onTap;
+  final VoidCallback onSaveToggle;
+  final String Function(Map<String, dynamic>) cuisineTextBuilder;
+  final double Function(Map<String, dynamic>) ratingBuilder;
+  final double Function(dynamic, {double fallback}) parseDouble;
+  final int Function(dynamic, {int fallback}) parseInt;
+  final String Function(dynamic, List<String>) imageResolver;
+
+  @override
+  Widget build(BuildContext context) {
+    final imageUrl = imageResolver(restaurant, const [
+      'banner_image',
+      'banner_url',
+      'image_url',
+      'image',
+      'photo',
+      'logo_image',
+      'logo',
+    ]);
+    final logoUrl = imageResolver(restaurant, const [
+      'logo_image',
+      'logo',
+      'icon',
+      'icon_url',
+      'restaurant_logo',
+      'restaurantLogo',
+    ]);
+    final rating = ratingBuilder(restaurant);
+    final delivery = parseInt(
+      restaurant['delivery_time'] ?? restaurant['deliveryTime'],
+      fallback: 30,
+    );
+    final isOpen = _restaurantAcceptsOrders(restaurant);
+    final distance = parseDouble(restaurant['distance'], fallback: -1);
+    final offerText = _offerText(context, restaurant);
+    final cuisine = cuisineTextBuilder(restaurant).trim();
+    final costForTwo = _costForTwoText(context, restaurant);
+    final amountForOne = parseDouble(
+      restaurant['amount_for_one'] ??
+          restaurant['amountForOne'] ??
+          restaurant['price_for_one'] ??
+          restaurant['cost_for_one'] ??
+          restaurant['lowest_price'] ??
+          restaurant['min_price'],
+      fallback: 0,
+    );
+    final displayAmount = amountForOne > 0
+        ? amountForOne
+        : _homeMinimumNestedMenuPrice(restaurant);
+
+    return TweenAnimationBuilder<double>(
+      duration: const Duration(milliseconds: 250),
+      tween: Tween<double>(begin: 0, end: 1),
+      curve: Curves.easeOutCubic,
+      builder: (context, value, child) {
+        return Opacity(
+          opacity: value,
+          child: Transform.translate(
+            offset: Offset(0, (1 - value) * 10),
+            child: child,
+          ),
+        );
+      },
+      child: Opacity(
+        opacity: isOpen ? 1 : 0.74,
+        child: _ScaleOnPress(
+          onTap: onTap,
+          child: Container(
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(24),
+              border: Border.all(color: const Color(0xFFF1F1F1)),
+              boxShadow: <BoxShadow>[
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.08),
+                  blurRadius: 12,
+                  offset: const Offset(0, 6),
+                ),
+              ],
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Stack(
+                  clipBehavior: Clip.none,
+                  alignment: Alignment.bottomCenter,
+                  children: <Widget>[
+                    ClipRRect(
+                      borderRadius:
+                          const BorderRadius.vertical(top: Radius.circular(24)),
+                      child: SizedBox(
+                        height: 210,
+                        width: double.infinity,
+                        child: _RestaurantMediaCarousel(
+                          restaurant: restaurant,
+                          fallbackImageUrl: imageUrl,
+                          parseDouble: parseDouble,
+                          fallback: _fallback(),
+                          rating: rating,
+                          deliveryMinutes: delivery,
+                          displayAmount: displayAmount,
+                          isSaved: isSaved,
+                          onSaveToggle: onSaveToggle,
+                        ),
+                      ),
+                    ),
+                    Positioned(
+                      bottom: -28,
+                      child: _RestaurantLogoOverlay(
+                        logoUrl: logoUrl,
+                        fallbackName:
+                            restaurant['name']?.toString() ?? 'Restaurant',
+                      ),
+                    ),
+                  ],
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(14, 38, 14, 14),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      Row(
+                        children: <Widget>[
+                          Expanded(
+                            child: Text(
+                              restaurant['name']?.toString() ?? 'Restaurant',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: Color(0xFF1C1C1C),
+                                fontSize: 17,
+                                height: 1.15,
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          _restaurantRatingOrNewBadge(
+                            rating,
+                            fontSize: 11,
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        cuisine.isEmpty
+                            ? (distance >= 0
+                                ? '${distance.toStringAsFixed(distance >= 10 ? 0 : 1)} km away'
+                                : 'Popular dishes nearby')
+                            : distance >= 0
+                                ? '$cuisine • ${distance.toStringAsFixed(distance >= 10 ? 0 : 1)} km'
+                                : cuisine,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Color(0xFF686B78),
+                          fontSize: 13,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        costForTwo.isEmpty
+                            ? '$delivery min'
+                            : '$delivery min • $costForTwo',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Color(0xFF686B78),
+                          fontSize: 13,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                      if (!isOpen) ...<Widget>[
+                        const SizedBox(height: 6),
+                        Text(
+                          _restaurantClosedMessage(restaurant),
+                          style: const TextStyle(
+                            color: Color(0xFFD14343),
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                      if (offerText.isNotEmpty) ...<Widget>[
+                        const SizedBox(height: 10),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 4,
+                          ),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFEAF8EA),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Text(
+                            offerText,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: Color(0xFF00A651),
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  String _offerText(BuildContext context, Map<String, dynamic> restaurant) {
+    final discount = restaurant['discount']?.toString().trim() ?? '';
+    if (discount.isNotEmpty) return discount;
+    final offer = restaurant['offer']?.toString().trim() ?? '';
+    if (offer.isNotEmpty) return offer;
+    final promos = restaurant['active_promos'];
+    if (promos is List && promos.isNotEmpty && promos.first is Map) {
+      final first = Map<String, dynamic>.from(promos.first as Map);
+      final value = first['discount_value']?.toString().trim() ?? '';
+      final min = first['min_order_amount']?.toString().trim() ?? '';
+      if (value.isNotEmpty) {
+        final type = first['discount_type']?.toString() ?? 'percentage';
+        final label = type == 'percentage' ? '$value% OFF' : 'Flat $value OFF';
+        return min.isNotEmpty
+            ? '$label above ${formatCurrency(context, parseDouble(min))}'
+            : label;
+      }
+    }
+    return '';
+  }
+
+  String _costForTwoText(
+      BuildContext context, Map<String, dynamic> restaurant) {
+    final amount = parseDouble(
+      restaurant['cost_for_two'] ??
+          restaurant['avg_cost_for_two'] ??
+          restaurant['costForTwo'] ??
+          restaurant['average_order_value'] ??
+          restaurant['minimum_order'],
+      fallback: 0,
+    );
+    if (amount <= 0) return '';
+    return '${formatCurrency(context, amount)} for two';
+  }
+
+  Widget _fallback() {
+    return Container(
+      color: _homePeach,
+      child: const Center(
+        child: Icon(Icons.storefront_rounded, size: 48, color: _homeAccent),
+      ),
+    );
+  }
+}
+
+class _RestaurantLogoOverlay extends StatelessWidget {
+  const _RestaurantLogoOverlay({
+    required this.logoUrl,
+    required this.fallbackName,
+  });
+
+  final String logoUrl;
+  final String fallbackName;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 62,
+      height: 62,
+      padding: const EdgeInsets.all(3),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        boxShadow: <BoxShadow>[
+          BoxShadow(
+            color: Colors.black.withOpacity(0.16),
+            blurRadius: 16,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(15),
+        child: logoUrl.isNotEmpty
+            ? _buildHomeNetworkImage(
+                logoUrl,
+                fit: BoxFit.cover,
+                width: 56,
+                height: 56,
+                placeholder: _fallbackLogo(),
+                errorWidget: _fallbackLogo(),
+              )
+            : _fallbackLogo(),
+      ),
+    );
+  }
+
+  Widget _fallbackLogo() {
+    final initial = fallbackName.trim().isNotEmpty
+        ? fallbackName.trim().characters.first.toUpperCase()
+        : 'R';
+    return Container(
+      color: _homePeach,
+      alignment: Alignment.center,
+      child: Text(
+        initial,
+        style: const TextStyle(
+          color: _homeAccent,
+          fontSize: 24,
+          fontWeight: FontWeight.w900,
+        ),
+      ),
+    );
+  }
+}
+
+class _RestaurantMediaCarousel extends StatefulWidget {
+  const _RestaurantMediaCarousel({
+    required this.restaurant,
+    required this.fallbackImageUrl,
+    required this.parseDouble,
+    required this.fallback,
+    required this.rating,
+    required this.deliveryMinutes,
+    required this.displayAmount,
+    required this.isSaved,
+    required this.onSaveToggle,
+    this.compact = false,
+  });
+
+  final Map<String, dynamic> restaurant;
+  final String fallbackImageUrl;
+  final double Function(dynamic, {double fallback}) parseDouble;
+  final Widget fallback;
+  final double rating;
+  final int deliveryMinutes;
+  final double displayAmount;
+  final bool isSaved;
+  final VoidCallback onSaveToggle;
+  final bool compact;
+
+  @override
+  State<_RestaurantMediaCarousel> createState() =>
+      _RestaurantMediaCarouselState();
+}
+
+class _RestaurantMediaCarouselState extends State<_RestaurantMediaCarousel> {
+  final PageController _controller = PageController();
+  Timer? _autoSlideTimer;
+  int _page = 0;
+
+  @override
+  void dispose() {
+    _autoSlideTimer?.cancel();
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _syncAutoSlideTimer());
+  }
+
+  @override
+  void didUpdateWidget(covariant _RestaurantMediaCarousel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _syncAutoSlideTimer());
+  }
+
+  void _syncAutoSlideTimer() {
+    if (!mounted) return;
+    final media = _mediaItems();
+    if (media.length <= 1) {
+      _autoSlideTimer?.cancel();
+      _autoSlideTimer = null;
+      return;
+    }
+    if (_autoSlideTimer != null) return;
+    _autoSlideTimer = Timer.periodic(const Duration(seconds: 4), (_) {
+      if (!mounted || !_controller.hasClients) return;
+      final media = _mediaItems();
+      if (media.length <= 1) return;
+      final nextPage = (_page + 1) % media.length;
+      _controller.animateToPage(
+        nextPage,
+        duration: const Duration(milliseconds: 420),
+        curve: Curves.easeOutCubic,
+      );
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final media = _mediaItems();
+    if (media.isEmpty) {
+      return widget.fallback;
+    }
+    final activePage = _page.clamp(0, media.length - 1).toInt();
+    return Stack(
+      fit: StackFit.expand,
+      children: <Widget>[
+        PageView.builder(
+          controller: _controller,
+          itemCount: media.length,
+          onPageChanged: (index) => setState(() => _page = index),
+          itemBuilder: (context, index) {
+            return _buildImageOrFallback(
+              media[index].imageUrl,
+              fit: BoxFit.cover,
+              placeholder: widget.fallback,
+              errorWidget: widget.fallback,
+            );
+          },
+        ),
+        Positioned(
+          left: widget.compact ? 0 : 12,
+          top: widget.compact ? 8 : 12,
+          child: _MenuImageBadge(
+            item: media[activePage],
+            fallbackPrice: widget.displayAmount,
+            compact: widget.compact,
+          ),
+        ),
+        if (!widget.compact)
+          Positioned(
+            top: 12,
+            right: 12,
+            child: GestureDetector(
+              onTap: widget.onSaveToggle,
+              child: Container(
+                width: 34,
+                height: 34,
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.92),
+                  shape: BoxShape.circle,
+                  boxShadow: <BoxShadow>[
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.08),
+                      blurRadius: 10,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
+                ),
+                child: Icon(
+                  widget.isSaved
+                      ? Icons.bookmark_rounded
+                      : Icons.bookmark_border_rounded,
+                  color: const Color(0xFF1C1C1C),
+                  size: 20,
+                ),
+              ),
+            ),
+          ),
+        if (!widget.compact)
+          Positioned(
+            left: 12,
+            bottom: 12,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: Colors.black.withOpacity(0.62),
+                borderRadius: BorderRadius.circular(999),
+              ),
+              child: Text(
+                '${widget.deliveryMinutes} min',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+          ),
+        if (media.length > 1 && !widget.compact)
+          Positioned(
+            right: 16,
+            bottom: 16,
+            child: Row(
+              children: List<Widget>.generate(
+                media.length.clamp(0, 6),
+                (index) => Container(
+                  width: index == activePage ? 18 : 6,
+                  height: 6,
+                  margin: const EdgeInsets.only(left: 5),
+                  decoration: BoxDecoration(
+                    color: Colors.white
+                        .withOpacity(index == activePage ? 0.95 : 0.55),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  List<_RestaurantMediaItem> _mediaItems() {
+    final items = <_RestaurantMediaItem>[];
+    void add({
+      required String imageUrl,
+      String? name,
+      double? price,
+      bool isVeg = false,
+    }) {
+      final trimmed = imageUrl.trim();
+      if (trimmed.isEmpty || items.any((item) => item.imageUrl == trimmed)) {
+        return;
+      }
+      if (_isLottieUrl(trimmed)) {
+        return;
+      }
+      items.add(
+        _RestaurantMediaItem(
+          imageUrl: trimmed,
+          name: name?.trim() ?? '',
+          price: price,
+          isVeg: isVeg,
+        ),
+      );
+    }
+
+    for (final key in const [
+      'menu_items',
+      'items',
+      'popular_items',
+      'featured_items',
+      'recommended_items',
+      'matched_menu_items',
+      'matchedMenuItems',
+    ]) {
+      final list = widget.restaurant[key];
+      if (list is! List) continue;
+      for (final raw in list) {
+        if (raw is! Map) continue;
+        final item = Map<String, dynamic>.from(raw);
+        final image = _imageFrom(item);
+        add(
+          imageUrl: image,
+          name: (item['name'] ?? item['title'])?.toString(),
+          price: _homeMenuItemPrice(item),
+          isVeg: _boolValue(item['is_veg'] ?? item['veg']),
+        );
+      }
+    }
+    add(imageUrl: widget.fallbackImageUrl, price: widget.displayAmount);
+    return items.take(8).toList(growable: false);
+  }
+
+  String _imageFrom(Map<String, dynamic> item) {
+    void addFrom(dynamic value, List<String> candidates) {
+      if (value is String && value.trim().isNotEmpty) {
+        candidates.add(value);
+        return;
+      }
+      if (value is List) {
+        for (final entry in value) {
+          addFrom(entry, candidates);
+        }
+        return;
+      }
+      if (value is Map) {
+        for (final key in const ['url', 'path', 'image', 'image_url', 'file']) {
+          addFrom(value[key], candidates);
+        }
+      }
+    }
+
+    final candidates = <String>[];
+    for (final key in const [
+      'image_url',
+      'image',
+      'photo',
+      'banner_image',
+      'image_path',
+      'thumbnail',
+      'images',
+    ]) {
+      addFrom(item[key], candidates);
+    }
+    for (final candidate in candidates) {
+      final resolved = _resolveHomeAssetUrl(candidate);
+      if (resolved.isNotEmpty) return resolved;
+    }
+    return '';
+  }
+
+  bool _boolValue(dynamic value) {
+    if (value is bool) return value;
+    if (value is int) return value != 0;
+    final text = value?.toString().toLowerCase().trim();
+    return text == 'true' || text == '1' || text == 'yes';
+  }
+}
+
+class _RestaurantMediaItem {
+  const _RestaurantMediaItem({
+    required this.imageUrl,
+    required this.name,
+    required this.price,
+    required this.isVeg,
+  });
+
+  final String imageUrl;
+  final String name;
+  final double? price;
+  final bool isVeg;
+}
+
+class _MenuImageBadge extends StatelessWidget {
+  const _MenuImageBadge({
+    required this.item,
+    required this.fallbackPrice,
+    this.compact = false,
+  });
+
+  final _RestaurantMediaItem item;
+  final double fallbackPrice;
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context) {
+    final price =
+        item.price != null && item.price! > 0 ? item.price! : fallbackPrice;
+    if (item.name.isEmpty && price <= 0) {
+      return const SizedBox.shrink();
+    }
+    final text = item.price != null && item.price! > 0
+        ? '${item.name} · ${formatCurrency(context, item.price!)}'
+        : item.name;
+    final badgeText =
+        price > 0 ? 'From ${formatCurrency(context, price)}' : text;
+    return Container(
+      constraints: BoxConstraints(maxWidth: compact ? 104 : 240),
+      padding: EdgeInsets.symmetric(
+        horizontal: compact ? 7 : 10,
+        vertical: compact ? 5 : 6,
+      ),
+      decoration: BoxDecoration(
+        color: Colors.black.withOpacity(0.72),
+        borderRadius: const BorderRadius.only(
+          topRight: Radius.circular(8),
+          bottomRight: Radius.circular(8),
+        ),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          if (item.isVeg) ...<Widget>[
+            const Icon(Icons.crop_square_rounded,
+                color: Colors.white, size: 14),
+            const SizedBox(width: 4),
+          ],
+          Flexible(
+            child: Text(
+              badgeText,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: compact ? 11 : 13,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _RunningOrderCard extends StatefulWidget {
+  const _RunningOrderCard({required this.order});
+
+  final Order order;
+
+  @override
+  State<_RunningOrderCard> createState() => _RunningOrderCardState();
+}
+
+class _RunningOrderCardState extends State<_RunningOrderCard>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _pulseController;
+
+  @override
+  void initState() {
+    super.initState();
+    _pulseController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1500),
+    )..repeat(reverse: true);
+  }
+
+  @override
+  void dispose() {
+    _pulseController.dispose();
+    super.dispose();
+  }
+
+  void _openTracking() {
+    Navigator.pushNamed(context, '/order/track', arguments: widget.order.id);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final order = widget.order;
+    final steps = _runningOrderSteps(order);
+    final restaurantName = order.restaurant?.name ?? 'Your order';
+    final onTheWay = order.status == 'on_the_way' || order.status == 'picked_up';
+
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: _homeBorder),
+        boxShadow: <BoxShadow>[
+          BoxShadow(
+            color: scheme.primary.withOpacity(0.08),
+            blurRadius: 18,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: _openTracking,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 14, 12, 12),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: <Widget>[
+                        Text(
+                          restaurantName,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: _homeMuted,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        const SizedBox(height: 3),
+                        Text(
+                          _runningOrderTitle(order),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: _homeText,
+                            fontSize: 16.5,
+                            fontWeight: FontWeight.w900,
+                            height: 1.1,
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 10, vertical: 5),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFF1F3F7),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: <Widget>[
+                              Text(
+                                _runningOrderEta(order),
+                                style: const TextStyle(
+                                  color: _homeText,
+                                  fontSize: 11.5,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                              const Text(
+                                '  ·  On time',
+                                style: TextStyle(
+                                  color: _homeGreen,
+                                  fontSize: 11.5,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  _MiniRouteThumb(onTheWay: onTheWay),
+                ],
+              ),
+            ),
+            // slim progress bar
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+              child: Row(
+                children: List<Widget>.generate(
+                  steps.length,
+                  (index) => Expanded(
+                    child: Row(
+                      children: <Widget>[
+                        Container(
+                          width: 7,
+                          height: 7,
+                          decoration: BoxDecoration(
+                            color:
+                                steps[index].$2 ? scheme.primary : Colors.white,
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                              color: steps[index].$2
+                                  ? scheme.primary
+                                  : _homeBorder,
+                              width: 1.5,
+                            ),
+                          ),
+                        ),
+                        if (index != steps.length - 1)
+                          Expanded(
+                            child: Container(
+                              height: 2,
+                              margin:
+                                  const EdgeInsets.symmetric(horizontal: 4),
+                              decoration: BoxDecoration(
+                                color: steps[index].$2
+                                    ? scheme.primary.withOpacity(0.3)
+                                    : const Color(0xFFE8EDF6),
+                                borderRadius: BorderRadius.circular(999),
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            Container(height: 1, color: _homeBorder),
+            Row(
+              children: <Widget>[
+                Expanded(
+                  child: TextButton.icon(
+                    onPressed: () => Navigator.pushNamed(
+                      context,
+                      '/support',
+                      arguments: <String, dynamic>{
+                        'order': order,
+                        'openChat': true,
+                      },
+                    ),
+                    icon: const Icon(Icons.support_agent_rounded, size: 15),
+                    label: const Text('Need help?'),
+                    style: TextButton.styleFrom(
+                      foregroundColor: _homeMuted,
+                      padding: const EdgeInsets.symmetric(vertical: 11),
+                      textStyle: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ),
+                Container(width: 1, height: 22, color: _homeBorder),
+                Expanded(
+                  child: TextButton.icon(
+                    onPressed: _openTracking,
+                    icon: const Icon(Icons.near_me_rounded, size: 15),
+                    label: const Text('Track order'),
+                    style: TextButton.styleFrom(
+                      foregroundColor: scheme.primary,
+                      padding: const EdgeInsets.symmetric(vertical: 11),
+                      textStyle: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Lightweight schematic route thumbnail for the home running-order card —
+/// avoids spinning up a GoogleMap instance inside the feed.
+class _MiniRouteThumb extends StatelessWidget {
+  const _MiniRouteThumb({required this.onTheWay});
+
+  final bool onTheWay;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      width: 104,
+      height: 92,
+      decoration: BoxDecoration(
+        color: const Color(0xFFEFF1F5),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: _homeBorder),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Stack(
+        children: <Widget>[
+          Positioned.fill(
+            child: CustomPaint(painter: _MiniRoutePainter(color: scheme.primary)),
+          ),
+          Positioned(
+            right: 6,
+            top: 6,
+            child: Container(
+              padding: const EdgeInsets.all(4),
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                shape: BoxShape.circle,
+              ),
+              child: Icon(Icons.open_in_full_rounded,
+                  size: 11, color: _homeMuted),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MiniRoutePainter extends CustomPainter {
+  _MiniRoutePainter({required this.color});
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    // faint street grid
+    final grid = Paint()
+      ..color = const Color(0xFFDDE1E8)
+      ..strokeWidth = 1;
+    for (double x = 12; x < size.width; x += 22) {
+      canvas.drawLine(Offset(x, 0), Offset(x, size.height), grid);
+    }
+    for (double y = 12; y < size.height; y += 22) {
+      canvas.drawLine(Offset(0, y), Offset(size.width, y), grid);
+    }
+
+    final a = Offset(size.width * 0.78, size.height * 0.22); // restaurant
+    final b = Offset(size.width * 0.24, size.height * 0.78); // home
+
+    // dashed route
+    final route = Paint()
+      ..color = const Color(0xFF1A1A1A)
+      ..strokeWidth = 2.4
+      ..strokeCap = StrokeCap.round;
+    final path = Path()
+      ..moveTo(a.dx, a.dy)
+      ..lineTo(a.dx, size.height * 0.5)
+      ..lineTo(b.dx, size.height * 0.5)
+      ..lineTo(b.dx, b.dy);
+    for (final metric in path.computeMetrics()) {
+      double d = 0;
+      while (d < metric.length) {
+        canvas.drawPath(
+            metric.extractPath(d, (d + 4).clamp(0, metric.length)), route);
+        d += 7;
+      }
+    }
+
+    // restaurant dot
+    canvas.drawCircle(a, 4.5, Paint()..color = const Color(0xFF1A1A1A));
+    canvas.drawCircle(a, 2, Paint()..color = Colors.white);
+    // home dot
+    canvas.drawCircle(b, 4.5, Paint()..color = color);
+    canvas.drawCircle(b, 2, Paint()..color = Colors.white);
+  }
+
+  @override
+  bool shouldRepaint(covariant _MiniRoutePainter old) => old.color != color;
+}
+
+String _runningOrderTitle(Order order) {
+  switch (order.status) {
+    case 'pending':
+      return 'Order placed';
+    case 'confirmed':
+      return 'Restaurant confirmed your order';
+    case 'preparing':
+      return 'Preparing your order';
+    case 'ready_for_pickup':
+      return 'Order is ready for pickup';
+    case 'reached_pickup':
+      return 'Driver reached the restaurant';
+    case 'picked_up':
+      return 'Order picked up';
+    case 'on_the_way':
+      return 'Rider is on the way';
+    default:
+      return order.statusText;
+  }
+}
+
+String _runningOrderEta(Order order) {
+  if (order.etaRange != null && order.etaRange!.isNotEmpty) {
+    return order.deliveryDistanceLabel == null
+        ? order.etaRange!
+        : '${order.etaRange!} • ${order.deliveryDistanceLabel}';
+  }
+  final eta = order.etaMinutes;
+  if (eta != null && eta > 0) {
+    final label = eta <= 2 ? 'Arriving in 2 mins' : 'Arriving in $eta mins';
+    return order.deliveryDistanceLabel == null
+        ? label
+        : '$label • ${order.deliveryDistanceLabel}';
+  }
+  switch (order.status) {
+    case 'preparing':
+      return 'Freshly being prepared';
+    case 'ready_for_pickup':
+    case 'reached_pickup':
+      return 'Pickup in progress';
+    case 'picked_up':
+    case 'on_the_way':
+      return 'Heading to your address';
+    default:
+      return 'Live status active';
+  }
+}
+
+String _runningOrderItemSummary(Order order) {
+  if (order.items.isEmpty) {
+    return 'Your order is moving smoothly';
+  }
+  final first = order.items.first.name;
+  if (order.items.length == 1) {
+    return first;
+  }
+  return '$first +${order.items.length - 1} more';
+}
+
+List<(String, bool)> _runningOrderSteps(Order order) {
+  final packed = <String>{
+    'preparing',
+    'ready_for_pickup',
+    'reached_pickup',
+    'picked_up',
+    'on_the_way',
+    'delivered',
+  }.contains(order.status);
+  final picked = <String>{
+    'picked_up',
+    'on_the_way',
+    'delivered',
+  }.contains(order.status);
+  final onWay = <String>{
+    'on_the_way',
+    'delivered',
+  }.contains(order.status);
+  return <(String, bool)>[
+    ('Confirmed', true),
+    ('Packed', packed),
+    ('Picked up', picked),
+    ('On the way', onWay),
+  ];
+}
+
+class _FloatingCartBar extends StatelessWidget {
+  const _FloatingCartBar({
+    required this.onTap,
+    required this.onViewMenu,
+  });
+
+  final VoidCallback onTap;
+  final VoidCallback onViewMenu;
+
+  @override
+  Widget build(BuildContext context) {
+    final cart = context.watch<CartProvider>();
+    if (cart.totalCartItemCount <= 0) {
+      return const SizedBox.shrink();
+    }
+
+    final carts = cart.carts;
+    final hasMultipleCarts = cart.cartCount > 1;
+    final activeRestaurant = cart.restaurant ??
+        (carts.length == 1 ? carts.first.restaurant : null) ??
+        (carts.isNotEmpty ? carts.first.restaurant : null);
+    final activeItemCount = cart.itemCount > 0
+        ? cart.itemCount
+        : (carts.isNotEmpty ? carts.first.itemCount : cart.totalCartItemCount);
+    final restaurantName = activeRestaurant?.name.trim() ?? '';
+    final label = restaurantName.isNotEmpty && restaurantName != 'Restaurant'
+        ? restaurantName
+        : 'Current order';
+    final width = min(MediaQuery.of(context).size.width - 36, 360.0);
+    final secondary = FoodFlowTheme.brandSecondary(context);
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Stack(
+        clipBehavior: Clip.none,
+        alignment: Alignment.topCenter,
+        children: [
+          Material(
+            color: Colors.transparent,
+            child: Container(
+              width: width,
+              padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(999),
+                border: Border.all(color: Colors.white.withOpacity(0.9)),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.13),
+                    blurRadius: 22,
+                    offset: const Offset(0, 10),
+                  ),
+                ],
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    width: 42,
+                    height: 42,
+                    decoration: const BoxDecoration(shape: BoxShape.circle),
+                    clipBehavior: Clip.antiAlias,
+                    child: activeRestaurant?.logoUrl.isNotEmpty == true
+                        ? AppCachedImage(
+                            imageUrl: activeRestaurant!.logoUrl,
+                            fit: BoxFit.cover,
+                            errorBuilder: (_, __, ___) =>
+                                _cartLogoFallback(context),
+                          )
+                        : _cartLogoFallback(context),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: InkWell(
+                      onTap: onViewMenu,
+                      borderRadius: BorderRadius.circular(18),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            label,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: FoodFlowTheme.ink,
+                              fontSize: 13.5,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                          const SizedBox(height: 1),
+                          Text(
+                            'View Menu',
+                            style: TextStyle(
+                              color: secondary,
+                              fontSize: 11.5,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  InkWell(
+                    onTap: onTap,
+                    borderRadius: BorderRadius.circular(999),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 9,
+                      ),
+                      decoration: BoxDecoration(
+                        color: secondary,
+                        borderRadius: BorderRadius.circular(999),
+                        boxShadow: [
+                          BoxShadow(
+                            color: secondary.withOpacity(0.22),
+                            blurRadius: 12,
+                            offset: const Offset(0, 5),
+                          ),
+                        ],
+                      ),
+                      child: Text(
+                        'View Cart\n$activeItemCount item${activeItemCount == 1 ? '' : 's'}',
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 12,
+                          height: 1.05,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  InkWell(
+                    onTap: () => context.read<CartProvider>().clearCart(),
+                    borderRadius: BorderRadius.circular(999),
+                    child: Container(
+                      width: 30,
+                      height: 30,
+                      decoration: const BoxDecoration(
+                        color: Color(0xFFF1F2F5),
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(
+                        Icons.close_rounded,
+                        color: FoodFlowTheme.muted,
+                        size: 18,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          if (hasMultipleCarts)
+            Positioned(
+              top: -18,
+              child: InkWell(
+                onTap: onTap,
+                borderRadius: BorderRadius.circular(999),
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(999),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.08),
+                        blurRadius: 12,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        'All carts',
+                        style: TextStyle(
+                          color: secondary,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      Icon(
+                        Icons.keyboard_arrow_up_rounded,
+                        color: secondary,
+                        size: 16,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  static Widget _cartLogoFallback(BuildContext context) {
+    return Container(
+      color: const Color(0xFFF8EFE7),
+      child: Icon(
+        Icons.restaurant_rounded,
+        color: Theme.of(context).colorScheme.primary,
+        size: 20,
+      ),
+    );
+  }
+}
+
+class _AllCartsSheetRow extends StatelessWidget {
+  const _AllCartsSheetRow({
+    required this.cart,
+    required this.onViewMenu,
+    required this.onViewCart,
+    required this.onRemove,
+  });
+
+  final RestaurantCart cart;
+  final VoidCallback onViewMenu;
+  final VoidCallback onViewCart;
+  final VoidCallback onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    final secondary = FoodFlowTheme.brandSecondary(context);
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(999),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.06),
+            blurRadius: 14,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 48,
+            height: 48,
+            decoration: const BoxDecoration(shape: BoxShape.circle),
+            clipBehavior: Clip.antiAlias,
+            child: cart.restaurant.logoUrl.isNotEmpty
+                ? AppCachedImage(
+                    imageUrl: cart.restaurant.logoUrl,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => _cartLogoFallback(context),
+                  )
+                : _cartLogoFallback(context),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: InkWell(
+              onTap: onViewMenu,
+              borderRadius: BorderRadius.circular(16),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    cart.restaurant.name.isEmpty
+                        ? 'Restaurant'
+                        : cart.restaurant.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: FoodFlowTheme.ink,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    'View Menu',
+                    style: TextStyle(
+                      color: secondary,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          FilledButton(
+            onPressed: onViewCart,
+            style: FilledButton.styleFrom(
+              backgroundColor: secondary,
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(999),
+              ),
+            ),
+            child: Text(
+              'View Cart\n${cart.itemCount} item${cart.itemCount == 1 ? '' : 's'}',
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w900),
+            ),
+          ),
+          IconButton(
+            onPressed: onRemove,
+            icon: const Icon(Icons.close),
+            color: FoodFlowTheme.muted,
+          ),
+        ],
+      ),
+    );
+  }
+
+  static Widget _cartLogoFallback(BuildContext context) {
+    return Container(
+      color: const Color(0xFFF8EFE7),
+      child: Icon(
+        Icons.restaurant_rounded,
+        color: Theme.of(context).colorScheme.primary,
+      ),
+    );
+  }
+}
+
+class _HomeBottomNavBar extends StatelessWidget {
+  const _HomeBottomNavBar({
+    required this.currentIndex,
+    required this.showVoiceAssistant,
+    required this.onTap,
+  });
+
+  final int currentIndex;
+  final bool showVoiceAssistant;
+  final ValueChanged<int> onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final bottomInset = MediaQuery.of(context).padding.bottom;
+    return SizedBox(
+      height: 112 + bottomInset,
+      child: Stack(
+        clipBehavior: Clip.none,
+        alignment: Alignment.bottomCenter,
+        children: [
+          Positioned(
+            left: 16,
+            right: 16,
+            bottom: 8 + bottomInset,
+            child: Container(
+              height: 74,
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(28),
+                boxShadow: <BoxShadow>[
+                  BoxShadow(
+                    color: const Color(0xFF6D28D9).withOpacity(0.08),
+                    blurRadius: 24,
+                    offset: const Offset(0, 10),
+                  ),
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.12),
+                    blurRadius: 14,
+                    offset: const Offset(0, 6),
+                  ),
+                ],
+              ),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 10),
+                child: Row(
+                  children: <Widget>[
+                    _NavItem(
+                      icon: AppIcons.home,
+                      label: 'Home',
+                      active: currentIndex == 0,
+                      onTap: () => onTap(0),
+                    ),
+                    _NavItem(
+                      icon: AppIcons.search,
+                      label: 'Search',
+                      active: currentIndex == 1,
+                      onTap: () => onTap(1),
+                    ),
+                    if (showVoiceAssistant)
+                      _CenterActionNavItem(
+                        label: 'Voice',
+                        onTap: () => onTap(-1),
+                      ),
+                    _NavItem(
+                      icon: AppIcons.receipt,
+                      label: 'Orders',
+                      active: currentIndex == 2,
+                      onTap: () => onTap(2),
+                    ),
+                    _NavItem(
+                      icon: AppIcons.user,
+                      label: 'Profile',
+                      active: currentIndex == 3,
+                      onTap: () => onTap(3),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _NavItem extends StatelessWidget {
+  const _NavItem({
+    required this.icon,
+    required this.label,
+    required this.active,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String label;
+  final bool active;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final primary = Theme.of(context).colorScheme.primary;
+    return Expanded(
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(18),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: <Widget>[
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 180),
+              width: 58,
+              height: 54,
+              decoration: BoxDecoration(
+                color: active ? const Color(0xFFF1E7FF) : Colors.transparent,
+                borderRadius: BorderRadius.circular(24),
+              ),
+              child: Stack(
+                clipBehavior: Clip.none,
+                alignment: Alignment.center,
+                children: [
+                  Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      AppIcon(
+                        icon,
+                        size: 22,
+                        color: active ? primary : const Color(0xFF6B7280),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        label,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: active ? primary : const Color(0xFF6B7280),
+                          fontSize: 10.5,
+                          fontWeight:
+                              active ? FontWeight.w800 : FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _CenterActionNavItem extends StatelessWidget {
+  const _CenterActionNavItem({
+    required this.label,
+    required this.onTap,
+  });
+
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final primary = Theme.of(context).colorScheme.primary;
+    return Expanded(
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(24),
+        child: SizedBox(
+          height: 74,
+          child: Stack(
+            clipBehavior: Clip.none,
+            alignment: Alignment.center,
+            children: [
+              Positioned(
+                top: -22,
+                child: Container(
+                  width: 66,
+                  height: 66,
+                  padding: const EdgeInsets.all(4),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(22),
+                    boxShadow: [
+                      BoxShadow(
+                        color: const Color(0xFF6D28D9).withOpacity(0.28),
+                        blurRadius: 18,
+                        spreadRadius: 2,
+                        offset: const Offset(0, 8),
+                      ),
+                    ],
+                  ),
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: <Color>[
+                          primary,
+                          const Color(0xFFFF7A00),
+                        ],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                      borderRadius: BorderRadius.circular(18),
+                    ),
+                    child: const Center(
+                      child: Icon(
+                        Icons.mic_rounded,
+                        color: Colors.white,
+                        size: 30,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              Positioned(
+                bottom: 6,
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: primary,
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _HomeDishCardData {
+  const _HomeDishCardData({
+    required this.name,
+    required this.imageUrl,
+    required this.price,
+    required this.restaurantId,
+    required this.restaurantName,
+    required this.isVeg,
+    this.rating = 0,
+    this.etaMinutes = 0,
+    this.item,
+    this.restaurant,
+    this.restaurantOpen = true,
+    this.available = true,
+  });
+
+  /// True when this dish can be ordered right now — its restaurant is open and
+  /// the item itself is available. Closed/unavailable dishes are shown greyed.
+  bool get orderable => available && restaurantOpen && (item?.isAvailable ?? true);
+
+  final String name;
+  final String imageUrl;
+  final double price;
+  final int restaurantId;
+  final String restaurantName;
+  final bool isVeg;
+  final double rating;
+  final int etaMinutes;
+  final MenuItem? item;
+  final Restaurant? restaurant;
+  final bool restaurantOpen;
+  final bool available;
+
+  int get effectiveRestaurantId {
+    if (restaurantId > 0) return restaurantId;
+    final itemRestaurantId = item?.restaurantId ?? 0;
+    if (itemRestaurantId > 0) return itemRestaurantId;
+    final restaurantModelId = restaurant?.id ?? 0;
+    if (restaurantModelId > 0) return restaurantModelId;
+    return 0;
+  }
+}

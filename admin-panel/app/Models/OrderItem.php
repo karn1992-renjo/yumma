@@ -9,7 +9,8 @@ class OrderItem extends Model
 {
     protected $fillable = [
         'order_id', 'menu_item_id', 'quantity', 'unit_price', 'total_price',
-        'selected_variant', 'selected_add_ons', 'special_instructions', 'rating'
+        'selected_variant', 'selected_add_ons', 'special_instructions', 'rating',
+        'petpooja_snapshot'
     ];
 
     protected $casts = [
@@ -17,6 +18,7 @@ class OrderItem extends Model
         'selected_add_ons' => 'array',
         'unit_price' => 'decimal:2',
         'total_price' => 'decimal:2',
+        'petpooja_snapshot' => 'array',
     ];
     
     public function order(): BelongsTo

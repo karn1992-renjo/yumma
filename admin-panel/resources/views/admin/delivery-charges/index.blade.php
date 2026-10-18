@@ -145,6 +145,29 @@
                             </div>
                         </div>
 
+                        <hr>
+
+                        <h6 class="fw-bold mb-3">Salaried Driver Delivery Charge Routing</h6>
+                        <p class="text-muted small mb-3">
+                            A driver on a fixed monthly salary (Driver settings &rarr; Earning Mode) is already paid for their time, so their
+                            per-order delivery fee is not credited to their wallet like a commission driver's. Choose who receives that
+                            delivery fee instead.
+                        </p>
+                        <div class="mb-3">
+                            <label class="form-label">Delivery Charge Goes To</label>
+                            <select name="salary_driver_delivery_recipient" id="salaryDriverRecipient" class="form-select">
+                                <option value="branch" {{ ($settings->salary_driver_delivery_recipient ?? 'branch') == 'branch' ? 'selected' : '' }}>Branch (if order is under a branch, else admin)</option>
+                                <option value="admin" {{ ($settings->salary_driver_delivery_recipient ?? '') == 'admin' ? 'selected' : '' }}>Admin (always)</option>
+                            </select>
+                        </div>
+                        <div class="mb-3 salary-branch-share-field" style="{{ ($settings->salary_driver_delivery_recipient ?? 'branch') == 'admin' ? 'display:none' : '' }}">
+                            <label class="form-label">Branch Share of Diverted Delivery Charge (%)</label>
+                            <input type="number" step="0.01" min="0" max="100" name="salary_driver_branch_share_percent" class="form-control"
+                                   value="{{ $settings->salary_driver_branch_share_percent ?? 70 }}">
+                            <small class="text-muted">Remainder stays with admin. Only applies when the order is mapped to a branch.</small>
+                            @error('salary_driver_branch_share_percent') <div class="text-danger small mt-1">{{ $message }}</div> @enderror
+                        </div>
+
                         <button type="submit" class="btn btn-primary w-100">
                             <i class="fas fa-save me-2"></i> Save Delivery Settings
                         </button>
@@ -243,7 +266,15 @@
                 perKmFields.style.display = this.value === 'per_km' ? 'block' : 'none';
             });
         }
-        
+
+        const salaryRecipient = document.getElementById('salaryDriverRecipient');
+        const salaryBranchShareField = document.querySelector('.salary-branch-share-field');
+        if (salaryRecipient) {
+            salaryRecipient.addEventListener('change', function() {
+                salaryBranchShareField.style.display = this.value === 'admin' ? 'none' : 'block';
+            });
+        }
+
         // Calculator
         const distanceInput = document.getElementById('calcDistance');
         const orderAmountInput = document.getElementById('calcOrderAmount');

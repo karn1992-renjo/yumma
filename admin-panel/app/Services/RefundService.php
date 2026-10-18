@@ -29,10 +29,15 @@ class RefundService
     /**
      * Process refund for an order
      */
-    public function processRefund(Order $order, string $reason, ?string $customAmount = null)
-    {
+    public function processRefund(
+        Order $order,
+        string $reason,
+        ?string $customAmount = null,
+        ?string $cancelledByRole = null,
+        ?string $cancelledByName = null
+    ) {
         DB::beginTransaction();
-        
+
         try {
             $order = Order::with(['restaurant.owner'])
                 ->lockForUpdate()
@@ -42,6 +47,7 @@ class RefundService
             }
 
             $wasDelivered = $order->status === 'delivered';
+            $wasAlreadyCancelled = $order->status === 'cancelled';
             $policy = RefundPolicy::getActivePolicy();
             $refundAmount = max(0, round((float) ($customAmount ?? $policy->calculateRefundAmount($order, $reason)), 2));
 
@@ -57,6 +63,14 @@ class RefundService
                 $updateData['status'] = 'cancelled';
                 $updateData['cancelled_at'] = now();
                 $updateData['cancellation_reason'] = $reason;
+                // Only record who cancelled it the first time -- a later
+                // call here (e.g. an admin issuing a refund on an order the
+                // restaurant already cancelled) must not overwrite that
+                // original attribution.
+                if ($cancelledByRole !== null && ! $wasAlreadyCancelled) {
+                    $updateData['cancelled_by_role'] = $cancelledByRole;
+                    $updateData['cancelled_by_name'] = $cancelledByName;
+                }
             }
             $order->update($updateData);
 

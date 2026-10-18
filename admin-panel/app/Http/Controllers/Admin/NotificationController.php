@@ -153,7 +153,7 @@ class NotificationController extends Controller
             $url = route('admin.orders.show', $data['order_id']);
         }
         if (!$url && isset($data['ticket_id'])) {
-            $url = route('admin.support.show', $data['ticket_id']);
+            $url = route('support.show', $data['ticket_id']);
         }
 
         return [

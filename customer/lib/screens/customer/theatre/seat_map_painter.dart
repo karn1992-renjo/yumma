@@ -15,12 +15,21 @@ class SeatMapView extends StatefulWidget {
     required this.sections,
     this.selectedSeat,
     this.onSeatSelected,
+    this.onTapMissed,
   });
 
   final List<SeatMapRow> rows;
   final Map<String, SeatMapSection> sections;
   final String? selectedSeat;
   final ValueChanged<String>? onSeatSelected;
+  // Fires when a tap lands too far from any seat's own catchment to
+  // resolve. Without this, a missed tap is silent -- whatever seat was
+  // already selected just stays highlighted, which reads exactly like "I
+  // tapped a different seat and it selected the wrong one" even though no
+  // new selection happened at all. See the real captured [SeatTapDebug]
+  // trace this was diagnosed from: a rejected tap only ~1cm off target,
+  // with zero feedback that it hadn't registered.
+  final VoidCallback? onTapMissed;
 
   @override
   State<SeatMapView> createState() => _SeatMapViewState();
@@ -128,6 +137,35 @@ class _SeatMapViewState extends State<SeatMapView> {
         hits.add(_SeatHit(position: positions[i], label: label, row: row));
       }
     }
+
+    // Per-seat catchment radius, not one global value. Seats on a curved
+    // row are placed at equal t along the bezier, not equal arc length, so
+    // spacing is genuinely uneven -- tight near the curve's sharpest point,
+    // looser elsewhere. A single shared radius sized for the tightest pair
+    // anywhere left plenty of room for TWO SEATS' catchment circles to
+    // overlap wherever the real local spacing was smaller than that global
+    // value, and in that overlap a tap could resolve to the center that's
+    // merely closer, not the one actually under the finger -- a real,
+    // reproduced bug ("selects a seat, but the wrong one") specifically on
+    // curved rows. Sizing each seat's own radius to half its own nearest
+    // neighbour's distance makes overlap impossible by construction: the
+    // catchment boundary between any two seats sits exactly on their
+    // shared midpoint, on both sides, every time.
+    for (final hit in hits) {
+      var nearestNeighbour = double.infinity;
+      for (final other in hits) {
+        if (identical(other, hit)) continue;
+        final dx = other.position.dx - hit.position.dx;
+        final dy = other.position.dy - hit.position.dy;
+        final distance = sqrt(dx * dx + dy * dy);
+        if (distance > 0 && distance < nearestNeighbour) {
+          nearestNeighbour = distance;
+        }
+      }
+      hit.localRadius =
+          nearestNeighbour.isFinite ? nearestNeighbour / 2 : _minSeatPitch / 2;
+    }
+
     return hits;
   }
 
@@ -141,29 +179,52 @@ class _SeatMapViewState extends State<SeatMapView> {
 
     _SeatHit? nearest;
     var nearestDistance = double.infinity;
+    // Temporary diagnostic: top-3 nearest candidates with their own
+    // distance/radius, so a real on-device tap tells us exactly what the
+    // algorithm saw instead of guessing from screenshots. Remove once the
+    // live-tap investigation is closed.
+    final ranked = <MapEntry<_SeatHit, double>>[];
     for (final hit in _hits) {
       if (hit.label == null) continue;
       final dx = hit.position.dx - tapped.dx;
       final dy = hit.position.dy - tapped.dy;
       final distance = dx * dx + dy * dy;
+      ranked.add(MapEntry(hit, distance));
       if (distance < nearestDistance) {
         nearestDistance = distance;
         nearest = hit;
       }
     }
+    ranked.sort((a, b) => a.value.compareTo(b.value));
 
-    // Catchment tied to the layout's own spacing rather than a fixed
-    // number. A fixed 65 units was wider than the 50-unit gap between rows
-    // in real layouts, so a tap in the dead space between two rows still
-    // grabbed a seat -- usually not the one under the finger.
-    // Half a pitch is exactly the seat's own cell: the midpoint between two
-    // seats belongs to neither, so a tap that lands there does nothing
-    // instead of guessing. With the opening zoom above that cell is a
-    // 44pt-wide target, which is what makes the guess unnecessary.
-    final radius = _minSeatPitch * 0.5;
-    if (nearest != null && nearestDistance <= radius * radius) {
-      widget.onSeatSelected?.call(nearest.label!);
+    debugPrint('[SeatTapDebug] localPosition=$localPosition renderSize=$renderSize '
+        'canvasHeight=$canvasHeight scaleX=$scaleX scaleY=$scaleY tapped=$tapped '
+        'transform=${_transformController.value}');
+    for (final entry in ranked.take(3)) {
+      final d = sqrt(entry.value);
+      debugPrint('[SeatTapDebug]   candidate ${entry.key.label} at ${entry.key.position} '
+          'distance=$d localRadius=${entry.key.localRadius} '
+          'withinCatchment=${d <= entry.key.localRadius}');
     }
+
+    // Catchment tied to this seat's own local spacing (see _computeHits()),
+    // not a single fixed/global number. A fixed 65 units was wider than the
+    // 50-unit gap between rows in real layouts, so a tap in the dead space
+    // between two rows still grabbed a seat -- usually not the one under
+    // the finger. The midpoint between two seats belongs to neither, so a
+    // tap that lands there does nothing instead of guessing.
+    if (nearest != null) {
+      final radius = nearest.localRadius;
+      if (nearestDistance <= radius * radius) {
+        debugPrint('[SeatTapDebug] RESOLVED -> ${nearest.label}');
+        widget.onSeatSelected?.call(nearest.label!);
+        return;
+      }
+      debugPrint('[SeatTapDebug] REJECTED -- nearest ${nearest.label} outside its own catchment');
+    } else {
+      debugPrint('[SeatTapDebug] REJECTED -- no labelled seat hits at all');
+    }
+    widget.onTapMissed?.call();
   }
 
   @override
@@ -249,7 +310,11 @@ class _SeatHit {
   final Offset position;
   final String? label;
   final SeatMapRow row;
-  const _SeatHit({
+  // Set after construction, once every hit's position is known -- see
+  // _computeHits(). Defaults to 0 (nothing catches) until then, never left
+  // unset in practice since _computeHits() always fills it in immediately.
+  double localRadius = 0;
+  _SeatHit({
     required this.position,
     required this.label,
     required this.row,

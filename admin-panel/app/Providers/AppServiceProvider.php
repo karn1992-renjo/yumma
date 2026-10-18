@@ -188,6 +188,13 @@ class AppServiceProvider extends ServiceProvider
         Config::set('app.default_delivery_radius', $defaultDeliveryRadius);
 
         View::share(compact('appName', 'primaryColor', 'primaryDark', 'primaryLight', 'secondaryColor', 'googleMapsApiKey', 'defaultDeliveryRadius', 'currencySymbol', 'currencyDecimals'));
+
+        // @money($amount) -- symbol + number_format to the admin's configured
+        // currency_decimals, so new/edited blade views have a one-line way to
+        // avoid both raw unformatted floats and a hardcoded ", 2)".
+        \Illuminate\Support\Facades\Blade::directive('money', function ($expression) {
+            return "<?php echo \\App\\Support\\Money::format($expression); ?>";
+        });
     }
 
     /**

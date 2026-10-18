@@ -84,7 +84,7 @@
                         <p class="text-muted">Customer's stated reason: {{ $order->return_reason }}</p>
                         <div class="mb-3">
                             <label class="form-label">Refund Amount</label>
-                            <input class="form-control" name="return_amount" type="number" step="{{ $currencyStep }}" max="{{ $order->total }}" value="{{ $order->total }}" required>
+                            <input class="form-control" name="return_amount" type="number" step="{{ $currencyStep }}" max="{{ number_format((float) $order->total, $currencyDecimals, '.', '') }}" value="{{ number_format((float) $order->total, $currencyDecimals, '.', '') }}" required>
                         </div>
                     </div>
                     <div class="modal-footer">

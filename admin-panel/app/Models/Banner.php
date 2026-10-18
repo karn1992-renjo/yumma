@@ -18,7 +18,7 @@ class Banner extends Model
     protected $fillable = [
         'title', 'description', 'cta_label', 'image', 'badge_image', 'link', 'redirect_type', 'redirect_category_id', 'redirect_restaurant_id',
         'redirect_menu_item_id', 'display_order', 'is_active', 'start_date', 'end_date', 'banner_type',
-        'display_surface', 'layout_mode', 'image_ratio'
+        'display_surface', 'layout_mode', 'image_ratio', 'delivery_area_id'
     ];
     
     protected $casts = [
@@ -43,7 +43,12 @@ class Banner extends Model
     {
         return $this->belongsTo(MenuItem::class, 'redirect_menu_item_id');
     }
-    
+
+    public function deliveryArea(): BelongsTo
+    {
+        return $this->belongsTo(DeliveryArea::class);
+    }
+
     public function isActive(): bool
     {
         if (!$this->is_active) return false;
@@ -79,5 +84,19 @@ class Banner extends Model
             'app', 'mobile', 'customer_app', 'customer-app', 'android', 'ios' => 'app',
             default => null,
         };
+    }
+
+    // delivery_area_id null means "show in every zone" -- a banner only
+    // narrows to one zone once an admin explicitly sets it.
+    public function scopeVisibleInZone($query, ?int $deliveryAreaId)
+    {
+        if ($deliveryAreaId === null) {
+            return $query;
+        }
+
+        return $query->where(function ($builder) use ($deliveryAreaId) {
+            $builder->whereNull('delivery_area_id')
+                ->orWhere('delivery_area_id', $deliveryAreaId);
+        });
     }
 }

@@ -9,6 +9,7 @@ import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_easyloading/flutter_easyloading.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:google_mobile_ads/google_mobile_ads.dart';
 import 'firebase_options.dart';
 import 'services/notification_service.dart';
 import 'services/navigation_service.dart';
@@ -38,6 +39,7 @@ import 'screens/auth/login_screen.dart';
 import 'screens/auth/register_screen.dart';
 import 'screens/auth/forgot_password_screen.dart';
 import 'screens/app_splash_screen.dart';
+import 'screens/location_gate_screen.dart';
 import 'screens/customer/home_screen.dart';
 import 'screens/customer/restaurant_detail_screen.dart';
 import 'screens/customer/cart_screen.dart';
@@ -64,6 +66,7 @@ import 'screens/customer/search_screen.dart';
 import 'screens/customer/ai_voice_assistant_screen.dart';
 import 'screens/customer/customer_support_screen.dart';
 import 'screens/customer/dining_bookings_list_screen.dart';
+import 'screens/customer/gold_subscription_screen.dart';
 import 'screens/customer/wallet_screen.dart';
 import 'screens/customer/scratch_cards_screen.dart';
 import 'screens/customer/referral_screen.dart';
@@ -77,6 +80,7 @@ Future<void> main() async {
   unawaited(loadV2Mode());
 
   configLoading();
+  await MobileAds.instance.initialize();
   final authProvider = AuthProvider();
   final cartProvider = CartProvider();
   final startupFuture = _initializeStartup(authProvider, cartProvider);
@@ -350,24 +354,34 @@ class _FoodDeliveryAppState extends State<FoodDeliveryApp> {
         scaffoldBackgroundColor: homeCanvas,
         visualDensity: const VisualDensity(horizontal: -3, vertical: -3),
         materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-        fontFamily: GoogleFonts.plusJakartaSans().fontFamily,
+        fontFamily: GoogleFonts.poppins().fontFamily,
         useMaterial3: true,
         // Smoother, consistent route transitions across the whole app
         // (both the classic screens and V2) — the M3 zoom/fade instead of the
-        // plain platform slide.
+        // plain platform slide. Snapshotting left at its default (enabled):
+        // disabling it forces Flutter to recomposite the outgoing route's
+        // live layer tree every transition frame instead of a cached
+        // snapshot -- on V1's heavy home screen that's the single biggest
+        // jank source during every push/pop, since V2's custom route
+        // (V2PageRoute) only animates the incoming page and never touches
+        // the outgoing tree at all.
         pageTransitionsTheme: const PageTransitionsTheme(
           builders: {
-            TargetPlatform.android: ZoomPageTransitionsBuilder(
-              allowEnterRouteSnapshotting: false,
-            ),
+            TargetPlatform.android: ZoomPageTransitionsBuilder(),
             // iOS intentionally omitted: use Flutter's built-in Cupertino
             // transition. (Newer Flutter stable dropped the public
             // CupertinoPageTransitionsBuilder name.)
           },
         ),
-        splashFactory: InkSparkle.splashFactory,
+        // InkRipple, not InkSparkle: InkSparkle is shader-based, and the
+        // first InkWell/button tap after launch can hitch while that shader
+        // compiles -- a V1-specific "taps feel janky" source (V2 avoids ink
+        // splashes entirely via V2Tappable). InkRipple is the cheaper,
+        // CPU-drawn ripple Material used before M3's InkSparkle default and
+        // has no first-tap compile cost.
+        splashFactory: InkRipple.splashFactory,
         textTheme: AppTypography.material3(
-          base: GoogleFonts.plusJakartaSansTextTheme(),
+          base: GoogleFonts.poppinsTextTheme(),
           textColor: homeText,
           mutedColor: homeMuted,
         ),
@@ -576,9 +590,13 @@ class _FoodDeliveryAppState extends State<FoodDeliveryApp> {
       home: AppSplashScreen(
         branding: _branding,
         startupFuture: widget.startupFuture,
-        builder: (_) => _canOpenCustomerBrowseExperience(authProvider)
-            ? const HomeScreen()
-            : const LoginScreen(),
+        builder: (context) {
+          final destination = _canOpenCustomerBrowseExperience(authProvider)
+              ? const HomeScreen()
+              : const LoginScreen();
+          if (!AppConfig.isCustomerApp) return destination;
+          return LocationGateScreen(destinationBuilder: (_) => destination);
+        },
       ),
       navigatorObservers: [routeObserver],
       onGenerateRoute: (settings) => _generateRoute(context, settings),
@@ -884,6 +902,8 @@ class _FoodDeliveryAppState extends State<FoodDeliveryApp> {
         return MaterialPageRoute(builder: (_) => const CustomerSupportScreen());
       case '/wallet':
         return _accountRoute(context, (_) => const WalletScreen());
+      case '/gold':
+        return _accountRoute(context, (_) => const GoldSubscriptionScreen());
       case '/scratch-cards':
         return _accountRoute(
           context,

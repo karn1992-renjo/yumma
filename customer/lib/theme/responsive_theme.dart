@@ -131,14 +131,30 @@ class ResponsiveBreakpoints {
 }
 
 class ResponsiveMedia {
+  // Poppins (the app's font, swapped in from Plus Jakarta Sans) renders
+  // visibly larger/taller at the same declared fontSize -- without this,
+  // every fixed-height card/row sized for the old font overflows by a few
+  // pixels (dish cards, "Recommended For You" grid, the VEG MODE label,
+  // etc.).
+  //
+  // The app's text size is intentionally fixed at this value regardless of
+  // the phone's own system font-size setting -- every layout in this app is
+  // sized for one specific scale, so letting a user's OS accessibility
+  // setting multiply on top (as a normal Flutter app would allow) is exactly
+  // what was reintroducing the overflow this constant fixes. This trades
+  // away that one accessibility affordance for consistent, non-overflowing
+  // layouts everywhere.
+  static const double _fontBaselineScale = 0.94;
+
   static Widget withClampedTextScale({
     required BuildContext context,
     required Widget? child,
   }) {
     final media = MediaQuery.of(context);
-    final scale = media.textScaler.scale(1).clamp(0.85, 1.3).toDouble();
     return MediaQuery(
-      data: media.copyWith(textScaler: TextScaler.linear(scale)),
+      data: media.copyWith(
+        textScaler: const TextScaler.linear(_fontBaselineScale),
+      ),
       child: child ?? const SizedBox.shrink(),
     );
   }

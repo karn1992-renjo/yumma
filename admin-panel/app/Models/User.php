@@ -3,6 +3,7 @@
 namespace App\Models;
 
 // use Illuminate\Contracts\Auth\MustVerifyEmail;
+use App\Support\PhoneNumber;
 use Database\Factories\UserFactory;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
@@ -11,9 +12,6 @@ use Laravel\Fortify\TwoFactorAuthenticatable;
 use Laravel\Jetstream\HasProfilePhoto;
 use Laravel\Sanctum\HasApiTokens;
 use Spatie\Permission\Traits\HasRoles;
-use App\Models\RestaurantStaff;
-use App\Models\AppSetting;
-use App\Support\PhoneNumber;
 
 class User extends Authenticatable
 {
@@ -22,10 +20,27 @@ class User extends Authenticatable
     /** @use HasFactory<UserFactory> */
     use HasFactory;
 
-    use HasRoles;
     use HasProfilePhoto;
+    use HasRoles;
     use Notifiable;
     use TwoFactorAuthenticatable;
+
+    public function requiresAdminMfa(): bool
+    {
+        return $this->hasAnyRole(['super_admin', 'admin']);
+    }
+
+    public function adminRecoveryPhones(): array
+    {
+        $phones = [];
+        foreach ([1, 2] as $slot) {
+            if ($this->{"admin_mfa_phone_{$slot}"} && $this->{"admin_mfa_phone_{$slot}_verified_at"}) {
+                $phones[$slot] = $this->{"admin_mfa_phone_{$slot}"};
+            }
+        }
+
+        return $phones;
+    }
 
     /**
      * The attributes that are mass assignable.
@@ -51,14 +66,30 @@ class User extends Authenticatable
         'earning_mode',
         'monthly_salary',
         'salary_effective_from',
+        'salary_payer',
         'pan',
         'tax_deductee_type',
         'current_restaurant_id',
         'branch_id',
         'address',
+        'city',
+        'landmark',
         'delivery_area_id',
         'latitude',
         'longitude',
+        'date_of_birth',
+        'gender',
+        'vehicle_model',
+        'fuel_type',
+        'profile_photo_path',
+        'vehicle_image',
+        'license_document',
+        'aadhar_card',
+        'pan_card',
+        'vehicle_rc',
+        'insurance_document',
+        'background_location_enabled',
+        'notification_permission_enabled',
         'fcm_token',
         'customer_fcm_token',
         'restaurant_fcm_token',
@@ -103,6 +134,8 @@ class User extends Authenticatable
         'remember_token',
         'two_factor_recovery_codes',
         'two_factor_secret',
+        'admin_mfa_phone_1',
+        'admin_mfa_phone_2',
     ];
 
     public function fcmTokenForApp(?string $targetApp): ?string
@@ -146,7 +179,11 @@ class User extends Authenticatable
     protected function casts(): array
     {
         return [
+            'admin_mfa_required' => 'boolean',
+            'admin_mfa_version' => 'integer',
             'email_verified_at' => 'datetime',
+            'suspended_at' => 'datetime',
+            'suspended_until' => 'datetime',
             'password' => 'hashed',
             'social_accounts' => 'array',
             'reward_points_balance' => 'integer',
@@ -160,7 +197,47 @@ class User extends Authenticatable
             'payout_provider_meta' => 'array',
             'monthly_salary' => 'decimal:2',
             'salary_effective_from' => 'date',
+            'date_of_birth' => 'date',
+            'background_location_enabled' => 'boolean',
+            'notification_permission_enabled' => 'boolean',
         ];
+    }
+
+    /**
+     * True while an admin-issued suspension is in effect (used for drivers).
+     * Deliberately separate from `is_active`, which other flows (e.g. a
+     * branch's quick suspend/reactivate) already toggle informally — this
+     * is the formal, admin-only suspension with a reason and optional
+     * expiry, and only an admin action (or the auto-expiry scheduler) can
+     * clear it.
+     */
+    public function isSuspended(): bool
+    {
+        if (! $this->suspended_at) {
+            return false;
+        }
+
+        return $this->suspended_until === null || $this->suspended_until->isFuture();
+    }
+
+    public function suspend(?string $reason, ?\Carbon\Carbon $until, int $adminUserId): void
+    {
+        $this->forceFill([
+            'suspended_at' => now(),
+            'suspended_until' => $until,
+            'suspension_reason' => $reason,
+            'suspended_by' => $adminUserId,
+        ])->save();
+    }
+
+    public function liftSuspension(): void
+    {
+        $this->forceFill([
+            'suspended_at' => null,
+            'suspended_until' => null,
+            'suspension_reason' => null,
+            'suspended_by' => null,
+        ])->save();
     }
 
     /**
@@ -224,7 +301,7 @@ class User extends Authenticatable
 
     public function referrer()
     {
-        return $this->belongsTo(User::class, 'referred_by_user_id');
+        return $this->belongsTo(self::class, 'referred_by_user_id');
     }
 
     public function referrals()
@@ -343,4 +420,3 @@ class User extends Authenticatable
         );
     }
 }
-

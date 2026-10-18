@@ -8,6 +8,7 @@ use App\Models\AppSetting;
 use App\Models\RestaurantAdWallet;
 use App\Models\RestaurantAdWalletRecharge;
 use App\Services\AdWalletService;
+use App\Support\JsonHttp;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
@@ -149,13 +150,15 @@ class AdWalletController extends Controller
 
         $cashfreeOrderId = 'AD_WALLET_' . $recharge->id . '_' . time();
         $baseUrl = $mode === 'test' ? 'https://sandbox.cashfree.com' : 'https://api.cashfree.com';
-        $cashfreeOrder = Http::withHeaders([
+        // (float) + JsonHttp::post() -- Cashfree rejects a bare-integer
+        // order_amount for a whole-rupee total. See App\Support\JsonHttp.
+        $cashfreeOrder = JsonHttp::post(Http::withHeaders([
             'x-api-version' => $apiVersion,
             'x-client-id' => $clientId,
             'x-client-secret' => $clientSecret,
-        ])->post($baseUrl . '/pg/orders', [
+        ]), $baseUrl . '/pg/orders', [
             'order_id' => $cashfreeOrderId,
-            'order_amount' => round($recharge->amount, 2),
+            'order_amount' => (float) round($recharge->amount, 2),
             'order_currency' => $recharge->currency,
             'order_note' => 'Ad wallet top-up',
             'customer_details' => [

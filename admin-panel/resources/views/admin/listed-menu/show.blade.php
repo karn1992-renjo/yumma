@@ -15,7 +15,9 @@
             <p class="text-muted mb-0">{{ $menuItem->restaurant?->name ?? 'Restaurant removed' }}</p>
         </div>
         <div class="d-flex gap-2">
+            @can('edit_menu_items')
             <a href="{{ route('admin.listed-menu.edit', $menuItem) }}" class="btn btn-primary"><i class="fas fa-pen me-2"></i>Edit</a>
+            @endcan
             <a href="{{ route('admin.listed-menu.index') }}" class="btn btn-light">Back</a>
         </div>
     </div>
@@ -69,11 +71,13 @@
                             @csrf
                             <button class="btn btn-outline-secondary">{{ $menuItem->is_available ? 'Mark Unavailable' : 'Mark Available' }}</button>
                         </form>
+                        @can('delete_menu_items')
                         <form method="POST" action="{{ route('admin.listed-menu.destroy', $menuItem) }}" onsubmit="return confirm('Delete this menu item?')">
                             @csrf
                             @method('DELETE')
                             <button class="btn btn-outline-danger">Delete</button>
                         </form>
+                        @endcan
                     </div>
                 </div>
             </div>

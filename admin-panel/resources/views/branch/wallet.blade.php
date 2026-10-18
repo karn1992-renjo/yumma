@@ -23,7 +23,7 @@
 
 <div class="row g-3 mb-4">
     @foreach(['Balance' => $wallet?->balance ?? 0, 'Locked Balance' => $wallet?->locked_balance ?? 0, 'Lifetime Earnings' => $wallet?->lifetime_earnings ?? 0, 'Lifetime Settled' => $wallet?->lifetime_settled ?? 0] as $label => $value)
-        <div class="col-md-3"><div class="card"><div class="card-body"><div class="text-muted small">{{ $label }}</div><h4 class="mb-0">{{ number_format($value, 2) }}</h4></div></div></div>
+        <div class="col-md-3"><div class="card"><div class="card-body"><div class="text-muted small">{{ $label }}</div><h4 class="mb-0">{{ number_format($value, $currencyDecimals) }}</h4></div></div></div>
     @endforeach
 </div>
 
@@ -36,7 +36,7 @@
                 <div class="col-md-4">
                     <label class="form-label">Amount</label>
                     <input type="number" step="0.01" min="1" max="{{ $wallet?->balance ?? 0 }}" name="amount" class="form-control" value="{{ old('amount') }}" required>
-                    <div class="form-text">Available balance: {{ number_format($wallet?->balance ?? 0, 2) }}</div>
+                    <div class="form-text">Available balance: {{ number_format($wallet?->balance ?? 0, $currencyDecimals) }}</div>
                 </div>
                 <div class="col-md-6">
                     <label class="form-label">Notes</label>
@@ -59,7 +59,7 @@
             @forelse($payouts as $payout)
                 <tr>
                     <td>{{ $payout->created_at->format('d M Y H:i') }}</td>
-                    <td>{{ number_format($payout->amount, 2) }}</td>
+                    <td>{{ number_format($payout->amount, $currencyDecimals) }}</td>
                     <td><span class="badge bg-{{ $payout->status === 'paid' ? 'success' : 'secondary' }}">{{ ucfirst($payout->status) }}</span></td>
                     <td>{{ $payout->transaction_reference ?? '-' }}</td>
                     <td>{{ $payout->notes }}</td>
@@ -84,8 +84,8 @@
                     <td>{{ str_replace('_', ' ', ucfirst($transaction->type)) }}</td>
                     <td>{{ $transaction->order?->order_number }}</td>
                     <td>{{ $transaction->description }}</td>
-                    <td>{{ number_format($transaction->amount, 2) }}</td>
-                    <td>{{ number_format($transaction->balance_after, 2) }}</td>
+                    <td>{{ number_format($transaction->amount, $currencyDecimals) }}</td>
+                    <td>{{ number_format($transaction->balance_after, $currencyDecimals) }}</td>
                 </tr>
             @empty
                 <tr><td colspan="6" class="text-center py-4">No wallet transactions yet.</td></tr>

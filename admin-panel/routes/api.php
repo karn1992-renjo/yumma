@@ -22,6 +22,9 @@ use App\Http\Controllers\Api\FlashResaleController;
 use App\Http\Controllers\Api\ReturnController;
 use App\Http\Controllers\Api\CampaignController;
 use App\Http\Controllers\Api\AdCampaignController;
+use App\Http\Controllers\Api\SubscriptionBillingController;
+use App\Http\Controllers\Api\RestaurantStoryController;
+use App\Http\Controllers\Api\StoryViewController;
 use App\Http\Controllers\Api\AdWalletController;
 use App\Http\Controllers\Api\AdTrackingController;
 use App\Http\Controllers\Api\AiToolController;
@@ -29,6 +32,7 @@ use App\Http\Controllers\Api\AiSessionTokenController;
 use App\Http\Controllers\Api\VoiceAiConfigController;
 use App\Http\Controllers\Api\ContentController;
 use App\Http\Controllers\Api\AddressController;
+use App\Http\Controllers\Api\CustomerGoldController;
 use App\Http\Controllers\Api\PaymentController;
 use App\Http\Controllers\Api\OrderPaymentController;
 use App\Http\Controllers\Api\WalletController;
@@ -293,7 +297,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/favorites/restaurants', function (Request $request) {
         return response()->json([
             'success' => true,
-            'data' => RestaurantResource::collection($request->user()->favoriteRestaurants()->get()),
+            'data' => RestaurantResource::collection($request->user()->favoriteRestaurants()->customerVisible()->get()),
         ]);
     });
     Route::post('/favorites/restaurants/{restaurant}', function (Request $request, Restaurant $restaurant) {
@@ -316,6 +320,20 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::delete('/addresses/{id}', [AddressController::class, 'destroy']);
     Route::post('/addresses/{id}/delete', [AddressController::class, 'destroy']);
     Route::post('/addresses/default/{id}', [AddressController::class, 'setDefault']);
+
+    // Customer Gold membership (waives delivery fees -- see
+    // Api\OrderController::buildPricingSummary())
+    Route::prefix('gold')->name('gold.')->group(function () {
+        Route::get('/plans', [CustomerGoldController::class, 'plans'])->name('plans');
+        Route::get('/current', [CustomerGoldController::class, 'current'])->name('current');
+        Route::post('/subscribe', [CustomerGoldController::class, 'subscribe'])->name('subscribe');
+        Route::post('/cancel', [CustomerGoldController::class, 'cancel'])->name('cancel');
+    });
+
+    // Customer-facing Stories read side (upload/manage is in the
+    // restaurant-owner group below)
+    Route::get('/restaurants/{restaurant}/stories', [StoryViewController::class, 'show']);
+    Route::post('/stories/{story}/viewed', [StoryViewController::class, 'markViewed']);
 
     // Restaurant Owner APIs
     Route::prefix('restaurant')->middleware('role:restaurant_owner,restaurant_staff')->group(function () {
@@ -421,6 +439,19 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/ads/campaigns/{id}/submit', [AdCampaignController::class, 'submit'])->middleware('role:restaurant_owner');
         Route::post('/ads/campaigns/{id}/pause', [AdCampaignController::class, 'pause'])->middleware('role:restaurant_owner');
         Route::post('/ads/campaigns/{id}/resume', [AdCampaignController::class, 'resume'])->middleware('role:restaurant_owner');
+
+        // Subscription billing
+        Route::get('/subscription/plans', [SubscriptionBillingController::class, 'plans'])->middleware('role:restaurant_owner');
+        Route::get('/subscription/current', [SubscriptionBillingController::class, 'current'])->middleware('role:restaurant_owner');
+        Route::post('/subscription/subscribe', [SubscriptionBillingController::class, 'subscribe'])->middleware('role:restaurant_owner');
+        Route::post('/subscription/cancel', [SubscriptionBillingController::class, 'cancel'])->middleware('role:restaurant_owner');
+        Route::get('/subscription/commission-preview', [SubscriptionBillingController::class, 'commissionPreview'])->middleware('role:restaurant_owner');
+        Route::post('/subscription/switch-to-commission', [SubscriptionBillingController::class, 'switchToCommission'])->middleware('role:restaurant_owner');
+
+        // Stories
+        Route::get('/stories', [RestaurantStoryController::class, 'index'])->middleware('role:restaurant_owner');
+        Route::post('/stories', [RestaurantStoryController::class, 'store'])->middleware('role:restaurant_owner');
+        Route::delete('/stories/{id}', [RestaurantStoryController::class, 'destroy'])->middleware('role:restaurant_owner');
 
         // Printers
         Route::get('/printers', [RestaurantController::class, 'getPrinters'])->middleware('role:restaurant_owner');

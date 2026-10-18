@@ -7,13 +7,17 @@ use App\Models\Order;
 use App\Models\User;
 use App\Models\Wallet;
 use App\Models\WalletTransaction;
+use App\Services\Accounting\LedgerPostingService;
+use App\Services\Integration\LedgerEventEmitter;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class CodReconciliationService
 {
     public const DEPOSIT_REFERENCE_TYPE = 'driver_cod_deposit';
+
     public const EXCESS_REFERENCE_TYPE = 'driver_cod_excess_credit';
 
     /**
@@ -42,7 +46,17 @@ class CodReconciliationService
             ->whereRaw(self::CASH_IN_HAND_EXPR . ' > 0')
             ->whereNull('cod_deposited_at')
             ->whereNotNull('driver_id')
-            ->when($branchId, fn ($query) => $query->where('branch_id', $branchId))
+            ->when($branchId, fn ($query) => $query->where(function ($q) use ($branchId) {
+                // A branch-mapped driver's cash belongs to that branch to
+                // reconcile even when the specific order itself isn't
+                // independently tagged with that branch (e.g. the order's
+                // own branch_id is null, or reflects the restaurant's zone
+                // rather than who actually delivered it) -- without the OR
+                // here, that money could only ever be collected by Admin,
+                // never by the driver's own branch.
+                $q->where('branch_id', $branchId)
+                    ->orWhereHas('driver', fn ($d) => $d->where('branch_id', $branchId));
+            }))
             ->when($driverId, fn ($query) => $query->where('driver_id', $driverId))
             ->when($dateFrom, fn ($query) => $query->whereDate('cash_collected_at', '>=', $dateFrom))
             ->when($dateTo, fn ($query) => $query->whereDate('cash_collected_at', '<=', $dateTo));
@@ -65,17 +79,31 @@ class CodReconciliationService
         // List every delivery partner (optionally scoped by branch / search) so
         // admins can see the whole roster across all zones and branches -- not
         // only the handful who happen to be holding undeposited cash right now.
-        // When a branch is picked, still keep any driver who is holding COD cash
-        // even if their profile has no branch set, so money is never hidden.
         $cashHolderIds = $totals->keys()->all();
 
-        return User::role('delivery_partner')
-            ->when($branchId, fn ($query) => $query->where(function ($q) use ($branchId, $cashHolderIds) {
-                $q->where('branch_id', $branchId);
-                if (! empty($cashHolderIds)) {
-                    $q->orWhereIn('id', $cashHolderIds);
+        return User::where(function ($query) use ($branchId, $cashHolderIds) {
+            $query->where(function ($inner) use ($branchId) {
+                $inner->role('delivery_partner');
+                if ($branchId) {
+                    $inner->where('branch_id', $branchId);
                 }
-            }))
+            });
+            // A driver's COD debt doesn't disappear just because their
+            // role was later changed (e.g. an admin edits their role, or
+            // syncRoles([]) on deactivation) -- always include anyone
+            // still holding cash, regardless of current role, or that
+            // money becomes invisible and uncollectable on this page even
+            // though the Dashboard's own COD figure (a raw order-level
+            // query with no role check) keeps counting it. This escape
+            // hatch is Admin-only (unscoped): a branch's own COD
+            // Management page must show ONLY drivers actually mapped to
+            // that branch, never a driver from elsewhere (or unmapped)
+            // just because they happen to hold cash on an order tagged
+            // with this branch's branch_id.
+            if (! $branchId && ! empty($cashHolderIds)) {
+                $query->orWhereIn('id', $cashHolderIds);
+            }
+        })
             ->when($search, function ($query) use ($search) {
                 $query->where(function ($builder) use ($search) {
                     $builder->where('name', 'like', "%{$search}%")
@@ -178,11 +206,19 @@ class CodReconciliationService
                     ], fn ($value) => $value !== null)
                 );
 
+                // COD total for this order. Mirror self::CASH_IN_HAND_EXPR /
+                // pendingOrderAmount(): when the driver flow never recorded
+                // cash_collected_amount, fall back to the order total. Without
+                // this the fully-collected check below compares against 0 and
+                // every partial deposit marks the order deposited, dropping the
+                // still-owed remainder off COD reconciliation.
+                $orderCodTotal = round(((float) $order->cash_collected_amount) ?: (float) $order->total, 2);
+
                 $newCollected = round((float) ($order->cod_collected_from_driver_amount ?? 0) + $applied, 2);
-                $isFullyCollected = $newCollected + 0.00001 >= round((float) $order->cash_collected_amount, 2);
+                $isFullyCollected = $newCollected + 0.00001 >= $orderCodTotal;
 
                 $order->forceFill([
-                    'cod_collected_from_driver_amount' => min($newCollected, round((float) $order->cash_collected_amount, 2)),
+                    'cod_collected_from_driver_amount' => min($newCollected, $orderCodTotal),
                     'cod_last_collected_at' => now(),
                     'cod_reconciliation_status' => $isFullyCollected ? 'deposited' : 'partial',
                     'cod_deposited_at' => $isFullyCollected ? now() : null,
@@ -194,35 +230,52 @@ class CodReconciliationService
                 if ($isFullyCollected) {
                     $settledCount++;
                     try {
-                        $codAmount = round((float) $order->cash_collected_amount, 2);
+                        $codAmount = $orderCodTotal;
                         $codMemo = 'COD deposit for order #' . ($order->order_number ?? $order->id);
-                        $entry = app(\App\Services\Accounting\LedgerPostingService::class)->postCodReconciled($order->id, $codAmount, now(), $codMemo);
-                        \App\Services\Integration\LedgerEventEmitter::journal($entry);
+                        $entry = app(LedgerPostingService::class)->postCodReconciled($order->id, $codAmount, now(), $codMemo);
+                        LedgerEventEmitter::journal($entry);
                     } catch (\Throwable $e) {
-                        \Illuminate\Support\Facades\Log::warning('Ledger postCodReconciled failed', [
+                        Log::warning('Ledger postCodReconciled failed', [
                             'order_id' => $order->id, 'error' => $e->getMessage(),
                         ]);
                     }
                 }
             }
 
+            // Anything still remaining after every matching order is
+            // covered. For an admin-wide collection (no branch scope) this
+            // is a genuine platform-wide excess and gets credited back to
+            // the driver's wallet as before. For a BRANCH-scoped
+            // collection, "remaining" may really be owed against a
+            // DIFFERENT branch's orders (or a branch-less order) that this
+            // query never looked at -- crediting it here would hand the
+            // driver free wallet money while that other branch's debt
+            // stays outstanding and un-deposited. Leave it unapplied
+            // instead and tell the caller, rather than silently paying it
+            // out.
             $excessAmount = round(max(0, $remaining), 2);
+            $unappliedAmount = 0.0;
+
             if ($excessAmount > 0) {
-                $this->creditWallet(
-                    $wallet,
-                    $driver,
-                    $excessAmount,
-                    self::EXCESS_REFERENCE_TYPE,
-                    null,
-                    'Extra COD cash collected beyond pending driver balance',
-                    $actor,
-                    array_filter([
-                        'source' => 'cod_excess_credit',
-                        'reference' => $reference,
-                        'branch_id' => $branchId,
-                        'cod_balance_before' => $balanceBefore,
-                    ], fn ($value) => $value !== null)
-                );
+                if ($branchId === null) {
+                    $this->creditWallet(
+                        $wallet,
+                        $driver,
+                        $excessAmount,
+                        self::EXCESS_REFERENCE_TYPE,
+                        null,
+                        'Extra COD cash collected beyond pending driver balance',
+                        $actor,
+                        array_filter([
+                            'source' => 'cod_excess_credit',
+                            'reference' => $reference,
+                            'cod_balance_before' => $balanceBefore,
+                        ], fn ($value) => $value !== null)
+                    );
+                } else {
+                    $unappliedAmount = $excessAmount;
+                    $excessAmount = 0.0;
+                }
             }
 
             return [
@@ -232,6 +285,7 @@ class CodReconciliationService
                 'amount' => $collectedAmount,
                 'cod_applied_amount' => $appliedAmount,
                 'excess_credit_amount' => $excessAmount,
+                'unapplied_amount' => $unappliedAmount,
                 'balance_before' => $balanceBefore,
                 'balance_after' => max(0, round($balanceBefore - $appliedAmount, 2)),
             ];

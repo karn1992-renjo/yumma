@@ -485,7 +485,7 @@ class _CartHeader extends StatelessWidget {
               const Spacer(),
               Text(
                 'Cart',
-                style: GoogleFonts.plusJakartaSans(
+                style: GoogleFonts.poppins(
                   fontSize: 18,
                   fontWeight: FontWeight.w800,
                   color: FoodFlowTheme.ink,
@@ -512,7 +512,7 @@ class _CartHeader extends StatelessWidget {
                       restaurantName,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: GoogleFonts.plusJakartaSans(
+                      style: GoogleFonts.poppins(
                         fontSize: 20,
                         fontWeight: FontWeight.w800,
                         color: FoodFlowTheme.ink,
@@ -523,7 +523,7 @@ class _CartHeader extends StatelessWidget {
                       '${cart.itemCount} item${cart.itemCount == 1 ? '' : 's'} ready for checkout',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: GoogleFonts.plusJakartaSans(
+                      style: GoogleFonts.poppins(
                         fontSize: 12.5,
                         fontWeight: FontWeight.w600,
                         color: FoodFlowTheme.muted,
@@ -550,7 +550,7 @@ class _CartHeader extends StatelessWidget {
                 Expanded(
                   child: Text(
                     'Review items here. Payment and order placement happen on checkout.',
-                    style: GoogleFonts.plusJakartaSans(
+                    style: GoogleFonts.poppins(
                       fontSize: 12,
                       height: 1.35,
                       fontWeight: FontWeight.w600,
@@ -593,7 +593,7 @@ class _CartHeader extends StatelessWidget {
               children: [
                 Text(
                   'Clear this cart?',
-                  style: GoogleFonts.plusJakartaSans(
+                  style: GoogleFonts.poppins(
                     fontSize: 18,
                     fontWeight: FontWeight.w800,
                     color: FoodFlowTheme.ink,
@@ -602,7 +602,7 @@ class _CartHeader extends StatelessWidget {
                 const SizedBox(height: 8),
                 Text(
                   'Items from the current restaurant cart will be removed.',
-                  style: GoogleFonts.plusJakartaSans(
+                  style: GoogleFonts.poppins(
                     fontSize: 13,
                     fontWeight: FontWeight.w500,
                     color: FoodFlowTheme.muted,
@@ -722,7 +722,7 @@ class _CartSwitcher extends StatelessWidget {
                           restaurant.name,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: GoogleFonts.plusJakartaSans(
+                          style: GoogleFonts.poppins(
                             fontSize: 13,
                             fontWeight: FontWeight.w800,
                             color: FoodFlowTheme.ink,
@@ -731,7 +731,7 @@ class _CartSwitcher extends StatelessWidget {
                         const SizedBox(height: 2),
                         Text(
                           '${restaurantCart.itemCount} item${restaurantCart.itemCount == 1 ? '' : 's'}',
-                          style: GoogleFonts.plusJakartaSans(
+                          style: GoogleFonts.poppins(
                             fontSize: 11,
                             fontWeight: FontWeight.w600,
                             color: isActive ? primary : FoodFlowTheme.muted,
@@ -806,7 +806,7 @@ class _CartReviewItem extends StatelessWidget {
                           menuItem.name,
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
-                          style: GoogleFonts.plusJakartaSans(
+                          style: GoogleFonts.poppins(
                             fontSize: 14.5,
                             height: 1.24,
                             fontWeight: FontWeight.w800,
@@ -823,7 +823,7 @@ class _CartReviewItem extends StatelessWidget {
                       menuItem.description!.trim(),
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
-                      style: GoogleFonts.plusJakartaSans(
+                      style: GoogleFonts.poppins(
                         fontSize: 11.5,
                         height: 1.35,
                         fontWeight: FontWeight.w500,
@@ -849,7 +849,7 @@ class _CartReviewItem extends StatelessWidget {
                         child: isReward
                             ? Text(
                                 'FREE',
-                                style: GoogleFonts.plusJakartaSans(
+                                style: GoogleFonts.poppins(
                                   fontSize: 15,
                                   fontWeight: FontWeight.w900,
                                   color: FoodFlowTheme.successDark,
@@ -924,7 +924,7 @@ class _InlineRewardBadge extends StatelessWidget {
               '$quantity free item • $title',
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: GoogleFonts.plusJakartaSans(
+              style: GoogleFonts.poppins(
                 fontSize: 11,
                 fontWeight: FontWeight.w800,
                 color: FoodFlowTheme.tagGreenDark,
@@ -976,7 +976,7 @@ class _CartRewardSection extends StatelessWidget {
               const SizedBox(width: 8),
               Text(
                 'Free with this order',
-                style: GoogleFonts.plusJakartaSans(
+                style: GoogleFonts.poppins(
                   fontSize: 14,
                   fontWeight: FontWeight.w900,
                   color: FoodFlowTheme.ink,
@@ -1031,7 +1031,7 @@ class _DetachedRewardLine extends StatelessWidget {
               name.isEmpty ? 'Free item' : name,
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
-              style: GoogleFonts.plusJakartaSans(
+              style: GoogleFonts.poppins(
                 fontSize: 13,
                 height: 1.25,
                 fontWeight: FontWeight.w800,
@@ -1042,7 +1042,7 @@ class _DetachedRewardLine extends StatelessWidget {
           const SizedBox(width: 8),
           Text(
             '$quantity x FREE',
-            style: GoogleFonts.plusJakartaSans(
+            style: GoogleFonts.poppins(
               fontSize: 12,
               fontWeight: FontWeight.w900,
               color: FoodFlowTheme.tagGreenDark,
@@ -1127,7 +1127,7 @@ class _PriceLine extends StatelessWidget {
       children: [
         Text(
           formatCurrency(context, displayTotal),
-          style: GoogleFonts.plusJakartaSans(
+          style: GoogleFonts.poppins(
             fontSize: 17,
             fontWeight: FontWeight.w900,
             color: FoodFlowTheme.ink,
@@ -1139,7 +1139,7 @@ class _PriceLine extends StatelessWidget {
               context,
               menuItem.price * item.quantity,
             ),
-            style: GoogleFonts.plusJakartaSans(
+            style: GoogleFonts.poppins(
               fontSize: 12,
               fontWeight: FontWeight.w700,
               color: FoodFlowTheme.faint,
@@ -1176,7 +1176,7 @@ class _OptionText extends StatelessWidget {
         values,
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
-        style: GoogleFonts.plusJakartaSans(
+        style: GoogleFonts.poppins(
           fontSize: 10.5,
           fontWeight: FontWeight.w700,
           color: FoodFlowTheme.tagOrangeDark,
@@ -1224,7 +1224,7 @@ class _QuantityStepper extends StatelessWidget {
             child: Text(
               quantity.toString(),
               textAlign: TextAlign.center,
-              style: GoogleFonts.plusJakartaSans(
+              style: GoogleFonts.poppins(
                 fontSize: 13,
                 fontWeight: FontWeight.w900,
                 color: primary,
@@ -1303,7 +1303,7 @@ class _CartBottomBar extends StatelessWidget {
             children: [
               Text(
                 'Item total',
-                style: GoogleFonts.plusJakartaSans(
+                style: GoogleFonts.poppins(
                   fontSize: 12.5,
                   fontWeight: FontWeight.w700,
                   color: FoodFlowTheme.muted,
@@ -1312,7 +1312,7 @@ class _CartBottomBar extends StatelessWidget {
               const SizedBox(width: 8),
               Text(
                 formatCurrency(context, itemTotal),
-                style: GoogleFonts.plusJakartaSans(
+                style: GoogleFonts.poppins(
                   fontSize: 15,
                   fontWeight: FontWeight.w900,
                   color: FoodFlowTheme.ink,
@@ -1322,7 +1322,7 @@ class _CartBottomBar extends StatelessWidget {
               if (discount > 0)
                 Text(
                   'You save ${formatCurrency(context, discount)}',
-                  style: GoogleFonts.plusJakartaSans(
+                  style: GoogleFonts.poppins(
                     fontSize: 11.5,
                     fontWeight: FontWeight.w800,
                     color: FoodFlowTheme.successDark,
@@ -1335,7 +1335,7 @@ class _CartBottomBar extends StatelessWidget {
             alignment: Alignment.centerLeft,
             child: Text(
               'Taxes & delivery calculated at checkout',
-              style: GoogleFonts.plusJakartaSans(
+              style: GoogleFonts.poppins(
                 fontSize: 10.5,
                 fontWeight: FontWeight.w600,
                 color: FoodFlowTheme.faint,
@@ -1352,7 +1352,7 @@ class _CartBottomBar extends StatelessWidget {
                   label: Text(
                     'Add more',
                     overflow: TextOverflow.ellipsis,
-                    style: GoogleFonts.plusJakartaSans(
+                    style: GoogleFonts.poppins(
                       fontSize: 13,
                       fontWeight: FontWeight.w800,
                       color: primary,
@@ -1401,7 +1401,7 @@ class _CartBottomBar extends StatelessWidget {
                               'Checkout',
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
-                              style: GoogleFonts.plusJakartaSans(
+                              style: GoogleFonts.poppins(
                                 fontSize: 15,
                                 fontWeight: FontWeight.w900,
                                 color: FoodFlowTheme.brandOnPrimary(context),
@@ -1455,7 +1455,7 @@ class _EmptyCartView extends StatelessWidget {
               const Spacer(),
               Text(
                 'Cart',
-                style: GoogleFonts.plusJakartaSans(
+                style: GoogleFonts.poppins(
                   fontSize: 18,
                   fontWeight: FontWeight.w800,
                   color: FoodFlowTheme.ink,
@@ -1483,7 +1483,7 @@ class _EmptyCartView extends StatelessWidget {
           Text(
             'Your cart is empty',
             textAlign: TextAlign.center,
-            style: GoogleFonts.plusJakartaSans(
+            style: GoogleFonts.poppins(
               fontSize: 24,
               fontWeight: FontWeight.w900,
               color: FoodFlowTheme.ink,
@@ -1493,7 +1493,7 @@ class _EmptyCartView extends StatelessWidget {
           Text(
             'Add dishes from restaurants and review them here before checkout.',
             textAlign: TextAlign.center,
-            style: GoogleFonts.plusJakartaSans(
+            style: GoogleFonts.poppins(
               fontSize: 13,
               height: 1.45,
               fontWeight: FontWeight.w500,
@@ -1515,7 +1515,7 @@ class _EmptyCartView extends StatelessWidget {
               ),
               child: Text(
                 'Browse restaurants',
-                style: GoogleFonts.plusJakartaSans(
+                style: GoogleFonts.poppins(
                   fontWeight: FontWeight.w800,
                 ),
               ),

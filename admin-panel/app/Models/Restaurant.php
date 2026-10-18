@@ -11,7 +11,16 @@ use App\Models\Cuisine;
 class Restaurant extends Model
 {
     protected $table = 'restaurants';
-    
+
+    /**
+     * Use the SEO-friendly slug for route binding (e.g. GenerateSitemap,
+     * implicit route-model-binding) instead of the numeric id.
+     */
+    public function getRouteKeyName(): string
+    {
+        return 'slug';
+    }
+
     protected $fillable = [
         'owner_id', 
         'branch_id',
@@ -33,13 +42,15 @@ class Restaurant extends Model
         'tds_pan_verified',
         'latitude',
         'longitude',
-        'delivery_radius', 
-        'phone', 
+        'delivery_area_id',
+        'delivery_radius',
+        'phone',
         'email', 
         'fssai_license_number',
         'cuisine',
-        'is_open', 
-        'is_pure_veg', 
+        'is_open',
+        'petpooja_store_closed_until',
+        'is_pure_veg',
         'min_order_amount', 
         'delivery_fee',
         'commission_rate',
@@ -72,6 +83,11 @@ class Restaurant extends Model
         'offline_reason' => 'array',
         'dining_settings' => 'array',
         'is_open' => 'boolean',
+        'suspended_at' => 'datetime',
+        'suspended_until' => 'datetime',
+        'commission_consent_accepted_at' => 'datetime',
+        'commission_consent_rate_shown' => 'decimal:2',
+        'petpooja_store_closed_until' => 'datetime',
         'is_pure_veg' => 'boolean',
         'is_verified' => 'boolean',
         'is_gst_registered' => 'boolean',
@@ -211,6 +227,77 @@ class Restaurant extends Model
     public function branch()
     {
         return $this->belongsTo(Branch::class);
+    }
+
+    public function petpoojaConfig()
+    {
+        return $this->hasOne(PetpoojaRestaurantConfig::class);
+    }
+
+    public function activeSubscription()
+    {
+        return $this->belongsTo(RestaurantSubscription::class, 'active_subscription_id');
+    }
+
+    public function subscriptions()
+    {
+        return $this->hasMany(RestaurantSubscription::class);
+    }
+
+    public function storiesAddonSubscription()
+    {
+        return $this->hasOne(RestaurantSubscription::class)
+            ->where('scope', 'stories_addon')
+            ->whereIn('status', ['trialing', 'active', 'past_due']);
+    }
+
+    public function isOnSubscriptionBilling(): bool
+    {
+        return $this->billing_mode === 'subscription';
+    }
+
+    /**
+     * True once a subscription has lapsed past its grace period and the
+     * restaurant must explicitly choose to resubscribe or switch to
+     * commission billing -- always derived live from the subscription
+     * relation, never a denormalized column, so it can't drift out of sync.
+     */
+    public function needsBillingChoice(): bool
+    {
+        return $this->isOnSubscriptionBilling()
+            && $this->activeSubscription?->status === 'billing_choice_required';
+    }
+
+    /**
+     * True once a subscribed restaurant has used up its order allowance for
+     * the current billing period (NULL order_limit = unlimited, never over
+     * capacity). Reused both to block order acceptance and to hide the
+     * restaurant from customer discovery until the period resets.
+     */
+    public function isOverSubscriptionOrderCap(): bool
+    {
+        if (! $this->isOnSubscriptionBilling()) {
+            return false;
+        }
+
+        $subscription = $this->activeSubscription;
+
+        return $subscription !== null && $subscription->isLive() && ! $subscription->hasOrderCapacity();
+    }
+
+    /**
+     * Instance-level equivalent of scopeCustomerVisible(), for a single
+     * already-loaded restaurant (e.g. a direct detail-page fetch) rather
+     * than a listing query.
+     */
+    public function isHiddenFromDiscovery(): bool
+    {
+        return $this->isSuspended() || $this->needsBillingChoice() || $this->isOverSubscriptionOrderCap();
+    }
+
+    public function deliveryArea()
+    {
+        return $this->belongsTo(DeliveryArea::class);
     }
 
     /**
@@ -463,15 +550,54 @@ class Restaurant extends Model
      */
     public function isOpenAt(Carbon $datetime = null): bool
     {
+        if ($this->isSuspended()) {
+            return false;
+        }
+
         if (!$this->is_open) {
             return false;
         }
-        
+
         $datetime = $datetime ?: Carbon::now($this->timezone ?? 'Asia/Kolkata');
 
         return $this->isScheduledOpenAt($datetime);
     }
-    
+
+    /**
+     * True while an admin-issued suspension is in effect. Deliberately
+     * independent of `is_open` / `offline_reason` (which the owner controls)
+     * so a suspended restaurant can never be put back online except by an
+     * admin clearing the suspension — toggling "open" has no effect on it.
+     */
+    public function isSuspended(): bool
+    {
+        if (! $this->suspended_at) {
+            return false;
+        }
+
+        return $this->suspended_until === null || $this->suspended_until->isFuture();
+    }
+
+    public function suspend(?string $reason, ?Carbon $until, int $adminUserId): void
+    {
+        $this->forceFill([
+            'suspended_at' => Carbon::now(),
+            'suspended_until' => $until,
+            'suspension_reason' => $reason,
+            'suspended_by' => $adminUserId,
+        ])->save();
+    }
+
+    public function liftSuspension(): void
+    {
+        $this->forceFill([
+            'suspended_at' => null,
+            'suspended_until' => null,
+            'suspension_reason' => null,
+            'suspended_by' => null,
+        ])->save();
+    }
+
     /**
      * Check if restaurant is open now (alias for isOpenAt)
      */
@@ -830,7 +956,47 @@ class Restaurant extends Model
     {
         return $query->where('is_open', true);
     }
-    
+
+    /**
+     * Hard exclusion for customer-facing discovery (listings, search,
+     * direct detail access) -- NOT the same as "closed" (which still shows,
+     * just sorted last). Excludes: (1) an admin-suspended restaurant
+     * (independent of the subscription checks below -- a suspension always
+     * hides, on any billing mode); (2) a restaurant whose subscription has
+     * lapsed into billing_choice_required; (3) one that's subscribed but
+     * has used up its order allowance for the period (so customers can't
+     * place an order a maxed-out restaurant can't accept). A commission-mode
+     * restaurant, or one with no active_subscription_id at all, is
+     * unaffected by checks (2)/(3).
+     */
+    public function scopeCustomerVisible($query)
+    {
+        return $query
+            ->where(function ($q) {
+                $q->whereNull('suspended_at')
+                    ->orWhere(function ($notSuspended) {
+                        $notSuspended->whereNotNull('suspended_until')
+                            ->where('suspended_until', '<=', now());
+                    });
+            })
+            ->where(function ($q) {
+                $q->whereNull('active_subscription_id')
+                    ->orWhereHas('activeSubscription', function ($sub) {
+                        $sub->where('status', '!=', 'billing_choice_required')
+                            ->where(function ($cap) {
+                                // Unlimited plan (order_limit IS NULL) always has capacity;
+                                // otherwise compare usage against the matching plan row via
+                                // a scalar subquery, since whereColumn can't reach across
+                                // two separate whereHas-scoped tables.
+                                $cap->whereHas('plan', fn ($plan) => $plan->whereNull('order_limit'))
+                                    ->orWhereRaw(
+                                        'orders_used_in_period < (select order_limit from subscription_plans where subscription_plans.id = restaurant_subscriptions.subscription_plan_id)'
+                                    );
+                            });
+                    });
+            });
+    }
+
     /**
      * Scope a query to only include verified restaurants
      */

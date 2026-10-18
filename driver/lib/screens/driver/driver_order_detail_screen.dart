@@ -5,8 +5,10 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:provider/provider.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
+import '../../providers/auth_provider.dart';
 import '../../services/api_service.dart';
 import '../../services/websocket_service.dart';
 import '../../services/directions_service.dart';
@@ -390,15 +392,26 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
     try {
       // Report the mode the driver actually used to settle, not the transient
       // selector value (which `_loadOrder` flips to 'online' once paid).
-      final settledMode = _cashCollected
-          ? 'cash'
-          : (_order?.cashCollectedAmount != null ? 'cash' : _selectedPaymentMode);
+      // `_isPaymentAlreadyPaid` must win over a stale `_cashCollected` toggle
+      // -- if a QR/online payment completed while this screen was already
+      // open (the driver ticked "cash collected" before that happened, or
+      // out of habit), reporting 'cash' would make the backend treat money
+      // the customer paid straight to the gateway as cash the driver is
+      // holding. The backend also now guards this server-side (never trusts
+      // this value alone once payment_status is already success), but the
+      // app should still report the truth.
+      final settledMode = _isPaymentAlreadyPaid
+          ? 'online'
+          : (_cashCollected
+              ? 'cash'
+              : (_order?.cashCollectedAmount != null ? 'cash' : _selectedPaymentMode));
       final response = await _api.post(
         '${ApiConstants.verifyDeliveryOtp}/${widget.orderId}',
         data: {
           'otp': _otpController.text,
           'payment_mode': settledMode,
-          'cash_collected': _cashCollected || _order?.cashCollectedAmount != null,
+          'cash_collected': !_isPaymentAlreadyPaid &&
+              (_cashCollected || _order?.cashCollectedAmount != null),
         },
       );
 
@@ -704,6 +717,11 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
   }
 
   bool get _isPaymentAlreadyPaid => _order?.isPaymentPaid == true;
+
+  bool _isOnlinePaymentAvailable(BuildContext context) {
+    final user = Provider.of<AuthProvider>(context).currentUser;
+    return user?.isPaymentGatewayEnabled ?? false;
+  }
 
   String _driverEarningText(Order order) {
     final earning = formatCurrency(context, order.driverEarningAmount);
@@ -1730,14 +1748,22 @@ class _DriverOrderDetailScreenState extends State<DriverOrderDetailScreen> {
                     icon: Icons.payments_rounded,
                   ),
                 ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: _buildPaymentModeOption(
-                    mode: 'online',
-                    title: 'Online',
-                    icon: Icons.account_balance_wallet_rounded,
+                // Online collection (the "Generate QR" Cashfree flow) is
+                // hidden entirely when online payment is disabled
+                // platform-wide, instead of offering a toggle that would
+                // just get rejected by the backend on tap -- same fix as
+                // the customer app's checkout summary, see
+                // [[checkout-online-payment-shown-when-disabled]].
+                if (_isOnlinePaymentAvailable(context)) ...[
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: _buildPaymentModeOption(
+                      mode: 'online',
+                      title: 'Online',
+                      icon: Icons.account_balance_wallet_rounded,
+                    ),
                   ),
-                ),
+                ],
               ],
             ),
             if (_selectedPaymentMode == 'cash') ...[

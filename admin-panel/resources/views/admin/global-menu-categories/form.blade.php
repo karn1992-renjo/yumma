@@ -7,7 +7,13 @@
     <div class="d-flex justify-content-between align-items-center mb-4">
         <div>
             <h1 class="h3 mb-1">{{ $category->exists ? 'Edit Global Category' : 'Add Global Category' }}</h1>
-            <p class="text-muted mb-0">Use parent categories for Pizza, Burger, Biryani, and child rows for sub categories.</p>
+            <p class="text-muted mb-0">
+                @if(isset($parents))
+                    Change the parent below to move this category, or back to "Main Category" to make it top-level.
+                @else
+                    Creates a top-level category (e.g. Pizza, Burger, Biryani). To add a sub category, use "+ Subcategory" on a category row instead.
+                @endif
+            </p>
         </div>
         <a href="{{ route('admin.global-menu-categories.index') }}" class="btn btn-light">Back</a>
     </div>
@@ -39,6 +45,7 @@
                     <label class="form-label fw-semibold">Name</label>
                     <input type="text" name="name" value="{{ old('name', $category->name) }}" class="form-control" required>
                 </div>
+                @if(isset($parents))
                 <div class="col-md-6">
                     <label class="form-label fw-semibold">Parent Category</label>
                     <select name="parent_id" class="form-select">
@@ -47,7 +54,9 @@
                             <option value="{{ $parent->id }}" @selected(old('parent_id', $category->parent_id) == $parent->id)>{{ $parent->name }}</option>
                         @endforeach
                     </select>
+                    <div class="form-text">Change this to move the category under a different parent, or back to "Main Category" to make it top-level.</div>
                 </div>
+                @endif
                 <div class="col-12">
                     <label class="form-label fw-semibold">Mapped Cuisines</label>
                     <select name="cuisine_ids[]" class="form-select" multiple size="8">

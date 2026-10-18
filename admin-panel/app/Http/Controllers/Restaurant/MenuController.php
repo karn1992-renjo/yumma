@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Restaurant;
 
 use App\Http\Controllers\Controller;
+use App\Http\Controllers\Restaurant\Concerns\EnforcesSubscriptionLimits;
 use App\Http\Controllers\Restaurant\Concerns\ResolvesRestaurantContext;
 use App\Models\MenuItem;
 use App\Models\Category;
@@ -33,6 +34,7 @@ class MenuController extends Controller
     }
 
     use ResolvesRestaurantContext;
+    use EnforcesSubscriptionLimits;
 
     public function index()
     {
@@ -43,7 +45,7 @@ class MenuController extends Controller
         }
         
         $menuItems = MenuItem::where('restaurant_id', $restaurant->id)
-            ->with('category')
+            ->with(['category', 'subcategory'])
             ->latest('updated_at')
             ->latest('id')
             ->paginate(20);
@@ -60,6 +62,8 @@ class MenuController extends Controller
         }
         
         $categories = Category::where('restaurant_id', $restaurant->id)
+            ->parents()
+            ->with(['children' => fn ($query) => $query->orderBy('display_order')])
             ->orderBy('display_order')
             ->get();
         $cuisines = Cuisine::active()->ordered()->get();
@@ -68,7 +72,7 @@ class MenuController extends Controller
             ->orderBy('name')
             ->get();
         $globalCategories = $this->globalCategoryOptions();
-            
+
         return view('restaurant.menu.create', compact('categories', 'cuisines', 'restaurant', 'globalMenuItems', 'globalCategories'));
     }
     
@@ -79,7 +83,17 @@ class MenuController extends Controller
         if (!$restaurant) {
             return redirect()->back()->with('error', 'Restaurant not found.');
         }
-        
+
+        if ($restaurant->petpoojaConfig?->is_menu_managed_by_pos) {
+            return redirect()->back()->with('error', 'This menu is managed by Petpooja -- add items in your POS instead.');
+        }
+
+        try {
+            $this->assertMenuItemCapacity($restaurant);
+        } catch (\RuntimeException $e) {
+            return redirect()->back()->with('error', $e->getMessage());
+        }
+
         $validated = $request->validate(array_merge([
             'name' => 'required|string|max:255',
             'master_menu_item_id' => 'nullable|integer|exists:master_menu_items,id',
@@ -121,7 +135,7 @@ class MenuController extends Controller
         }
         
         $validated['restaurant_id'] = $restaurant->id;
-        $validated['category_id'] = $this->resolveRestaurantCategoryId($restaurant->id, $validated['category_id'] ?? null, $request->input('global_category_id'), $request->input('global_subcategory_id'));
+        [$validated['category_id'], $validated['subcategory_id']] = $this->resolveRestaurantCategoryIds($restaurant->id, $validated['category_id'] ?? null, $request->input('global_category_id'), $request->input('global_subcategory_id'));
         $validated['cuisine_id'] = $validated['cuisine_id']
             ?? ($master?->cuisine_id ? (int) $master->cuisine_id : null)
             ?? $this->resolveGlobalCategoryCuisineId($request->input('global_category_id'), $request->input('global_subcategory_id'));
@@ -177,7 +191,14 @@ class MenuController extends Controller
             return back()->withInput()->with('error', 'Pure veg restaurants can only import vegetarian menu items.');
         }
 
-        $categoryId = $this->resolveRestaurantCategoryId($restaurant->id, null, $request->input('global_category_id'), $request->input('global_subcategory_id'), $master->category_name);
+        [$categoryId, $subcategoryId] = $this->resolveRestaurantCategoryIds(
+            $restaurant->id,
+            null,
+            $request->input('global_category_id'),
+            $request->input('global_subcategory_id'),
+            $master->category_name,
+            $master->subcategory_name
+        );
 
         MenuItem::updateOrCreate(
             [
@@ -187,6 +208,7 @@ class MenuController extends Controller
             [
                 'item_source' => 'global',
                 'category_id' => $categoryId,
+                'subcategory_id' => $subcategoryId,
                 'name' => $master->name,
                 'description' => $master->description,
                 'price' => $validated['price'],
@@ -219,7 +241,11 @@ class MenuController extends Controller
         }
         
         $menuItem = MenuItem::where('restaurant_id', $restaurant->id)->findOrFail($id);
-        $categories = Category::where('restaurant_id', $restaurant->id)->orderBy('display_order')->get();
+        $categories = Category::where('restaurant_id', $restaurant->id)
+            ->parents()
+            ->with(['children' => fn ($query) => $query->orderBy('display_order')])
+            ->orderBy('display_order')
+            ->get();
         $cuisines = Cuisine::active()->ordered()->get();
         $globalMenuItems = MasterMenuItem::where('is_active', true)
             ->orderBy('category_name')
@@ -239,7 +265,11 @@ class MenuController extends Controller
         }
         
         $menuItem = MenuItem::where('restaurant_id', $restaurant->id)->findOrFail($id);
-        
+
+        if ($menuItem->item_source === 'petpooja' && ($restaurant->petpoojaConfig?->is_menu_managed_by_pos ?? true)) {
+            return redirect()->back()->with('error', 'This item is managed by Petpooja -- edit it in your POS instead.');
+        }
+
         $validated = $request->validate(array_merge([
             'name' => 'required|string|max:255',
             'master_menu_item_id' => 'nullable|integer|exists:master_menu_items,id',
@@ -280,7 +310,7 @@ class MenuController extends Controller
             }
         }
         
-        $validated['category_id'] = $this->resolveRestaurantCategoryId($restaurant->id, $validated['category_id'] ?? null, $request->input('global_category_id'), $request->input('global_subcategory_id'));
+        [$validated['category_id'], $validated['subcategory_id']] = $this->resolveRestaurantCategoryIds($restaurant->id, $validated['category_id'] ?? null, $request->input('global_category_id'), $request->input('global_subcategory_id'));
         $validated['cuisine_id'] = $validated['cuisine_id']
             ?? $this->resolveGlobalCategoryCuisineId($request->input('global_category_id'), $request->input('global_subcategory_id'));
         $validated['is_veg'] = $validated['food_type'] === 'veg';
@@ -386,17 +416,32 @@ class MenuController extends Controller
             }
 
             $categoryId = null;
+            $subcategoryId = null;
+            $categoryName = trim((string) ($record['category'] ?? ''));
             $subCategoryName = trim((string) ($record['sub_category'] ?? $record['subcategory'] ?? ''));
-            if (!empty($record['category']) || $subCategoryName !== '') {
-                $categoryName = trim($record['category']);
-                $categoryName = $categoryName !== '' && $subCategoryName !== ''
-                    ? "{$categoryName} / {$subCategoryName}"
-                    : ($categoryName ?: $subCategoryName);
+
+            // Category and Sub Category are real, independently linked rows
+            // (parent/child) rather than one row named "Category / Sub
+            // Category" -- a sub-category with no category column falls back
+            // to being its own top-level category instead of being dropped.
+            if ($categoryName !== '') {
                 $category = Category::firstOrCreate(
-                    ['restaurant_id' => $restaurant->id, 'name' => $categoryName],
+                    ['restaurant_id' => $restaurant->id, 'parent_id' => null, 'name' => $categoryName],
                     ['display_order' => 0, 'is_active' => true]
                 );
                 $categoryId = $category->id;
+
+                if ($subCategoryName !== '') {
+                    $subcategoryId = Category::firstOrCreate(
+                        ['restaurant_id' => $restaurant->id, 'parent_id' => $categoryId, 'name' => $subCategoryName],
+                        ['display_order' => 0, 'is_active' => true]
+                    )->id;
+                }
+            } elseif ($subCategoryName !== '') {
+                $categoryId = Category::firstOrCreate(
+                    ['restaurant_id' => $restaurant->id, 'parent_id' => null, 'name' => $subCategoryName],
+                    ['display_order' => 0, 'is_active' => true]
+                )->id;
             }
 
             $foodType = strtolower(trim($record['food_type'] ?? 'veg'));
@@ -411,6 +456,7 @@ class MenuController extends Controller
             MenuItem::create([
                 'restaurant_id' => $restaurant->id,
                 'category_id' => $categoryId,
+                'subcategory_id' => $subcategoryId,
                 'name' => $record['name'],
                 'description' => $record['description'] ?: null,
                 'price' => (float) $record['price'],
@@ -444,8 +490,13 @@ class MenuController extends Controller
         }
         
         $menuItem = MenuItem::where('restaurant_id', $restaurant->id)->findOrFail($id);
+
+        if ($menuItem->item_source === 'petpooja' && ($restaurant->petpoojaConfig?->is_menu_managed_by_pos ?? true)) {
+            return redirect()->back()->with('error', 'This item is managed by Petpooja -- remove it in your POS instead.');
+        }
+
         $menuItem->delete();
-        
+
         return redirect()->route('restaurant.menu.index')->with('success', 'Menu item deleted successfully!');
     }
     
@@ -476,34 +527,69 @@ class MenuController extends Controller
             ->get();
     }
 
-    private function resolveRestaurantCategoryId(int $restaurantId, ?int $categoryId = null, ?int $globalCategoryId = null, ?int $globalSubcategoryId = null, ?string $fallbackName = null): ?int
-    {
+    /**
+     * Resolve a restaurant's own {category_id, subcategory_id} pair -- either
+     * from an explicit restaurant category selection, or from a Global
+     * Category + Global Subcategory picked on the form/import. Category and
+     * Subcategory are always two real, independently linked rows (parent +
+     * child via Category::parent_id), never one row named "Category / Sub
+     * Category" the way this used to work.
+     *
+     * @return array{0: ?int, 1: ?int}
+     */
+    private function resolveRestaurantCategoryIds(
+        int $restaurantId,
+        ?int $categoryId = null,
+        ?int $globalCategoryId = null,
+        ?int $globalSubcategoryId = null,
+        ?string $fallbackCategoryName = null,
+        ?string $fallbackSubcategoryName = null
+    ): array {
         if ($categoryId) {
-            return $categoryId;
+            $selected = Category::where('restaurant_id', $restaurantId)->find($categoryId);
+            if ($selected && $selected->parent_id) {
+                // The dropdown let the user pick a subcategory directly --
+                // its parent is the real category_id.
+                return [$selected->parent_id, $selected->id];
+            }
+
+            return [$categoryId, null];
         }
 
-        $name = $fallbackName;
+        $categoryName = $fallbackCategoryName;
+        $subcategoryName = $fallbackSubcategoryName;
+
         if ($globalCategoryId) {
             $globalCategory = GlobalMenuCategory::active()->find($globalCategoryId);
-            $name = $globalCategory?->name;
+            $categoryName = $globalCategory?->name ?: $categoryName;
+
             if ($globalSubcategoryId) {
                 $globalSubcategory = GlobalMenuCategory::active()
                     ->where('parent_id', $globalCategoryId)
                     ->find($globalSubcategoryId);
-                $name = $globalCategory && $globalSubcategory
-                    ? "{$globalCategory->name} / {$globalSubcategory->name}"
-                    : $name;
+                $subcategoryName = $globalSubcategory?->name ?: $subcategoryName;
             }
         }
 
-        if (!$name) {
-            return null;
+        if (!$categoryName) {
+            return [null, null];
         }
 
-        return Category::firstOrCreate(
-            ['restaurant_id' => $restaurantId, 'name' => $name],
+        $category = Category::firstOrCreate(
+            ['restaurant_id' => $restaurantId, 'parent_id' => null, 'name' => $categoryName],
             ['display_order' => 0, 'is_active' => true]
-        )->id;
+        );
+
+        if (!$subcategoryName) {
+            return [$category->id, null];
+        }
+
+        $subcategory = Category::firstOrCreate(
+            ['restaurant_id' => $restaurantId, 'parent_id' => $category->id, 'name' => $subcategoryName],
+            ['display_order' => 0, 'is_active' => true]
+        );
+
+        return [$category->id, $subcategory->id];
     }
 
 

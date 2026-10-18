@@ -113,9 +113,11 @@
                 <h1>Banner Management</h1>
                 <p>Manage app banner media, redirects, ordering, schedule, and carousel timing.</p>
             </div>
+            @can('create_banners')
             <a href="{{ route('admin.banners.create') }}" class="btn btn-primary fw-bold">
                 <i class="fas fa-plus me-2"></i>Add Banner
             </a>
+            @endcan
         </div>
     </section>
 
@@ -152,7 +154,9 @@
             <i class="fas fa-images fa-3x mb-3"></i>
             <div class="fw-bold text-dark">No banners found</div>
             <div class="mb-3">Create the first app banner with image or Lottie JSON media.</div>
+            @can('create_banners')
             <a href="{{ route('admin.banners.create') }}" class="btn btn-primary">Create Banner</a>
+            @endcan
         </section>
     @else
         <section class="bn-grid" id="bannersContainer">
@@ -219,12 +223,16 @@
                                 @endif
                             </div>
                             <div class="d-flex gap-2">
+                                @can('edit_banners')
                                 <a href="{{ route('admin.banners.edit', $banner) }}" class="bn-action" title="Edit"><i class="fas fa-pen"></i></a>
+                                @endcan
+                                @can('delete_banners')
                                 <form action="{{ route('admin.banners.destroy', $banner) }}" method="POST" id="deleteForm{{ $banner->id }}">
                                     @csrf
                                     @method('DELETE')
                                     <button type="button" class="bn-action danger" onclick="confirmDelete('deleteForm{{ $banner->id }}', 'Delete this banner?')" title="Delete"><i class="fas fa-trash"></i></button>
                                 </form>
+                                @endcan
                             </div>
                         </div>
                     </div>

@@ -30,9 +30,11 @@
             <a href="{{ route('admin.promotion-engine.logs') }}" class="btn btn-outline-secondary">
                 <i class="fas fa-clipboard-list me-2"></i>Logs
             </a>
+            @can('create_promos')
             <a href="{{ route('admin.promotion-engine.create') }}" class="btn btn-primary">
                 <i class="fas fa-plus me-2"></i>Create Promotion
             </a>
+            @endcan
         </div>
     </div>
 </div>
@@ -113,6 +115,7 @@
                         <td><span class="badge bg-{{ $statusBadge[$promotion->status] ?? 'secondary' }}">{{ ucfirst($promotion->status) }}</span></td>
                         <td class="text-end">
                             <div class="btn-group">
+                                @can('edit_promos')
                                 <a href="{{ route('admin.promotion-engine.edit', $promotion) }}" class="btn btn-sm btn-outline-primary">
                                     <i class="fas fa-edit"></i>
                                 </a>
@@ -122,6 +125,8 @@
                                         <i class="fas fa-power-off"></i>
                                     </button>
                                 </form>
+                                @endcan
+                                @can('delete_promos')
                                 <form action="{{ route('admin.promotion-engine.destroy', $promotion) }}" method="POST"
                                       onsubmit="return confirm('Delete promotion &quot;{{ addslashes($promotion->title) }}&quot;? This cannot be undone.');">
                                     @csrf
@@ -130,6 +135,7 @@
                                         <i class="fas fa-trash"></i>
                                     </button>
                                 </form>
+                                @endcan
                             </div>
                         </td>
                     </tr>

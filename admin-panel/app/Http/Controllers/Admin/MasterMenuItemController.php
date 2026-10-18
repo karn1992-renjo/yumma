@@ -136,11 +136,18 @@ class MasterMenuItemController extends Controller
                 continue;
             }
 
+            [$globalCategoryId, $globalSubcategoryId] = $this->resolveGlobalCategoryIdsByName(
+                $record['category'] ?? null,
+                $record['sub_category'] ?? null
+            );
+
             $item = MasterMenuItem::updateOrCreate(
                 ['name' => $record['menu_name']],
                 [
                     'category_name' => $record['category'] ?? null,
                     'subcategory_name' => $record['sub_category'] ?? null,
+                    'global_category_id' => $globalCategoryId,
+                    'global_subcategory_id' => $globalSubcategoryId,
                     'cuisine_id' => $this->resolveCuisineId(
                         $record['cuisine'] ?? null,
                         $record['sub_category'] ?? null,
@@ -226,6 +233,10 @@ class MasterMenuItemController extends Controller
 
         if ($request->filled('global_category_id')) {
             $globalCategory = GlobalMenuCategory::find($request->input('global_category_id'));
+            // category_name/subcategory_name stay in sync as a denormalized cache for the
+            // existing search/filter queries in index() -- the FK below is now the real,
+            // authoritative link (previously the id was validated but discarded, so a
+            // GlobalMenuCategory rename never reached items that referenced it).
             $validated['category_name'] = $globalCategory?->name ?: $validated['category_name'];
         }
 
@@ -260,9 +271,41 @@ class MasterMenuItemController extends Controller
             $validated['images'] = $item->images ?? [];
         }
 
-        unset($validated['image'], $validated['image_url'], $validated['variants_text'], $validated['add_ons_text'], $validated['global_category_id'], $validated['global_subcategory_id']);
+        unset($validated['image'], $validated['image_url'], $validated['variants_text'], $validated['add_ons_text']);
 
         return $validated;
+    }
+
+    /**
+     * CSV import only carries free-text category/sub_category columns -- match
+     * them against the real GlobalMenuCategory tree by name so imported items
+     * link up properly instead of being permanently orphaned free text. A
+     * name with no match is left null rather than auto-creating a new
+     * taxonomy entry from what might just be a typo.
+     */
+    private function resolveGlobalCategoryIdsByName(?string $categoryName, ?string $subcategoryName): array
+    {
+        $categoryName = trim((string) $categoryName);
+        $subcategoryName = trim((string) $subcategoryName);
+
+        $globalCategoryId = null;
+        $globalSubcategoryId = null;
+
+        if ($categoryName !== '') {
+            $globalCategory = GlobalMenuCategory::active()->parents()
+                ->whereRaw('LOWER(name) = ?', [Str::lower($categoryName)])
+                ->first();
+            $globalCategoryId = $globalCategory?->id;
+
+            if ($globalCategory && $subcategoryName !== '') {
+                $globalSubcategoryId = GlobalMenuCategory::active()
+                    ->where('parent_id', $globalCategory->id)
+                    ->whereRaw('LOWER(name) = ?', [Str::lower($subcategoryName)])
+                    ->value('id');
+            }
+        }
+
+        return [$globalCategoryId, $globalSubcategoryId];
     }
 
     private function resolveCuisineId(?string $explicitCuisine, ?string ...$terms): ?int

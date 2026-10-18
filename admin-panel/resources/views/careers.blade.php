@@ -8,10 +8,17 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Careers | {{ $appName }}</title>
+    @include('partials.seo-meta', [
+        'metaTitle' => 'Careers at '.$appName,
+        'metaDescription' => "Explore open roles and career opportunities at {$appName}.",
+        'canonicalUrl' => route('careers'),
+    ])
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 @include('partials.public-blade-polish')
 </head>
 <body class="bg-light">
+@include('partials.frontend-header')
     <main class="container py-5">
         <a href="{{ route('home') }}" class="text-decoration-none mb-4 d-inline-block">&larr; Back to home</a>
         <div class="bg-white shadow-sm rounded-4 p-5">
@@ -45,6 +52,8 @@
             </div>
         </div>
     </main>
+@include('partials.frontend-footer')
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 @include('partials.web-visit-tracker', ['panel' => 'frontend'])
 </body>
 </html>

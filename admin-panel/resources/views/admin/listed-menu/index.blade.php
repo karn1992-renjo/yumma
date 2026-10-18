@@ -14,9 +14,11 @@
             <h1 class="h3 mb-1">Listed Menu</h1>
             <p class="text-muted mb-0">View and manage every restaurant menu item from one admin workspace.</p>
         </div>
+        @can('create_menu_items')
         <a href="{{ route('admin.listed-menu.create') }}" class="btn btn-primary">
             <i class="fas fa-plus me-2"></i>Add Menu Item
         </a>
+        @endcan
     </div>
 
     @if(session('success'))
@@ -144,12 +146,16 @@
                             <td class="text-end">
                                 <div class="btn-group">
                                     <a href="{{ route('admin.listed-menu.show', $item) }}" class="btn btn-sm btn-outline-secondary"><i class="fas fa-eye"></i></a>
+                                    @can('edit_menu_items')
                                     <a href="{{ route('admin.listed-menu.edit', $item) }}" class="btn btn-sm btn-outline-primary"><i class="fas fa-pen"></i></a>
+                                    @endcan
+                                    @can('delete_menu_items')
                                     <form method="POST" action="{{ route('admin.listed-menu.destroy', $item) }}" onsubmit="return confirm('Delete this menu item?')">
                                         @csrf
                                         @method('DELETE')
                                         <button class="btn btn-sm btn-outline-danger"><i class="fas fa-trash"></i></button>
                                     </form>
+                                    @endcan
                                 </div>
                             </td>
                         </tr>

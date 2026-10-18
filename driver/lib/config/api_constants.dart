@@ -161,4 +161,7 @@ class ApiConstants {
   static const String campaigns = '/campaigns';
   static const String campaignTrackClick = '/campaigns/track-click';
   static const String campaignTrackImpression = '/campaigns/track-impression';
+
+  // Referral endpoints
+  static const String referralSummary = '/referrals/summary';
 }

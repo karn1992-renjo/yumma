@@ -8,6 +8,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:lottie/lottie.dart';
 import 'package:provider/provider.dart';
 
+import '../../config/ad_config.dart';
 import '../../config/api_constants.dart';
 import '../../config/app_config.dart';
 import '../../models/menu_item.dart';
@@ -23,12 +24,14 @@ import '../../theme/foodflow_theme.dart';
 import '../../utils/currency_utils.dart';
 import '../../utils/promotion_display_utils.dart';
 import '../../utils/promotion_summary_utils.dart';
+import '../../widgets/common/native_ad_widget.dart';
 import '../../widgets/common/lucide_icon.dart';
 import '../../widgets/customer/cart_item_card.dart';
 import '../../widgets/customer/account_chrome.dart';
 import '../../widgets/customer/coupon_ticket_card.dart';
 import '../../widgets/customer/free_delivery_success_popup.dart';
 import '../../widgets/customer/menu_item_card.dart';
+import '../../widgets/gold/gold_checkout_upsell_card.dart';
 
 class CheckoutScreen extends StatefulWidget {
   const CheckoutScreen({
@@ -60,7 +63,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       return _cachedJakartaTextTheme!;
     }
     _cachedBaseTextTheme = base;
-    _cachedJakartaTextTheme = GoogleFonts.plusJakartaSansTextTheme(base);
+    _cachedJakartaTextTheme = GoogleFonts.poppinsTextTheme(base);
     return _cachedJakartaTextTheme!;
   }
 
@@ -70,7 +73,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       return _cachedJakartaPrimaryTextTheme!;
     }
     _cachedBasePrimaryTextTheme = base;
-    _cachedJakartaPrimaryTextTheme = GoogleFonts.plusJakartaSansTextTheme(base);
+    _cachedJakartaPrimaryTextTheme = GoogleFonts.poppinsTextTheme(base);
     return _cachedJakartaPrimaryTextTheme!;
   }
 
@@ -1392,8 +1395,16 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                 total: total,
                 isTakeaway: isTakeaway,
               ),
+              if (!isTakeaway && deliveryFee > 0) ...[
+                const SizedBox(height: 14),
+                GoldCheckoutUpsellCard(deliveryFeeThisOrder: deliveryFee),
+              ],
               const SizedBox(height: 14),
               _ckCancellationNote(),
+              const SizedBox(height: 14),
+              NativeAdWidget(
+                adUnitId: AdConfig.nativeAdUnitIdCheckout,
+              ),
             ],
           ),
         ),
@@ -2022,7 +2033,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                           children: [
                             Text(
                               formatCurrency(context, total),
-                              style: GoogleFonts.plusJakartaSans(
+                              style: GoogleFonts.poppins(
                                 color: FoodFlowTheme.brandOnPrimary(context),
                                 fontSize: 16,
                                 fontWeight: FontWeight.w900,
@@ -2030,7 +2041,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                             ),
                             Text(
                               'TOTAL',
-                              style: GoogleFonts.plusJakartaSans(
+                              style: GoogleFonts.poppins(
                                 color: FoodFlowTheme.brandOnPrimary(context)
                                     .withOpacity(0.82),
                                 fontSize: 9,
@@ -2051,7 +2062,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                         else ...[
                           Text(
                             'Place order',
-                            style: GoogleFonts.plusJakartaSans(
+                            style: GoogleFonts.poppins(
                               color: FoodFlowTheme.brandOnPrimary(context),
                               fontSize: 15,
                               fontWeight: FontWeight.w900,
@@ -3573,7 +3584,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                                 formatCurrency(context, total),
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
-                                style: GoogleFonts.plusJakartaSans(
+                                style: GoogleFonts.poppins(
                                   color: FoodFlowTheme.brandOnPrimary(context),
                                   fontSize: 15,
                                   fontWeight: FontWeight.w900,
@@ -3583,7 +3594,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                                 'TOTAL',
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
-                                style: GoogleFonts.plusJakartaSans(
+                                style: GoogleFonts.poppins(
                                   color: FoodFlowTheme.brandOnPrimary(context)
                                       .withOpacity(0.85),
                                   fontSize: 10,
@@ -3608,7 +3619,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                             'Place Order',
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: GoogleFonts.plusJakartaSans(
+                            style: GoogleFonts.poppins(
                               color: FoodFlowTheme.brandOnPrimary(context),
                               fontSize: 14,
                               fontWeight: FontWeight.w900,
@@ -3633,8 +3644,18 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     );
   }
 
+  // If online payment is unavailable, checkout uses the available offline
+  // method by default instead of leaving an unusable online selection active.
+  String _displayPaymentMethod(User? user) {
+    if (_selectedPaymentMethod == 'online' &&
+        (user == null || !user.isPaymentGatewayEnabled)) {
+      return (user?.isCodEnabled ?? true) ? 'cod' : 'wallet';
+    }
+    return _selectedPaymentMethod;
+  }
+
   String _paymentTitle(User? user) {
-    return switch (_selectedPaymentMethod) {
+    return switch (_displayPaymentMethod(user)) {
       'wallet' => AppConfig.walletMoneyLabel,
       'cod' => 'Cash on Delivery',
       _ => _selectedCashfreeUpiAppName?.trim().isNotEmpty == true
@@ -3644,7 +3665,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   }
 
   IconData _paymentIcon(User? user) {
-    return switch (_selectedPaymentMethod) {
+    return switch (_displayPaymentMethod(user)) {
       'wallet' => Icons.account_balance_wallet_outlined,
       'cod' => Icons.payments_outlined,
       _ => _onlinePaymentModeIcon(_selectedOnlineModeFor(user)),
@@ -3676,6 +3697,16 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     final initialUser = authProvider.currentUser;
     debugPrint(
         '[PaymentTrace] checkout.settings.refreshed source=sheet default=${initialUser?.paymentGatewayProvider ?? '-'} enabled=${initialUser?.enabledPaymentGatewayKeys.join(',') ?? '-'} gateways=${initialUser?.paymentGateways.map((gateway) => '${gateway.key}:${gateway.enabled}:${gateway.selected}').join('|') ?? '-'}');
+    if (_selectedPaymentMethod == 'online' &&
+        (initialUser == null || !initialUser.isPaymentGatewayEnabled)) {
+      setState(() {
+        _selectedPaymentMethod = (initialUser?.isCodEnabled ?? true)
+            ? 'cod'
+            : 'wallet';
+        _selectedCashfreeUpiAppId = null;
+        _selectedCashfreeUpiAppName = null;
+      });
+    }
     final initialGateway = _effectiveGatewayProvider(initialUser);
     debugPrint(
         '[PaymentTrace] checkout.sheet.open selectedMethod=$_selectedPaymentMethod selectedGateway=$_selectedGatewayKey effectiveGateway=$initialGateway enabledGateways=${initialUser?.enabledPaymentGatewayKeys.join(',') ?? '-'} defaultProvider=${initialUser?.paymentGatewayProvider ?? '-'}');
@@ -3701,10 +3732,15 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         final onlineOptions = activeGateway == null
             ? const <_OnlinePaymentModeOption>[]
             : _onlinePaymentModeOptions(activeGateway);
-        final visibleOnlineOptions =
-            activeGateway == 'cashfree' && _cashfreeUpiApps.isNotEmpty
-                ? onlineOptions.where((option) => option.key != 'upi').toList()
-                : onlineOptions;
+        // Cashfree's SDK has no supported way to launch a specific UPI app
+        // chosen ahead of time -- its own checkout screen always shows its
+        // own app list regardless of what's picked here (confirmed against
+        // the SDK's native bridge source, not assumed). Listing individual
+        // apps as if picking one here skips Cashfree's own list was
+        // misleading, so all online modes (including a single generic UPI
+        // tile) are shown uniformly instead of hiding 'upi' behind per-app
+        // tiles.
+        final visibleOnlineOptions = onlineOptions;
         final savings = ((_summaryDiscount ?? 0) +
                 (_summaryEmbeddedItemDiscount ?? 0) +
                 (_summaryDeliveryDiscount ?? 0))
@@ -3803,35 +3839,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                     const SizedBox(height: 8),
                   ],
                   if (activeGateway != null && onlineOptions.isNotEmpty) ...[
-                    _paymentSectionTitle(
-                      activeGateway == 'cashfree' ? 'UPI apps' : 'Recommended',
-                    ),
+                    _paymentSectionTitle('Recommended'),
                     const SizedBox(height: 10),
-                    if (activeGateway == 'cashfree' &&
-                        _cashfreeUpiApps.isNotEmpty)
-                      for (final app in _cashfreeUpiApps) ...[
-                        _paymentSheetTile(
-                          title: app.displayName,
-                          subtitle: 'Pay directly from ${app.displayName}',
-                          icon: Icons.account_balance_wallet_outlined,
-                          assetIcon: _cashfreeUpiAppAsset(app),
-                          providedIcon: app.icon,
-                          selected: _selectedPaymentMethod == 'online' &&
-                              _selectedCashfreeUpiAppId == app.id,
-                          badge: _selectedCashfreeUpiAppId == app.id
-                              ? 'Selected'
-                              : null,
-                          trailingText: 'UPI',
-                          onTap: () => _selectPaymentMethod(
-                            'online',
-                            gatewayKey: activeGateway,
-                            onlineMode: 'upi',
-                            cashfreeUpiAppId: app.id,
-                            cashfreeUpiAppName: app.displayName,
-                          ),
-                        ),
-                        const SizedBox(height: 10),
-                      ],
                     for (final option in visibleOnlineOptions) ...[
                       _paymentSheetTile(
                         title: option.title,
@@ -3839,8 +3848,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                         icon: option.icon,
                         assetIcon: option.assetIcon,
                         selected: _selectedPaymentMethod == 'online' &&
-                            _selectedOnlineModeFor(user) == option.key &&
-                            _selectedCashfreeUpiAppId == null,
+                            _selectedOnlineModeFor(user) == option.key,
                         badge: option.key == 'upi' ? 'Recommended' : null,
                         trailingText: option.trailingText,
                         onTap: () => _selectPaymentMethod(
@@ -4326,10 +4334,16 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       setState(() {
         _cashfreeUpiApps = apps;
         _hasLoadedCashfreeUpiApps = true;
-        if (apps.isNotEmpty && _selectedCashfreeUpiAppId == null) {
-          _selectedCashfreeUpiAppId = apps.first.id;
-          _selectedCashfreeUpiAppName = apps.first.displayName;
-        } else if (apps.isEmpty) {
+        // Deliberately do NOT auto-select apps.first here. The single UPI
+        // tile (see "Keep one UPI tile" above _selectPaymentMethod) is meant
+        // to leave the app unselected so the payment service opens
+        // Cashfree's own native INTENT_WITH_UI app picker. Silently
+        // preselecting the first installed app forced INTENT mode at the
+        // installed-app level instead, which the customer never chose --
+        // and because this only runs once per screen (see the loaded guard
+        // above), backing out of the sheet without tapping the tile left
+        // that silent preselection in place for the next payment attempt.
+        if (apps.isEmpty) {
           _selectedCashfreeUpiAppId = null;
           _selectedCashfreeUpiAppName = null;
           _selectedOnlinePaymentMode = 'upi';
@@ -4525,7 +4539,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   }
 
   String _paymentAssetForSelection(User? user) {
-    return switch (_selectedPaymentMethod) {
+    return switch (_displayPaymentMethod(user)) {
       'wallet' => 'assets/icons/payment/wallet.svg',
       'cod' => 'assets/icons/payment/cod.svg',
       _ => _selectedCashfreeUpiAppName?.trim().isNotEmpty == true
@@ -5456,7 +5470,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                   achieved
                       ? 'You unlocked free delivery!'
                       : 'Add ${formatCurrency(context, remaining)} more for free delivery',
-                  style: GoogleFonts.plusJakartaSans(
+                  style: GoogleFonts.poppins(
                     color: FoodFlowTheme.ink,
                     fontSize: 13,
                     fontWeight: FontWeight.w800,
@@ -6214,7 +6228,18 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     if (_selectedPaymentMethod == 'cod' || _selectedPaymentMethod == 'wallet') {
       return _selectedPaymentMethod;
     }
-    return _effectiveGatewayProvider(user);
+    final gateway = _effectiveGatewayProvider(user);
+    if (gateway != null) return gateway;
+
+    final fallback = (user?.isCodEnabled ?? true) ? 'cod' : 'wallet';
+    if (mounted && _selectedPaymentMethod != fallback) {
+      setState(() {
+        _selectedPaymentMethod = fallback;
+        _selectedCashfreeUpiAppId = null;
+        _selectedCashfreeUpiAppName = null;
+      });
+    }
+    return fallback;
   }
 
   void _navigateToCartOrderConfirmation(Order order, CartProvider cart) {

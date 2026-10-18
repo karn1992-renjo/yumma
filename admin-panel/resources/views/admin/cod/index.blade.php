@@ -283,7 +283,7 @@
         const option = select?.selectedOptions?.[0];
         const driverBalance = Number(option?.dataset?.balance || 0);
         if (balance) balance.textContent = formatAmount(driverBalance);
-        if (amount && !amount.value) amount.value = driverBalance > 0 ? driverBalance.toFixed(2) : '';
+        if (amount && !amount.value) amount.value = driverBalance > 0 ? driverBalance.toFixed(window.currencyDecimals || 2) : '';
     }
 
     select?.addEventListener('change', refreshDriverBalance);

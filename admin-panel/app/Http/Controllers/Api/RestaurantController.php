@@ -116,6 +116,24 @@ class RestaurantController extends Controller
                 ], 404);
             }
 
+            if ($restaurant && $restaurant->isSuspended()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'This restaurant has been suspended by the admin.',
+                    'suspended' => true,
+                    'suspension_reason' => $restaurant->suspension_reason,
+                    'suspended_until' => $restaurant->suspended_until?->toIso8601String(),
+                ], 403);
+            }
+
+            if ($restaurant && $restaurant->needsBillingChoice()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Your subscription has lapsed. Choose a plan or switch to commission billing to continue.',
+                    'needs_billing_choice' => true,
+                ], 403);
+            }
+
             $today = Carbon::today();
 
             // Get pending orders
@@ -644,6 +662,8 @@ class RestaurantController extends Controller
             }
 
             $categories = $restaurant->categories()
+                ->whereNull('parent_id')
+                ->with(['children' => fn ($query) => $query->orderBy('display_order')->orderBy('name')])
                 ->orderBy('display_order')
                 ->orderBy('name')
                 ->get()
@@ -685,7 +705,24 @@ class RestaurantController extends Controller
                 'name' => 'required|string|max:255',
                 'description' => 'nullable|string',
                 'image' => 'nullable|image|mimes:jpeg,png,jpg,webp|max:2048',
+                'parent_id' => 'nullable|integer|exists:categories,id',
             ]);
+
+            // A subcategory is created by passing parent_id -- it must be one
+            // of this restaurant's OWN top-level categories, never another
+            // restaurant's row or an already-nested subcategory (only one
+            // level of nesting is supported, matching the web panel).
+            $parentId = null;
+            if ($request->filled('parent_id')) {
+                $parent = $restaurant->categories()->whereNull('parent_id')->find($request->input('parent_id'));
+                if (! $parent) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Selected parent category was not found for this restaurant.',
+                    ], 422);
+                }
+                $parentId = $parent->id;
+            }
 
             $imagePath = $request->hasFile('image')
                 ? $request->file('image')->store('categories', 'public')
@@ -693,6 +730,7 @@ class RestaurantController extends Controller
 
             $category = Category::create([
                 'restaurant_id' => $restaurant->id,
+                'parent_id' => $parentId,
                 'name' => $request->name,
                 'description' => $request->description,
                 'image' => $imagePath,
@@ -789,7 +827,14 @@ class RestaurantController extends Controller
 
             $category = $restaurant->categories()->findOrFail($id);
 
-            if ($category->menuItems()->count() > 0) {
+            if ($category->children()->exists()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Cannot delete a category that has subcategories. Delete or move its subcategories first.',
+                ], 400);
+            }
+
+            if ($category->menuItems()->count() > 0 || $category->subcategoryMenuItems()->count() > 0) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Cannot delete category with menu items.',
@@ -862,6 +907,14 @@ class RestaurantController extends Controller
                 ], 422);
             }
 
+            $subscription = $restaurant->isOnSubscriptionBilling() ? $restaurant->activeSubscription : null;
+            if ($subscription && $subscription->isLive() && ! $subscription->hasOrderCapacity()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Your subscription\'s order limit for this period has been reached. Upgrade your plan or switch to commission billing to keep accepting orders.',
+                ], 422);
+            }
+
             DB::beginTransaction();
 
             $order->status = 'confirmed';
@@ -874,6 +927,10 @@ class RestaurantController extends Controller
                 );
             }
             $order->save();
+
+            if ($subscription) {
+                app(\App\Services\SubscriptionService::class)->incrementOrderUsage($subscription);
+            }
 
             if (! $order->driver_id) {
                 app(AutoAssignDriverService::class)->autoAssignOrder($order);
@@ -945,12 +1002,20 @@ class RestaurantController extends Controller
             $order->status = 'cancelled';
             $this->setOrderColumnIfExists($order, 'cancelled_at', Carbon::now());
             $this->setOrderColumnIfExists($order, 'cancellation_reason', $request->reason);
+            $this->setOrderColumnIfExists($order, 'cancelled_by_role', 'restaurant');
+            $this->setOrderColumnIfExists($order, 'cancelled_by_name', $user->name ?? $restaurant->name ?? 'Restaurant');
             $order->save();
 
             DB::commit();
 
             if ($order->payment_status === 'success') {
-                app(RefundService::class)->processRefund($order, 'Order rejected by restaurant');
+                app(RefundService::class)->processRefund(
+                    $order,
+                    'Order rejected by restaurant',
+                    null,
+                    'restaurant',
+                    $user->name ?? $restaurant->name ?? 'Restaurant'
+                );
                 $order->refresh();
             }
 
@@ -1105,6 +1170,8 @@ class RestaurantController extends Controller
                     'cancellation_reason',
                     $request->reason ?: 'Cancelled by restaurant'
                 );
+                $this->setOrderColumnIfExists($order, 'cancelled_by_role', 'restaurant');
+                $this->setOrderColumnIfExists($order, 'cancelled_by_name', $user->name ?? $restaurant->name ?? 'Restaurant');
             }
 
             $order->save();
@@ -1125,7 +1192,13 @@ class RestaurantController extends Controller
             }
 
             if ($order->status === 'cancelled' && $order->payment_status === 'success') {
-                app(RefundService::class)->processRefund($order, 'Order cancelled by restaurant');
+                app(RefundService::class)->processRefund(
+                    $order,
+                    'Order cancelled by restaurant',
+                    null,
+                    'restaurant',
+                    $user->name ?? $restaurant->name ?? 'Restaurant'
+                );
                 $order->refresh();
             }
 
@@ -3642,7 +3715,7 @@ class RestaurantController extends Controller
                 ? min(200.0, (float) $validated['radius'])
                 : $this->discoveryRadiusForLocation($latitude, $longitude);
 
-            $restaurantsQuery = Restaurant::query()->where('is_verified', true);
+            $restaurantsQuery = Restaurant::query()->where('is_verified', true)->customerVisible();
 
             if (! empty($validated['query'])) {
                 $search = $validated['query'];
@@ -3767,6 +3840,7 @@ class RestaurantController extends Controller
 
             $restaurantsQuery = Restaurant::query()
                 ->where('is_verified', true)
+                ->customerVisible()
                 ->where(function ($query) use ($search, $cuisineId, $categorySearch, $cuisineTerms, $cuisineFilter) {
                     if ($cuisineFilter) {
                         $query->where(function ($cuisineQuery) use ($cuisineTerms) {
@@ -4028,7 +4102,7 @@ class RestaurantController extends Controller
         try {
             $restaurant = Restaurant::with('owner')->find($id);
 
-            if (! $restaurant) {
+            if (! $restaurant || $restaurant->isHiddenFromDiscovery()) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Restaurant not found.',
@@ -4113,15 +4187,21 @@ class RestaurantController extends Controller
     {
         return [
             'id' => $category->id,
+            'parent_id' => $category->parent_id,
             'name' => $category->name,
             'description' => $category->description,
             'image' => $category->image,
             'image_url' => MediaStorage::url($category->image),
             'display_order' => $category->display_order,
             'is_active' => (bool) $category->is_active,
-            'item_count' => $category->relationLoaded('menuItems')
-                ? $category->menuItems->count()
+            // A top-level category's items link via category_id; a
+            // subcategory's items link via subcategory_id instead.
+            'item_count' => $category->parent_id
+                ? $category->subcategoryMenuItems()->count()
                 : $category->menuItems()->count(),
+            'subcategories' => $category->relationLoaded('children')
+                ? $category->children->map(fn ($child) => $this->formatCategoryForApi($child))->values()
+                : [],
         ];
     }
 
@@ -4611,7 +4691,8 @@ class RestaurantController extends Controller
 
         $query = Restaurant::query()
             ->whereKeyNot($restaurant->id)
-            ->where('is_verified', true);
+            ->where('is_verified', true)
+            ->customerVisible();
 
         if ($cuisineNames->isNotEmpty() || $cuisineIds->isNotEmpty()) {
             $query->where(function ($builder) use ($cuisineNames, $cuisineIds) {
@@ -4650,6 +4731,7 @@ class RestaurantController extends Controller
             Restaurant::query()
                 ->whereKeyNot($restaurant->id)
                 ->where('is_verified', true)
+                ->customerVisible()
                 ->where('city', $restaurant->city)
                 ->orderByDesc('is_open')
                 ->orderByDesc('rating')
@@ -4754,6 +4836,8 @@ class RestaurantController extends Controller
                 'cancellation_reason',
                 'Selected menu item unavailable'
             );
+            $this->setOrderColumnIfExists($order, 'cancelled_by_role', 'restaurant');
+            $this->setOrderColumnIfExists($order, 'cancelled_by_name', auth()->user()->name ?? $restaurant->name ?? 'Restaurant');
             $order->save();
 
             return [
@@ -4773,7 +4857,10 @@ class RestaurantController extends Controller
         if ($order->payment_status === 'success') {
             app(RefundService::class)->processRefund(
                 $order,
-                'Order rejected because an item is out of stock'
+                'Order rejected because an item is out of stock',
+                null,
+                'restaurant',
+                $order->cancelled_by_name ?? $restaurant->name ?? 'Restaurant'
             );
             $order->refresh();
         }

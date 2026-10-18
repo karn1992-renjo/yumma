@@ -360,6 +360,7 @@ class AdvancedSearchService
 
         $restaurants = Restaurant::query()
             ->whereKey($rows->pluck('entity_id')->filter())
+            ->customerVisible()
             ->get()
             ->keyBy('id');
 

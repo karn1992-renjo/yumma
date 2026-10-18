@@ -417,6 +417,7 @@ class AuthService {
     required String name,
     required String phone,
     String? profileImagePath,
+    DateTime? dateOfBirth,
   }) async {
     final normalizedPhone = _normalizePhone(phone);
     if (profileImagePath != null) {
@@ -433,6 +434,10 @@ class AuthService {
 
       request.fields['name'] = name;
       request.fields['phone'] = normalizedPhone;
+      if (dateOfBirth != null) {
+        request.fields['date_of_birth'] =
+            dateOfBirth.toIso8601String().split('T').first;
+      }
 
       request.files.add(await http.MultipartFile.fromPath(
         'profile_image',
@@ -468,6 +473,8 @@ class AuthService {
       final response = await _api.put(ApiConstants.updateProfile, data: {
         'name': name,
         'phone': normalizedPhone,
+        if (dateOfBirth != null)
+          'date_of_birth': dateOfBirth.toIso8601String().split('T').first,
       });
       if (response['success'] == true) {
         final user = User.fromJson(response['data']);

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../../../config/ad_config.dart';
 import '../../../../config/api_constants.dart';
 import '../../../../models/menu_item.dart';
 import '../../../../models/order.dart';
@@ -15,11 +16,13 @@ import '../../../../services/flexible_order_payment_service.dart';
 import '../../../../services/location_service.dart';
 import '../../../../utils/currency_utils.dart';
 import '../../../../widgets/common/app_cached_image.dart';
+import '../../../../widgets/common/native_ad_widget.dart';
 import '../data/v2_util.dart';
 import '../theme/v2_theme.dart';
 import '../v2_nav.dart';
 import '../widgets/v2_anim.dart';
 import '../widgets/v2_cart_actions.dart';
+import '../../../../widgets/gold/gold_checkout_upsell_card.dart';
 import '../widgets/v2_free_delivery_popup.dart';
 import '../widgets/v2_glass.dart';
 import '../widgets/v2_location_sheet.dart';
@@ -1011,6 +1014,10 @@ class _CheckoutV2State extends State<CheckoutV2> {
                           ],
                         ),
                 ),
+                if (!freeDelivery && deliveryOriginal > 0) ...[
+                  const SizedBox(height: 12),
+                  GoldCheckoutUpsellCard(deliveryFeeThisOrder: deliveryOriginal),
+                ],
                 const SizedBox(height: 12),
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -1028,6 +1035,10 @@ class _CheckoutV2State extends State<CheckoutV2> {
                       ),
                     ),
                   ],
+                ),
+                const SizedBox(height: 14),
+                NativeAdWidget(
+                  adUnitId: AdConfig.nativeAdUnitIdCheckout,
                 ),
               ],
             ),

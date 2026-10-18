@@ -19,8 +19,10 @@ class HomeSection extends Model
         'new_arrivals' => 'New Arrivals',
         'trending_near_you' => 'Trending Near You',
         'popular_dishes' => 'Popular Dishes',
+        'dishes_under_99' => 'Dishes Under ₹99',
         'admin_offers' => 'Admin Offers',
         'shop_by_brand' => 'Shop By Brand',
+        'restaurant_stories' => 'Restaurant Stories',
     ];
 
     public const SOURCES = [

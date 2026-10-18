@@ -7,6 +7,7 @@ use App\Models\AppSetting;
 use App\Models\Banner;
 use App\Models\Category;
 use App\Models\Cuisine;
+use App\Models\DeliveryArea;
 use App\Models\DeliveryChargeSetting;
 use App\Models\GlobalMenuCategory;
 use App\Models\HomeSection;
@@ -14,6 +15,8 @@ use App\Models\MasterMenuItem;
 use App\Models\MenuItem;
 use App\Models\Promotion;
 use App\Models\Restaurant;
+use App\Models\RestaurantStory;
+use App\Models\RestaurantStoryView;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Str;
@@ -27,6 +30,24 @@ class HomeSectionService
     private float $deliveryRadius = 0.0;
     private bool $deliveryZoneOnly = false;
     private ?string $displaySurface = null;
+    private ?int $resolvedDeliveryAreaId = null;
+    private bool $deliveryAreaResolved = false;
+
+    // Point-in-polygon zone matching is a bit of work -- resolve it once per
+    // request and reuse across every section (banners, deals, ...) instead
+    // of recomputing per section.
+    private function currentDeliveryAreaId(): ?int
+    {
+        if (! $this->deliveryAreaResolved) {
+            $this->deliveryAreaResolved = true;
+            $this->resolvedDeliveryAreaId = DeliveryArea::resolveForPoint(
+                $this->customerLatitude,
+                $this->customerLongitude
+            )?->id;
+        }
+
+        return $this->resolvedDeliveryAreaId;
+    }
 
     public function adminSections(): Collection
     {
@@ -333,8 +354,10 @@ class HomeSectionService
             'new_arrivals' => $this->resolveRestaurantSectionWithDefaultScope($section, 'new_arrivals', 'latest'),
             'trending_near_you' => $this->resolveRestaurantSectionWithDefaultScope($section, 'trending_near_you', 'most_ordered'),
             'popular_dishes' => $this->resolvePopularDishesSection($section),
+            'dishes_under_99' => $this->resolveDishesUnderPriceSection($section, (float) ($section->configuration['max_price'] ?? 99.0)),
             'admin_offers' => null,
             'shop_by_brand' => $this->resolveBrandSection($section),
+            'restaurant_stories' => $this->resolveRestaurantStoriesSection($section),
             default => $this->resolveGenericSection($section),
         };
     }
@@ -473,13 +496,110 @@ class HomeSectionService
         $items = $query
             ->limit($limit * 3)
             ->get()
-            ->filter(fn (MenuItem $item) => filled($item->image))
+            // No longer requiring a photo here -- the app's dish card already
+            // falls back to a food-icon placeholder when imageUrl is empty
+            // (_RecommendedDishCard._fallback()), and most catalogs don't
+            // have item photos uploaded yet. Filtering on image presence just
+            // meant these sections stayed empty.
+            // Stable sort: keeps closed-restaurant dishes from ever outranking
+            // open ones, while PHP 8's stable sort preserves the SQL-level
+            // total_orders/is_bestseller/is_recommended/rating order within
+            // each open/closed group.
+            ->sortByDesc(fn (MenuItem $item) => (int) ($item->restaurant?->isOpenNow() ?? true))
             ->take($limit)
             ->values();
 
         return [
             'token' => 'home_section:'.$section->id,
             'type' => 'popular_dishes',
+            'title' => $section->title,
+            'subtitle' => $section->subtitle,
+            'enabled' => $items->isNotEmpty(),
+            'strict_items' => true,
+            'items' => $items->map(fn (MenuItem $item) => [
+                'id' => $item->id,
+                'menu_item_id' => $item->id,
+                'name' => $item->name,
+                'image' => $this->resolveStoredOrAbsoluteImage($item->image),
+                'image_url' => $this->resolveStoredOrAbsoluteImage($item->image),
+                'price' => (float) $item->price,
+                'discounted_price' => $item->discounted_price !== null
+                    ? (float) $item->discounted_price
+                    : null,
+                'restaurant_id' => $item->restaurant_id,
+                'restaurant_name' => $item->restaurant?->name ?? 'Restaurant',
+                'restaurant_is_open' => (bool) ($item->restaurant?->isOpenNow() ?? true),
+                'is_available' => (bool) ($item->is_available ?? true),
+                'is_veg' => (bool) $item->is_veg,
+                'rating' => (float) ($item->rating ?? 0),
+                'total_orders' => (int) ($item->total_orders ?? 0),
+            ])->all(),
+            'style' => $this->sectionStyle($section),
+        ];
+    }
+
+    private function resolveDishesUnderPriceSection(HomeSection $section, float $maxPrice = 99.0): array
+    {
+        $configuration = $section->configuration ?? [];
+        $limit = max(1, min(24, (int) ($configuration['limit'] ?? 10)));
+
+        if (! $this->hasCustomerLocation()) {
+            return [
+                'token' => 'home_section:'.$section->id,
+                'type' => 'dishes_under_99',
+                'title' => $section->title,
+                'subtitle' => $section->subtitle,
+                'enabled' => true,
+                'strict_items' => true,
+                'items' => [],
+                'style' => $this->sectionStyle($section),
+            ];
+        }
+
+        $query = MenuItem::query()
+            ->where('is_available', true)
+            ->where(function ($builder) {
+                $builder->whereNull('approval_status')
+                    ->orWhere('approval_status', 'approved');
+            })
+            // Mirrors MenuItem::getFinalPriceAttribute() (discounted_price ??
+            // price), the same "effective price" used at checkout, at the SQL
+            // level so the threshold applies to whichever price the customer
+            // actually pays.
+            ->where(function ($builder) use ($maxPrice) {
+                $builder->where(function ($inner) use ($maxPrice) {
+                    $inner->whereNotNull('discounted_price')->where('discounted_price', '<=', $maxPrice);
+                })->orWhere(function ($inner) use ($maxPrice) {
+                    $inner->whereNull('discounted_price')->where('price', '<=', $maxPrice);
+                });
+            })
+            ->whereHas('restaurant', function ($builder) {
+                $builder->where('is_verified', true);
+                if ($this->hasCustomerLocation()) {
+                    $builder->nearby(
+                        $this->customerLatitude,
+                        $this->customerLongitude,
+                        $this->deliveryRadius
+                    );
+                }
+            })
+            ->with('restaurant')
+            ->orderByDesc('total_orders')
+            ->orderByDesc('is_bestseller')
+            ->orderByDesc('is_recommended')
+            ->orderByDesc('rating');
+
+        $items = $query
+            ->limit($limit * 3)
+            ->get()
+            // No longer requiring a photo -- see resolveAutoPopularDishesSection().
+            ->sortByDesc(fn (MenuItem $item) => (int) ($item->restaurant?->isOpenNow() ?? true))
+            ->take($limit)
+            ->values();
+
+        return [
+            'token' => 'home_section:'.$section->id,
+            'type' => 'dishes_under_99',
             'title' => $section->title,
             'subtitle' => $section->subtitle,
             'enabled' => $items->isNotEmpty(),
@@ -833,6 +953,7 @@ class HomeSectionService
                 'limit' => $normalizedTypes->isNotEmpty() ? max($limit * 4, 40) : $limit,
                 'user_id' => auth()->id(),
                 'platform' => 'customer_app',
+                'zone_id' => $this->currentDeliveryAreaId(),
             ])
             ->reject(fn (array $offer) => $this->isScratchOnlyDeal($offer))
             ->when($normalizedTypes->isNotEmpty(), fn (Collection $offers) => $offers
@@ -920,6 +1041,17 @@ class HomeSectionService
                     $rewardConfig['combo_group'] = $group;
                     $rewardConfig['combo_groups'] = [$group];
 
+                    // Platform-wide/admin-created combo & meal_deal promotions
+                    // have no restaurant_id of their own (owner_type isn't
+                    // restaurant-scoped), so $offer['restaurant_id'] is null
+                    // here. Fall back to the first combo item's restaurant so
+                    // the card's tap handler always gets a real id instead of
+                    // propagating that null straight to the frontend.
+                    $resolvedRestaurantId = $offer['restaurant_id'] ?? $groupItems
+                        ->map(fn (array $item) => $item['restaurant_id'] ?? null)
+                        ->filter()
+                        ->first();
+
                     $cards[] = array_merge($offer, [
                         'source_type' => 'promotion',
                         'card_type' => 'combo_group',
@@ -931,6 +1063,7 @@ class HomeSectionService
                         'image' => $firstImage ?: ($offer['image'] ?? null),
                         'image_url' => $firstImage ?: ($offer['image_url'] ?? null),
                         'promo_image' => $firstImage ?: ($offer['promo_image'] ?? null),
+                        'restaurant_id' => $resolvedRestaurantId,
                         'actual_price' => $actualPrice,
                         'original_price' => $actualPrice,
                         'price' => $effectivePrice,
@@ -1284,6 +1417,7 @@ class HomeSectionService
         $query = Banner::query()
             ->where('is_active', true)
             ->visibleOnSurface($this->displaySurface)
+            ->visibleInZone($this->currentDeliveryAreaId())
             ->where(function ($builder) {
                 $builder->whereNull('start_date')->orWhere('start_date', '<=', now());
             })
@@ -1429,6 +1563,7 @@ class HomeSectionService
 
         $query = Restaurant::query()
             ->where('is_verified', true)
+            ->customerVisible()
             ->with('owner')
             ->withCount('orders');
 
@@ -1477,6 +1612,16 @@ class HomeSectionService
             }
         }
 
+        // Currently-closed restaurants sink to the end of every section,
+        // regardless of scope -- a stable sort (PHP 8+ guarantees this) so
+        // the existing rating/latest/most-ordered ordering is preserved
+        // within the open group and within the closed group. Uses the live
+        // isOpenNow() check (weekly timings), not the raw is_open column,
+        // matching the pattern already used for item-level sections below.
+        $restaurants = $restaurants->sortBy(
+            fn (Restaurant $restaurant) => $restaurant->isOpenNow() ? 0 : 1
+        )->values();
+
         return $restaurants->map(function (Restaurant $restaurant) use ($section) {
             $minimumMenuPrice = $restaurant->amountForOne();
             $eta = null;
@@ -1520,6 +1665,7 @@ class HomeSectionService
 
             return [
             'id' => $restaurant->id,
+            'slug' => $restaurant->slug,
             'name' => $restaurant->name,
             'image' => MediaStorage::url($restaurant->banner_image ?: $restaurant->logo_image),
             'banner_image' => MediaStorage::url($restaurant->banner_image),
@@ -1562,7 +1708,12 @@ class HomeSectionService
             'distance' => isset($restaurant->distance) ? round((float) $restaurant->distance, 2) : null,
             'created_at' => optional($restaurant->created_at)?->toIso8601String(),
             ];
-        });
+        })->when(
+            $section->section_type === 'recommended_for_you',
+            // Stable sort: closed restaurants sort last without disturbing
+            // the sponsored-auction/rating order already applied above.
+            fn (Collection $items) => $items->sortByDesc('is_open_now')->values()
+        );
     }
 
     private function hasCustomerLocation(): bool
@@ -1752,6 +1903,7 @@ class HomeSectionService
 
         $query = Restaurant::query()
             ->where('is_verified', true)
+            ->customerVisible()
             ->where(function ($builder) {
                 $builder
                     ->whereNotNull('logo_image')
@@ -1805,6 +1957,7 @@ class HomeSectionService
         $items = $restaurants
             ->map(fn (Restaurant $restaurant) => [
                 'id' => $restaurant->id,
+                'slug' => $restaurant->slug,
                 'name' => $restaurant->name,
                 'logo' => MediaStorage::url($restaurant->logo_image),
                 'logo_image' => MediaStorage::url($restaurant->logo_image),
@@ -1818,6 +1971,84 @@ class HomeSectionService
         return [
             'token' => 'home_section:'.$section->id,
             'type' => 'shop_by_brand',
+            'title' => $section->title,
+            'subtitle' => $section->subtitle,
+            'enabled' => true,
+            'items' => $items,
+            'style' => $this->sectionStyle($section),
+        ];
+    }
+
+    /**
+     * Instagram-style rail: one bubble per restaurant with a live (non-
+     * expired) story, grouped and ordered by most-recent story first. The
+     * gradient/gray ring state (`has_unseen`) is per-viewer -- an anonymous/
+     * guest customer has no RestaurantStoryView rows at all, so every bubble
+     * reads as unseen for them, matching the plan's explicit call on that.
+     */
+    private function resolveRestaurantStoriesSection(HomeSection $section): ?array
+    {
+        $configuration = $section->configuration ?? [];
+        $limit = max(1, min(30, (int) ($configuration['limit'] ?? 20)));
+
+        $stories = RestaurantStory::query()
+            ->live()
+            ->whereHas('restaurant', function ($builder) {
+                $builder->where('is_verified', true)->customerVisible();
+            })
+            ->with('restaurant:id,name,slug,logo_image')
+            ->orderByDesc('posted_at')
+            ->get();
+
+        if ($stories->isEmpty()) {
+            return [
+                'token' => 'home_section:'.$section->id,
+                'type' => 'restaurant_stories',
+                'title' => $section->title,
+                'subtitle' => $section->subtitle,
+                'enabled' => false,
+                'items' => [],
+                'style' => $this->sectionStyle($section),
+            ];
+        }
+
+        $userId = auth()->id();
+        $seenStoryIds = $userId
+            ? RestaurantStoryView::where('user_id', $userId)
+                ->whereIn('restaurant_story_id', $stories->pluck('id'))
+                ->pluck('restaurant_story_id')
+                ->all()
+            : [];
+
+        $items = $stories
+            ->groupBy('restaurant_id')
+            ->map(function (Collection $restaurantStories) use ($seenStoryIds) {
+                $restaurant = $restaurantStories->first()->restaurant;
+                if (! $restaurant) {
+                    return null;
+                }
+
+                $hasUnseen = $restaurantStories->contains(
+                    fn (RestaurantStory $story) => ! in_array($story->id, $seenStoryIds, true)
+                );
+
+                return [
+                    'restaurant_id' => $restaurant->id,
+                    'restaurant_slug' => $restaurant->slug,
+                    'restaurant_name' => $restaurant->name,
+                    'avatar' => MediaStorage::url($restaurant->logo_image),
+                    'story_count' => $restaurantStories->count(),
+                    'has_unseen' => $hasUnseen,
+                    'latest_posted_at' => $restaurantStories->first()->posted_at->toIso8601String(),
+                ];
+            })
+            ->filter()
+            ->values()
+            ->take($limit);
+
+        return [
+            'token' => 'home_section:'.$section->id,
+            'type' => 'restaurant_stories',
             'title' => $section->title,
             'subtitle' => $section->subtitle,
             'enabled' => true,

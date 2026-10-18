@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 import '../../widgets/common/app_cached_image.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
 import '../../models/user.dart';
@@ -26,6 +27,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   final ImagePicker _imagePicker = ImagePicker();
   bool _isSaving = false;
   String? _selectedProfileImagePath;
+  DateTime? _dateOfBirth;
 
   @override
   void initState() {
@@ -33,6 +35,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     final user = context.read<AuthProvider>().currentUser;
     _nameController = TextEditingController(text: user?.name ?? '');
     _phoneController = TextEditingController(text: user?.phone ?? '');
+    _dateOfBirth = user?.dateOfBirth;
   }
 
   @override
@@ -56,6 +59,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       name: _nameController.text.trim(),
       phone: normalizedPhone,
       profileImagePath: _selectedProfileImagePath,
+      dateOfBirth: _dateOfBirth,
     );
 
     if (!mounted) return;
@@ -95,6 +99,20 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           backgroundColor: Theme.of(context).colorScheme.error,
         ),
       );
+    }
+  }
+
+  Future<void> _pickDateOfBirth() async {
+    FocusScope.of(context).unfocus();
+    final now = DateTime.now();
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _dateOfBirth ?? DateTime(now.year - 18, now.month, now.day),
+      firstDate: DateTime(now.year - 100),
+      lastDate: DateTime(now.year - 5, now.month, now.day),
+    );
+    if (picked != null && mounted) {
+      setState(() => _dateOfBirth = picked);
     }
   }
 
@@ -278,6 +296,29 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                       validator: (value) {
                         return PhoneNumberUtils.validateIndianMobile(value);
                       },
+                    ),
+                    const SizedBox(height: 18),
+                    _ProfileFieldLabel(label: 'Date of birth'),
+                    InkWell(
+                      onTap: _pickDateOfBirth,
+                      borderRadius: BorderRadius.circular(14),
+                      child: InputDecorator(
+                        decoration: _inputDecoration(
+                          context,
+                          hint: 'Select your date of birth',
+                          icon: Icons.cake_outlined,
+                        ),
+                        child: Text(
+                          _dateOfBirth != null
+                              ? DateFormat('d MMM yyyy').format(_dateOfBirth!)
+                              : 'Select your date of birth',
+                          style: TextStyle(
+                            color: _dateOfBirth != null
+                                ? profileTextColor(context)
+                                : Theme.of(context).hintColor,
+                          ),
+                        ),
+                      ),
                     ),
                     const SizedBox(height: 18),
                     _ProfileFieldLabel(label: 'Email address'),

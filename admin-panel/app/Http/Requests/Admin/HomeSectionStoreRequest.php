@@ -25,6 +25,7 @@ class HomeSectionStoreRequest extends FormRequest
             'starts_at' => ['nullable', 'date'],
             'ends_at' => ['nullable', 'date', 'after_or_equal:starts_at'],
             'limit' => ['nullable', 'integer', 'min:1', 'max:24'],
+            'max_price' => ['nullable', 'numeric', 'min:1', 'max:100000'],
             'restaurant_scope' => ['nullable', Rule::in(array_keys(HomeSection::RESTAURANT_SCOPES))],
             'popular_only' => ['nullable', 'boolean'],
             'banner_ids' => ['nullable', 'array'],

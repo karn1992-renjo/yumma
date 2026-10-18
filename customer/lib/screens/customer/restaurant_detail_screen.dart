@@ -69,7 +69,7 @@ class _RestaurantDetailScreenState extends State<RestaurantDetailScreen> {
       return _cachedPlusJakartaTextTheme!;
     }
     _cachedBaseTextTheme = base;
-    _cachedPlusJakartaTextTheme = GoogleFonts.plusJakartaSansTextTheme(base);
+    _cachedPlusJakartaTextTheme = GoogleFonts.poppinsTextTheme(base);
     return _cachedPlusJakartaTextTheme!;
   }
 
@@ -205,10 +205,18 @@ class _RestaurantDetailScreenState extends State<RestaurantDetailScreen> {
       );
       if (response['success'] == true) {
         _restaurant = Restaurant.fromJson(response['data']);
-        await _loadDistanceToRestaurant();
-        await _loadMenuItems(forceRefresh: forceRefresh);
+        // Promos and the AI combo are independent of the menu/distance and
+        // already apply their own setState when they land -- start them
+        // immediately instead of waiting for menu+distance to finish first.
         unawaited(_loadRestaurantPromos());
         unawaited(_loadAiCombo());
+        // Distance and the menu are both independent of each other (V2's
+        // equivalent loads restaurant+menu with Future.wait) -- running them
+        // sequentially here only added latency before the menu could render.
+        await Future.wait([
+          _loadDistanceToRestaurant(),
+          _loadMenuItems(forceRefresh: forceRefresh),
+        ]);
         if (mounted) {
           unawaited(AppImageCache.precacheVisible(
             context,
@@ -345,8 +353,7 @@ class _RestaurantDetailScreenState extends State<RestaurantDetailScreen> {
         if (items.length >= 2) {
           _aiComboTitle = data['title']?.toString();
           _aiComboItems = items;
-          _aiComboPrice =
-              double.tryParse(data['price']?.toString() ?? '') ?? 0;
+          _aiComboPrice = double.tryParse(data['price']?.toString() ?? '') ?? 0;
         }
       }
     } catch (_) {
@@ -395,18 +402,6 @@ class _RestaurantDetailScreenState extends State<RestaurantDetailScreen> {
     }
 
     return filtered;
-  }
-
-  Map<String, List<MenuItem>> get _visibleItemsByCategory {
-    final filtered = _filteredItemsByCategory;
-    if (_selectedCategory.isEmpty ||
-        _selectedCategory == _allMenuCategoriesLabel) {
-      return filtered;
-    }
-
-    final items = filtered[_selectedCategory];
-    if (items == null) return filtered;
-    return <String, List<MenuItem>>{_selectedCategory: items};
   }
 
   bool _matchesFilters(MenuItem item) {
@@ -571,7 +566,7 @@ class _RestaurantDetailScreenState extends State<RestaurantDetailScreen> {
       pageBuilder: (dialogContext, animation, secondaryAnimation) {
         return Theme(
           data: Theme.of(dialogContext).copyWith(
-            textTheme: GoogleFonts.plusJakartaSansTextTheme(
+            textTheme: GoogleFonts.poppinsTextTheme(
                 Theme.of(dialogContext).textTheme),
           ),
           child: _FloatingMenuDialog(
@@ -775,7 +770,7 @@ class _RestaurantDetailScreenState extends State<RestaurantDetailScreen> {
       ),
       builder: (sheetContext) => Theme(
         data: Theme.of(sheetContext).copyWith(
-          textTheme: GoogleFonts.plusJakartaSansTextTheme(
+          textTheme: GoogleFonts.poppinsTextTheme(
               Theme.of(sheetContext).textTheme),
         ),
         child: MenuCustomizationSheet(
@@ -1028,7 +1023,7 @@ class _RestaurantDetailScreenState extends State<RestaurantDetailScreen> {
       builder: (sheetContext) {
         return Theme(
           data: Theme.of(sheetContext).copyWith(
-            textTheme: GoogleFonts.plusJakartaSansTextTheme(
+            textTheme: GoogleFonts.poppinsTextTheme(
                 Theme.of(sheetContext).textTheme),
           ),
           child: StatefulBuilder(
@@ -1265,9 +1260,21 @@ class _RestaurantDetailScreenState extends State<RestaurantDetailScreen> {
     }
 
     final restaurant = _restaurant!;
-    final filtered = _visibleItemsByCategory;
+    // _filteredItemsByCategory filters+sorts the whole menu on every call --
+    // computing it once here and deriving both the (possibly
+    // single-category) render list and the full category-name list from it
+    // avoids doing that work twice per build (previously: once via
+    // _visibleItemsByCategory, again via _categoryNames).
+    final allFiltered = _filteredItemsByCategory;
+    final categoryOptions = allFiltered.keys.toList();
+    final selectedCategoryItems = _selectedCategory.isEmpty ||
+            _selectedCategory == _allMenuCategoriesLabel
+        ? null
+        : allFiltered[_selectedCategory];
+    final filtered = selectedCategoryItems == null
+        ? allFiltered
+        : <String, List<MenuItem>>{_selectedCategory: selectedCategoryItems};
     final categories = filtered.keys.toList();
-    final categoryOptions = _categoryNames;
     final tagOptions = _tagOptions;
     for (final category in categoryOptions) {
       _categoryKeys.putIfAbsent(category, () => GlobalKey());
@@ -1982,7 +1989,7 @@ class _RestaurantDetailScreenState extends State<RestaurantDetailScreen> {
                             children: [
                               Text(
                                 'View Cart',
-                                style: GoogleFonts.plusJakartaSans(
+                                style: GoogleFonts.poppins(
                                   color: Colors.white,
                                   fontWeight: FontWeight.w800,
                                   fontSize: 14,

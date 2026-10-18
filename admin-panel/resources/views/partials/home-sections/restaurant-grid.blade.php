@@ -23,25 +23,30 @@
                             $amountForOne = (float) ($restaurant['amount_for_one'] ?? 0);
                         @endphp
                         <div class="col-md-6 col-lg-6">
-                            <a href="/restaurants/{{ $restaurant['id'] }}" class="text-decoration-none">
-                                <div class="d-flex align-items-center rounded-5 bg-white shadow-sm border overflow-hidden p-3 h-100">
-                                    <div class="rounded-4 overflow-hidden flex-shrink-0" style="width: 120px; height: 110px;">
-                                        <img src="{{ $restaurant['image'] ?: 'https://placehold.co/400x300/E8E8E8/9C9C9C?text=No+Image' }}" alt="{{ $restaurant['name'] }}" width="400" height="300" loading="lazy" class="w-100 h-100" style="object-fit: cover;">
-                                    </div>
-                                    <div class="ms-3 flex-grow-1">
-                                        <div class="d-flex align-items-start justify-content-between gap-2">
-                                            <div class="fw-bold text-dark" style="font-size: 1.65rem; line-height:1.05;">{{ $restaurant['name'] }}</div>
-                                            @if(($restaurant['rating'] ?? 0) > 0)
-                                                <div class="text-success fw-bold"><i class="fas fa-star me-1"></i>{{ number_format((float) $restaurant['rating'], 1) }}</div>
-                                            @endif
-                                        </div>
-                                        <div class="text-muted fw-semibold mt-2">
-                                            {{ $restaurant['delivery_time'] }}-{{ $restaurant['delivery_time'] + 8 }} mins
-                                            @if($amountForOne > 0)
-                                                | Rs. {{ number_format($amountForOne, 2) }} for one
-                                            @endif
-                                        </div>
-                                        <div class="text-secondary mt-2">{{ $restaurant['cuisine'] }}</div>
+                            <a href="{{ url('/restaurants/'.($restaurant['slug'] ?? $restaurant['id'])) }}" class="restaurant-card">
+                                <div class="restaurant-img">
+                                    <img src="{{ $restaurant['image'] ?: 'https://placehold.co/400x300/E8E8E8/9C9C9C?text=No+Image' }}" alt="{{ $restaurant['name'] }}" width="400" height="300" loading="lazy">
+                                    @if(!empty($restaurant['logo_image']))
+                                        <div class="restaurant-logo-overlay"><img src="{{ $restaurant['logo_image'] }}" alt=""></div>
+                                    @endif
+                                </div>
+                                <div class="restaurant-info">
+                                    <div class="restaurant-name">{{ $restaurant['name'] }}</div>
+                                    <div class="restaurant-cuisine">{{ $restaurant['cuisine'] }}</div>
+                                    <div class="restaurant-meta">
+                                        @if(($restaurant['rating'] ?? 0) > 0)
+                                            <div class="rating"><i class="fas fa-star me-1"></i>{{ number_format((float) $restaurant['rating'], 1) }}</div>
+                                        @endif
+                                        @if(($restaurant['is_open'] ?? true) === false)
+                                            <div class="restaurant-closed-text">Closed</div>
+                                        @else
+                                            <div class="delivery-time">
+                                                <i class="far fa-clock me-1"></i>{{ $restaurant['delivery_time'] }}-{{ $restaurant['delivery_time'] + 8 }} mins
+                                                @if($amountForOne > 0)
+                                                    &middot; {{ $currencySymbol }}{{ number_format($amountForOne, $currencyDecimals) }} for one
+                                                @endif
+                                            </div>
+                                        @endif
                                     </div>
                                 </div>
                             </a>

@@ -11,8 +11,10 @@
         </div>
         <div class="d-flex gap-2 flex-wrap">
             <a href="{{ route('admin.gigs.analytics', ['date' => $selectedDate ?? today()->toDateString()]) }}" class="btn btn-outline-primary"><i class="fas fa-chart-line me-2"></i>Analytics</a>
+            @can('create_gigs')
             <a href="{{ route('admin.gigs.bulk') }}" class="btn btn-outline-secondary"><i class="fas fa-layer-group me-2"></i>Bulk Create</a>
             <a href="{{ route('admin.gigs.create') }}" class="btn btn-primary"><i class="fas fa-plus me-2"></i>Create Slot</a>
+            @endcan
         </div>
     </div>
 </div>
@@ -82,7 +84,7 @@
                             <td><div class="small text-muted">Min login: {{ $gig->min_login_minutes }} mins</div><div class="small text-muted">Min orders: {{ $gig->min_orders_required }}</div><div class="small text-muted">Max cancels: {{ $gig->max_cancellations_allowed }}</div></td>
                             <td>{{ App\Models\AppSetting::sanitizedCurrencySymbol() }}{{ number_format((float) $gig->estimated_earning, App\Models\AppSetting::currencyDecimals()) }}</td>
                             <td><span class="badge badge-{{ $gig->status === 'available' ? 'success' : ($gig->status === 'booked' ? 'primary' : ($gig->status === 'completed' ? 'info' : 'danger')) }}">{{ ucfirst($gig->status) }}</span></td>
-                            <td class="text-end"><div class="d-flex justify-content-end gap-2"><a href="{{ route('admin.gigs.edit', $gig) }}" class="btn btn-sm btn-outline-primary">Edit</a><form action="{{ route('admin.gigs.destroy', $gig) }}" method="POST" onsubmit="return confirm('Delete this gig slot?');">@csrf @method('DELETE')<button type="submit" class="btn btn-sm btn-outline-danger">Delete</button></form></div></td>
+                            <td class="text-end"><div class="d-flex justify-content-end gap-2">@can('edit_gigs')<a href="{{ route('admin.gigs.edit', $gig) }}" class="btn btn-sm btn-outline-primary">Edit</a>@endcan @can('delete_gigs')<form action="{{ route('admin.gigs.destroy', $gig) }}" method="POST" onsubmit="return confirm('Delete this gig slot?');">@csrf @method('DELETE')<button type="submit" class="btn btn-sm btn-outline-danger">Delete</button></form>@endcan</div></td>
                         </tr>
                     @endforeach
                 @endforeach

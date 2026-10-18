@@ -3,7 +3,7 @@ description: A complete food delivery application with customer, restaurant, and
 
 publish_to: 'none'
 
-version: 2.4.21+42
+version: 2.4.26+47
 
 environment:
   sdk: '>=3.0.0 <4.0.0'
@@ -39,6 +39,7 @@ dependencies:
   flutter_cache_manager: ^3.4.1
   smooth_page_indicator: ^2.0.1
   vibration: ^3.1.8
+  video_player: ^2.9.2
   
   # Navigation
   go_router: ^17.2.3
@@ -99,6 +100,9 @@ dependencies:
   crypto: ^3.0.3
   sms_autofill: ^2.2.0
   lottie: ^3.3.1
+
+  # Ads
+  google_mobile_ads: ^9.1.0
 
 dev_dependencies:
   flutter_test:

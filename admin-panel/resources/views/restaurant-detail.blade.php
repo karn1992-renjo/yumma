@@ -10,17 +10,77 @@
         $currencySymbol = App\Models\AppSetting::sanitizedCurrencySymbol();
         $currencyDecimals = App\Models\AppSetting::currencyDecimals();
     @endphp
-    
+    @include('partials.seo-meta', [
+        'metaTitle' => $restaurant->name,
+        'metaDescription' => trim((string) $restaurant->description) !== ''
+            ? \Illuminate\Support\Str::limit(trim($restaurant->description), 160)
+            : trim($restaurant->name.' - order online from '.($restaurant->cuisine_text ?: 'a variety of cuisines').' in '.($restaurant->city ?: 'your city').'. Fast delivery and live order tracking.'),
+        'metaImage' => $restaurant->banner_image ?: $restaurant->logo_image,
+        'canonicalUrl' => route('restaurant.show', $restaurant->slug ?? $restaurant->id),
+    ])
+
+    @php
+        $restaurantCityCanonical = $restaurant->city
+            ? route('city.restaurants', \Illuminate\Support\Str::slug($restaurant->city))
+            : null;
+        $restaurantSchema = array_filter([
+            '@context' => 'https://schema.org',
+            '@type' => 'Restaurant',
+            'name' => $restaurant->name,
+            'image' => $restaurant->banner_image ? \App\Services\MediaStorage::url($restaurant->banner_image) : (\App\Services\MediaStorage::url($restaurant->logo_image) ?: null),
+            'servesCuisine' => $restaurant->cuisine_names ?: null,
+            'url' => route('restaurant.show', $restaurant->slug ?? $restaurant->id),
+            'address' => array_filter([
+                '@type' => 'PostalAddress',
+                'streetAddress' => $restaurant->address,
+                'addressLocality' => $restaurant->city,
+                'addressRegion' => $restaurant->state,
+                'postalCode' => $restaurant->pincode,
+                'addressCountry' => $restaurant->country_code ?: 'IN',
+            ]),
+            'geo' => ($restaurant->latitude && $restaurant->longitude) ? [
+                '@type' => 'GeoCoordinates',
+                'latitude' => (float) $restaurant->latitude,
+                'longitude' => (float) $restaurant->longitude,
+            ] : null,
+            'aggregateRating' => ($restaurant->rating && $restaurant->total_ratings) ? [
+                '@type' => 'AggregateRating',
+                'ratingValue' => (float) $restaurant->rating,
+                'reviewCount' => (int) $restaurant->total_ratings,
+            ] : null,
+        ]);
+    @endphp
+    <script type="application/ld+json">{!! json_encode($restaurantSchema, JSON_UNESCAPED_SLASHES) !!}</script>
+    @if($restaurantCityCanonical)
+    <script type="application/ld+json">
+    {!! json_encode([
+        '@context' => 'https://schema.org',
+        '@type' => 'BreadcrumbList',
+        'itemListElement' => [
+            ['@type' => 'ListItem', 'position' => 1, 'name' => 'Home', 'item' => route('home')],
+            ['@type' => 'ListItem', 'position' => 2, 'name' => "Restaurants in {$restaurant->city}", 'item' => $restaurantCityCanonical],
+            ['@type' => 'ListItem', 'position' => 3, 'name' => $restaurant->name, 'item' => route('restaurant.show', $restaurant->slug ?? $restaurant->id)],
+        ],
+    ], JSON_UNESCAPED_SLASHES) !!}
+    </script>
+    @endif
+
     <!-- CSS Dependencies -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,300;14..32,400;14..32,500;14..32,600;14..32,700;14..32,800&display=swap" rel="stylesheet">
-    
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Nunito+Sans:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+
     <style>
         :root {
-            --primary: {{ $primaryColor ?? '#EF4F5F' }};
-            --primary-dark: {{ $primaryDark ?? '#E03546' }};
-            --secondary: {{ $secondaryColor ?? '#FF8C42' }};
+            --primary: {{ $primaryColor ?? '#2563EB' }};
+            --swiggy-orange: {{ $primaryColor ?? '#2563EB' }};
+            --swiggy-dark: #02060c;
+            --swiggy-muted: #686b78;
+            --swiggy-green: #1ba672;
+            --swiggy-veg-green: #0f8a65;
+            --swiggy-nonveg-red: #e43b4f;
+            --primary-dark: #e56d0d;
+            --secondary: {{ $secondaryColor ?? '#111827' }};
             --success: #10B981;
             --warning: #F59E0B;
             --info: #3B82F6;
@@ -34,10 +94,15 @@
             --gray-700: #374151;
             --gray-800: #1F2937;
             --gray-900: #111827;
+
+            /* Matches the Flutter customer app's actual design tokens,
+               used by the elements redesigned to match it on this page. */
+            --app-success: #22C55E;
+            --app-danger: #E53935;
         }
 
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: 'Inter', sans-serif; background: var(--gray-50); color: var(--gray-900); overflow-x: hidden; }
+        body { font-family: 'Nunito Sans', sans-serif; background: var(--gray-50); color: var(--gray-900); overflow-x: hidden; }
 
         ::-webkit-scrollbar { width: 6px; height: 6px; }
         ::-webkit-scrollbar-track { background: var(--gray-100); }
@@ -46,13 +111,18 @@
         .navbar { background: white; box-shadow: 0 1px 8px rgba(0,0,0,0.08); padding: 12px 0; position: sticky; top: 0; z-index: 1000; }
         .navbar-brand { font-size: 28px; font-weight: 800; background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
 
-        .hero-section { position: relative; height: 340px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); overflow: hidden; }
-        .hero-section img { width: 100%; height: 100%; object-fit: cover; filter: brightness(0.85); }
-        .hero-overlay { position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: linear-gradient(to bottom, rgba(0,0,0,0.3), rgba(0,0,0,0.6)); }
+        /* Matches the app's banner: 240px, bottom-only rounded corners, no
+           heavy dark overlay -- the circular icon buttons carry their own
+           semi-transparent background instead. */
+        .hero-section { position: relative; height: 240px; border-radius: 0 0 28px 28px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); overflow: hidden; }
+        .hero-section img { width: 100%; height: 100%; object-fit: cover; }
+        .hero-icon-btn { position: absolute; top: 16px; width: 38px; height: 38px; border-radius: 50%; background: rgba(0,0,0,0.45); color: #fff; display: flex; align-items: center; justify-content: center; text-decoration: none; z-index: 5; }
+        .hero-icon-btn.back { left: 16px; }
+        .hero-icon-btn.share { right: 16px; }
 
         .restaurant-info-card { background: white; border-radius: 24px; margin-top: -60px; position: relative; z-index: 10; padding: 24px 32px; box-shadow: 0 8px 32px rgba(0,0,0,0.1); }
         .restaurant-logo { width: 100px; height: 100px; border-radius: 20px; object-fit: cover; border: 4px solid white; box-shadow: 0 4px 16px rgba(0,0,0,0.1); margin-top: -70px; }
-        .rating-badge { background: var(--success); color: white; padding: 6px 12px; border-radius: 30px; font-weight: 600; font-size: 14px; display: inline-flex; align-items: center; gap: 6px; }
+        .rating-badge { background: var(--app-success); color: white; padding: 6px 12px; border-radius: 30px; font-weight: 700; font-size: 14px; display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
         .info-chip { background: var(--gray-100); padding: 8px 16px; border-radius: 40px; font-size: 14px; display: inline-flex; align-items: center; gap: 8px; color: var(--gray-700); }
 
         .nav-tabs-custom { background: white; border-bottom: 1px solid var(--gray-200); position: sticky; top: 76px; z-index: 99; }
@@ -63,26 +133,45 @@
 
         .menu-section { padding: 32px 0 64px; }
         .menu-category { margin-bottom: 48px; scroll-margin-top: 120px; }
-        .menu-item-card { background: white; border-radius: 16px; padding: 16px; margin-bottom: 16px; transition: all 0.3s ease; cursor: pointer; border: 1px solid var(--gray-200); }
-        .menu-item-card:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(0,0,0,0.1); border-color: transparent; }
-        .menu-item-img { width: 80px; height: 80px; border-radius: 12px; object-fit: cover; }
-        .veg-badge { width: 12px; height: 12px; border-radius: 2px; background: #32CD32; display: inline-block; margin-right: 6px; }
-        .non-veg-badge { width: 12px; height: 12px; border-radius: 2px; background: #DC143C; display: inline-block; margin-right: 6px; }
-        .add-btn { background: white; border: 1px solid var(--gray-300); padding: 8px 24px; border-radius: 30px; font-weight: 600; font-size: 14px; transition: all 0.3s; }
-        .add-btn:hover { background: var(--primary); border-color: var(--primary); color: white; }
+        /* Grid of cards, matching the app's own Wrap-grid menu layout --
+           also what keeps a card's image from stretching edge-to-edge on
+           wide desktop viewports now that the sidebar cart panel is gone. */
+        .menu-items-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 16px; }
+        /* Menu item card -- matches the app's RestaurantMenuGridCard: a
+           full-width image on top, no heavy card border, text block below. */
+        .menu-item-card { background: white; border-radius: 16px; overflow: hidden; transition: box-shadow 0.2s ease; cursor: default; border: 1px solid #F1F1F1; box-shadow: 0 2px 6px rgba(0,0,0,0.04); }
+        .menu-item-card:hover { box-shadow: 0 6px 16px rgba(0,0,0,0.08); }
+        .menu-item-img-wrap { position: relative; width: 100%; aspect-ratio: 3/2; overflow: hidden; }
+        .menu-item-img { width: 100%; height: 100%; object-fit: cover; }
+        .menu-item-body { padding: 14px 16px 16px; position: relative; }
+        .food-type-badge { width: 16px; height: 16px; border: 1.5px solid; border-radius: 3px; display: inline-flex; align-items: center; justify-content: center; margin-right: 6px; flex-shrink: 0; }
+        .food-type-badge .dot { width: 8px; height: 8px; border-radius: 50%; }
+        .food-type-badge.veg { border-color: var(--app-success); }
+        .food-type-badge.veg .dot { background: var(--app-success); }
+        .food-type-badge.non-veg,
+        .food-type-badge.egg { border-color: var(--app-danger); }
+        .food-type-badge.non-veg .dot,
+        .food-type-badge.egg .dot { background: var(--app-danger); }
+        .veg-badge, .non-veg-badge { display: none; } /* superseded by .food-type-badge */
 
-        .cart-sidebar { position: fixed; right: -420px; top: 0; width: 420px; height: 100vh; background: white; box-shadow: -8px 0 32px rgba(0,0,0,0.1); z-index: 1050; transition: 0.3s cubic-bezier(0.4, 0, 0.2, 1); display: flex; flex-direction: column; }
-        .cart-sidebar.open { right: 0; }
-        .cart-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1040; display: none; }
-        .cart-overlay.show { display: block; }
-        .cart-item { background: var(--gray-50); border-radius: 12px; padding: 12px; margin-bottom: 12px; }
-        .cart-quantity-control { display: flex; align-items: center; gap: 10px; background: white; padding: 4px; border-radius: 40px; border: 1px solid var(--gray-200); }
-        .cart-qty-btn { width: 28px; height: 28px; border-radius: 50%; border: none; background: var(--primary); color: white; font-weight: bold; display: flex; align-items: center; justify-content: center; cursor: pointer; }
-        .cart-qty-btn.minus { background: var(--gray-300); color: var(--gray-700); }
+        /* Circular filled Add button, matching the app's _GridAddButton. */
+        .add-btn { position: absolute; top: -20px; right: 16px; width: 36px; height: 36px; border-radius: 50%; background: var(--app-success); border: 3px solid white; color: white; display: flex; align-items: center; justify-content: center; font-size: 14px; box-shadow: 0 4px 10px rgba(0,0,0,0.18); transition: transform 0.15s ease; padding: 0; }
+        .add-btn:hover { transform: scale(1.06); background: var(--app-success); color: white; }
 
-        .cart-floating-btn { position: fixed; bottom: 24px; right: 24px; background: var(--primary); color: white; width: 56px; height: 56px; border-radius: 50%; display: flex; align-items: center; justify-content: center; cursor: pointer; box-shadow: 0 8px 20px rgba(239,79,95,0.4); z-index: 100; transition: all 0.3s; }
-        .cart-floating-btn:hover { transform: scale(1.1); }
-        .cart-badge { position: absolute; top: -5px; right: -5px; background: white; color: var(--primary); border-radius: 50%; width: 22px; height: 22px; font-size: 12px; font-weight: bold; display: flex; align-items: center; justify-content: center; }
+        /* Persistent cart bar -- replaces the old desktop sidebar, mobile
+           floating button, and mobile off-canvas sidebar with one component
+           matching the app's bottomNavigationBar cart bar. */
+        .cart-bar { position: fixed; left: 14px; right: 14px; bottom: 14px; max-width: 480px; margin: 0 auto; background: white; border-radius: 22px; box-shadow: 0 8px 24px rgba(109,40,217,0.08), 0 4px 16px rgba(0,0,0,0.12); padding: 10px 14px; display: none; align-items: center; gap: 12px; z-index: 1040; }
+        .cart-bar.show { display: flex; }
+        .cart-bar-logo { width: 48px; height: 48px; border-radius: 16px; object-fit: cover; flex-shrink: 0; background: var(--gray-100); }
+        .cart-bar-info { flex-grow: 1; min-width: 0; }
+        .cart-bar-name { font-weight: 800; font-size: 14px; color: var(--gray-900); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .cart-bar-meta { font-size: 12px; color: var(--gray-500); font-weight: 600; }
+        .cart-bar-cta { background: linear-gradient(135deg, var(--primary), color-mix(in srgb, var(--primary) 70%, #000)); color: white; border: none; padding: 10px 18px; border-radius: 16px; font-weight: 700; font-size: 13px; white-space: nowrap; flex-shrink: 0; }
+
+        @media (max-width: 991.98px) {
+            .cart-bar { bottom: 102px; }
+        }
 
         .review-card { background: white; border-radius: 16px; padding: 20px; margin-bottom: 16px; border: 1px solid var(--gray-200); }
         .review-avatar { width: 48px; height: 48px; border-radius: 50%; background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%); display: flex; align-items: center; justify-content: center; color: white; font-weight: bold; font-size: 18px; }
@@ -112,41 +201,22 @@
             .restaurant-info-card { padding: 16px; margin-top: -40px; }
             .restaurant-logo { width: 70px; height: 70px; margin-top: -50px; }
             .hero-section { height: 200px; }
-            .cart-sidebar { width: 100%; right: -100%; }
             .nav-tabs-custom .nav-link { padding: 12px 16px; font-size: 14px; }
         }
     </style>
 @include('partials.public-blade-polish')
+<style>
+    body {
+        font-family: 'Nunito Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+        background: #ffffff !important;
+        color: #02060c !important;
+    }
+</style>
 </head>
 <body>
 
-<!-- Navbar -->
-<nav class="navbar">
-    <div class="container">
-        <a class="navbar-brand text-decoration-none" href="{{ route('home') }}">
-            <i class="fas fa-utensils me-2"></i>{{ $appName ?? config('app.name') }}
-        </a>
-        <div class="d-flex align-items-center gap-3">
-            @auth
-                <div class="dropdown">
-                    <button class="btn btn-link text-dark text-decoration-none dropdown-toggle" type="button" data-bs-toggle="dropdown">
-                        <i class="fas fa-user-circle fs-5"></i> {{ Auth::user()->name }}
-                    </button>
-                    <ul class="dropdown-menu dropdown-menu-end">
-                        <li><a class="dropdown-item" href="{{ route('customer.orders.index') }}"><i class="fas fa-shopping-bag me-2"></i>My Orders</a></li>
-                        <li><a class="dropdown-item" href="{{ route('customer.addresses.index') }}"><i class="fas fa-map-marker-alt me-2"></i>Addresses</a></li>
-                        <li><hr class="dropdown-divider"></li>
-                        <li><a class="dropdown-item" href="{{ route('logout') }}" onclick="event.preventDefault(); document.getElementById('logout-form').submit();"><i class="fas fa-sign-out-alt me-2"></i>Logout</a></li>
-                    </ul>
-                </div>
-                <form id="logout-form" action="{{ route('logout') }}" method="POST" style="display: none;">@csrf</form>
-            @else
-                <a href="{{ route('login') }}" class="btn btn-outline-primary rounded-pill">Login</a>
-                <a href="{{ route('register') }}" class="btn btn-primary rounded-pill">Sign Up</a>
-            @endauth
-        </div>
-    </div>
-</nav>
+<!-- Unified Frontend Header -->
+@include('partials.frontend-header')
 
 @php
     // Safe banner URL with null checks
@@ -208,7 +278,8 @@
 <!-- Hero Section -->
 <div class="hero-section">
     <img src="{{ $restaurantBannerUrl }}" alt="{{ $restaurant->name }}">
-    <div class="hero-overlay"></div>
+    <a href="javascript:void(0)" onclick="history.back()" class="hero-icon-btn back" aria-label="Back"><i class="fas fa-arrow-left"></i></a>
+    <a href="javascript:void(0)" onclick="shareRestaurant()" class="hero-icon-btn share" aria-label="Share"><i class="fas fa-share-alt"></i></a>
 </div>
 
 <div class="container">
@@ -228,9 +299,9 @@
                 <h1 class="fw-bold mb-2">{{ $restaurant->name }}</h1>
                 <p class="text-muted mb-3">{{ $cuisineDisplay }}</p>
                 <div class="d-flex flex-wrap gap-3">
-                    <div class="rating-badge">
-                        <i class="fas fa-star"></i> 
-                        <span>{{ number_format($rating, 1) }}</span> 
+                    <div class="rating-badge" onclick="openReviewsTab()">
+                        <i class="fas fa-star"></i>
+                        <span>{{ number_format($rating, 1) }}</span>
                         <span style="font-size: 12px;">({{ $totalReviews }}+ ratings)</span>
                     </div>
                     @php
@@ -404,7 +475,7 @@
         <div class="tab-pane fade show active" id="menu" role="tabpanel">
             <div class="menu-section">
                 <div class="row">
-                    <div class="col-lg-8">
+                    <div class="col-12">
                         <!-- Category Navigation -->
                         @if($menuItemsByCategory->count() > 0)
                             <div class="category-nav mb-4" style="position: sticky; top: 130px; background: var(--gray-50); padding: 12px 0; z-index: 9;">
@@ -423,67 +494,65 @@
                             @foreach($menuItemsByCategory as $categoryName => $items)
                                 <div id="category-{{ \Illuminate\Support\Str::slug($categoryName) }}" class="menu-category">
                                     <h3 class="fw-bold mb-3">{{ $categoryName }}</h3>
+                                    <div class="menu-items-grid">
                                     @foreach($items as $item)
+                                        @php
+                                            $foodType = $item->food_type ?: ($item->is_veg ? 'veg' : 'non_veg');
+                                            $foodTypeClass = $foodType === 'veg' ? 'veg' : ($foodType === 'egg' ? 'egg' : 'non-veg');
+                                        @endphp
                                         <div class="menu-item-card" data-item-name="{{ strtolower($item->name) }}">
-                                            <div class="row align-items-center">
-                                                <div class="col">
-                                                    <div class="d-flex gap-3">
-                                                        @if($item->image)
-                                                            <img src="{{ \App\Services\MediaStorage::url($item->image) }}" alt="{{ $item->name }}" class="menu-item-img">
-                                                        @else
-                                                            <div class="menu-item-img bg-light d-flex align-items-center justify-content-center">
-                                                                <i class="fas fa-utensils fa-2x text-muted"></i>
-                                                            </div>
-                                                        @endif
-                                                        <div class="flex-grow-1">
-                                                            <div class="d-flex align-items-center gap-2 mb-1">
-                            @php
-                                $foodType = $item->food_type ?: ($item->is_veg ? 'veg' : 'non_veg');
-                            @endphp
-                                                                <span class="{{ $foodType === 'veg' ? 'veg-badge' : 'non-veg-badge' }}" style="{{ $foodType === 'egg' ? 'background:#F59E0B;' : '' }}"></span>
-                                                                <h5 class="fw-bold mb-0">{{ $item->name }}</h5>
-                                                                <span class="badge {{ $foodType === 'veg' ? 'bg-success' : ($foodType === 'egg' ? 'bg-warning text-dark' : 'bg-danger') }}">{{ $item->diet_label }}</span>
-                                                                @if($item->is_recommended)
-                                                                    <span class="badge bg-success">Recommended</span>
-                                                                @endif
-                                                                @foreach([
-                                                                    'is_bestseller' => 'Bestseller',
-                                                                    'is_new' => 'New',
-                                                                    'is_spicy' => 'Spicy',
-                                                                    'is_combo' => 'Combo',
-                                                                ] as $flag => $label)
-                                                                    @if($item->{$flag})
-                                                                        <span class="badge bg-light text-dark">{{ $label }}</span>
-                                                                    @endif
-                                                                @endforeach
-                                                            </div>
-                                                            @if($item->description)
-                                                                <p class="text-muted small mb-2">{{ $item->description }}</p>
-                                                            @endif
-                                                            <div class="d-flex align-items-center gap-3">
-                                                                <span class="fw-bold h5 mb-0 text-primary">
-                                                                    {{ $currencySymbol }}{{ number_format($item->discounted_price ?? $item->price, App\Models\AppSetting::currencyDecimals()) }}
-                                                                </span>
-                                                                @if(isset($item->discounted_price) && $item->discounted_price && $item->discounted_price < $item->price)
-                                                                    <span class="text-muted text-decoration-line-through">
-                                                                        {{ $currencySymbol }}{{ number_format($item->price, App\Models\AppSetting::currencyDecimals()) }}
-                                                                    </span>
-                                                                    <span class="badge bg-warning">
-                                                                        {{ round((($item->price - $item->discounted_price) / $item->price) * 100) }}% OFF
-                                                                    </span>
-                                                                @endif
-                                                            </div>
-                                                        </div>
+                                            <div class="menu-item-img-wrap">
+                                                @if($item->image)
+                                                    <img src="{{ \App\Services\MediaStorage::url($item->image) }}" alt="{{ $item->name }}" class="menu-item-img">
+                                                @else
+                                                    <div class="menu-item-img bg-light d-flex align-items-center justify-content-center">
+                                                        <i class="fas fa-utensils fa-2x text-muted"></i>
                                                     </div>
+                                                @endif
+                                            </div>
+                                            <div class="menu-item-body">
+                                                <button class="add-btn" data-variants='@json($item->variants ?? [])' data-addons='@json($item->add_ons ?? [])' onclick="addToCart(this, {{ $item->id }}, '{{ addslashes($item->name) }}', {{ number_format((float) ($item->discounted_price ?? $item->price), App\Models\AppSetting::currencyDecimals(), '.', '') }})" aria-label="Add {{ $item->name }} to cart">
+                                                    <i class="fas fa-plus"></i>
+                                                </button>
+                                                <div class="d-flex align-items-start gap-2 mb-1">
+                                                    <span class="food-type-badge {{ $foodTypeClass }}"><span class="dot"></span></span>
+                                                    <h5 class="fw-bold mb-0" style="font-size: 16px;">{{ $item->name }}</h5>
                                                 </div>
-                                                <div class="col-auto">
-                                                    <button class="add-btn" data-variants='@json($item->variants ?? [])' data-addons='@json($item->add_ons ?? [])' onclick="addToCart(this, {{ $item->id }}, '{{ addslashes($item->name) }}', {{ $item->discounted_price ?? $item->price }})">
-                                                        <i class="fas fa-plus me-2"></i>Add
-                                                    </button>
+                                                <div class="d-flex flex-wrap gap-1 mb-1">
+                                                    @if($item->is_recommended)
+                                                        <span class="badge bg-success">Recommended</span>
+                                                    @endif
+                                                    @foreach([
+                                                        'is_bestseller' => 'Bestseller',
+                                                        'is_new' => 'New',
+                                                        'is_spicy' => 'Spicy',
+                                                        'is_combo' => 'Combo',
+                                                    ] as $flag => $label)
+                                                        @if($item->{$flag})
+                                                            <span class="badge bg-light text-dark">{{ $label }}</span>
+                                                        @endif
+                                                    @endforeach
+                                                </div>
+                                                @if($item->description)
+                                                    <p class="text-muted small mb-2">{{ Illuminate\Support\Str::limit($item->description, 80) }}</p>
+                                                @endif
+                                                <div class="d-flex align-items-center gap-2">
+                                                    <span class="fw-bold mb-0 text-primary" style="font-size: 15px;">
+                                                        {{ $currencySymbol }}{{ number_format($item->discounted_price ?? $item->price, App\Models\AppSetting::currencyDecimals()) }}
+                                                    </span>
+                                                    @if(isset($item->discounted_price) && $item->discounted_price && $item->discounted_price < $item->price)
+                                                        <span class="text-muted text-decoration-line-through small">
+                                                            {{ $currencySymbol }}{{ number_format($item->price, App\Models\AppSetting::currencyDecimals()) }}
+                                                        </span>
+                                                        <span class="badge bg-warning">
+                                                            {{ round((($item->price - $item->discounted_price) / $item->price) * 100) }}% OFF
+                                                        </span>
+                                                    @endif
                                                 </div>
                                             </div>
                                         </div>
                                     @endforeach
+                                    </div>
                                 </div>
                             @endforeach
                         @else
@@ -493,60 +562,6 @@
                                 <p class="text-muted">Check back later for updated menu</p>
                             </div>
                         @endif
-                    </div>
-
-                    <!-- Cart Desktop -->
-                    <div class="col-lg-4">
-                        <div class="position-sticky" style="top: 140px;">
-                            <div class="bg-white rounded-4 p-4 shadow-sm">
-                                <div class="d-flex justify-content-between align-items-center mb-3">
-                                    <h5 class="fw-bold mb-0"><i class="fas fa-shopping-bag text-primary me-2"></i>Your Cart</h5>
-                                    <button class="btn btn-sm btn-link text-danger" onclick="clearCart()">Clear All</button>
-                                </div>
-                                <div id="cartItemsDesktop">
-                                    <div class="text-center py-5">
-                                        <i class="fas fa-shopping-cart fa-3x text-muted mb-3"></i>
-                                        <p class="text-muted">Your cart is empty</p>
-                                        <small class="text-muted">Add items from the menu</small>
-                                    </div>
-                                </div>
-                                <div id="cartTotalDesktop" style="display: none;">
-                                    <div class="border-top pt-3 mt-3">
-                                        <div class="d-flex justify-content-between mb-2">
-                                            <span>Subtotal</span>
-                                            <span class="fw-bold">{{ $currencySymbol }}<span id="subtotal">0</span></span>
-                                        </div>
-                                        <div class="d-flex justify-content-between mb-2">
-                                            <span id="taxLabel">Taxes</span>
-                                            <span class="fw-bold">{{ $currencySymbol }}<span id="tax">0</span></span>
-                                        </div>
-                                        @guest
-                                            <div class="alert alert-warning d-flex align-items-center gap-2 mb-3">
-                                                <i class="fas fa-lock"></i>
-                                                <div>You need to login before checkout. <a href="{{ route('login') }}" class="text-decoration-underline">Login now</a>.</div>
-                                            </div>
-                                        @endguest
-                                        @if(!$restaurant->is_open)
-                                            <div class="alert alert-warning mb-3">
-                                                This restaurant is currently closed. Orders can only be placed when it reopens.
-                                            </div>
-                                        @endif
-                                        <div class="d-flex justify-content-between mb-3 pt-2 border-top">
-                                            <span class="fw-bold">Total</span>
-                                            <span class="fw-bold text-primary h5 mb-0">{{ $currencySymbol }}<span id="total">0</span></span>
-                                        </div>
-                                        <button class="btn btn-primary w-100 py-3 rounded-pill" onclick="proceedToCheckout()" @if(!$restaurant->is_open) disabled @endif>
-                                            @guest 
-                                                Login to Checkout 
-                                            @else 
-                                                Proceed to Checkout 
-                                            @endguest 
-                                            <i class="fas fa-arrow-right ms-2"></i>
-                                        </button>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
                     </div>
                 </div>
             </div>
@@ -665,7 +680,7 @@
                 <div class="row g-4">
                     @forelse($similarRestaurants ?? [] as $similar)
                         <div class="col-md-6 col-lg-3">
-                            <div class="similar-restaurant-card" onclick="window.location.href='{{ route('restaurant.show', $similar->id) }}'">
+                            <div class="similar-restaurant-card" onclick="window.location.href='{{ route('restaurant.show', $similar->slug ?? $similar->id) }}'">
                                 @php
                                     $similarImage = $similar->logo_image
                                         ? \App\Services\MediaStorage::url($similar->logo_image)
@@ -699,54 +714,24 @@
     </div>
 </div>
 
-<!-- Mobile Cart -->
-<div class="cart-floating-btn d-lg-none" onclick="toggleCart()">
-    <i class="fas fa-shopping-bag fa-xl"></i>
-    <span class="cart-badge" id="mobileCartBadge" style="display: none;">0</span>
+<!-- Persistent Cart Bar -- matches the app's bottomNavigationBar cart bar:
+     appears once the cart has items, shows restaurant + item count + total,
+     taps straight through to the existing checkout flow. Replaces the old
+     desktop sidebar + mobile floating button + mobile off-canvas sidebar. -->
+<div class="cart-bar" id="cartBar">
+    @if($restaurantLogoUrl)
+        <img src="{{ $restaurantLogoUrl }}" alt="" class="cart-bar-logo">
+    @else
+        <div class="cart-bar-logo d-flex align-items-center justify-content-center"><i class="fas fa-store text-muted"></i></div>
+    @endif
+    <div class="cart-bar-info">
+        <div class="cart-bar-name">{{ $restaurant->name }}</div>
+        <div class="cart-bar-meta" id="cartBarMeta">0 items</div>
+    </div>
+    <button class="cart-bar-cta" onclick="window.location.href = '{{ route('cart.index') }}?restaurant_id={{ $restaurant->id }}'">
+        View Cart <i class="fas fa-chevron-right ms-1"></i>
+    </button>
 </div>
-
-<div class="cart-sidebar" id="mobileCartSidebar">
-    <div class="d-flex justify-content-between align-items-center p-4 border-bottom">
-        <h5 class="fw-bold mb-0"><i class="fas fa-shopping-bag text-primary me-2"></i>Your Cart</h5>
-        <button class="btn-close" onclick="toggleCart()"></button>
-    </div>
-    <div class="flex-grow-1 overflow-auto p-4" id="mobileCartItems">
-        <div class="text-center py-5">
-            <i class="fas fa-shopping-cart fa-3x text-muted mb-3"></i>
-            <p class="text-muted">Your cart is empty</p>
-        </div>
-    </div>
-    <div class="p-4 border-top" id="mobileCartFooter" style="display: none;">
-        <div class="d-flex justify-content-between mb-2">
-            <span>Subtotal</span>
-            <span class="fw-bold">{{ $currencySymbol }}<span id="mobileSubtotal">0</span></span>
-        </div>
-        @guest
-            <div class="alert alert-warning d-flex align-items-center gap-2 mb-3">
-                <i class="fas fa-lock"></i>
-                <div>Login is required to complete checkout. <a href="{{ route('login') }}" class="text-decoration-underline">Login now</a>.</div>
-            </div>
-        @endguest
-        @if(!$restaurant->is_open)
-            <div class="alert alert-warning mb-3">
-                This restaurant is currently closed. Orders can only be placed when it reopens.
-            </div>
-        @endif
-        <div class="d-flex justify-content-between mb-3">
-            <span class="fw-bold">Total</span>
-            <span class="fw-bold text-primary">{{ $currencySymbol }}<span id="mobileTotal">0</span></span>
-        </div>
-        <button class="btn btn-primary w-100 py-3 rounded-pill" onclick="proceedToCheckout()" @if(!$restaurant->is_open) disabled @endif>
-            @guest 
-                Login to Checkout 
-            @else 
-                Proceed to Checkout 
-            @endguest 
-            <i class="fas fa-arrow-right ms-2"></i>
-        </button>
-    </div>
-</div>
-<div class="cart-overlay" id="cartOverlay" onclick="toggleCart()"></div>
 
 <script>
     @php
@@ -775,9 +760,10 @@
         cart = []; 
     }
     
-    function saveCart() { 
-        localStorage.setItem('cart_' + restaurantId, JSON.stringify(cart)); 
-        updateCartUI(); 
+    function saveCart() {
+        localStorage.setItem('cart_' + restaurantId, JSON.stringify(cart));
+        updateCartUI();
+        if (window.updateHeaderCartCount) window.updateHeaderCartCount();
     }
     
     function addToCart(button, id, name, price) {
@@ -805,13 +791,9 @@
         
         if(button) {
             var originalHtml = button.innerHTML;
-            button.innerHTML = '<i class="fas fa-check me-2"></i>Added';
-            button.style.background = '#10B981';
-            button.style.borderColor = '#10B981';
-            setTimeout(function() { 
+            button.innerHTML = '<i class="fas fa-check"></i>';
+            setTimeout(function() {
                 button.innerHTML = originalHtml;
-                button.style.background = '';
-                button.style.borderColor = '';
             }, 1000);
         }
     }
@@ -850,225 +832,48 @@
         return selected;
     }
     
-    function updateQuantity(index, change) {
-        index = Number(index);
-        var item = cart[index];
-        if(item) {
-            item.quantity += change;
-            if(item.quantity <= 0) {
-                cart.splice(index, 1);
-            }
-            saveCart();
-        }
-    }
-    
-    function removeFromCart(index) {
-        index = Number(index);
-        if (index >= 0 && index < cart.length) {
-            cart.splice(index, 1);
-            saveCart();
-            showToast('Item removed', 'info');
-        }
-    }
-    
-    function clearCart() { 
-        if(confirm('Clear your entire cart?')) {
-            cart = []; 
-            saveCart(); 
-            showToast('Cart cleared', 'info');
-        }
-    }
-    
     function updateCartUI() {
-        var subtotal = 0;
+        var subtotal = 0, itemCount = 0;
         for (var i = 0; i < cart.length; i++) {
             subtotal += (cart[i].price || 0) * (cart[i].quantity || 0);
+            itemCount += (cart[i].quantity || 0);
         }
         var tax = subtotal * (cartTaxRate / 100);
         var total = subtotal + tax;
-        var itemCount = 0;
-        for (var i = 0; i < cart.length; i++) {
-            itemCount += (cart[i].quantity || 0);
-        }
-        
-        // Desktop
-        var desktopContainer = document.getElementById('cartItemsDesktop');
-        var desktopTotal = document.getElementById('cartTotalDesktop');
-        if(desktopContainer) {
-            if(cart.length === 0) {
-                desktopContainer.innerHTML = '<div class="text-center py-5"><i class="fas fa-shopping-cart fa-3x text-muted mb-3"></i><p class="text-muted">Your cart is empty</p><small class="text-muted">Add items from the menu</small></div>';
-                if(desktopTotal) desktopTotal.style.display = 'none';
+
+        var bar = document.getElementById('cartBar');
+        var meta = document.getElementById('cartBarMeta');
+        if (bar) {
+            if (cart.length === 0) {
+                bar.classList.remove('show');
             } else {
-                var desktopHtml = '';
-                for (var i = 0; i < cart.length; i++) {
-                    var item = cart[i];
-                    var addOnsHtml = '';
-                    if (item.selected_add_ons && item.selected_add_ons.length) {
-                        addOnsHtml = '<div class="small text-muted">Extras: ';
-                        for (var j = 0; j < item.selected_add_ons.length; j++) {
-                            if (j > 0) addOnsHtml += ', ';
-                            addOnsHtml += escapeHtml(item.selected_add_ons[j].name);
-                        }
-                        addOnsHtml += '</div>';
-                    }
-                    desktopHtml += '<div class="cart-item">' +
-                        '<div class="d-flex justify-content-between align-items-start mb-2">' +
-                            '<div>' +
-                                '<h6 class="fw-bold mb-1">' + escapeHtml(item.name) + '</h6>' +
-                                (item.selected_variant ? '<div class="small text-muted">' + escapeHtml(item.selected_variant.name) + '</div>' : '') +
-                                addOnsHtml +
-                                '<span class="text-primary fw-bold">' + window.currencySymbol + (item.price || 0).toFixed(window.currencyDecimals) + '</span>' +
-                            '</div>' +
-                            '<button class="btn btn-sm btn-link text-danger p-0" onclick="removeFromCart(' + i + ')">' +
-                                '<i class="fas fa-trash-alt"></i>' +
-                            '</button>' +
-                        '</div>' +
-                        '<div class="d-flex justify-content-between align-items-center">' +
-                            '<div class="cart-quantity-control">' +
-                                '<button class="cart-qty-btn minus" onclick="updateQuantity(' + i + ', -1)">-</button>' +
-                                '<span class="fw-semibold">' + item.quantity + '</span>' +
-                                '<button class="cart-qty-btn" onclick="updateQuantity(' + i + ', 1)">+</button>' +
-                            '</div>' +
-                            '<span class="fw-bold">' + window.currencySymbol + ((item.price || 0) * (item.quantity || 0)).toFixed(window.currencyDecimals) + '</span>' +
-                        '</div>' +
-                    '</div>';
+                bar.classList.add('show');
+                if (meta) {
+                    meta.innerText = itemCount + (itemCount === 1 ? ' item' : ' items') + ' · ' + window.currencySymbol + total.toFixed(window.currencyDecimals);
                 }
-                desktopContainer.innerHTML = desktopHtml;
-                if(desktopTotal) desktopTotal.style.display = 'block';
-            }
-        }
-        
-        if(document.getElementById('subtotal')) document.getElementById('subtotal').innerText = subtotal.toFixed(window.currencyDecimals);
-        if(document.getElementById('tax')) document.getElementById('tax').innerText = tax.toFixed(window.currencyDecimals);
-        if(document.getElementById('taxLabel')) document.getElementById('taxLabel').innerText = cartTaxLabel;
-        if(document.getElementById('total')) document.getElementById('total').innerText = total.toFixed(window.currencyDecimals);
-        
-        // Mobile
-        var mobileContainer = document.getElementById('mobileCartItems');
-        var mobileFooter = document.getElementById('mobileCartFooter');
-        if(mobileContainer) {
-            if(cart.length === 0) {
-                mobileContainer.innerHTML = '<div class="text-center py-5"><i class="fas fa-shopping-cart fa-3x text-muted mb-3"></i><p class="text-muted">Your cart is empty</p></div>';
-                if(mobileFooter) mobileFooter.style.display = 'none';
-            } else {
-                var mobileHtml = '';
-                for (var i = 0; i < cart.length; i++) {
-                    var item = cart[i];
-                    var addOnsHtml = '';
-                    if (item.selected_add_ons && item.selected_add_ons.length) {
-                        addOnsHtml = '<div class="small text-muted">Extras: ';
-                        for (var j = 0; j < item.selected_add_ons.length; j++) {
-                            if (j > 0) addOnsHtml += ', ';
-                            addOnsHtml += escapeHtml(item.selected_add_ons[j].name);
-                        }
-                        addOnsHtml += '</div>';
-                    }
-                    mobileHtml += '<div class="cart-item">' +
-                        '<div class="d-flex justify-content-between align-items-start mb-2">' +
-                            '<div>' +
-                                '<h6 class="fw-bold mb-1">' + escapeHtml(item.name) + '</h6>' +
-                                (item.selected_variant ? '<div class="small text-muted">' + escapeHtml(item.selected_variant.name) + '</div>' : '') +
-                                addOnsHtml +
-                                '<span class="text-primary fw-bold">' + window.currencySymbol + (item.price || 0).toFixed(window.currencyDecimals) + '</span>' +
-                            '</div>' +
-                            '<button class="btn btn-sm btn-link text-danger p-0" onclick="removeFromCart(' + i + ')">' +
-                                '<i class="fas fa-trash-alt"></i>' +
-                            '</button>' +
-                        '</div>' +
-                        '<div class="d-flex justify-content-between align-items-center">' +
-                            '<div class="cart-quantity-control">' +
-                                '<button class="cart-qty-btn minus" onclick="updateQuantity(' + i + ', -1)">-</button>' +
-                                '<span class="fw-semibold">' + item.quantity + '</span>' +
-                                '<button class="cart-qty-btn" onclick="updateQuantity(' + i + ', 1)">+</button>' +
-                            '</div>' +
-                            '<span class="fw-bold">' + window.currencySymbol + ((item.price || 0) * (item.quantity || 0)).toFixed(window.currencyDecimals) + '</span>' +
-                        '</div>' +
-                    '</div>';
-                }
-                mobileContainer.innerHTML = mobileHtml;
-                if(mobileFooter) mobileFooter.style.display = 'block';
-            }
-        }
-        
-        if(document.getElementById('mobileSubtotal')) document.getElementById('mobileSubtotal').innerText = subtotal.toFixed(window.currencyDecimals);
-        if(document.getElementById('mobileTotal')) document.getElementById('mobileTotal').innerText = total.toFixed(window.currencyDecimals);
-        
-        var badge = document.getElementById('mobileCartBadge');
-        if(badge) {
-            if(itemCount > 0) {
-                badge.style.display = 'flex';
-                badge.innerText = itemCount > 99 ? '99+' : itemCount;
-            } else {
-                badge.style.display = 'none';
             }
         }
     }
-    
-    function proceedToCheckout() {
-        if (!restaurantIsOpen) {
-            showToast('Restaurant is currently closed. You can place an order only when it reopens.', 'error');
-            return;
-        }
-        if(cart.length === 0) {
-            showToast('Your cart is empty!', 'error');
-            return;
-        }
-        @guest 
-            showToast('Please login to continue', 'warning');
-            setTimeout(function() { 
-                window.location.href = "{{ route('login', ['redirect' => url()->current()]) }}";
-            }, 1000);
-            return;
-        @endguest
-        
-        var validCart = [];
-        for (var i = 0; i < cart.length; i++) {
-            var item = cart[i];
-            if (item.id && item.name && item.price && item.quantity > 0) {
-                validCart.push(item);
-            }
-        }
-        
-        if(validCart.length === 0) {
-            showToast('Invalid cart data', 'error');
-            return;
-        }
-        
-        var checkoutData = [];
-        for (var i = 0; i < validCart.length; i++) {
-            checkoutData.push({
-                id: validCart[i].id,
-                name: validCart[i].name,
-                price: parseFloat(validCart[i].price),
-                quantity: parseInt(validCart[i].quantity),
-                selected_variant: validCart[i].selected_variant || null,
-                selected_add_ons: validCart[i].selected_add_ons || [],
-                restaurant_id: restaurantId
-            });
-        }
-        
-        try {
-            localStorage.setItem('checkout_cart', JSON.stringify(checkoutData));
-            localStorage.setItem('checkout_restaurant_id', restaurantId);
-            showToast('Redirecting to checkout...', 'info');
-            setTimeout(function() {
-                window.location.href = '/checkout?cart=' + encodeURIComponent(JSON.stringify(checkoutData));
-            }, 500);
-        } catch(e) {
-            showToast('Failed to proceed', 'error');
+
+
+    function shareRestaurant() {
+        var shareData = { title: document.title, url: window.location.href };
+        if (navigator.share) {
+            navigator.share(shareData).catch(function() {});
+        } else if (navigator.clipboard) {
+            navigator.clipboard.writeText(window.location.href);
+            showToast('Link copied to clipboard', 'info');
         }
     }
-    
-    function toggleCart() {
-        var sidebar = document.getElementById('mobileCartSidebar');
-        var overlay = document.getElementById('cartOverlay');
-        if(sidebar && overlay) {
-            sidebar.classList.toggle('open');
-            overlay.classList.toggle('show');
-            document.body.style.overflow = sidebar.classList.contains('open') ? 'hidden' : '';
+
+    function openReviewsTab() {
+        var trigger = document.querySelector('[data-bs-target="#reviews"]');
+        if (trigger && window.bootstrap) {
+            new bootstrap.Tab(trigger).show();
+            trigger.scrollIntoView({ behavior: 'smooth', block: 'start' });
         }
     }
-    
+
     function showToast(message, type) {
         var toast = document.createElement('div');
         toast.className = 'toast-notification';
@@ -1147,6 +952,8 @@
     loadDistanceFromLocation();
     updateCartUI();
 </script>
+<!-- Unified Frontend Footer -->
+@include('partials.frontend-footer')
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 @include('partials.web-visit-tracker', ['panel' => 'frontend'])
 </body>

@@ -125,15 +125,27 @@ class UniqueUserContactForRole implements ValidationRule
 
         $candidates = [$normalized, $digits, '+' . $digits, ltrim($digits, '0')];
 
+        // A 10-digit Indian mobile number can legitimately start with the
+        // same digits as the country code (e.g. 9155308530 starts with
+        // "91"), so str_starts_with() alone can't tell a local number from
+        // one that already carries its country code -- it previously
+        // guessed "already prefixed" for those numbers and never generated
+        // the correct "+91"+local candidate at all. Generate both
+        // interpretations instead of picking one.
         if ($countryDigits !== '') {
-            if (str_starts_with($digits, $countryDigits)) {
+            $looksAlreadyPrefixed = str_starts_with($digits, $countryDigits)
+                && strlen($digits) === strlen($countryDigits) + 10;
+
+            if ($looksAlreadyPrefixed) {
                 $localDigits = substr($digits, strlen($countryDigits));
                 if ($localDigits !== false && $localDigits !== '') {
                     $candidates[] = $localDigits;
                     $candidates[] = '0' . $localDigits;
                     $candidates[] = '+' . $countryDigits . $localDigits;
                 }
-            } else {
+            }
+
+            if (strlen($digits) === 10) {
                 $candidates[] = '+' . $countryDigits . $digits;
                 $candidates[] = $countryDigits . $digits;
             }

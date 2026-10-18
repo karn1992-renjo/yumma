@@ -602,177 +602,439 @@ class _PromotionMenuCard extends StatelessWidget {
     return _dimIfUnavailable(
       orderable: orderable,
       child: InkWell(
-      borderRadius: BorderRadius.circular(22),
-      onTap: () => _openEntry(context, entry),
-      child: Container(
-        decoration: _cardDecoration(context),
-        clipBehavior: Clip.antiAlias,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(
-              flex: 11,
-              child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  _AutoImageCarousel(
-                    imageUrls: images,
-                    fallback: _imageFallback(
-                      icon: Icons.restaurant_menu_rounded,
-                      color: _promoGridPrimary(context),
-                    ),
-                  ),
-                  const _CardImageHighlight(),
-                  Positioned(
-                    left: 8,
-                    top: 8,
-                    child: _PromotionTypeTag(label: tag),
-                  ),
-                  if (item.hasDiscount || entry.isComboStyle)
-                    Positioned(
-                      right: 8,
-                      bottom: 8,
-                      child: _PromotionDiscountBadge(
-                        text: _rewardText(context, entry.offer),
+        borderRadius: BorderRadius.circular(22),
+        onTap: () => _showEntryDetailSheet(context, entry),
+        child: Container(
+          decoration: _cardDecoration(context),
+          clipBehavior: Clip.antiAlias,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                flex: 11,
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    _AutoImageCarousel(
+                      imageUrls: images,
+                      fallback: _imageFallback(
+                        icon: Icons.restaurant_menu_rounded,
+                        color: _promoGridPrimary(context),
                       ),
                     ),
-                ],
+                    const _CardImageHighlight(),
+                    Positioned(
+                      left: 8,
+                      top: 8,
+                      child: _PromotionTypeTag(label: tag),
+                    ),
+                    if (item.hasDiscount || entry.isComboStyle)
+                      Positioned(
+                        right: 8,
+                        bottom: 8,
+                        child: _PromotionDiscountBadge(
+                          text: _rewardText(context, entry.offer),
+                        ),
+                      ),
+                  ],
+                ),
               ),
-            ),
-            Expanded(
-              flex: 10,
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        _VegMarker(isVeg: item.isVeg),
-                        const SizedBox(width: 6),
-                        Expanded(
-                          child: Text(
-                            entry.isComboStyle
-                                ? _offerTitle(
-                                    entry.offer,
-                                    fallback: 'Combo Deal',
-                                  )
-                                : item.name,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: _promoGridText,
-                              fontSize: 13,
-                              height: 1.1,
-                              fontWeight: FontWeight.w900,
+              Expanded(
+                flex: 10,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          _VegMarker(isVeg: item.isVeg),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Text(
+                              entry.isComboStyle
+                                  ? _offerTitle(
+                                      entry.offer,
+                                      fallback: 'Combo Deal',
+                                    )
+                                  : item.name,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: _promoGridText,
+                                fontSize: 13,
+                                height: 1.1,
+                                fontWeight: FontWeight.w900,
+                              ),
                             ),
                           ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 5),
-                    Text(
-                      _restaurantNameForEntry(entry),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: _promoGridSubtext,
-                        fontSize: 10.5,
-                        fontWeight: FontWeight.w800,
+                        ],
                       ),
-                    ),
-                    if (subtitle.isNotEmpty) ...[
-                      const SizedBox(height: 4),
+                      const SizedBox(height: 5),
                       Text(
-                        subtitle,
+                        _restaurantNameForEntry(entry),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
                           color: _promoGridSubtext,
-                          fontSize: 10,
-                          height: 1.2,
-                          fontWeight: FontWeight.w700,
+                          fontSize: 10.5,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      if (subtitle.isNotEmpty) ...[
+                        const SizedBox(height: 4),
+                        Text(
+                          subtitle,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: _promoGridSubtext,
+                            fontSize: 10,
+                            height: 1.2,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ],
+                      const Spacer(),
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: FittedBox(
+                                        fit: BoxFit.scaleDown,
+                                        alignment: Alignment.centerLeft,
+                                        child: Text(
+                                          formatCurrency(context, dealPrice),
+                                          maxLines: 1,
+                                          style: const TextStyle(
+                                            color: _promoGridText,
+                                            fontSize: 16,
+                                            fontWeight: FontWeight.w900,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                    if (originalPrice > dealPrice) ...[
+                                      const SizedBox(width: 4),
+                                      Flexible(
+                                        child: Text(
+                                          formatCurrency(
+                                              context, originalPrice),
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: TextStyle(
+                                            color: _promoGridSubtext
+                                                .withOpacity(0.72),
+                                            fontSize: 10,
+                                            fontWeight: FontWeight.w800,
+                                            decoration:
+                                                TextDecoration.lineThrough,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ],
+                                ),
+                                if (savings > 0) ...[
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    'Save ${formatCurrency(context, savings)}',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      color: _promoGridSuccess,
+                                      fontSize: 9,
+                                      fontWeight: FontWeight.w900,
+                                    ),
+                                  ),
+                                ],
+                              ],
+                            ),
+                          ),
+                          const SizedBox(width: 7),
+                          _PromotionQuantityControl(
+                            quantity: quantity,
+                            enabled: item.isAvailable,
+                            onChanged: (quantity) =>
+                                _setEntryQuantity(context, entry, quantity),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Tapping a combo/promotion card opens this detail sheet instead of
+/// navigating straight into the restaurant page -- shows the full item
+/// breakdown (not just the 3-item preview on the card), the real
+/// deal/original price, and lets the customer add it to cart or jump to
+/// the restaurant from one place.
+void _showEntryDetailSheet(BuildContext context, _PromotionEntry entry) {
+  showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    backgroundColor: Colors.transparent,
+    builder: (sheetContext) => _PromotionEntryDetailSheet(entry: entry),
+  );
+}
+
+class _PromotionEntryDetailSheet extends StatelessWidget {
+  const _PromotionEntryDetailSheet({required this.entry});
+
+  final _PromotionEntry entry;
+
+  @override
+  Widget build(BuildContext context) {
+    final dealPrice = _dealPrice(entry);
+    final originalPrice = _originalPrice(entry);
+    final savings = (originalPrice - dealPrice).clamp(0, double.infinity);
+    final orderable = entry.orderable;
+    final restaurantName = _restaurantNameForEntry(entry);
+    final images = _entryImages(entry);
+    final description = entry.primaryItem.description?.trim() ?? '';
+
+    return DraggableScrollableSheet(
+      initialChildSize: 0.68,
+      minChildSize: 0.4,
+      maxChildSize: 0.92,
+      expand: false,
+      builder: (sheetContext, scrollController) {
+        return Container(
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+          ),
+          child: Column(
+            children: [
+              const SizedBox(height: 10),
+              Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.black12,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              Expanded(
+                child: ListView(
+                  controller: scrollController,
+                  padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+                  children: [
+                    if (images.isNotEmpty)
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(16),
+                        child: AspectRatio(
+                          aspectRatio: 16 / 9,
+                          child: _AutoImageCarousel(
+                            imageUrls: images,
+                            fallback: _imageFallback(
+                              icon: Icons.restaurant_menu_rounded,
+                              color: _promoGridPrimary(context),
+                            ),
+                          ),
+                        ),
+                      ),
+                    const SizedBox(height: 14),
+                    Text(
+                      entry.isComboStyle
+                          ? _offerTitle(entry.offer, fallback: 'Combo Deal')
+                          : entry.primaryItem.name,
+                      style: const TextStyle(
+                        fontSize: 19,
+                        fontWeight: FontWeight.w900,
+                        color: _promoGridText,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      restaurantName,
+                      style: const TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                        color: _promoGridSubtext,
+                      ),
+                    ),
+                    if (description.isNotEmpty) ...[
+                      const SizedBox(height: 10),
+                      Text(
+                        description,
+                        style: const TextStyle(
+                          fontSize: 13,
+                          color: _promoGridSubtext,
+                          height: 1.4,
                         ),
                       ),
                     ],
-                    const Spacer(),
+                    const SizedBox(height: 16),
                     Row(
-                      crossAxisAlignment: CrossAxisAlignment.end,
                       children: [
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
+                        Text(
+                          formatCurrency(context, dealPrice),
+                          style: const TextStyle(
+                            fontSize: 20,
+                            fontWeight: FontWeight.w900,
+                            color: _promoGridText,
+                          ),
+                        ),
+                        if (originalPrice > dealPrice) ...[
+                          const SizedBox(width: 8),
+                          Text(
+                            formatCurrency(context, originalPrice),
+                            style: TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w700,
+                              color: _promoGridSubtext.withOpacity(0.72),
+                              decoration: TextDecoration.lineThrough,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                    if (savings > 0)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 2),
+                        child: Text(
+                          'You save ${formatCurrency(context, savings)}',
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w900,
+                            color: _promoGridSuccess,
+                          ),
+                        ),
+                      ),
+                    if (!orderable)
+                      const Padding(
+                        padding: EdgeInsets.only(top: 10),
+                        child: Text(
+                          'This restaurant is currently closed.',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w800,
+                            color: Colors.redAccent,
+                          ),
+                        ),
+                      ),
+                    const SizedBox(height: 18),
+                    const Text(
+                      'What you get',
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w900,
+                        color: _promoGridText,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    ...entry.items.map((item) => Padding(
+                          padding: const EdgeInsets.only(bottom: 10),
+                          child: Row(
                             children: [
-                              Row(
-                                children: [
-                                  Expanded(
-                                    child: FittedBox(
-                                      fit: BoxFit.scaleDown,
-                                      alignment: Alignment.centerLeft,
-                                      child: Text(
-                                        formatCurrency(context, dealPrice),
-                                        maxLines: 1,
-                                        style: const TextStyle(
-                                          color: _promoGridText,
-                                          fontSize: 16,
-                                          fontWeight: FontWeight.w900,
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                  if (originalPrice > dealPrice) ...[
-                                    const SizedBox(width: 4),
-                                    Flexible(
-                                      child: Text(
-                                        formatCurrency(context, originalPrice),
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: TextStyle(
-                                          color: _promoGridSubtext
-                                              .withOpacity(0.72),
-                                          fontSize: 10,
-                                          fontWeight: FontWeight.w800,
-                                          decoration:
-                                              TextDecoration.lineThrough,
-                                        ),
+                              ClipRRect(
+                                borderRadius: BorderRadius.circular(10),
+                                child: AppCachedImage(
+                                  imageUrl: item.imageUrl,
+                                  width: 48,
+                                  height: 48,
+                                  fit: BoxFit.cover,
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      item.name,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w800,
+                                        color: _promoGridText,
                                       ),
                                     ),
                                   ],
-                                ],
-                              ),
-                              if (savings > 0) ...[
-                                const SizedBox(height: 2),
-                                Text(
-                                  'Save ${formatCurrency(context, savings)}',
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                    color: _promoGridSuccess,
-                                    fontSize: 9,
-                                    fontWeight: FontWeight.w900,
-                                  ),
                                 ),
-                              ],
+                              ),
+                              Text(
+                                formatCurrency(context, item.price),
+                                style: const TextStyle(
+                                  fontSize: 12.5,
+                                  fontWeight: FontWeight.w800,
+                                  color: _promoGridSubtext,
+                                ),
+                              ),
                             ],
                           ),
-                        ),
-                        const SizedBox(width: 7),
-                        _PromotionQuantityControl(
-                          quantity: quantity,
-                          enabled: item.isAvailable,
-                          onChanged: (quantity) =>
-                              _setEntryQuantity(context, entry, quantity),
-                        ),
-                      ],
-                    ),
+                        )),
                   ],
                 ),
               ),
-            ),
-          ],
-        ),
-      ),
-      ),
+              SafeArea(
+                top: false,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 10, 20, 14),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: () {
+                            Navigator.pop(context);
+                            _openEntry(context, entry);
+                          },
+                          style: OutlinedButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                          ),
+                          child: const Text('View Restaurant'),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        flex: 2,
+                        child: ElevatedButton(
+                          onPressed: orderable
+                              ? () {
+                                  Navigator.pop(context);
+                                  _addEntryToCart(context, entry);
+                                }
+                              : null,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: _promoGridPrimary(context),
+                            foregroundColor: Colors.white,
+                            elevation: 0,
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                          ),
+                          child: Text(
+                              orderable ? 'Add to Cart' : 'Currently Closed'),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 }
@@ -1276,8 +1538,12 @@ void _openEntry(BuildContext context, _PromotionEntry entry) {
     context,
     '/restaurant/detail',
     arguments: {
-      'restaurant_id': restaurantId,
-      'menu_item_id': item.id,
+      // main.dart's route parser only recognises 'restaurantId'/'id' and
+      // 'menuItemId' on a Map argument -- snake_case keys here were
+      // silently falling through to null, surfacing as "Invalid
+      // restaurant ID" every time this was tapped.
+      'restaurantId': restaurantId,
+      'menuItemId': item.id,
     },
   );
 }
@@ -1756,5 +2022,3 @@ BoxDecoration _promotionPanelDecoration(
     ],
   );
 }
-
-

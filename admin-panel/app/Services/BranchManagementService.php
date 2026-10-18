@@ -6,6 +6,7 @@ use App\Models\Branch;
 use App\Models\BranchAuditLog;
 use App\Models\BranchPayout;
 use App\Models\BranchSettlement;
+use App\Models\BranchTicket;
 use App\Models\BranchTransferHistory;
 use App\Models\BranchUser;
 use App\Models\BranchWallet;
@@ -15,16 +16,20 @@ use App\Models\CommissionSetting;
 use App\Models\Order;
 use App\Models\Restaurant;
 use App\Models\User;
+use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
+use Illuminate\Validation\ValidationException;
 use Spatie\Permission\Models\Role;
 
 class BranchManagementService
 {
     public const OWNER_ROLE = 'branch_owner';
+
     public const MANAGER_ROLE = 'branch_manager';
+
     public const STAFF_ROLE = 'branch_staff';
 
     public function createBranch(array $data, ?User $actor = null): Branch
@@ -244,6 +249,21 @@ class BranchManagementService
         });
     }
 
+    public function unassignDriver(User $driver, ?User $actor = null): void
+    {
+        DB::transaction(function () use ($driver, $actor) {
+            $old = ['branch_id' => $driver->branch_id];
+            if (! $old['branch_id']) {
+                return;
+            }
+
+            $driver->forceFill(['branch_id' => null])->save();
+            DB::table('branch_drivers')->where('driver_id', $driver->id)->delete();
+
+            $this->audit(Branch::find($old['branch_id']), $actor, 'driver.unassigned', $driver, $old, ['branch_id' => null]);
+        });
+    }
+
     public function resolveBranchForRestaurant(Restaurant $restaurant): ?Branch
     {
         if ($restaurant->branch_id) {
@@ -352,6 +372,51 @@ class BranchManagementService
         });
     }
 
+    /**
+     * A salaried driver's own branch mapping is a stronger, unambiguous
+     * signal than the order's own branch_id (which may be null, or reflect
+     * the restaurant's zone rather than who actually delivered it) -- when
+     * the driver belongs to a branch, 100% of the delivery charge they'd
+     * otherwise have earned (see PayoutCalculationService::calculateDriverEarning())
+     * goes straight to that branch's wallet instead. Kept deliberately
+     * separate from creditCompletedOrder()/order.branch_commission, which
+     * stays scoped to the restaurant's own branch-commission-share concept
+     * -- this can be a completely different branch.
+     */
+    public function creditDriverSalaryDeliveryEarning(Order $order, int $branchId, float $amount): void
+    {
+        if ($amount <= 0) {
+            return;
+        }
+
+        DB::transaction(function () use ($order, $branchId, $amount) {
+            $exists = BranchWalletTransaction::where('branch_id', $branchId)
+                ->where('order_id', $order->id)
+                ->where('type', 'salaried_driver_delivery_earning')
+                ->exists();
+            if ($exists) {
+                return;
+            }
+
+            $wallet = BranchWallet::where('branch_id', $branchId)->lockForUpdate()->first()
+                ?? BranchWallet::create(['branch_id' => $branchId]);
+
+            $wallet->balance = (float) $wallet->balance + $amount;
+            $wallet->lifetime_earnings = (float) $wallet->lifetime_earnings + $amount;
+            $wallet->save();
+
+            BranchWalletTransaction::create([
+                'branch_wallet_id' => $wallet->id,
+                'branch_id' => $branchId,
+                'order_id' => $order->id,
+                'type' => 'salaried_driver_delivery_earning',
+                'amount' => $amount,
+                'balance_after' => $wallet->balance,
+                'description' => 'Salaried driver delivery charge for order ' . ($order->order_number ?? $order->id) . ' routed to driver\'s branch',
+            ]);
+        });
+    }
+
     public function reverseRefund(Order $order, ?float $amount = null): void
     {
         if (! $order->branch_id || ! $order->branch_commission_settled) {
@@ -405,7 +470,7 @@ class BranchManagementService
                 ->whereDate('period_end', '>=', $startDate)
                 ->exists();
             if ($overlapsExistingSettlement) {
-                throw \Illuminate\Validation\ValidationException::withMessages([
+                throw ValidationException::withMessages([
                     'period_start' => 'This period overlaps an existing branch settlement.',
                 ]);
             }
@@ -414,13 +479,13 @@ class BranchManagementService
                 ->where('status', 'delivered')
                 ->where('branch_commission_settled', true)
                 ->whereBetween('delivered_at', [
-                    \Carbon\Carbon::parse($startDate)->startOfDay(),
-                    \Carbon\Carbon::parse($endDate)->endOfDay(),
+                    Carbon::parse($startDate)->startOfDay(),
+                    Carbon::parse($endDate)->endOfDay(),
                 ])
                 ->get();
 
             if ($orders->isEmpty()) {
-                throw \Illuminate\Validation\ValidationException::withMessages([
+                throw ValidationException::withMessages([
                     'period_start' => 'No payable delivered orders exist in this period.',
                 ]);
             }
@@ -450,7 +515,7 @@ class BranchManagementService
         return DB::transaction(function () use ($settlement, $actor) {
             $settlement = BranchSettlement::lockForUpdate()->findOrFail($settlement->id);
             if ($settlement->status !== 'pending') {
-                throw \Illuminate\Validation\ValidationException::withMessages([
+                throw ValidationException::withMessages([
                     'settlement' => 'Only pending settlements can be approved.',
                 ]);
             }
@@ -484,13 +549,13 @@ class BranchManagementService
                 ?? BranchWallet::create(['branch_id' => $branch->id]);
 
             if ($amount <= 0) {
-                throw \Illuminate\Validation\ValidationException::withMessages([
+                throw ValidationException::withMessages([
                     'amount' => 'Withdrawal amount must be greater than zero.',
                 ]);
             }
 
             if ((float) $wallet->balance < $amount) {
-                throw \Illuminate\Validation\ValidationException::withMessages([
+                throw ValidationException::withMessages([
                     'amount' => 'Insufficient branch wallet balance for this withdrawal request.',
                 ]);
             }
@@ -538,7 +603,7 @@ class BranchManagementService
             }
 
             if (! in_array($payout->status, ['pending', 'approved'], true)) {
-                throw \Illuminate\Validation\ValidationException::withMessages([
+                throw ValidationException::withMessages([
                     'payout' => 'This branch payout cannot be marked as paid.',
                 ]);
             }
@@ -550,7 +615,7 @@ class BranchManagementService
 
             if ($payout->branch_settlement_id) {
                 if ((float) $wallet->balance < (float) $payout->amount) {
-                    throw \Illuminate\Validation\ValidationException::withMessages([
+                    throw ValidationException::withMessages([
                         'payout' => 'Insufficient branch wallet balance for this payout.',
                     ]);
                 }
@@ -616,7 +681,7 @@ class BranchManagementService
             'active_orders' => $branch->orders()->whereNotIn('status', ['delivered', 'cancelled', 'refunded'])->count(),
             'pending_settlements' => $branch->settlements()->whereIn('status', ['pending', 'approved'])->count(),
             'pending_refunds' => $branch->orders()->whereIn('refund_status', ['pending', 'processing'])->count(),
-            'open_tickets' => $branch->hasMany(\App\Models\BranchTicket::class)->whereIn('status', ['open', 'pending'])->count(),
+            'open_tickets' => $branch->hasMany(BranchTicket::class)->whereIn('status', ['open', 'pending'])->count(),
         ];
     }
 

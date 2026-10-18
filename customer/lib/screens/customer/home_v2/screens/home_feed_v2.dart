@@ -10,6 +10,7 @@ import '../../../../providers/order_provider.dart';
 import '../../../../widgets/common/app_cached_image.dart';
 import '../../../../widgets/customer/offer_tile.dart';
 import '../../../../widgets/customer/promotion_detail_sheet.dart';
+import '../../../../widgets/stories/stories_rail.dart';
 import '../data/v2_models.dart';
 import '../data/v2_repository.dart';
 import '../data/v2_util.dart';
@@ -674,6 +675,15 @@ class _HomeFeedV2State extends State<HomeFeedV2> {
                 );
               },
             ),
+          );
+        }
+      case 'restaurant_stories':
+        {
+          if (s.items.isEmpty) return const SizedBox.shrink();
+          return _shell(
+            title: s.title ?? 'Stories',
+            subtitle: s.subtitle,
+            child: StoriesRailList(items: s.items),
           );
         }
       case 'shop_by_brand':

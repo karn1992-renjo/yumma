@@ -69,6 +69,15 @@ class PartnerApplicationController extends Controller
                 ], 422);
             }
             $request->merge(['phone' => $normalizedPhone]);
+
+            $referralCode = trim((string) $request->input('referral_code', ''));
+            if ($referralCode !== '' && ! User::query()->where('referral_code', $referralCode)->exists()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Referral code is invalid.',
+                    'errors' => ['referral_code' => ['Referral code is invalid.']],
+                ], 422);
+            }
         }
 
         if ($partnerType === 'restaurant') {
@@ -253,6 +262,7 @@ class PartnerApplicationController extends Controller
             'pan_card' => 'nullable|file|mimes:pdf,jpg,jpeg,png|max:5120',
             'vehicle_rc' => 'nullable|file|mimes:pdf,jpg,jpeg,png|max:5120',
             'insurance_document' => 'nullable|file|mimes:pdf,jpg,jpeg,png|max:5120',
+            'referral_code' => 'nullable|string|max:50',
             'terms' => 'accepted',
         ];
     }
@@ -331,6 +341,7 @@ class PartnerApplicationController extends Controller
             'minimum_order_value' => $request->input('minimum_order_value'),
             'free_delivery_threshold' => $request->input('free_delivery_threshold'),
             'delivery_charges' => $request->input('delivery_charges'),
+            'referral_code' => $request->input('referral_code'),
             'packaging_charge' => $request->input('packaging_charge'),
             'gst_percentage' => $request->input('gst_percentage'),
             'handling_fee' => $request->input('handling_fee'),

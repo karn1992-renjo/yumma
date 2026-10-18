@@ -125,6 +125,7 @@
                             <option value="widget" {{ ($settings['msg91_otp_mode'] ?? 'widget') == 'widget' ? 'selected' : '' }}>Widget/SDK for mobile apps</option>
                             <option value="api" {{ ($settings['msg91_otp_mode'] ?? 'widget') == 'api' ? 'selected' : '' }}>SendOTP API</option>
                         </select>
+                        <small class="text-muted">This mode controls customer/mobile login. Admin MFA uses the MSG91 SendOTP API directly and falls back to configured Firebase Phone Auth if MSG91 delivery fails.</small>
                     </div>
                     <div class="settings-field settings-span-6">
                         <label class="form-label">MSG91 Widget ID</label>

@@ -217,6 +217,15 @@
                                         <option value="{{ $category->id }}" {{ old('category_id') == $category->id ? 'selected' : '' }}>
                                             {{ $category->name }}
                                         </option>
+                                        @if($category->children->isNotEmpty())
+                                            <optgroup label="{{ $category->name }} subcategories">
+                                                @foreach($category->children as $subcategory)
+                                                    <option value="{{ $subcategory->id }}" {{ old('category_id') == $subcategory->id ? 'selected' : '' }}>
+                                                        &nbsp;&nbsp;— {{ $subcategory->name }}
+                                                    </option>
+                                                @endforeach
+                                            </optgroup>
+                                        @endif
                                     @endforeach
                                 </select>
                                 @error('category_id')<div class="invalid-feedback">{{ $message }}</div>@enderror

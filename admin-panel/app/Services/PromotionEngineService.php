@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\AppSetting;
 use App\Models\Order;
 use App\Models\Category;
 use App\Models\MenuItem;
@@ -27,7 +28,12 @@ class PromotionEngineService
     {
         $limit = max(1, min(100, (int) ($context['limit'] ?? 50)));
         $restaurantId = isset($context['restaurant_id']) ? (int) $context['restaurant_id'] : null;
+        $zoneId = isset($context['zone_id']) ? (int) $context['zone_id'] : null;
 
+        // targets.zone_ids is a JSON column (admin's "Delivery Zones" targeting
+        // picker writes it) -- filtered in PHP rather than SQL so this works
+        // identically on SQLite (local dev) and MySQL (prod). An empty/missing
+        // zone_ids list means the promotion is available in every zone.
         return Promotion::query()
             ->with(['couponCodes' => fn ($query) => $query->where('is_active', true)])
             ->active()
@@ -40,8 +46,21 @@ class PromotionEngineService
             })
             ->orderBy('priority')
             ->orderByDesc('created_at')
-            ->limit($limit)
             ->get()
+            ->filter(function (Promotion $promotion) use ($zoneId) {
+                // No zone_id given means the caller isn't zone-scoping this
+                // request at all (e.g. the raw admin/API listing) -- leave
+                // every promotion in rather than silently hiding the ones an
+                // admin has restricted to specific zones.
+                if ($zoneId === null) {
+                    return true;
+                }
+
+                $zoneIds = array_map('intval', (array) data_get($promotion->targets ?? [], 'zone_ids', []));
+
+                return empty($zoneIds) || in_array($zoneId, $zoneIds, true);
+            })
+            ->take($limit)
             ->map(fn (Promotion $promotion) => $this->promotionPayload($promotion))
             ->values();
     }
@@ -493,15 +512,15 @@ class PromotionEngineService
         $platformFee = (float) $context['platform_fee'];
         $packagingFee = (float) $context['packaging_fee'];
         $tax = (float) $context['tax'];
-        $couponDiscount = round((float) $lines->where('bucket', 'coupon_discount')->sum('discount_amount'), 2);
-        $deliveryDiscount = round((float) $lines->where('bucket', 'delivery_discount')->sum('discount_amount'), 2);
-        $packagingDiscount = round((float) $lines->where('bucket', 'packaging_discount')->sum('discount_amount'), 2);
-        $restaurantDiscount = round((float) $lines->where('bucket', 'restaurant_discount')->sum('discount_amount'), 2);
-        $promotionDiscount = round((float) $lines->where('bucket', 'promotion_discount')->sum('discount_amount'), 2);
-        $itemDiscount = round((float) $lines->where('bucket', 'item_discount')->sum('discount_amount'), 2);
-        $cashback = round((float) $lines->sum('cashback_amount'), 2);
+        $couponDiscount = round((float) $lines->where('bucket', 'coupon_discount')->sum('discount_amount'), AppSetting::currencyDecimals());
+        $deliveryDiscount = round((float) $lines->where('bucket', 'delivery_discount')->sum('discount_amount'), AppSetting::currencyDecimals());
+        $packagingDiscount = round((float) $lines->where('bucket', 'packaging_discount')->sum('discount_amount'), AppSetting::currencyDecimals());
+        $restaurantDiscount = round((float) $lines->where('bucket', 'restaurant_discount')->sum('discount_amount'), AppSetting::currencyDecimals());
+        $promotionDiscount = round((float) $lines->where('bucket', 'promotion_discount')->sum('discount_amount'), AppSetting::currencyDecimals());
+        $itemDiscount = round((float) $lines->where('bucket', 'item_discount')->sum('discount_amount'), AppSetting::currencyDecimals());
+        $cashback = round((float) $lines->sum('cashback_amount'), AppSetting::currencyDecimals());
         $rewardPoints = (int) $lines->sum('reward_points');
-        $giftVoucherAmount = round((float) $lines->sum('gift_voucher_amount'), 2);
+        $giftVoucherAmount = round((float) $lines->sum('gift_voucher_amount'), AppSetting::currencyDecimals());
         $freeItems = $lines
             ->filter(fn (array $line) => ! empty($line['free_item_id']))
             ->map(fn (array $line) => [
@@ -510,16 +529,16 @@ class PromotionEngineService
                 'title' => $line['title'] ?? null,
             ])
             ->values();
-        $totalSavings = round($couponDiscount + $deliveryDiscount + $packagingDiscount + $restaurantDiscount + $promotionDiscount + $itemDiscount, 2);
-        $grossTotal = round($subtotal + $deliveryFee + $platformFee + $packagingFee + $tax, 2);
+        $totalSavings = round($couponDiscount + $deliveryDiscount + $packagingDiscount + $restaurantDiscount + $promotionDiscount + $itemDiscount, AppSetting::currencyDecimals());
+        $grossTotal = round($subtotal + $deliveryFee + $platformFee + $packagingFee + $tax, AppSetting::currencyDecimals());
 
         return [
-            'subtotal' => round($subtotal, 2),
-            'delivery_fee' => round(max(0, $deliveryFee - $deliveryDiscount), 2),
-            'original_delivery_fee' => round($deliveryFee, 2),
-            'platform_fee' => round($platformFee, 2),
-            'packaging_fee' => round($packagingFee, 2),
-            'tax' => round($tax, 2),
+            'subtotal' => round($subtotal, AppSetting::currencyDecimals()),
+            'delivery_fee' => round(max(0, $deliveryFee - $deliveryDiscount), AppSetting::currencyDecimals()),
+            'original_delivery_fee' => round($deliveryFee, AppSetting::currencyDecimals()),
+            'platform_fee' => round($platformFee, AppSetting::currencyDecimals()),
+            'packaging_fee' => round($packagingFee, AppSetting::currencyDecimals()),
+            'tax' => round($tax, AppSetting::currencyDecimals()),
             'restaurant_discount' => $restaurantDiscount,
             'promotion_discount' => $promotionDiscount,
             'item_discount' => $itemDiscount,
@@ -533,8 +552,8 @@ class PromotionEngineService
             'free_items' => $freeItems,
             'total_savings' => $totalSavings,
             'discount' => $totalSavings,
-            'final_total' => max(0, round($grossTotal - $totalSavings, 2)),
-            'total' => max(0, round($grossTotal - $totalSavings, 2)),
+            'final_total' => max(0, round($grossTotal - $totalSavings, AppSetting::currencyDecimals())),
+            'total' => max(0, round($grossTotal - $totalSavings, AppSetting::currencyDecimals())),
         ];
     }
 
@@ -550,13 +569,13 @@ class PromotionEngineService
                     'title' => $line['title'] ?? null,
                     'funding_type' => $funding['funding_type'] ?? null,
                     'partner_name' => $funding['partner_name'] ?? null,
-                    'discount_amount' => round((float) ($line['discount_amount'] ?? 0), 2),
-                    'cashback_amount' => round((float) ($line['cashback_amount'] ?? 0), 2),
-                    'gift_voucher_amount' => round((float) ($line['gift_voucher_amount'] ?? 0), 2),
-                    'gross_liability_amount' => round((float) ($funding['gross_liability_amount'] ?? 0), 2),
-                    'platform_liability_amount' => round((float) ($funding['platform_liability_amount'] ?? 0), 2),
-                    'restaurant_liability_amount' => round((float) ($funding['restaurant_liability_amount'] ?? 0), 2),
-                    'partner_liability_amount' => round((float) ($funding['partner_liability_amount'] ?? 0), 2),
+                    'discount_amount' => round((float) ($line['discount_amount'] ?? 0), AppSetting::currencyDecimals()),
+                    'cashback_amount' => round((float) ($line['cashback_amount'] ?? 0), AppSetting::currencyDecimals()),
+                    'gift_voucher_amount' => round((float) ($line['gift_voucher_amount'] ?? 0), AppSetting::currencyDecimals()),
+                    'gross_liability_amount' => round((float) ($funding['gross_liability_amount'] ?? 0), AppSetting::currencyDecimals()),
+                    'platform_liability_amount' => round((float) ($funding['platform_liability_amount'] ?? 0), AppSetting::currencyDecimals()),
+                    'restaurant_liability_amount' => round((float) ($funding['restaurant_liability_amount'] ?? 0), AppSetting::currencyDecimals()),
+                    'partner_liability_amount' => round((float) ($funding['partner_liability_amount'] ?? 0), AppSetting::currencyDecimals()),
                 ];
             })
             ->values();
@@ -567,10 +586,10 @@ class PromotionEngineService
         $liability = $this->liabilityLinesFromLines($lines);
 
         return [
-            'gross_liability_amount' => round((float) $liability->sum('gross_liability_amount'), 2),
-            'platform_liability_amount' => round((float) $liability->sum('platform_liability_amount'), 2),
-            'restaurant_liability_amount' => round((float) $liability->sum('restaurant_liability_amount'), 2),
-            'partner_liability_amount' => round((float) $liability->sum('partner_liability_amount'), 2),
+            'gross_liability_amount' => round((float) $liability->sum('gross_liability_amount'), AppSetting::currencyDecimals()),
+            'platform_liability_amount' => round((float) $liability->sum('platform_liability_amount'), AppSetting::currencyDecimals()),
+            'restaurant_liability_amount' => round((float) $liability->sum('restaurant_liability_amount'), AppSetting::currencyDecimals()),
+            'partner_liability_amount' => round((float) $liability->sum('partner_liability_amount'), AppSetting::currencyDecimals()),
         ];
     }
 
@@ -581,7 +600,7 @@ class PromotionEngineService
             ->filter(fn ($value) => $value !== null)
             ->min();
 
-        return $remaining !== null ? round((float) $remaining, 2) : null;
+        return $remaining !== null ? round((float) $remaining, AppSetting::currencyDecimals()) : null;
     }
 
     private function offerApplicability(Collection $discountLines, array $invalidReasons): array

@@ -23,7 +23,15 @@ class FirebasePhoneAuthService {
       return '+$cleaned';
     }
 
-    if (cleaned.startsWith(codeDigits)) {
+    // A bare prefix check (startsWith) alone is wrong: a 10-digit Indian
+    // mobile number can legitimately start with the same digits as the
+    // country code (e.g. 9155308530 starts with "91"), which would
+    // otherwise be mistaken for an already-prefixed number and lose its
+    // real country code. Require the digit count to match
+    // country-code-length + 10 (local Indian mobile length) too.
+    if (codeDigits.isNotEmpty &&
+        cleaned.startsWith(codeDigits) &&
+        cleaned.length == codeDigits.length + 10) {
       return '+$cleaned';
     }
 

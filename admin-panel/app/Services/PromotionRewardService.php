@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\AppSetting;
 use App\Models\Promotion;
 
 class PromotionRewardService
@@ -41,8 +42,8 @@ class PromotionRewardService
                 'bucket' => $bucket,
                 'type' => $type,
                 'value' => (float) ($reward['value'] ?? 0),
-                'discount_amount' => round($discountAmount, 2),
-                'cashback_amount' => round((float) ($workflow['cashback_amount'] ?? 0), 2),
+                'discount_amount' => round($discountAmount, AppSetting::currencyDecimals()),
+                'cashback_amount' => round((float) ($workflow['cashback_amount'] ?? 0), AppSetting::currencyDecimals()),
                 'reward_points' => (int) ($workflow['reward_points'] ?? 0),
                 'free_item_id' => data_get($workflow, 'reward_lines.0.item_id'),
                 'gift_voucher_amount' => 0.0,
@@ -132,7 +133,7 @@ class PromotionRewardService
             $cashback = 0.0;
             $discount = 0.0;
             $bucket = $type;
-            $giftVoucherAmount = round((float) $value, 2);
+            $giftVoucherAmount = round((float) $value, AppSetting::currencyDecimals());
         } elseif ($type === 'referral_bonus') {
             $cashback = 0.0;
             $discount = 0.0;
@@ -141,7 +142,7 @@ class PromotionRewardService
             if ($bonusType === 'reward_points') {
                 $rewardPoints = (int) $value;
             } elseif ($bonusType === 'gift_voucher') {
-                $giftVoucherAmount = round((float) $value, 2);
+                $giftVoucherAmount = round((float) $value, AppSetting::currencyDecimals());
             } else {
                 $cashback = $value;
             }
@@ -174,8 +175,8 @@ class PromotionRewardService
             'bucket' => $bucket,
             'type' => $type,
             'value' => $value,
-            'discount_amount' => round($discount, 2),
-            'cashback_amount' => round($cashback, 2),
+            'discount_amount' => round($discount, AppSetting::currencyDecimals()),
+            'cashback_amount' => round($cashback, AppSetting::currencyDecimals()),
             'reward_points' => $rewardPoints,
             'free_item_id' => $reward['free_item_id'] ?? $reward['item_id'] ?? null,
             'gift_voucher_amount' => $giftVoucherAmount,
@@ -381,7 +382,7 @@ class PromotionRewardService
             $points = max(0, (int) ($ruleReward['points'] ?? $value));
             $bucket = 'reward_points';
         } elseif (in_array($type, ['gift_voucher', 'gift_card'], true)) {
-            $giftVoucher = round($value, 2);
+            $giftVoucher = round($value, AppSetting::currencyDecimals());
             $bucket = 'gift_voucher';
         } else {
             return $this->emptyCustomRule();
@@ -393,10 +394,10 @@ class PromotionRewardService
 
         return [
             'bucket' => $bucket,
-            'discount_amount' => max(0, round($discount, 2)),
-            'cashback_amount' => max(0, round($cashback, 2)),
+            'discount_amount' => max(0, round($discount, AppSetting::currencyDecimals())),
+            'cashback_amount' => max(0, round($cashback, AppSetting::currencyDecimals())),
             'reward_points' => $points,
-            'gift_voucher_amount' => max(0, round($giftVoucher, 2)),
+            'gift_voucher_amount' => max(0, round($giftVoucher, AppSetting::currencyDecimals())),
             'reward_payload' => [
                 'custom_rule' => [
                     'promotion_id' => $promotion->id,

@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Http\Controllers\Restaurant\Concerns\EnforcesSubscriptionLimits;
 use App\Http\Resources\MenuItemResource;
 use App\Models\Category;
 use App\Models\Cuisine;
@@ -17,6 +18,8 @@ use Illuminate\Support\Str;
 
 class RestaurantMenuController extends Controller
 {
+    use EnforcesSubscriptionLimits;
+
     public function adjustPrices(Request $request, MenuPriceAdjustmentService $adjuster)
     {
         $restaurant = $this->getAuthenticatedRestaurant($request);
@@ -328,6 +331,12 @@ class RestaurantMenuController extends Controller
 
         if ($response = $this->ensureMenuAccess()) {
             return $response;
+        }
+
+        try {
+            $this->assertMenuItemCapacity($restaurant);
+        } catch (\RuntimeException $e) {
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 422);
         }
 
         $request->validate(array_merge([

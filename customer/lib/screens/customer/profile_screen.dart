@@ -304,6 +304,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           onTap: () => Navigator.pushNamed(context, '/wallet'),
                         ),
                         _ProfileMenuTile(
+                          icon: Icons.star_rounded,
+                          title: 'Membership',
+                          subtitle: 'Free delivery on every order',
+                          iconColor: _profilePrimary(context),
+                          iconBackground: _profilePrimary(context).withOpacity(0.12),
+                          onTap: () => Navigator.pushNamed(context, '/gold'),
+                        ),
+                        _ProfileMenuTile(
                           icon: LucideIcons.heart,
                           title: 'Favourites',
                           subtitle: _countLabel(

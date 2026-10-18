@@ -12,7 +12,7 @@
     <div class="d-flex justify-content-between align-items-center flex-wrap gap-3">
         <div>
             <div class="d-flex align-items-center gap-2 mb-2">
-                <a href="{{ route('admin.support.index') }}" class="btn btn-sm btn-light rounded-3">
+                <a href="{{ route('support.index') }}" class="btn btn-sm btn-light rounded-3">
                     <i class="fas fa-arrow-left me-1"></i> Back
                 </a>
                 <h1 class="mb-0">{{ $conversation->conversation_number }}</h1>
@@ -29,16 +29,18 @@
             </p>
         </div>
         <div class="d-flex gap-2">
-            @if($conversation->status != 'resolved' && $conversation->status != 'closed')
+            @if($conversation->status != 'resolved' && $conversation->status != 'closed' && Auth::user()->can('resolve_support_tickets'))
             <button type="button" class="btn btn-success rounded-3" data-bs-toggle="modal" data-bs-target="#resolveModal">
                 <i class="fas fa-check-circle me-2"></i> Mark Resolved
             </button>
             @endif
+            @can('manage_support_tickets')
             <button type="button" class="btn btn-outline-primary rounded-3" data-bs-toggle="modal" data-bs-target="#assignModal">
                 <i class="fas fa-user-plus me-2"></i> Assign
             </button>
-            @if($conversation->status != 'closed')
-            <form action="{{ route('admin.support.update-status', $conversation->id) }}" method="POST" class="d-inline">
+            @endcan
+            @if($conversation->status != 'closed' && Auth::user()->can('manage_support_tickets'))
+            <form action="{{ route('support.update-status', $conversation->id) }}" method="POST" class="d-inline">
                 @csrf
                 @method('PUT')
                 <input type="hidden" name="status" value="closed">
@@ -78,7 +80,7 @@
                 $senderLabels = ['bot' => 'Bot', 'system' => 'System', 'admin' => 'Admin'];
                 $senderName = $senderLabels[$message->sender_type] ?? ($message->sender->name ?? ucfirst($message->sender_type));
                 $avatarColor = match($message->sender_type) {
-                    'admin' => 'primary', 'bot' => 'info', 'system' => 'secondary', default => 'secondary',
+                    'admin' => 'primary', 'support' => 'warning', 'bot' => 'info', 'system' => 'secondary', default => 'secondary',
                 };
             @endphp
             @if($message->message_type === 'system')
@@ -96,6 +98,7 @@
                         <span class="fw-semibold">
                             {{ $senderName }}
                             @if($message->sender_type === 'admin')<span class="badge bg-primary ms-1">Admin</span>@endif
+                            @if($message->sender_type === 'support')<span class="badge bg-warning text-dark ms-1">Support</span>@endif
                             @if($message->sender_type === 'bot')<span class="badge bg-info ms-1">Bot</span>@endif
                             @if($message->message_type === 'action')<span class="badge bg-success ms-1">Action</span>@endif
                         </span>
@@ -131,7 +134,7 @@
             @if($conversation->status != 'closed')
             <div class="border-top pt-4 mt-4">
                 <h6 class="fw-bold mb-3">Reply as agent</h6>
-                <form action="{{ route('admin.support.reply', $conversation->id) }}" method="POST" enctype="multipart/form-data">
+                <form action="{{ route('support.reply', $conversation->id) }}" method="POST" enctype="multipart/form-data">
                     @csrf
                     <div class="mb-3">
                         <textarea name="message" class="form-control" rows="4"
@@ -181,12 +184,14 @@
             <hr>
             <h6 class="fw-bold mb-2">Resolution Actions</h6>
             <div class="d-grid gap-2">
+                @can('resolve_support_tickets')
                 <button type="button" class="btn btn-outline-danger btn-sm rounded-3" data-bs-toggle="modal" data-bs-target="#refundModal">
                     <i class="fas fa-rotate-left me-2"></i> Issue Refund
                 </button>
                 <button type="button" class="btn btn-outline-success btn-sm rounded-3" data-bs-toggle="modal" data-bs-target="#walletModal">
                     <i class="fas fa-wallet me-2"></i> Credit Wallet
                 </button>
+                @endcan
                 @if($conversation->order->driver_id || in_array($conversation->order->status, ['confirmed', 'preparing', 'ready_for_pickup']))
                 <a href="{{ route('admin.orders.show', $conversation->order_id) }}" class="btn btn-outline-primary btn-sm rounded-3">
                     <i class="fas fa-truck me-2"></i> Reassign Driver
@@ -265,7 +270,7 @@
 <div class="modal fade" id="resolveModal" tabindex="-1">
     <div class="modal-dialog">
         <div class="modal-content">
-            <form action="{{ route('admin.support.update-status', $conversation->id) }}" method="POST">
+            <form action="{{ route('support.update-status', $conversation->id) }}" method="POST">
                 @csrf
                 @method('PUT')
                 <input type="hidden" name="status" value="resolved">
@@ -293,7 +298,7 @@
 <div class="modal fade" id="assignModal" tabindex="-1">
     <div class="modal-dialog">
         <div class="modal-content">
-            <form action="{{ route('admin.support.assign', $conversation->id) }}" method="POST">
+            <form action="{{ route('support.assign', $conversation->id) }}" method="POST">
                 @csrf
                 <div class="modal-header">
                     <h5 class="modal-title">Assign Conversation</h5>
@@ -304,7 +309,7 @@
                         <label class="form-label">Assign to Admin</label>
                         <select name="assigned_to" class="form-select" required>
                             <option value="">Select Admin...</option>
-                            @foreach(\App\Models\User::role('admin')->get() as $admin)
+                            @foreach(\App\Models\User::role(['admin', 'support'])->get() as $admin)
                                 <option value="{{ $admin->id }}" {{ $conversation->assigned_to == $admin->id ? 'selected' : '' }}>
                                     {{ $admin->name }}
                                 </option>
@@ -327,7 +332,7 @@
 <div class="modal fade" id="refundModal" tabindex="-1">
     <div class="modal-dialog">
         <div class="modal-content">
-            <form action="{{ route('admin.support.actions', $conversation->id) }}" method="POST">
+            <form action="{{ route('support.actions', $conversation->id) }}" method="POST">
                 @csrf
                 <input type="hidden" name="action" value="refund">
                 <div class="modal-header">
@@ -337,7 +342,7 @@
                 <div class="modal-body">
                     <div class="mb-3">
                         <label class="form-label">Amount (leave blank for policy-calculated amount)</label>
-                        <input type="number" step="0.01" min="0.01" max="{{ $conversation->order->total }}" name="amount" class="form-control" placeholder="{{ $conversation->order->total }}">
+                        <input type="number" step="0.01" min="0.01" max="{{ number_format((float) $conversation->order->total, $currencyDecimals, '.', '') }}" name="amount" class="form-control" placeholder="{{ number_format((float) $conversation->order->total, $currencyDecimals, '.', '') }}">
                     </div>
                     <div class="mb-3">
                         <label class="form-label">Reason</label>
@@ -357,7 +362,7 @@
 <div class="modal fade" id="walletModal" tabindex="-1">
     <div class="modal-dialog">
         <div class="modal-content">
-            <form action="{{ route('admin.support.actions', $conversation->id) }}" method="POST">
+            <form action="{{ route('support.actions', $conversation->id) }}" method="POST">
                 @csrf
                 <input type="hidden" name="action" value="wallet_credit">
                 <div class="modal-header">

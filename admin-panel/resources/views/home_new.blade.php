@@ -5,17 +5,14 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="csrf-token" content="{{ csrf_token() }}">
     @php
-        $appName = App\Models\AppSetting::getValue('app_name', 'FoodFlow');
-        $appLogo = App\Models\AppSetting::getValue('app_logo', null);
+        $appName = App\Models\AppSetting::getValue('app_name', config('app.name', 'Swaad'));
         $appFavicon = App\Models\AppSetting::getValue('app_favicon', null);
         $frontendBackgroundImage = App\Models\AppSetting::getValue('frontend_background_image', null);
         $frontendBackgroundImageUrl = $frontendBackgroundImage
             ? \Illuminate\Support\Facades\Storage::disk('public')->url($frontendBackgroundImage)
             : null;
-        $headerBrandingType = App\Models\AppSetting::getValue('header_branding_type', 'text');
-        $headerBrandingType = in_array($headerBrandingType, ['text', 'logo', 'logo_text']) ? $headerBrandingType : 'text';
-        $primaryColor = App\Models\AppSetting::getValue('primary_color', '#EF4F5F');
-        $secondaryColor = App\Models\AppSetting::getValue('secondary_color', '#FF8C42');
+        $primaryColor = App\Models\AppSetting::getValue('primary_color', '#2563EB');
+        $secondaryColor = App\Models\AppSetting::getValue('secondary_color', '#111827');
         $googleMapsKey = $googleMapsApiKey ?? App\Models\AppSetting::getValue('google_maps_api_key', App\Models\AppSetting::getValue('google_maps_key', ''));
         $currencySymbol = App\Models\AppSetting::sanitizedCurrencySymbol();
 
@@ -30,36 +27,21 @@
         $quickFilterUnder199 = App\Models\AppSetting::getValue('quick_filter_under_199', "Under {$currencySymbol} 199");
         $quickFilterBestsellers = App\Models\AppSetting::getValue('quick_filter_bestsellers', 'Bestsellers');
 
-        $statRestaurantCount = App\Models\AppSetting::getValue('stat_restaurant_count', '500+');
+        // Counts are real, live data (HomeController::homepageStats()) -- not
+        // admin-typed marketing placeholders. Only the labels stay
+        // admin-configurable copy.
+        $statRestaurantCount = $homepageStats['restaurant_count'] ?? '0';
         $statRestaurantLabel = App\Models\AppSetting::getValue('stat_restaurant_label', 'Partner Restaurants');
-        $statOrderCount = App\Models\AppSetting::getValue('stat_order_count', '10K+');
+        $statOrderCount = $homepageStats['order_count'] ?? '0';
         $statOrderLabel = App\Models\AppSetting::getValue('stat_order_label', 'Orders Delivered');
-        $statUserCount = App\Models\AppSetting::getValue('stat_user_count', '50K+');
+        $statUserCount = $homepageStats['customer_count'] ?? '0';
         $statUserLabel = App\Models\AppSetting::getValue('stat_user_label', 'Happy Users');
-        $statCityCount = App\Models\AppSetting::getValue('stat_city_count', '25+');
+        $statCityCount = $homepageStats['city_count'] ?? '0';
         $statCityLabel = App\Models\AppSetting::getValue('stat_city_label', 'Cities Covered');
 
-        $partnerNavText = App\Models\AppSetting::getValue('partner_nav_text', 'Partner with Us');
-        $partnerModalTitle = App\Models\AppSetting::getValue('partner_modal_title', 'Partner with ' . $appName);
-        $partnerModalSubtitle = App\Models\AppSetting::getValue('partner_modal_subtitle', 'Choose a partner journey and grow with our delivery network.');
-        $partnerRestaurantTitle = App\Models\AppSetting::getValue('partner_restaurant_title', 'Restaurant Partner');
-        $partnerRestaurantText = App\Models\AppSetting::getValue('partner_restaurant_text', 'List your restaurant & reach thousands of customers');
-        $partnerDriverTitle = App\Models\AppSetting::getValue('partner_driver_title', 'Delivery Partner');
-        $partnerDriverText = App\Models\AppSetting::getValue('partner_driver_text', 'Earn money by delivering on your own schedule');
-
-        $footerDescription = App\Models\AppSetting::getValue('footer_description', 'Order food from the best restaurants in your city. Fast delivery, great taste!');
-        $footerCompanyTitle = App\Models\AppSetting::getValue('footer_company_title', 'Company');
-        $footerSupportTitle = App\Models\AppSetting::getValue('footer_support_title', 'Support');
-        $footerLegalTitle = App\Models\AppSetting::getValue('footer_legal_title', 'Legal');
-        $footerLinkAbout = App\Models\AppSetting::getValue('footer_link_about', 'About Us');
-        $footerLinkCareers = App\Models\AppSetting::getValue('footer_link_careers', 'Careers');
-        $footerLinkBlog = App\Models\AppSetting::getValue('footer_link_blog', 'Blog');
-        $footerLinkHelp = App\Models\AppSetting::getValue('footer_link_help', 'Help Center');
-        $footerLinkContact = App\Models\AppSetting::getValue('footer_link_contact', 'Contact Us');
-        $footerLinkFaqs = App\Models\AppSetting::getValue('footer_link_faqs', 'FAQs');
-        $footerCopyright = App\Models\AppSetting::getValue('footer_copyright', 'All rights reserved.');
     @endphp
     <title>{{ $appName }} - Order food from best restaurants near you</title>
+    @include('partials.seo-meta', ['canonicalUrl' => route('home')])
     <link rel="icon" href="{{ $appFavicon ? \Illuminate\Support\Facades\Storage::disk('public')->url($appFavicon) : asset('favicon.ico') }}">
     
     <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
@@ -72,23 +54,39 @@
     <link rel="preload" as="style" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" onload="this.onload=null;this.rel='stylesheet'">
     <noscript><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"></noscript>
     
-    <!-- Google Fonts -->
-    <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" onload="this.onload=null;this.rel='stylesheet'">
-    <noscript><link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet"></noscript>
+    <!-- Google Fonts -- matches the Flutter app: Plus Jakarta Sans app-wide,
+         Nunito Sans for home-feed body/card text (lib/main.dart:349,365-369;
+         home_screen_production.dart:4509-4510). -->
+    <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Nunito+Sans:wght@400;500;600;700;800;900&display=swap" onload="this.onload=null;this.rel='stylesheet'">
+    <noscript><link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Nunito+Sans:wght@400;500;600;700;800;900&display=swap" rel="stylesheet"></noscript>
     
-    <!-- Google Places API -->
-    <script src="https://maps.googleapis.com/maps/api/js?key={{ $googleMapsKey }}&libraries=places&callback=initAutocomplete&v=weekly&loading=async" async defer fetchpriority="low"></script>
-    
+    {{-- Google Maps JS is loaded once by partials.frontend-header (shared
+         across every page) -- this page's own initAutocomplete() hooks into
+         that same load instead of loading the Maps API a second time, which
+         Google's own JS throws a console warning for and can reset
+         window.google mid-session. --}}
+
     <style>
         :root {
             --primary: {{ $primaryColor }};
             --secondary: {{ $secondaryColor }};
-            --primary-rgb: {{ sscanf($primaryColor, '#%02x%02x%02x')[0] ?? 239 }}, {{ sscanf($primaryColor, '#%02x%02x%02x')[1] ?? 79 }}, {{ sscanf($primaryColor, '#%02x%02x%02x')[2] ?? 95 }};
-            --secondary-rgb: {{ sscanf($secondaryColor, '#%02x%02x%02x')[0] ?? 255 }}, {{ sscanf($secondaryColor, '#%02x%02x%02x')[1] ?? 140 }}, {{ sscanf($secondaryColor, '#%02x%02x%02x')[2] ?? 66 }};
+            --primary-rgb: {{ sscanf($primaryColor, '#%02x%02x%02x')[0] ?? 37 }}, {{ sscanf($primaryColor, '#%02x%02x%02x')[1] ?? 99 }}, {{ sscanf($primaryColor, '#%02x%02x%02x')[2] ?? 235 }};
+            --secondary-rgb: {{ sscanf($secondaryColor, '#%02x%02x%02x')[0] ?? 17 }}, {{ sscanf($secondaryColor, '#%02x%02x%02x')[1] ?? 24 }}, {{ sscanf($secondaryColor, '#%02x%02x%02x')[2] ?? 39 }};
             --brand-gradient: linear-gradient(135deg, var(--primary), var(--secondary));
             --brand-gradient-hover: linear-gradient(135deg, color-mix(in srgb, var(--primary) 82%, #000), color-mix(in srgb, var(--secondary) 88%, #000));
             --brand-soft-shadow: 0 18px 40px rgba(var(--primary-rgb), 0.24);
             --frontend-bg-image: @if($frontendBackgroundImageUrl) url('{{ $frontendBackgroundImageUrl }}') @else none @endif;
+
+            /* Matches the Flutter customer app's actual design tokens
+               (lib/theme/brand_palette.dart, lib/main.dart) so the web
+               experience feels like the same product. */
+            --app-ink: #111827;
+            --app-muted: #6B7280;
+            --app-border: #E5E7EB;
+            --app-bg: #FAFAFA;
+            --app-success: #22C55E;
+            --app-danger: #E53935;
+            --app-card-radius: 24px;
         }
 
         * {
@@ -98,13 +96,28 @@
         }
 
         body {
-            font-family: 'Inter', sans-serif;
+            font-family: 'Nunito Sans', sans-serif;
             overflow-x: hidden;
             background:
                 radial-gradient(circle at 8% 18%, rgba(var(--primary-rgb), 0.055), transparent 28%),
                 radial-gradient(circle at 92% 12%, rgba(var(--secondary-rgb), 0.06), transparent 26%),
                 #fff;
             color: #1C1C1C;
+        }
+
+        /* `perspective` used to live on `body`, but a `perspective` (like a
+           `transform`) on any ancestor creates a new containing block for
+           `position: fixed` descendants -- it silently turned the fixed
+           navbar, offcanvas menu, and modals into elements positioned
+           relative to `body` instead of the viewport, so they scrolled away
+           with the page instead of staying put. Scoped instead to just the
+           specific elements below whose children actually use a 3D
+           translateZ/rotateX tilt effect. */
+        .hero,
+        .hero-content,
+        .categories-section,
+        .category-card,
+        #restaurantsContainer {
             perspective: 1100px;
         }
 
@@ -135,177 +148,6 @@
             animation-delay: -3s;
         }
 
-        /* Zomato Style Navbar */
-        .navbar {
-            position: fixed;
-            top: 22px;
-            left: 0;
-            right: 0;
-            width: 100%;
-            padding: 0;
-            transition: all 0.3s ease;
-            z-index: 1080;
-            background: transparent;
-            pointer-events: none;
-        }
-
-        .navbar > .container {
-            min-height: 78px;
-            padding: 10px 22px;
-            border: 1px solid rgba(255,255,255,0.34);
-            border-radius: 999px;
-            background:
-                linear-gradient(135deg, rgba(255,255,255,0.12), rgba(255,255,255,0.06)),
-                rgba(15, 23, 42, 0.08);
-            box-shadow:
-                0 22px 58px rgba(12, 10, 35, 0.22),
-                inset 0 1px 0 rgba(255,255,255,0.28);
-            backdrop-filter: blur(18px);
-            transform: translateZ(42px);
-            position: relative;
-            z-index: 2;
-            pointer-events: auto;
-            transition:
-                min-height .28s ease,
-                padding .28s ease,
-                border-color .28s ease,
-                background .28s ease,
-                box-shadow .28s ease;
-        }
-
-        .navbar.scrolled {
-            top: 22px;
-            background: transparent;
-        }
-
-        .navbar a,
-        .navbar button,
-        .navbar .dropdown-menu {
-            pointer-events: auto;
-        }
-
-        .navbar .dropdown {
-            position: relative;
-        }
-
-        .navbar .dropdown-menu {
-            z-index: 12120;
-            top: calc(100% + 12px) !important;
-            right: 0 !important;
-            left: auto !important;
-            transform: none !important;
-            margin-top: 0 !important;
-            border: 0;
-            border-radius: 18px;
-            box-shadow: 0 22px 54px rgba(15, 23, 42, 0.18);
-            overflow: hidden;
-        }
-
-        .offcanvas {
-            z-index: 12110 !important;
-        }
-
-        .offcanvas-backdrop {
-            z-index: 12100 !important;
-        }
-
-        .modal {
-            z-index: 12050 !important;
-        }
-
-        .modal-backdrop {
-            z-index: 12040 !important;
-        }
-
-        .navbar.scrolled > .container {
-            min-height: 78px;
-            padding: 10px 22px;
-            border-color: rgba(var(--primary-rgb), 0.16);
-            background: rgba(255, 255, 255, 0.9);
-            box-shadow:
-                0 18px 44px rgba(15, 23, 42, 0.13),
-                inset 0 1px 0 rgba(255,255,255,0.95);
-        }
-
-        .navbar.scrolled .nav-link,
-        .navbar.scrolled .navbar-brand {
-            color: #1C1C1C !important;
-        }
-
-        .navbar-brand {
-            font-size: 28px;
-            font-weight: 800;
-            color: white !important;
-            letter-spacing: -0.5px;
-        }
-
-        .navbar-brand img {
-            height: 58px !important;
-            max-width: 180px;
-            object-fit: contain;
-            filter: drop-shadow(0 8px 18px rgba(0,0,0,0.2));
-        }
-
-        .navbar.scrolled .navbar-brand img {
-            height: 58px !important;
-        }
-
-        .navbar-brand span {
-            color: #fff;
-            text-shadow: 0 10px 22px rgba(0,0,0,0.25);
-        }
-
-        .navbar.scrolled .navbar-brand span {
-            color: var(--primary);
-            text-shadow: none;
-        }
-
-        .nav-link {
-            color: white !important;
-            font-weight: 800;
-            margin: 0 16px;
-            transition: all 0.3s;
-            font-size: 16px;
-            text-shadow: 0 8px 18px rgba(0,0,0,0.18);
-        }
-
-        .nav-link:hover {
-            color: color-mix(in srgb, var(--secondary) 72%, #fff) !important;
-            transform: translateY(-1px);
-        }
-
-        .navbar.scrolled .nav-link {
-            text-shadow: none;
-        }
-
-        .auth-buttons .btn {
-            border-radius: 8px;
-            padding: 8px 20px;
-            font-weight: 600;
-            font-size: 14px;
-        }
-
-        .btn-outline-light {
-            border: 1px solid rgba(255,255,255,0.78);
-            color: white;
-            background: rgba(255,255,255,0.08);
-            box-shadow:
-                0 12px 26px rgba(12, 10, 35, 0.16),
-                inset 0 1px 0 rgba(255,255,255,0.24);
-            backdrop-filter: blur(10px);
-        }
-
-        .btn-outline-light:hover {
-            background: white;
-            color: var(--primary);
-        }
-
-        .navbar.scrolled .btn-outline-light {
-            border-color: rgba(var(--primary-rgb), 0.18);
-            color: #111827;
-            background: rgba(var(--primary-rgb), 0.06);
-            box-shadow: 0 10px 24px rgba(var(--primary-rgb), 0.12);
-        }
 
         /* Hero Section - Zomato Style */
         .hero {
@@ -580,6 +422,7 @@
         }
 
         .section-title {
+            font-family: 'Plus Jakarta Sans', sans-serif;
             font-size: 36px;
             font-weight: 700;
             margin-bottom: 12px;
@@ -593,46 +436,41 @@
         .category-card {
             text-align: center;
             cursor: pointer;
-            transition: all 0.3s;
-            transform-style: preserve-3d;
+            transition: all 0.2s;
         }
 
         .category-card:hover {
-            transform: translateY(-8px) rotateX(4deg);
+            transform: translateY(-4px);
         }
 
         .category-icon {
-            width: 100px;
-            height: 100px;
-            background: linear-gradient(145deg, #fff, #F8F8F8);
+            width: 64px;
+            height: 64px;
+            background: #fff;
+            border: 1px solid #F2F2F2;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.06);
             border-radius: 50%;
             display: flex;
             align-items: center;
             justify-content: center;
-            margin: 0 auto 16px;
-            transition: all 0.3s;
+            margin: 0 auto 10px;
+            transition: all 0.2s;
         }
 
         .category-card:hover .category-icon {
-            background: var(--brand-gradient);
-            color: white;
-            box-shadow: 0 18px 36px rgba(var(--primary-rgb), 0.24);
-            transform: translateZ(22px);
+            box-shadow: 0 6px 16px rgba(0, 0, 0, 0.1);
         }
 
         .category-icon i {
-            font-size: 40px;
+            font-size: 26px;
             color: var(--primary);
-            transition: all 0.3s;
-        }
-
-        .category-card:hover .category-icon i {
-            color: white;
         }
 
         .category-name {
+            font-family: 'Nunito Sans', sans-serif;
             font-weight: 600;
-            font-size: 16px;
+            font-size: 12px;
+            color: #1C1C1C;
         }
 
         .quick-filter-row {
@@ -717,24 +555,22 @@
 
         .restaurant-card {
             background: white;
-            border-radius: 16px;
+            border-radius: var(--app-card-radius, 24px);
+            border: 1px solid #F1F1F1;
             overflow: hidden;
-            box-shadow:
-                0 18px 42px rgba(15, 23, 42, 0.08),
-                0 1px 0 rgba(255,255,255,0.9) inset;
-            transition: all 0.3s;
+            box-shadow: 0 6px 12px rgba(0, 0, 0, 0.08);
+            transition: all 0.25s;
             cursor: pointer;
             text-decoration: none;
             color: inherit;
             display: block;
             margin-bottom: 24px;
+            position: relative;
         }
 
         .restaurant-card:hover {
-            transform: translateY(-9px) rotateX(2deg);
-            box-shadow:
-                0 28px 62px rgba(var(--primary-rgb), 0.18),
-                0 1px 0 rgba(255,255,255,0.9) inset;
+            transform: translateY(-4px);
+            box-shadow: 0 10px 20px rgba(0, 0, 0, 0.12);
         }
 
         .ff-reveal {
@@ -786,7 +622,7 @@
 
         .restaurant-img {
             position: relative;
-            height: 180px;
+            height: 210px;
             overflow: hidden;
         }
 
@@ -801,18 +637,8 @@
             transform: scale(1.05);
         }
 
-        .restaurant-badge {
-            position: absolute;
-            top: 12px;
-            left: 12px;
-            background: rgba(0, 0, 0, 0.7);
-            color: white;
-            padding: 4px 10px;
-            border-radius: 20px;
-            font-size: 11px;
-            font-weight: 600;
-        }
-
+        /* "Ad" sponsored-placement disclosure only -- kept regardless of app
+           parity, this is an ad-disclosure requirement, not a design choice. */
         .promoted-badge {
             position: absolute;
             top: 12px;
@@ -825,19 +651,44 @@
             font-weight: 600;
         }
 
+        /* Circular logo overlay straddling the image/info seam, matching the
+           app's _RestaurantListTileModern card. */
+        .restaurant-logo-overlay {
+            position: absolute;
+            left: 14px;
+            bottom: -28px;
+            width: 56px;
+            height: 56px;
+            border-radius: 50%;
+            background: white;
+            border: 3px solid white;
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.15);
+            overflow: hidden;
+            z-index: 2;
+        }
+
+        .restaurant-logo-overlay img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
         .restaurant-info {
-            padding: 16px;
+            padding: 38px 16px 16px;
         }
 
         .restaurant-name {
-            font-size: 18px;
-            font-weight: 700;
+            font-family: 'Nunito Sans', sans-serif;
+            font-size: 17px;
+            font-weight: 900;
+            color: #1C1C1C;
             margin-bottom: 4px;
         }
 
         .restaurant-cuisine {
             font-size: 13px;
-            color: #696969;
+            font-weight: 500;
+            color: #686B78;
             margin-bottom: 8px;
         }
 
@@ -848,188 +699,26 @@
         }
 
         .rating {
-            background: #267C3A;
-            color: white;
-            padding: 4px 8px;
-            border-radius: 6px;
-            font-size: 12px;
-            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            color: var(--app-success);
+            font-size: 13px;
+            font-weight: 700;
         }
 
         .delivery-time {
-            font-size: 12px;
-            color: #696969;
+            font-size: 13px;
+            font-weight: 500;
+            color: #686B78;
         }
 
-        /* Location Modal - Zomato Style */
-        .location-modal.modal {
-            z-index: 12050 !important;
-            padding-top: clamp(76px, 9vh, 118px);
+        .restaurant-closed-text {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--app-danger);
         }
 
-        .location-modal .modal-dialog-centered {
-            align-items: flex-start;
-            min-height: auto;
-        }
-
-        .location-modal .modal-dialog {
-            max-width: 520px;
-            margin-top: 0;
-            margin-left: auto;
-            margin-right: auto;
-        }
-
-        .location-modal .modal-content {
-            border-radius: 30px;
-            border: none;
-            overflow: hidden;
-            background:
-                radial-gradient(circle at 18% 0%, rgba(var(--primary-rgb), 0.18), transparent 34%),
-                radial-gradient(circle at 92% 14%, rgba(var(--secondary-rgb), 0.16), transparent 30%),
-                linear-gradient(180deg, #ffffff, #fff7f3);
-            box-shadow:
-                0 34px 90px rgba(var(--primary-rgb), 0.22),
-                inset 0 1px 0 rgba(255,255,255,0.95);
-        }
-
-        .location-modal .modal-body {
-            padding: 34px !important;
-            display: flex;
-            flex-direction: column;
-            align-items: stretch;
-            gap: 16px;
-        }
-
-        .location-modal-header {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            text-align: center;
-            margin-bottom: 6px;
-        }
-
-        .location-modal-header h4 {
-            margin: 18px 0 7px;
-            color: #111827;
-            font-size: 24px;
-            font-weight: 900;
-            letter-spacing: -0.4px;
-        }
-
-        .location-modal-header p {
-            margin: 0;
-            max-width: 360px;
-            color: #6B7280;
-            font-size: 14.5px;
-            line-height: 1.45;
-        }
-
-        .location-modal-icon {
-            width: 76px;
-            height: 76px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            border-radius: 24px;
-            background: linear-gradient(135deg, rgba(var(--secondary-rgb), 0.14), rgba(var(--primary-rgb), 0.13));
-            box-shadow: 0 16px 34px rgba(var(--primary-rgb), 0.16);
-            margin: 0 auto;
-        }
-
-        .location-modal-icon i {
-            color: var(--primary);
-            font-size: 32px;
-            line-height: 1;
-        }
-
-        .location-search-wrapper {
-            position: relative;
-            margin-bottom: 0;
-            width: 100%;
-            display: flex;
-            align-items: center;
-        }
-
-        .location-search-wrapper i {
-            position: absolute;
-            left: 20px;
-            top: 50%;
-            transform: translateY(-50%);
-            color: var(--primary);
-            font-size: 18px;
-            line-height: 1;
-            pointer-events: none;
-            z-index: 2;
-        }
-
-        .location-search-wrapper input {
-            width: 100%;
-            height: 58px;
-            padding: 0 18px 0 54px;
-            border: 1px solid #E6E9F0;
-            border-radius: 18px;
-            font-size: 16px;
-            outline: none;
-            box-shadow: 0 10px 28px rgba(12, 10, 35, 0.06);
-            transition: border-color .22s ease, box-shadow .22s ease, transform .22s ease;
-            line-height: 58px;
-        }
-
-        .location-search-wrapper input:focus {
-            border-color: rgba(var(--primary-rgb), 0.55);
-            box-shadow: 0 16px 38px rgba(var(--primary-rgb), 0.14);
-            transform: translateY(-1px);
-        }
-
-        .location-modal .btn-danger {
-            border: 0;
-            border-radius: 18px !important;
-            background: var(--brand-gradient) !important;
-            box-shadow: var(--brand-soft-shadow);
-            font-weight: 900;
-            transition: transform .22s ease, box-shadow .22s ease;
-        }
-
-        .location-detect-button {
-            width: 100%;
-            height: 56px;
-            padding: 0 18px !important;
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            margin: 0 !important;
-            font-size: 15.5px;
-        }
-
-        .location-modal .btn-danger:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 20px 42px rgba(var(--primary-rgb), 0.34);
-        }
-
-        .location-modal .btn-link {
-            font-weight: 800;
-            text-decoration: none;
-            color: var(--primary);
-            padding: 4px 10px;
-        }
-
-        .location-modal-footer {
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            margin-top: -2px;
-        }
-
-        .saved-address-item {
-            padding: 12px;
-            border-radius: 12px;
-            cursor: pointer;
-            transition: all 0.2s;
-        }
-
-        .saved-address-item:hover {
-            background: #F8F8F8;
-        }
 
         /* Footer */
         .footer {
@@ -1094,24 +783,6 @@
         }
 
         @media (max-width: 768px) {
-            .navbar {
-                top: 10px;
-                padding: 0 10px;
-            }
-            .navbar > .container {
-                min-height: 62px;
-                padding: 8px 14px;
-                border-radius: 24px;
-            }
-            .navbar.scrolled {
-                top: 10px;
-            }
-            .navbar.scrolled > .container {
-                min-height: 62px;
-                padding: 8px 14px;
-            }
-            .navbar-brand img { height: 46px !important; max-width: 140px; }
-            .navbar.scrolled .navbar-brand img { height: 46px !important; }
             .hero {
                 min-height: 680px;
                 padding: 100px 0 52px;
@@ -1143,14 +814,7 @@
                 margin-top: 2px;
             }
             .quick-filter-chip { padding: 11px 15px; font-size: 14px; }
-            .location-modal .modal-dialog { margin: 12px; }
-            .location-modal .modal-body { padding: 24px !important; gap: 14px; }
-            .location-modal-icon { width: 66px; height: 66px; border-radius: 22px; }
-            .location-modal-icon i { font-size: 28px; }
-            .location-modal-header h4 { font-size: 21px; margin-top: 14px; }
             .section-title { font-size: 28px; }
-            .category-icon { width: 70px; height: 70px; }
-            .category-icon i { font-size: 28px; }
         }
 
         /* Autocomplete Styles */
@@ -1159,7 +823,7 @@
             border: none;
             box-shadow: 0 4px 15px rgba(0,0,0,0.1);
             margin-top: 8px;
-            font-family: 'Inter', sans-serif;
+            font-family: 'Nunito Sans', sans-serif;
             z-index: 12080 !important;
         }
 
@@ -1196,73 +860,7 @@
 <body>
 @include('partials.google-tag-manager')
 
-<!-- Navbar -->
-<nav class="navbar" id="navbar">
-    <div class="container">
-        <a class="navbar-brand d-flex align-items-center gap-2" href="/">
-            @if(($headerBrandingType === 'logo' || $headerBrandingType === 'logo_text') && $appLogo)
-                <img src="{{ \Illuminate\Support\Facades\Storage::disk('public')->url($appLogo) }}" alt="{{ $appName }}">
-            @endif
-            @if($headerBrandingType === 'text' || $headerBrandingType === 'logo_text' || ! $appLogo)
-                <span>{{ $appName }}</span>
-            @endif
-        </a>
-        
-        <div class="d-none d-md-flex align-items-center gap-4">
-            <a href="#partnerModal" class="nav-link" data-partner-trigger>{{ $partnerNavText }}</a>
-            @auth
-                <div class="dropdown">
-                    <button class="btn btn-outline-light dropdown-toggle" type="button" data-bs-toggle="dropdown" data-bs-display="static" data-bs-offset="0,12" style="border-radius: 8px;">
-                        <i class="fas fa-user me-1"></i> {{ Auth::user()->name }}
-                    </button>
-                    <ul class="dropdown-menu dropdown-menu-end">
-                        <li><a class="dropdown-item" href="{{ route('customer.orders.index') }}"><i class="fas fa-shopping-bag me-2"></i>My Orders</a></li>
-                        <li><a class="dropdown-item" href="{{ route('customer.addresses.index') }}"><i class="fas fa-map-marker-alt me-2"></i>Addresses</a></li>
-                        <li><hr class="dropdown-divider"></li>
-                        <li>
-                            <form method="POST" action="{{ route('logout') }}">
-                                @csrf
-                                <button type="submit" class="dropdown-item text-danger"><i class="fas fa-sign-out-alt me-2"></i>Logout</button>
-                            </form>
-                        </li>
-                    </ul>
-                </div>
-            @else
-                <div class="auth-buttons d-flex gap-2">
-                    <a href="{{ route('login') }}" class="btn btn-outline-light">Login</a>
-                    <a href="{{ route('register') }}" class="btn" style="background: var(--brand-gradient); color: white; box-shadow: var(--brand-soft-shadow);">Sign Up</a>
-                </div>
-            @endauth
-        </div>
-        
-        <button class="navbar-toggler d-md-none" type="button" data-bs-toggle="offcanvas" data-bs-target="#mobileMenu" style="color: white; border: none;">
-            <i class="fas fa-bars fa-2x"></i>
-        </button>
-    </div>
-</nav>
-
-<!-- Mobile Menu -->
-<div class="offcanvas offcanvas-end" tabindex="-1" id="mobileMenu">
-    <div class="offcanvas-header">
-        <h5 class="offcanvas-title">{{ $appName }}</h5>
-        <button type="button" class="btn-close" data-bs-dismiss="offcanvas"></button>
-    </div>
-    <div class="offcanvas-body">
-        <div class="d-flex flex-column gap-3">
-            <a href="#partnerModal" class="btn btn-outline-danger" data-partner-trigger>{{ $partnerNavText }}</a>
-            @auth
-                <a href="{{ route('customer.orders.index') }}" class="btn btn-outline-danger">My Orders</a>
-                <form method="POST" action="{{ route('logout') }}">
-                    @csrf
-                    <button type="submit" class="btn btn-danger w-100">Logout</button>
-                </form>
-            @else
-                <a href="{{ route('login') }}" class="btn btn-outline-danger">Login</a>
-                <a href="{{ route('register') }}" class="btn btn-danger">Sign Up</a>
-            @endauth
-        </div>
-    </div>
-</div>
+@include('partials.frontend-header')
 
 <!-- Hero Section -->
 <section class="hero">
@@ -1386,117 +984,13 @@
     @endif
 @endforeach
 
-<!-- Location Modal (First Time) -->
-<div class="modal fade location-modal" id="locationModal" tabindex="-1" data-bs-backdrop="static" data-bs-keyboard="false">
-    <div class="modal-dialog modal-dialog-centered">
-        <div class="modal-content">
-            <div class="modal-body p-4">
-                <div class="location-modal-header">
-                    <div class="location-modal-icon">
-                        <i class="fas fa-map-marker-alt"></i>
-                    </div>
-                    <h4>Set Your Delivery Location</h4>
-                    <p>Find restaurants near you by entering your location</p>
-                </div>
-                
-                <div class="location-search-wrapper">
-                    <i class="fas fa-search"></i>
-                    <input type="text" id="modalLocationInput" placeholder="Search for your city or area..." autocomplete="off">
-                </div>
-                
-                <button class="btn btn-danger location-detect-button" onclick="detectAndSetLocation()">
-                    <i class="fas fa-location-dot me-2"></i> Detect Current Location
-                </button>
-                
-                <div class="location-modal-footer">
-                    <button type="button" class="btn btn-link" data-bs-dismiss="modal">Skip for now</button>
-                </div>
-            </div>
-        </div>
-    </div>
-</div>
-
-<!-- Partner Modal -->
-<div class="modal fade" id="partnerModal" tabindex="-1">
-    <div class="modal-dialog modal-lg modal-dialog-centered">
-        <div class="modal-content" style="border-radius: 20px;">
-            <div class="modal-header border-0">
-                <h4 class="modal-title fw-bold">{{ $partnerModalTitle }}</h4>
-                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-            </div>
-            <div class="modal-body p-4">
-                <p class="text-muted mb-4">{{ $partnerModalSubtitle }}</p>
-                <div class="row g-4">
-                    <div class="col-md-6">
-                        <div class="card h-100 border-0 shadow-sm text-center p-4" style="cursor: pointer;" onclick="location.href='/partner/register?type=restaurant'">
-                            <i class="fas fa-store fa-3x text-danger mb-3"></i>
-                            <h5>{{ $partnerRestaurantTitle }}</h5>
-                            <p class="text-muted small">{{ $partnerRestaurantText }}</p>
-                        </div>
-                    </div>
-                    <div class="col-md-6">
-                        <div class="card h-100 border-0 shadow-sm text-center p-4" style="cursor: pointer;" onclick="location.href='/partner/register?type=driver'">
-                            <i class="fas fa-motorcycle fa-3x text-warning mb-3"></i>
-                            <h5>{{ $partnerDriverTitle }}</h5>
-                            <p class="text-muted small">{{ $partnerDriverText }}</p>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-</div>
-
 <!-- Footer -->
-<footer class="footer">
-    <div class="container">
-        <div class="row">
-            <div class="col-md-4 mb-4">
-                <div class="footer-logo">{{ $appName }}</div>
-                <p class="text-muted small">{{ $footerDescription }}</p>
-                <div class="d-flex gap-3 mt-3">
-                    <a href="#" class="text-white"><i class="fab fa-facebook-f"></i></a>
-                    <a href="#" class="text-white"><i class="fab fa-twitter"></i></a>
-                    <a href="#" class="text-white"><i class="fab fa-instagram"></i></a>
-                    <a href="#" class="text-white"><i class="fab fa-linkedin-in"></i></a>
-                </div>
-            </div>
-            <div class="col-md-2 mb-4">
-                <div class="footer-links">
-                    <h5>{{ $footerCompanyTitle }}</h5>
-                    <ul>
-                        <li><a href="{{ route('about') }}">{{ $footerLinkAbout }}</a></li>
-                        <li><a href="{{ route('careers') }}">{{ $footerLinkCareers }}</a></li>
-                        <li><a href="{{ route('blog') }}">{{ $footerLinkBlog }}</a></li>
-                    </ul>
-                </div>
-            </div>
-            <div class="col-md-2 mb-4">
-                <div class="footer-links">
-                    <h5>{{ $footerSupportTitle }}</h5>
-                    <ul>
-                        <li><a href="{{ route('help') }}">{{ $footerLinkHelp }}</a></li>
-                        <li><a href="{{ route('contact') }}">{{ $footerLinkContact }}</a></li>
-                        <li><a href="{{ route('faqs') }}">{{ $footerLinkFaqs }}</a></li>
-                    </ul>
-                </div>
-            </div>
-            <div class="col-md-2 mb-4">
-                <div class="footer-links">
-                    <h5>{{ $footerLegalTitle }}</h5>
-                    <ul>
-                        <li><a href="{{ route('legal.terms') }}">Terms</a></li>
-                        <li><a href="{{ route('legal.privacy') }}">Privacy</a></li>
-                    </ul>
-                </div>
-            </div>
-        </div>
-        <hr class="my-4" style="border-color: rgba(255,255,255,0.1);">
-        <div class="text-center text-muted small">
-            &copy; {{ date('Y') }} {{ $appName }}. {{ $footerCopyright }}
-        </div>
-    </div>
-</footer>
+{{-- Same shared header+footer used on restaurant-detail.blade.php and every
+     other public page now, for a consistent header across the whole site.
+     The page's own "Delivery Zone" state (currentLat/currentLng/currentLocation
+     below) is kept in sync with the shared header's zone drawer via
+     window.onSwiggyZoneChanged(). --}}
+@include('partials.frontend-footer')
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js" defer></script>
 <script>
@@ -1512,48 +1006,38 @@
     let currentLng = null;
     let vegOnly = false;
 
-    // Google Places Autocomplete
+    // Google Places Autocomplete for the hero search bar. partials.frontend-header
+    // loads the Google Maps JS API once (shared across every page) and calls
+    // window.initGlobalPlacesAutocomplete when it's ready -- hook into that
+    // same callback instead of loading the Maps API a second time here.
     function initAutocomplete() {
         const locationInput = document.getElementById('locationInput');
-        const modalLocationInput = document.getElementById('modalLocationInput');
-        
-        if (locationInput) {
-            autocomplete = new google.maps.places.Autocomplete(locationInput, {
-                types: ['(cities)'],
-                componentRestrictions: { country: 'in' }
-            });
-            
-            autocomplete.addListener('place_changed', function() {
-                const place = autocomplete.getPlace();
-                if (place.geometry) {
-                    currentLat = place.geometry.location.lat();
-                    currentLng = place.geometry.location.lng();
-                    currentLocation = place.formatted_address || place.name;
-                    searchRestaurants();
-                }
-            });
-        }
-        
-        if (modalLocationInput) {
-            const modalAutocomplete = new google.maps.places.Autocomplete(modalLocationInput, {
-                types: ['(cities)'],
-                componentRestrictions: { country: 'in' }
-            });
-            
-            modalAutocomplete.addListener('place_changed', function() {
-                const place = modalAutocomplete.getPlace();
-                if (place.geometry) {
-                    currentLat = place.geometry.location.lat();
-                    currentLng = place.geometry.location.lng();
-                    currentLocation = place.formatted_address || place.name;
-                    document.getElementById('locationInput').value = currentLocation;
-                    bootstrap.Modal.getInstance(document.getElementById('locationModal')).hide();
-                    searchRestaurants();
-                    saveLocationToStorage(currentLat, currentLng, currentLocation);
-                }
-            });
-        }
+        if (!locationInput) return;
+
+        autocomplete = new google.maps.places.Autocomplete(locationInput, {
+            types: ['(cities)'],
+            componentRestrictions: { country: 'in' }
+        });
+
+        autocomplete.addListener('place_changed', function() {
+            const place = autocomplete.getPlace();
+            if (place.geometry) {
+                currentLat = place.geometry.location.lat();
+                currentLng = place.geometry.location.lng();
+                currentLocation = place.formatted_address || place.name;
+                saveLocationToStorage(currentLat, currentLng, currentLocation);
+                searchRestaurants();
+            }
+        });
     }
+
+    (function hookIntoSharedPlacesCallback() {
+        const existingCallback = window.initGlobalPlacesAutocomplete;
+        window.initGlobalPlacesAutocomplete = function() {
+            if (typeof existingCallback === 'function') existingCallback();
+            initAutocomplete();
+        };
+    })();
 
     // Detect User Location
     function detectUserLocation() {
@@ -1584,36 +1068,6 @@
         }
     }
 
-    function detectAndSetLocation() {
-        const btn = document.querySelector('#locationModal .btn-danger');
-        const originalText = btn.innerHTML;
-        btn.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i> Detecting...';
-        btn.disabled = true;
-        
-        if (navigator.geolocation) {
-            navigator.geolocation.getCurrentPosition(
-                async (position) => {
-                    currentLat = position.coords.latitude;
-                    currentLng = position.coords.longitude;
-                    await reverseGeocode(currentLat, currentLng);
-                    bootstrap.Modal.getInstance(document.getElementById('locationModal')).hide();
-                    btn.innerHTML = originalText;
-                    btn.disabled = false;
-                    searchRestaurants();
-                },
-                (error) => {
-                    showToast('Unable to detect location. Please enter manually.', 'error');
-                    btn.innerHTML = originalText;
-                    btn.disabled = false;
-                }
-            );
-        } else {
-            showToast('Geolocation is not supported by your browser', 'error');
-            btn.innerHTML = originalText;
-            btn.disabled = false;
-        }
-    }
-
     async function reverseGeocode(lat, lng) {
         try {
             const response = await fetch(`https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&key={{ $googleMapsKey }}`);
@@ -1631,6 +1085,14 @@
 
     function saveLocationToStorage(lat, lng, location) {
         localStorage.setItem('userLocation', JSON.stringify({ lat, lng, location }));
+        // Keep partials.frontend-header's own "Delivery Zone" state (and its
+        // nav button label) in sync -- it reads/writes userDeliveryZone, and
+        // without this the header keeps showing "Select Zone" even after this
+        // page successfully auto-detects or geocodes a location.
+        localStorage.setItem('userDeliveryZone', JSON.stringify({ lat, lng, zone: location, zone_id: null }));
+        if (typeof updateSwiggyNavZoneDisplay === 'function') {
+            updateSwiggyNavZoneDisplay(location);
+        }
     }
 
     function loadSavedLocation() {
@@ -1645,6 +1107,21 @@
         }
         return false;
     }
+
+    // partials.frontend-header's own "Delivery Zone" drawer calls
+    // window.onSwiggyZoneChanged(zoneName, lat, lng, zoneId) after a zone is
+    // picked, if defined -- this is that hook, keeping the hero search bar's
+    // own location state (and the restaurant list) in sync with whatever the
+    // shared header's drawer selects.
+    window.onSwiggyZoneChanged = function(zoneName, lat, lng) {
+        currentLat = lat ?? null;
+        currentLng = lng ?? null;
+        currentLocation = zoneName;
+        const input = document.getElementById('locationInput');
+        if (input) input.value = zoneName;
+        saveLocationToStorage(currentLat, currentLng, currentLocation);
+        searchRestaurants();
+    };
 
     // Load Restaurants
     async function loadRestaurants(reset = true) {
@@ -1673,19 +1150,20 @@
                 const container = document.getElementById('restaurantsContainer');
                 const newHtml = data.restaurants.map(r => `
                     <div class="col-md-4 col-lg-3">
-                        <a href="/restaurants/${r.id}" class="restaurant-card">
+                        <a href="/restaurants/${r.slug || r.id}" class="restaurant-card">
                             <div class="restaurant-img">
                                 <img src="${r.image || 'https://placehold.co/400x300/E8E8E8/9C9C9C?text=No+Image'}" alt="${escapeHtml(r.name)}">
                                 ${r.is_sponsored ? '<span class="promoted-badge">Ad</span>' : ''}
-                                ${r.is_pure_veg ? '<span class="restaurant-badge" style="top:46px;background:#267C3A;">Pure Veg</span>' : ''}
-                                <span class="restaurant-badge">${r.is_open ? 'Open Now' : 'Closed'}</span>
+                                ${r.logo ? `<div class="restaurant-logo-overlay"><img src="${r.logo}" alt=""></div>` : ''}
                             </div>
                             <div class="restaurant-info">
                                 <div class="restaurant-name">${escapeHtml(r.name)}</div>
                                 <div class="restaurant-cuisine">${r.cuisine || 'Various Cuisines'}</div>
                                 <div class="restaurant-meta">
                                     <div class="rating"><i class="fas fa-star me-1"></i> ${r.rating || '4.0'}</div>
-                                    <div class="delivery-time"><i class="far fa-clock me-1"></i> ${r.delivery_time || '30-40'} min</div>
+                                    ${r.is_open === false
+                                        ? '<div class="restaurant-closed-text">Closed</div>'
+                                        : `<div class="delivery-time"><i class="far fa-clock me-1"></i> ${r.delivery_time || '30-40'} min</div>`}
                                 </div>
                             </div>
                         </a>
@@ -1739,15 +1217,6 @@
         document.getElementById('vegOnlyChip')?.classList.toggle('active', vegOnly);
         loadRestaurants(true);
     }
-    function openPartnerModal(event) {
-        if (event) event.preventDefault();
-        const modalEl = document.getElementById('partnerModal');
-        if (!modalEl) return;
-        if (window.bootstrap?.Modal) {
-            bootstrap.Modal.getOrCreateInstance(modalEl).show();
-        }
-    }
-    
     function escapeHtml(text) {
         const div = document.createElement('div');
         div.textContent = text;
@@ -1768,40 +1237,6 @@
         `;
         document.body.appendChild(toast);
         setTimeout(() => toast.remove(), 3000);
-    }
-
-    function updateNavbarState() {
-        const navbar = document.getElementById('navbar');
-        if (!navbar) return;
-        navbar.classList.toggle('scrolled', window.scrollY > 16);
-    }
-
-    function initHeaderActions() {
-        updateNavbarState();
-        window.addEventListener('scroll', updateNavbarState, { passive: true });
-
-        document.querySelectorAll('[data-partner-trigger]').forEach((trigger) => {
-            trigger.addEventListener('click', openPartnerModal);
-        });
-
-        if (window.bootstrap?.Dropdown) {
-            document.querySelectorAll('[data-bs-toggle="dropdown"]').forEach((toggle) => {
-                bootstrap.Dropdown.getOrCreateInstance(toggle);
-            });
-        }
-
-        if (window.bootstrap?.Offcanvas) {
-            document.querySelectorAll('[data-bs-toggle="offcanvas"]').forEach((toggle) => {
-                const targetSelector = toggle.getAttribute('data-bs-target');
-                const target = targetSelector ? document.querySelector(targetSelector) : null;
-                if (!target) return;
-                const offcanvas = bootstrap.Offcanvas.getOrCreateInstance(target);
-                toggle.addEventListener('click', (event) => {
-                    event.preventDefault();
-                    offcanvas.show();
-                });
-            });
-        }
     }
 
     // Infinite Scroll
@@ -1940,14 +1375,18 @@
 
     // Initialize
     document.addEventListener('DOMContentLoaded', () => {
-        initHeaderActions();
         initFrontendMotion();
-        const saved = loadSavedLocation();
-        if (!saved) {
-            new bootstrap.Modal(document.getElementById('locationModal')).show();
-        } else {
-            loadRestaurants(true);
+        // Auto-detect on first visit instead of leaving the generic
+        // "no location" state until the user taps Detect manually.
+        // detectUserLocation() already degrades gracefully (toast + reset
+        // button state) if the user denies the permission prompt or
+        // geolocation fails/isn't supported, so the page is never left in a
+        // broken state -- it just stays in the same no-location state it
+        // would've shown without this call.
+        if (!loadSavedLocation()) {
+            detectUserLocation();
         }
+        loadRestaurants(true);
     });
 </script>
 @include('partials.web-visit-tracker', ['panel' => 'frontend'])

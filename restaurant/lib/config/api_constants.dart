@@ -131,6 +131,16 @@ class ApiConstants {
       '$restaurantAdCampaigns/$id/pause';
   static String restaurantAdCampaignResume(int id) =>
       '$restaurantAdCampaigns/$id/resume';
+  static const String restaurantSubscriptionPlans = '/restaurant/subscription/plans';
+  static const String restaurantSubscriptionCurrent = '/restaurant/subscription/current';
+  static const String restaurantSubscriptionSubscribe = '/restaurant/subscription/subscribe';
+  static const String restaurantSubscriptionCancel = '/restaurant/subscription/cancel';
+  static const String restaurantSubscriptionCommissionPreview =
+      '/restaurant/subscription/commission-preview';
+  static const String restaurantSubscriptionSwitchToCommission =
+      '/restaurant/subscription/switch-to-commission';
+  static const String restaurantStories = '/restaurant/stories';
+  static String restaurantStory(int id) => '/restaurant/stories/$id';
   static const String restaurantPrinters = '/restaurant/printers';
   static const String restaurantPrinterSettings =
       '/restaurant/printers/settings';

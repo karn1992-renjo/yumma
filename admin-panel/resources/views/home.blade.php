@@ -1150,7 +1150,7 @@
                 const container = document.getElementById('restaurantsContainer');
                 const newHtml = data.restaurants.map(r => `
                     <div class="col-md-4 col-lg-3">
-                        <a href="/restaurants/${r.id}" class="restaurant-card">
+                        <a href="/restaurants/${r.slug || r.id}" class="restaurant-card">
                             <div class="restaurant-img">
                                 <img src="${r.image || 'https://placehold.co/400x300/E8E8E8/9C9C9C?text=No+Image'}" alt="${escapeHtml(r.name)}">
                                 ${r.is_sponsored ? '<span class="promoted-badge">Ad</span>' : ''}

@@ -8,6 +8,7 @@ import 'package:flutter/services.dart';
 import '../../../config/api_constants.dart';
 import '../../../services/api_service.dart';
 import '../../../services/location_service.dart';
+import '../../../widgets/gold/gold_promo_popup.dart';
 import '../home_experience.dart';
 import 'data/v2_serviceability.dart';
 import 'data/v2_util.dart';
@@ -50,6 +51,7 @@ class _CustomerHomeScreenV2State extends State<CustomerHomeScreenV2> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _loadLocation();
       _loadNotificationCount();
+      maybeShowGoldPromoPopup(context);
     });
   }
 

@@ -263,7 +263,18 @@ class RolePermissionSeeder extends Seeder
             'view_orders',
             'manage_support_tickets',
         ]);
-        
+
+        $supportRole = Role::firstOrCreate([
+            'name' => 'support',
+            'guard_name' => 'web'
+        ]);
+        $supportRole->givePermissionTo([
+            'view_dashboard',
+            'view_support_tickets',
+            'reply_support_tickets',
+            'manage_support_tickets',
+        ]);
+
         // ==========================================
         // CREATE DEFAULT USERS
         // ==========================================

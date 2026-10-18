@@ -69,8 +69,8 @@ class UsSalesTaxStrategy implements TaxStrategy
         $decimals = 2;
         $state = $this->stateCode($restaurant);
 
-        $itemsTotal = round((float) collect($lines)->sum('line_total'), 2);
-        $feesTotal = round((float) array_sum(array_map('floatval', $charges)), 2);
+        $itemsTotal = round((float) collect($lines)->sum('line_total'), $decimals);
+        $feesTotal = round((float) array_sum(array_map('floatval', $charges)), $decimals);
 
         // Exclusive pricing: the full item + fee total is the taxable base, and
         // the computed tax is entirely "added on top" -- there is no inclusive

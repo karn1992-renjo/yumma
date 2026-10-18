@@ -11,7 +11,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\ServiceProvider;
 use Illuminate\Support\Str;
-use Laravel\Fortify\Actions\RedirectIfTwoFactorAuthenticatable;
+use App\Actions\Fortify\RedirectIfAdminMfaRequired;
 use Laravel\Fortify\Fortify;
 
 class FortifyServiceProvider extends ServiceProvider
@@ -21,7 +21,7 @@ class FortifyServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
-        //
+        \App\Support\AdminMfaLegacyGuard::register($this->app);
     }
 
     /**
@@ -33,7 +33,7 @@ class FortifyServiceProvider extends ServiceProvider
         Fortify::updateUserProfileInformationUsing(UpdateUserProfileInformation::class);
         Fortify::updateUserPasswordsUsing(UpdateUserPassword::class);
         Fortify::resetUserPasswordsUsing(ResetUserPassword::class);
-        Fortify::redirectUserForTwoFactorAuthenticationUsing(RedirectIfTwoFactorAuthenticatable::class);
+        Fortify::redirectUserForTwoFactorAuthenticationUsing(RedirectIfAdminMfaRequired::class);
 
         $this->app->singleton(
             \Laravel\Fortify\Contracts\LoginResponse::class,
@@ -48,6 +48,14 @@ class FortifyServiceProvider extends ServiceProvider
 
         RateLimiter::for('two-factor', function (Request $request) {
             return Limit::perMinute(5)->by($request->session()->get('login.id'));
+        });
+
+        RateLimiter::for('admin-mfa', function (Request $request) {
+            return Limit::perMinute(5)->by('admin-mfa:'.($request->session()->get('admin_mfa.pending.id') ?? $request->ip()));
+        });
+
+        RateLimiter::for('admin-security', function (Request $request) {
+            return Limit::perMinute(5)->by('admin-security:'.($request->user()?->id ?? $request->session()->get('admin_mfa.pending.id') ?? $request->ip()));
         });
     }
 }

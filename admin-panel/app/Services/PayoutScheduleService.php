@@ -27,11 +27,11 @@ class PayoutScheduleService
             ? (array) ($options[$vendorType] ?? $options[$vendorType . '_schedule'] ?? [])
             : [];
 
-        $frequency = $override['schedule_frequency']
+        $frequency = ($override['schedule_frequency'] ?? null)
             ?: $setting?->schedule_frequency
             ?: AppSetting::getValue('payout_frequency', 'weekly');
         $day = strtolower(
-            $override['schedule_day']
+            ($override['schedule_day'] ?? null)
             ?: $setting?->schedule_day
             ?: AppSetting::getValue('payout_day', 'monday')
         );

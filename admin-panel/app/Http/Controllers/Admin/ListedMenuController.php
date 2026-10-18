@@ -195,6 +195,10 @@ class ListedMenuController extends Controller
 
     public function update(Request $request, MenuItem $listedMenu)
     {
+        if ($listedMenu->item_source === 'petpooja' && ($listedMenu->restaurant?->petpoojaConfig?->is_menu_managed_by_pos ?? true)) {
+            return back()->with('error', 'This item is managed by Petpooja -- edit it in the restaurant\'s POS instead.');
+        }
+
         $validated = $request->validate($this->rules($listedMenu));
         $restaurant = Restaurant::findOrFail((int) $validated['restaurant_id']);
 
@@ -217,6 +221,10 @@ class ListedMenuController extends Controller
 
     public function destroy(MenuItem $listedMenu)
     {
+        if ($listedMenu->item_source === 'petpooja' && ($listedMenu->restaurant?->petpoojaConfig?->is_menu_managed_by_pos ?? true)) {
+            return back()->with('error', 'This item is managed by Petpooja -- remove it in the restaurant\'s POS instead.');
+        }
+
         $this->deleteStoredImage($listedMenu->image);
         $listedMenu->delete();
 

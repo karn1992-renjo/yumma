@@ -184,7 +184,7 @@ class OrderController extends Controller
                 $orderType
             );
             $platformFee = DeliveryChargeSetting::getPlatformFee();
-            $tax = round((float) TaxSetting::calculateTax($subtotal, $deliveryFee), 2);
+            $tax = round((float) TaxSetting::calculateTax($subtotal, $deliveryFee), AppSetting::currencyDecimals());
             $total = $subtotal + $deliveryFee + $platformFee + $tax;
             $discount = 0;
             $promo = null;
@@ -236,7 +236,7 @@ class OrderController extends Controller
             $platformFee = $pricing['platform_fee'];
             $subtotal = $pricing['subtotal'] ?? $subtotal;
             $discount = $pricing['order_discount'] ?? $pricing['discount'];
-            $tipAmount = round((float) $request->input('tip', 0), 2);
+            $tipAmount = round((float) $request->input('tip', 0), AppSetting::currencyDecimals());
             $tipAmount = max(0, min(1000, $tipAmount));
             $total = $pricing['total'] + $tipAmount;
             $promo = $pricing['promo'];
@@ -321,6 +321,8 @@ class OrderController extends Controller
                 'delivery_distance_km' => $deliveryDistanceKm,
                 'original_delivery_fee' => $originalDeliveryFee,
                 'delivery_discount' => $deliveryDiscount,
+                'gold_delivery_waived' => $pricing['gold_delivery_waived'] ?? false,
+                'gold_delivery_waiver_amount' => $pricing['gold_delivery_waiver_amount'] ?? null,
                 'delivery_subsidy_source' => $pricing['delivery_subsidy_source'] ?? null,
                 'admin_delivery_subsidy' => $pricing['admin_delivery_subsidy'] ?? 0,
                 'restaurant_delivery_subsidy' => $pricing['restaurant_delivery_subsidy'] ?? 0,
@@ -376,6 +378,18 @@ class OrderController extends Controller
                 ->where('restaurant_id', $request->restaurant_id)
                 ->delete();
 
+            // Consume one unit of the Gold plan's order_limit (if any) for
+            // this period, inside the same transaction as order creation, so
+            // a concurrent second order can't both see capacity and both get
+            // waived past the cap.
+            if (($pricing['gold_delivery_waived'] ?? false) && auth()->id()) {
+                $goldSubscription = app(\App\Services\GoldSubscriptionService::class)
+                    ->activeSubscriptionFor((int) auth()->id());
+                if ($goldSubscription) {
+                    app(\App\Services\GoldSubscriptionService::class)->incrementOrderUsage($goldSubscription);
+                }
+            }
+
             if ($request->payment_method === 'wallet') {
                 $debited = app(\App\Services\WalletService::class)->debitInstant(
                     $request->user(),
@@ -425,6 +439,27 @@ class OrderController extends Controller
             }
 
             foreach ($orderItems as $item) {
+                $petpoojaSnapshot = null;
+                $sourceMenuItem = MenuItem::find($item['id']);
+                if ($sourceMenuItem && $sourceMenuItem->item_source === 'petpooja') {
+                    $meta = $sourceMenuItem->petpooja_meta ?? [];
+                    $petpoojaSnapshot = [
+                        'petpooja_item_id' => $sourceMenuItem->petpooja_item_id,
+                        'petpooja_variation_id' => $sourceMenuItem->petpooja_variation_id,
+                        'name' => $sourceMenuItem->name,
+                        'variation_name' => $meta['variation_name'] ?? null,
+                        'tax_inclusive' => (bool) ($meta['tax_inclusive'] ?? false),
+                        'gst_liability' => 'vendor',
+                        'item_tax' => $meta['item_tax'] ?? null,
+                        'item_discount' => '0',
+                        // Addon-level Petpooja ids aren't threaded through
+                        // the cart's selected_add_ons shape yet -- Save
+                        // Order still relays the item itself correctly,
+                        // just without per-addon detail.
+                        'addons' => [],
+                    ];
+                }
+
                 OrderItem::create([
                     'order_id' => $order->id,
                     'menu_item_id' => $item['id'],
@@ -434,6 +469,7 @@ class OrderController extends Controller
                     'selected_variant' => $item['selected_variant'],
                     'selected_add_ons' => $item['selected_add_ons'],
                     'special_instructions' => $item['special_instructions'] ?? null,
+                    'petpooja_snapshot' => $petpoojaSnapshot,
                 ]);
             }
 
@@ -773,10 +809,10 @@ class OrderController extends Controller
         unset($pricing['promo'], $pricing['promotion_result'], $pricing['promotion_context']);
 
         // Driver tip is added on top of the priced bill (checkout-time tip).
-        $tipAmount = max(0, min(1000, round((float) $request->input('tip', 0), 2)));
+        $tipAmount = max(0, min(1000, round((float) $request->input('tip', 0), AppSetting::currencyDecimals())));
         if ($tipAmount > 0) {
             $pricing['tip'] = $tipAmount;
-            $pricing['total'] = round((float) ($pricing['total'] ?? 0) + $tipAmount, 2);
+            $pricing['total'] = round((float) ($pricing['total'] ?? 0) + $tipAmount, AppSetting::currencyDecimals());
         }
 
         $freeDeliveryThreshold = $orderType === 'delivery'
@@ -806,13 +842,13 @@ class OrderController extends Controller
         return response()->json([
             'success' => true,
             'data' => array_merge([
-                'subtotal' => round($subtotal, 2),
+                'subtotal' => round($subtotal, AppSetting::currencyDecimals()),
                 'delivery_distance_km' => $deliveryDistanceKm,
                 'free_delivery_threshold' => $freeDeliveryThreshold !== null
-                    ? round((float) $freeDeliveryThreshold, 2)
+                    ? round((float) $freeDeliveryThreshold, AppSetting::currencyDecimals())
                     : null,
                 'free_delivery_remaining' => $freeDeliveryRemaining !== null
-                    ? round($freeDeliveryRemaining, 2)
+                    ? round($freeDeliveryRemaining, AppSetting::currencyDecimals())
                     : null,
                 'free_delivery_eligible' => $freeDeliveryThreshold !== null,
                 'free_delivery_achieved' => $freeDeliveryThreshold !== null
@@ -1049,7 +1085,7 @@ class OrderController extends Controller
             if (! $customerWallet || $customerWallet->balance < $amount) {
                 DB::rollBack();
 
-                $shortfall = round($amount - (float) ($customerWallet->balance ?? 0), 2);
+                $shortfall = round($amount - (float) ($customerWallet->balance ?? 0), AppSetting::currencyDecimals());
 
                 return response()->json([
                     'success' => false,
@@ -1174,8 +1210,16 @@ class OrderController extends Controller
         DB::beginTransaction();
 
         try {
+            $customerName = auth()->user()->name ?? 'Customer';
+
             if ($canForceCancel && $order->payment_status === 'success') {
-                $refundResult = $this->refundService->processRefund($order, $request->reason);
+                $refundResult = $this->refundService->processRefund(
+                    $order,
+                    $request->reason,
+                    null,
+                    'customer',
+                    $customerName
+                );
 
                 if (! $refundResult['success']) {
                     throw new \Exception('Refund processing failed: ' . $refundResult['message']);
@@ -1187,12 +1231,20 @@ class OrderController extends Controller
                     'status' => 'cancelled',
                     'cancelled_at' => now(),
                     'cancellation_reason' => $request->reason,
+                    'cancelled_by_role' => 'customer',
+                    'cancelled_by_name' => $customerName,
                     'refund_status' => 'pending',
                     'refund_reason' => $request->reason,
                 ]);
                 $message = 'Order cancelled. Refund, if applicable, will be handled as per the active refund policy.';
             } elseif ($order->payment_status === 'success') {
-                $refundResult = $this->refundService->processRefund($order, $request->reason);
+                $refundResult = $this->refundService->processRefund(
+                    $order,
+                    $request->reason,
+                    null,
+                    'customer',
+                    $customerName
+                );
 
                 if (! $refundResult['success']) {
                     throw new \Exception('Refund processing failed: ' . $refundResult['message']);
@@ -1204,11 +1256,19 @@ class OrderController extends Controller
                     'status' => 'cancelled',
                     'cancelled_at' => now(),
                     'cancellation_reason' => $request->reason,
+                    'cancelled_by_role' => 'customer',
+                    'cancelled_by_name' => $customerName,
                 ]);
                 $message = 'Order cancelled successfully!';
             }
 
             DB::commit();
+
+            try {
+                app(\App\Services\Petpooja\PetpoojaOrderRelayService::class)->cancel($order, $request->reason);
+            } catch (\Throwable $e) {
+                \Illuminate\Support\Facades\Log::warning('Petpooja cancel relay failed.', ['order_id' => $order->id, 'message' => $e->getMessage()]);
+            }
 
             $order = $order->fresh(['customer', 'restaurant', 'driver']);
             app(OrderStatusPushService::class)->notifyParticipants(
@@ -1412,7 +1472,7 @@ class OrderController extends Controller
             return 0.0;
         }
 
-        return round((float) DeliveryChargeSetting::getDeliveryCharge($distance), 2);
+        return round((float) DeliveryChargeSetting::getDeliveryCharge($distance), AppSetting::currencyDecimals());
     }
 
     private function calculateChargeableDeliveryFee($restaurantId, $lat, $lng, string $orderType = 'delivery'): float
@@ -1423,7 +1483,7 @@ class OrderController extends Controller
 
         $restaurant = Restaurant::find($restaurantId);
         if (! $restaurant) {
-            return round((float) DeliveryChargeSetting::getDeliveryCharge(), 2);
+            return round((float) DeliveryChargeSetting::getDeliveryCharge(), AppSetting::currencyDecimals());
         }
 
         $distance = null;
@@ -1436,7 +1496,7 @@ class OrderController extends Controller
             );
         }
 
-        return round((float) DeliveryChargeSetting::getDeliveryCharge($distance), 2);
+        return round((float) DeliveryChargeSetting::getDeliveryCharge($distance), AppSetting::currencyDecimals());
     }
 
     private function buildPricingSummary(
@@ -1451,9 +1511,9 @@ class OrderController extends Controller
     ): array {
         $originalDeliveryFee = round(
             $this->calculateChargeableDeliveryFee($restaurant->id, $deliveryLat, $deliveryLng, $orderType),
-            2
+            AppSetting::currencyDecimals()
         );
-        $platformFee = round(max(0, (float) DeliveryChargeSetting::getPlatformFee()), 2);
+        $platformFee = round(max(0, (float) DeliveryChargeSetting::getPlatformFee()), AppSetting::currencyDecimals());
 
         $taxCalc = app(\App\Services\Tax\TaxCalculationService::class)->baseline($subtotal, $originalDeliveryFee);
         $tax = $taxCalc['tax'];
@@ -1465,7 +1525,7 @@ class OrderController extends Controller
         $baseTaxBreakdown = $taxBreakdown;
         $packagingFee = round((float) collect($taxBreakdown)
             ->where('type', 'packaging_charge')
-            ->sum('amount'), 2);
+            ->sum('amount'), AppSetting::currencyDecimals());
 
         $discount = 0.0;
         $promo = null;
@@ -1493,7 +1553,7 @@ class OrderController extends Controller
         // flagged as short on drivers; the identical amount funds a matching
         // driver bonus in GigIncentiveService::calculateGigEarnings().
         $surgeFee = ($orderType !== 'takeaway' && $deliveryArea?->surge_fee_active)
-            ? round((float) $deliveryArea->surge_fee_amount, 2)
+            ? round((float) $deliveryArea->surge_fee_amount, AppSetting::currencyDecimals())
             : 0.0;
 
         // Flat, self-funding late-night delivery surcharge -- applies to
@@ -1501,7 +1561,7 @@ class OrderController extends Controller
         // amount funds a driver night bonus in
         // GigIncentiveService::calculateGigEarnings().
         $nightSurcharge = $orderType !== 'takeaway'
-            ? round((float) app(\App\Services\NightSurchargeService::class)->amountFor(), 2)
+            ? round((float) app(\App\Services\NightSurchargeService::class)->amountFor(), AppSetting::currencyDecimals())
             : 0.0;
 
         // Long-distance charge -- borne by the RESTAURANT (deducted from its
@@ -1509,7 +1569,7 @@ class OrderController extends Controller
         $longDistanceCharge = $orderType !== 'takeaway'
             ? round((float) app(\App\Services\LongDistanceChargeService::class)->chargeFor(
                 $deliveryDistanceKm !== null ? (float) $deliveryDistanceKm : null
-            ), 2)
+            ), AppSetting::currencyDecimals())
             : 0.0;
 
         $promotionContext = [
@@ -1523,7 +1583,7 @@ class OrderController extends Controller
             // Packaging charges are already part of the tax breakdown. Split
             // them here because the promotion engine models that bucket
             // independently and would otherwise count it twice.
-            'tax' => max(0, round($tax - $packagingFee, 2)),
+            'tax' => max(0, round($tax - $packagingFee, AppSetting::currencyDecimals())),
             'distance_km' => $deliveryDistanceKm,
             'coupon_code' => $couponCode,
             'order_type' => $orderType,
@@ -1561,11 +1621,35 @@ class OrderController extends Controller
             $deliveryDiscount
         );
 
+        // Gold membership waives whatever delivery fee is still payable after
+        // any threshold/promo discount -- kept entirely OUT of $deliveryDiscount
+        // (which deliverySubsidyBreakdown() can partially bill to the
+        // restaurant per DeliveryChargeSetting) and added straight to the
+        // admin subsidy bucket instead, since Gold is always
+        // platform/admin-subsidized, never deducted from the restaurant or
+        // driver side.
+        $goldWaiverAmount = 0.0;
+        if ($orderType !== 'takeaway' && $payableDeliveryFee > 0 && auth()->id()) {
+            $goldSubscription = app(\App\Services\GoldSubscriptionService::class)->activeSubscriptionFor((int) auth()->id());
+            if ($goldSubscription && $goldSubscription->hasOrderCapacity()) {
+                $goldWaiverAmount = $payableDeliveryFee;
+                $payableDeliveryFee = 0.0;
+                $deliverySubsidy['admin'] = round($deliverySubsidy['admin'] + $goldWaiverAmount, AppSetting::currencyDecimals());
+                $deliverySubsidy['source'] = $deliverySubsidy['source'] ? $deliverySubsidy['source'] . '+gold' : 'gold';
+            }
+        }
+        // Reported separately from $deliveryDiscount (which fed
+        // deliverySubsidyBreakdown()'s restaurant-split math above) so the
+        // client's existing "delivery_fee - delivery_discount = payable" display
+        // math keeps working unchanged with Gold folded in, without the gold
+        // amount ever being eligible for restaurant-side subsidy billing.
+        $displayedDeliveryDiscount = round($deliveryDiscount + $goldWaiverAmount, AppSetting::currencyDecimals());
+
         $orderDiscount = round(
             max(0, (float) ($promotionResult['discount'] ?? 0) - $embeddedDiscount - $promotionDeliveryDiscount),
             AppSetting::currencyDecimals()
         );
-        $displayDiscount = round($orderDiscount + $deliveryDiscount, AppSetting::currencyDecimals());
+        $displayDiscount = round($orderDiscount + $displayedDeliveryDiscount, AppSetting::currencyDecimals());
         $billDiscount = round($displayDiscount + $embeddedDiscount, AppSetting::currencyDecimals());
 
         if ($activeTaxes->isNotEmpty()) {
@@ -1575,7 +1659,7 @@ class OrderController extends Controller
             // still based on the original chargeable delivery fee.
             $taxableSubtotal = $embeddedDiscount > 0 ? $billableSubtotal : $subtotal;
             $taxBreakdown = TaxSetting::calculateBreakdown($taxableSubtotal, $originalDeliveryFee);
-            $tax = round((float) collect($taxBreakdown)->sum('amount'), 2);
+            $tax = round((float) collect($taxBreakdown)->sum('amount'), AppSetting::currencyDecimals());
             if ($tax <= 0 && $baseTax > 0 && $embeddedDiscount <= 0) {
                 $tax = $baseTax;
                 $taxBreakdown = $baseTaxBreakdown;
@@ -1614,28 +1698,30 @@ class OrderController extends Controller
         }
 
         $promo = $promotionResult['promo'] ?? null;
-        $total = max(0, round($billableSubtotal + $payableDeliveryFee + $platformFee + $tax + $surgeFee + $nightSurcharge - $orderDiscount, 2));
+        $total = max(0, round($billableSubtotal + $payableDeliveryFee + $platformFee + $tax + $surgeFee + $nightSurcharge - $orderDiscount, AppSetting::currencyDecimals()));
         $orderEarnedPoints = (int) floor($total);
 
         return [
-            'surge_fee' => round($surgeFee, 2),
+            'surge_fee' => round($surgeFee, AppSetting::currencyDecimals()),
             'surge_active' => $surgeFee > 0,
-            'night_surcharge' => round($nightSurcharge, 2),
+            'night_surcharge' => round($nightSurcharge, AppSetting::currencyDecimals()),
             'night_surcharge_active' => $nightSurcharge > 0,
-            'restaurant_long_distance_charge' => round($longDistanceCharge, 2),
+            'restaurant_long_distance_charge' => round($longDistanceCharge, AppSetting::currencyDecimals()),
             'delivery_distance_km' => $deliveryDistanceKm !== null ? round((float) $deliveryDistanceKm, 3) : null,
-            'delivery_fee' => round($originalDeliveryFee, 2),
-            'payable_delivery_fee' => round($payableDeliveryFee, 2),
-            'customer_delivery_fee' => round($payableDeliveryFee, 2),
-            'original_delivery_fee' => round($originalDeliveryFee, 2),
-            'delivery_discount' => round($deliveryDiscount, 2),
+            'delivery_fee' => round($originalDeliveryFee, AppSetting::currencyDecimals()),
+            'payable_delivery_fee' => round($payableDeliveryFee, AppSetting::currencyDecimals()),
+            'customer_delivery_fee' => round($payableDeliveryFee, AppSetting::currencyDecimals()),
+            'original_delivery_fee' => round($originalDeliveryFee, AppSetting::currencyDecimals()),
+            'delivery_discount' => $displayedDeliveryDiscount,
+            'gold_delivery_waived' => $goldWaiverAmount > 0,
+            'gold_delivery_waiver_amount' => round($goldWaiverAmount, AppSetting::currencyDecimals()),
             'delivery_subsidy_source' => $deliverySubsidy['source'],
-            'admin_delivery_subsidy' => round($deliverySubsidy['admin'], 2),
-            'restaurant_delivery_subsidy' => round($deliverySubsidy['restaurant'], 2),
+            'admin_delivery_subsidy' => round($deliverySubsidy['admin'], AppSetting::currencyDecimals()),
+            'restaurant_delivery_subsidy' => round($deliverySubsidy['restaurant'], AppSetting::currencyDecimals()),
             'order_type' => $orderType,
-            'subtotal' => round($billableSubtotal, 2),
-            'original_subtotal' => round($subtotal, 2),
-            'embedded_item_discount' => round($embeddedDiscount, 2),
+            'subtotal' => round($billableSubtotal, AppSetting::currencyDecimals()),
+            'original_subtotal' => round($subtotal, AppSetting::currencyDecimals()),
+            'embedded_item_discount' => round($embeddedDiscount, AppSetting::currencyDecimals()),
             'platform_fee' => $platformFee,
             'tax' => $tax,
             'tax_rate' => $taxRate,
@@ -1650,16 +1736,16 @@ class OrderController extends Controller
             'bill_discount' => $billDiscount,
             'total_discount' => $billDiscount,
             'order_discount' => $orderDiscount,
-            'promotion_discount' => round((float) ($promotionResult['promotion_discount'] ?? 0), 2),
-            'item_discount' => round((float) ($promotionResult['item_discount'] ?? 0), 2),
-            'coupon_discount' => round((float) ($promotionResult['coupon_discount'] ?? 0), 2),
-            'packaging_discount' => round((float) ($promotionResult['packaging_discount'] ?? 0), 2),
-            'cashback_earned' => round((float) ($promotionResult['cashback_earned'] ?? 0), 2),
+            'promotion_discount' => round((float) ($promotionResult['promotion_discount'] ?? 0), AppSetting::currencyDecimals()),
+            'item_discount' => round((float) ($promotionResult['item_discount'] ?? 0), AppSetting::currencyDecimals()),
+            'coupon_discount' => round((float) ($promotionResult['coupon_discount'] ?? 0), AppSetting::currencyDecimals()),
+            'packaging_discount' => round((float) ($promotionResult['packaging_discount'] ?? 0), AppSetting::currencyDecimals()),
+            'cashback_earned' => round((float) ($promotionResult['cashback_earned'] ?? 0), AppSetting::currencyDecimals()),
             'reward_points_earned' => $orderEarnedPoints,
             'promotion_reward_points_earned' => (int) ($promotionResult['reward_points_earned'] ?? 0),
             'reward_points_balance' => (int) (auth()->user()?->reward_points_balance ?? 0),
             'reward_points_message' => $orderEarnedPoints > 0 ? 'You will earn ' . $orderEarnedPoints . ' points after delivery.' : null,
-            'gift_voucher_amount' => round((float) ($promotionResult['gift_voucher_amount'] ?? 0), 2),
+            'gift_voucher_amount' => round((float) ($promotionResult['gift_voucher_amount'] ?? 0), AppSetting::currencyDecimals()),
             'reward_lines' => $promotionResult['reward_lines'] ?? [],
             'free_items' => $promotionResult['free_items'] ?? [],
             'promotion_progress' => $promotionResult['promotion_progress'] ?? [],
@@ -1827,11 +1913,11 @@ class OrderController extends Controller
     ): array {
         $totalPercent = $adminPercent + $restaurantPercent;
         if ($totalPercent <= 0) {
-            return ['source' => 'admin', 'admin' => round($amount, 2), 'restaurant' => 0.0];
+            return ['source' => 'admin', 'admin' => round($amount, AppSetting::currencyDecimals()), 'restaurant' => 0.0];
         }
 
-        $admin = round($amount * ($adminPercent / $totalPercent), 2);
-        $restaurant = round(max(0, $amount - $admin), 2);
+        $admin = round($amount * ($adminPercent / $totalPercent), AppSetting::currencyDecimals());
+        $restaurant = round(max(0, $amount - $admin), AppSetting::currencyDecimals());
 
         return [
             'source' => $source,

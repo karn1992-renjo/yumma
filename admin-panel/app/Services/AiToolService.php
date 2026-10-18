@@ -47,6 +47,7 @@ class AiToolService
 
         $restaurants = Restaurant::query()
             ->verified()
+            ->customerVisible()
             ->when($queryText !== '', fn ($builder) => $builder->search($queryText))
             ->when(isset($validated['lat'], $validated['lng']), fn ($builder) => $builder->nearby((float) $validated['lat'], (float) $validated['lng']))
             ->limit($limit)
@@ -91,7 +92,12 @@ class AiToolService
             'restaurant_id' => ['required', 'integer', 'exists:restaurants,id'],
         ])->validate();
 
-        return ['restaurant' => (new RestaurantResource(Restaurant::findOrFail($validated['restaurant_id'])))->resolve()];
+        $restaurant = Restaurant::findOrFail($validated['restaurant_id']);
+        if ($restaurant->isHiddenFromDiscovery()) {
+            throw ValidationException::withMessages(['restaurant_id' => 'Restaurant not found.']);
+        }
+
+        return ['restaurant' => (new RestaurantResource($restaurant))->resolve()];
     }
 
     private function getProduct(array $arguments): array

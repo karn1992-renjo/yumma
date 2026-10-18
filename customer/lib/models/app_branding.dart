@@ -56,6 +56,13 @@ class AppBranding {
   final String onboardingIntroTitle;
   final String onboardingIntroSubtitle;
   final List<AppOnboardingSlide> onboardingSlides;
+  final bool admobAdsEnabled;
+  final String admobAndroidAppId;
+  final String admobIosAppId;
+  final String admobAndroidOrderTrackingAdUnitId;
+  final String admobIosOrderTrackingAdUnitId;
+  final String admobAndroidCheckoutAdUnitId;
+  final String admobIosCheckoutAdUnitId;
 
   const AppBranding({
     required this.appName,
@@ -86,6 +93,13 @@ class AppBranding {
     this.onboardingIntroTitle = '',
     this.onboardingIntroSubtitle = '',
     this.onboardingSlides = const [],
+    this.admobAdsEnabled = false,
+    this.admobAndroidAppId = '',
+    this.admobIosAppId = '',
+    this.admobAndroidOrderTrackingAdUnitId = '',
+    this.admobIosOrderTrackingAdUnitId = '',
+    this.admobAndroidCheckoutAdUnitId = '',
+    this.admobIosCheckoutAdUnitId = '',
   });
 
   factory AppBranding.fromJson(Map<String, dynamic> json) {
@@ -164,6 +178,21 @@ class AppBranding {
           .toString()
           .trim(),
       onboardingSlides: slides,
+      admobAdsEnabled: _parseBool(json['admob_ads_enabled']),
+      admobAndroidAppId: (json['admob_android_app_id'] ?? '').toString().trim(),
+      admobIosAppId: (json['admob_ios_app_id'] ?? '').toString().trim(),
+      admobAndroidOrderTrackingAdUnitId:
+          (json['admob_android_order_tracking_ad_unit_id'] ?? '')
+              .toString()
+              .trim(),
+      admobIosOrderTrackingAdUnitId:
+          (json['admob_ios_order_tracking_ad_unit_id'] ?? '')
+              .toString()
+              .trim(),
+      admobAndroidCheckoutAdUnitId:
+          (json['admob_android_checkout_ad_unit_id'] ?? '').toString().trim(),
+      admobIosCheckoutAdUnitId:
+          (json['admob_ios_checkout_ad_unit_id'] ?? '').toString().trim(),
     );
   }
 
@@ -247,6 +276,14 @@ class AppBranding {
       'onboarding_intro_subtitle': onboardingIntroSubtitle,
       'onboarding_slides':
           onboardingSlides.map((slide) => slide.toJson()).toList(),
+      'admob_ads_enabled': admobAdsEnabled,
+      'admob_android_app_id': admobAndroidAppId,
+      'admob_ios_app_id': admobIosAppId,
+      'admob_android_order_tracking_ad_unit_id':
+          admobAndroidOrderTrackingAdUnitId,
+      'admob_ios_order_tracking_ad_unit_id': admobIosOrderTrackingAdUnitId,
+      'admob_android_checkout_ad_unit_id': admobAndroidCheckoutAdUnitId,
+      'admob_ios_checkout_ad_unit_id': admobIosCheckoutAdUnitId,
     };
   }
 

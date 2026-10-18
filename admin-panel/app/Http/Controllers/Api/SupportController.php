@@ -315,7 +315,7 @@ class SupportController extends Controller
     {
         $adminIds = $conversation->assigned_to
             ? [$conversation->assigned_to]
-            : User::role(['super_admin', 'admin'])->pluck('id')->all();
+            : User::role(['super_admin', 'admin', 'support'])->pluck('id')->all();
 
         $requesterName = $conversation->user?->name ?? 'A customer';
         $preview = $message->message_type === 'image' ? 'Shared an image' : $message->message;
@@ -324,7 +324,7 @@ class SupportController extends Controller
             try {
                 $payload = [
                     'type' => 'support_message',
-                    'deep_link' => '/admin/support/' . $conversation->id,
+                    'deep_link' => '/support/' . $conversation->id,
                     'conversation_id' => $conversation->id,
                     'conversation_number' => $conversation->conversation_number,
                 ];

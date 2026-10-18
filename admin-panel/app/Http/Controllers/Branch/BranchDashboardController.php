@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Branch;
 
 use App\Http\Controllers\Controller;
+use App\Events\SupportMessageSent;
 use App\Exports\BranchCollectionExport;
 use App\Models\AppSetting;
 use App\Models\BranchSettlement;
@@ -15,14 +16,21 @@ use App\Models\BranchZone;
 use App\Models\Cuisine;
 use App\Models\Order;
 use App\Models\Restaurant;
+use App\Models\SupportConversation;
+use App\Models\SupportMessage;
 use App\Models\User;
+use App\Notifications\AppDatabaseNotification;
 use App\Rules\UniqueUserContactForRole;
 use App\Services\AutoAssignDriverService;
 use App\Services\BranchManagementService;
 use App\Services\CodReconciliationService;
+use App\Services\DeliveryAreaResolver;
 use App\Services\OrderStatusPushService;
+use App\Services\PaymentVerificationService;
+use App\Services\PayoutCalculationService;
 use App\Services\RefundService;
 use App\Services\ScratchCardService;
+use App\Support\BuildsOrderDetailPresentation;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
@@ -34,10 +42,14 @@ use Maatwebsite\Excel\Facades\Excel;
 
 class BranchDashboardController extends Controller
 {
+    use BuildsOrderDetailPresentation;
+
     public function __construct(
         private BranchManagementService $branches,
         private RefundService $refundService,
-        private CodReconciliationService $cod
+        private CodReconciliationService $cod,
+        private PayoutCalculationService $payoutCalculation,
+        private DeliveryAreaResolver $deliveryAreaResolver
     )
     {
     }
@@ -88,6 +100,41 @@ class BranchDashboardController extends Controller
             ->orderBy('date')
             ->get();
 
+        // Real per-day series for the KPI card sparklines (previously
+        // hardcoded literal arrays that never reflected actual activity).
+        $dailyOrderCount = $this->branchOrderQuery($branch, $restaurantIds)
+            ->where('created_at', '>=', now()->subDays(29)->startOfDay())
+            ->selectRaw('DATE(created_at) as date, COUNT(*) as count')
+            ->groupBy('date')
+            ->orderBy('date')
+            ->get();
+
+        $dailyActiveRestaurants = $this->branchOrderQuery($branch, $restaurantIds)
+            ->where('status', 'delivered')
+            ->where('created_at', '>=', now()->subDays(29)->startOfDay())
+            ->selectRaw('DATE(created_at) as date, COUNT(DISTINCT restaurant_id) as count')
+            ->groupBy('date')
+            ->orderBy('date')
+            ->get();
+
+        $dailySuccessRate = $this->branchOrderQuery($branch, $restaurantIds)
+            ->where('created_at', '>=', now()->subDays(29)->startOfDay())
+            ->selectRaw("DATE(created_at) as date, SUM(CASE WHEN status = 'delivered' THEN 1 ELSE 0 END) as delivered, COUNT(*) as total")
+            ->groupBy('date')
+            ->orderBy('date')
+            ->get()
+            ->map(fn ($row) => (object) [
+                'date' => $row->date,
+                'rate' => $row->total > 0 ? round($row->delivered / $row->total * 100, 1) : 0,
+            ]);
+
+        $dailyCommission = $this->creditedBranchOrderQuery($branch, $restaurantIds)
+            ->where('created_at', '>=', now()->subDays(29)->startOfDay())
+            ->selectRaw('DATE(created_at) as date, SUM(branch_commission) as commission')
+            ->groupBy('date')
+            ->orderBy('date')
+            ->get();
+
         $topRestaurants = Restaurant::where(function ($query) use ($branch, $restaurantIds) {
                 $query->where('branch_id', $branch->id)
                     ->when($restaurantIds->isNotEmpty(), fn ($builder) => $builder->orWhereIn('id', $restaurantIds));
@@ -101,7 +148,17 @@ class BranchDashboardController extends Controller
 
         $topDrivers = User::role('delivery_partner')
             ->where('branch_id', $branch->id)
-            ->withCount(['orders' => fn ($query) => $query->visibleToRestaurant()])
+            ->withCount(['orders' => function ($query) use ($branch, $restaurantIds) {
+                // Scope the order count to THIS branch's own orders, same as
+                // $orders/$topRestaurants above -- without this, a driver's
+                // historical order count from a PREVIOUS branch (if ever
+                // reassigned) would inflate their ranking here.
+                $query->visibleToRestaurant()
+                    ->where(function ($q) use ($branch, $restaurantIds) {
+                        $q->where('branch_id', $branch->id)
+                            ->when($restaurantIds->isNotEmpty(), fn ($b) => $b->orWhereIn('restaurant_id', $restaurantIds));
+                    });
+            }])
             ->orderByDesc('orders_count')
             ->limit(5)
             ->get();
@@ -123,6 +180,10 @@ class BranchDashboardController extends Controller
             'orders',
             'stats',
             'dailyRevenue',
+            'dailyOrderCount',
+            'dailyActiveRestaurants',
+            'dailySuccessRate',
+            'dailyCommission',
             'topRestaurants',
             'topDrivers',
             'walletTransactions',
@@ -195,12 +256,27 @@ class BranchDashboardController extends Controller
         abort_unless($this->orderBelongsToBranch($order, $branch), 404);
         abort_unless($order->isVisibleToRestaurant(), 404);
 
-        $order->load(['restaurant', 'customer', 'driver', 'branch']);
+        $order->load([
+            'restaurant', 'customer', 'driver', 'branch',
+            'orderItems.menuItem', 'transactions', 'paymentAttempts.driver', 'paymentAttempts.creator',
+        ]);
         $availableDrivers = $this->availableBranchDrivers($branch, $order);
         $canAssignDriver = $this->branchCan($request, 'branch.orders.assign_driver', ['manage_orders', 'manage_drivers']);
         $canUpdateStatus = $this->branchCan($request, 'branch.orders.update_status', ['manage_orders']);
 
-        return view('branch.orders-show', compact('branch', 'order', 'availableDrivers', 'canAssignDriver', 'canUpdateStatus'));
+        $timeline = $this->getOrderTimeline($order);
+        $deliveryDistanceKm = $this->calculateDeliveryDistanceKm($order);
+        $orderItems = $this->buildOrderItemsForDisplay($order);
+
+        // Branch sees its own commission (its own money), never the
+        // platform's cut -- same figures admin sees, minus admin_earning.
+        $financials = $this->buildOrderFinancials($order, $this->payoutCalculation);
+        unset($financials['admin_earning']);
+
+        return view('branch.orders-show', compact(
+            'branch', 'order', 'availableDrivers', 'canAssignDriver', 'canUpdateStatus',
+            'timeline', 'deliveryDistanceKm', 'orderItems', 'financials'
+        ));
     }
 
     public function assignOrderDriver(Request $request, Order $order, AutoAssignDriverService $autoAssignService)
@@ -306,8 +382,19 @@ class BranchDashboardController extends Controller
             $order->status = $data['status'];
             $this->stampOrderStatusTimestamps($order, $data['status'], $data['cancellation_reason'] ?? null);
 
+            if ($data['status'] === 'cancelled') {
+                $order->cancelled_by_role = 'branch';
+                $order->cancelled_by_name = $request->user()->name ?? 'Branch';
+            }
+
             if ($data['status'] === 'cancelled' && $order->payment_status === 'success') {
-                $refundResult = $this->refundService->processRefund($order, $data['cancellation_reason']);
+                $refundResult = $this->refundService->processRefund(
+                    $order,
+                    $data['cancellation_reason'],
+                    null,
+                    'branch',
+                    $request->user()->name ?? 'Branch'
+                );
                 if (!($refundResult['success'] ?? false)) {
                     throw new \RuntimeException('Refund processing failed: ' . ($refundResult['message'] ?? 'Unknown error'));
                 }
@@ -353,6 +440,45 @@ class BranchDashboardController extends Controller
         ]);
 
         return $this->orderActionResponse($request, true, 'Order status updated.');
+    }
+
+    public function verifyOrderPayment(Request $request, Order $order, PaymentVerificationService $verification)
+    {
+        $branch = $this->currentBranch($request);
+        $this->authorizeBranch($request, 'branch.orders.update_status', ['manage_orders']);
+        abort_unless($this->orderBelongsToBranch($order, $branch), 404);
+
+        $result = $verification->checkOrderPayment($order);
+
+        $corrected = false;
+        if ($result['paid'] && $order->payment_status !== 'success') {
+            $order->payment_status = 'success';
+            $order->paid_at ??= now();
+            $order->online_payment_verified_at ??= now();
+            $order->save();
+            $corrected = true;
+
+            activity()
+                ->performedOn($order)
+                ->causedBy($request->user())
+                ->withProperties([
+                    'gateway' => $order->payment_gateway,
+                    'gateway_status' => $result['status'],
+                    'branch_id' => $branch->id,
+                ])
+                ->log('Payment manually re-verified and corrected to success');
+        }
+
+        $message = $corrected
+            ? $result['message'] . ' Order payment status has been corrected to "success".'
+            : $result['message'];
+
+        return $this->orderActionResponse($request, true, $message, 200, [
+            'gateway_paid' => $result['paid'],
+            'gateway_status' => $result['status'],
+            'gateway_amount' => $result['amount'],
+            'corrected' => $corrected,
+        ]);
     }
 
     /**
@@ -637,6 +763,7 @@ class BranchDashboardController extends Controller
                 'pincode' => $data['pincode'],
                 'latitude' => $data['latitude'] ?? 0,
                 'longitude' => $data['longitude'] ?? 0,
+                'delivery_area_id' => $this->resolveBranchDeliveryAreaId($branch, $request, $data),
                 'delivery_radius' => $data['delivery_radius'],
                 'restaurant_type' => $data['restaurant_type'],
                 'is_pure_veg' => $request->boolean('is_pure_veg'),
@@ -740,6 +867,7 @@ class BranchDashboardController extends Controller
             'pincode' => $data['pincode'],
             'latitude' => $data['latitude'] ?? 0,
             'longitude' => $data['longitude'] ?? 0,
+            'delivery_area_id' => $this->resolveBranchDeliveryAreaId($branch, $request, $data),
             'delivery_radius' => $data['delivery_radius'],
             'restaurant_type' => $data['restaurant_type'],
             'is_pure_veg' => $request->boolean('is_pure_veg'),
@@ -865,7 +993,20 @@ class BranchDashboardController extends Controller
 
         $search = $request->filled('search') ? trim((string) $request->search) : null;
         $drivers = $this->cod->driverSummaries($branch->id, $search);
-        $totals = $this->cod->totals($branch->id);
+
+        // Sum the visible rows rather than a branch-scoped totals() query --
+        // driverSummaries() computes each driver's cash-in-hand unscoped (a
+        // driver holds the money regardless of which branch's order it came
+        // from, and many COD orders carry a NULL branch_id), so a
+        // branch-scoped total here would disagree with the roster right
+        // below it. Mirrors Admin\CodManagementController::index().
+        $cashHolders = $drivers->where('pending_amount', '>', 0);
+        $totals = [
+            'amount' => round((float) $cashHolders->sum('pending_amount'), 2),
+            'orders' => (int) $cashHolders->sum('pending_orders'),
+            'drivers' => $cashHolders->count(),
+        ];
+
         $capabilities = $this->branchCapabilities($request);
 
         return view('branch.cod', compact('branch', 'drivers', 'totals', 'search', 'capabilities'));
@@ -1102,6 +1243,43 @@ class BranchDashboardController extends Controller
         return view('branch.wallet', compact('branch', 'wallet', 'transactions', 'payouts', 'capabilities'));
     }
 
+    /**
+     * Delivery-fee money routed to this branch's wallet from salaried
+     * drivers' orders (see BranchManagementService::creditDriverSalaryDeliveryEarning()).
+     * These rows already exist in BranchWalletTransaction mixed into the
+     * generic wallet() list above -- this filters to just that one type so
+     * the branch can see its delivery-charge income on its own.
+     */
+    public function deliveryCharges(Request $request)
+    {
+        $branch = $this->currentBranch($request);
+        $this->authorizeBranch($request, 'branch.wallet.view', ['view_wallet', 'view_earnings']);
+
+        $query = BranchWalletTransaction::where('branch_id', $branch->id)
+            ->where('type', 'salaried_driver_delivery_earning');
+
+        $summary = [
+            'today' => (float) (clone $query)->whereDate('created_at', today())->sum('amount'),
+            'this_month' => (float) (clone $query)->whereYear('created_at', now()->year)->whereMonth('created_at', now()->month)->sum('amount'),
+            'lifetime' => (float) (clone $query)->sum('amount'),
+        ];
+
+        // DATE() is supported identically by SQLite and MySQL -- unlike
+        // HOUR()/DATE_FORMAT(), it won't crash on the local sqlite dev DB.
+        $dailyBreakdown = (clone $query)
+            ->where('created_at', '>=', now()->subDays(29)->startOfDay())
+            ->selectRaw('DATE(created_at) as date, COUNT(*) as orders, SUM(amount) as amount')
+            ->groupBy('date')
+            ->orderByDesc('date')
+            ->get();
+
+        $ledger = (clone $query)->with('order')->latest()->paginate(25);
+
+        $capabilities = $this->branchCapabilities($request);
+
+        return view('branch.delivery-charges', compact('branch', 'summary', 'dailyBreakdown', 'ledger', 'capabilities'));
+    }
+
     public function exportWallet(Request $request)
     {
         $branch = $this->currentBranch($request);
@@ -1256,19 +1434,206 @@ class BranchDashboardController extends Controller
                     ->when($restaurantIds->isNotEmpty(), fn ($builder) => $builder->orWhereIn('id', $restaurantIds));
             })
             ->withCount('orders')
+            ->withSum(['orders as revenue' => fn ($query) => $query->where('status', 'delivered')], 'total')
             ->orderByDesc('orders_count')
             ->limit(10)
             ->get();
 
+        // MySQL's HOUR() has no SQLite equivalent -- without this branch this
+        // crashes with a 500 against the local sqlite dev DB. Mirrors the
+        // same fix already applied in Restaurant\DashboardController.
+        $hourExpression = DB::connection()->getDriverName() === 'sqlite'
+            ? "CAST(strftime('%H', created_at) AS INTEGER)"
+            : 'HOUR(created_at)';
+
         $peakHours = (clone $orders)
-            ->selectRaw('HOUR(created_at) as hour, COUNT(*) as orders_count')
+            ->selectRaw("{$hourExpression} as hour, COUNT(*) as orders_count")
             ->groupBy('hour')
             ->orderByDesc('orders_count')
             ->limit(10)
             ->get();
+
+        // DATE() is supported identically by SQLite and MySQL, so day-level
+        // grouping is safe without a driver branch (unlike HOUR() above).
+        $dailyIncomeRows = (clone $orders)
+            ->where('status', 'delivered')
+            ->where('created_at', '>=', now()->subDays(29)->startOfDay())
+            ->selectRaw('DATE(created_at) as date, COUNT(*) as orders, SUM(total) as revenue')
+            ->groupBy('date')
+            ->orderByDesc('date')
+            ->get();
+        $dailyCommissionByDate = (clone $creditedOrders)
+            ->where('created_at', '>=', now()->subDays(29)->startOfDay())
+            ->selectRaw('DATE(created_at) as date, SUM(branch_commission) as commission')
+            ->groupBy('date')
+            ->pluck('commission', 'date');
+        $dailyIncome = $dailyIncomeRows->map(fn ($row) => (object) [
+            'date' => $row->date,
+            'orders' => $row->orders,
+            'revenue' => (float) $row->revenue,
+            'commission' => (float) ($dailyCommissionByDate[$row->date] ?? 0),
+        ]);
+
+        // Month-wise has no safe single-engine SQL function (MySQL's
+        // DATE_FORMAT has no SQLite equivalent, same trap as HOUR() above),
+        // so day-level rows (already DB-safe via DATE()) are rolled up into
+        // months in PHP instead.
+        $monthlyIncomeRows = (clone $orders)
+            ->where('status', 'delivered')
+            ->where('created_at', '>=', now()->subMonths(11)->startOfMonth())
+            ->selectRaw('DATE(created_at) as date, COUNT(*) as orders, SUM(total) as revenue')
+            ->groupBy('date')
+            ->get();
+        $monthlyCommissionByDate = (clone $creditedOrders)
+            ->where('created_at', '>=', now()->subMonths(11)->startOfMonth())
+            ->selectRaw('DATE(created_at) as date, SUM(branch_commission) as commission')
+            ->groupBy('date')
+            ->pluck('commission', 'date');
+        $monthlyIncome = $monthlyIncomeRows
+            ->groupBy(fn ($row) => \Carbon\Carbon::parse($row->date)->format('Y-m'))
+            ->map(function ($rows, $month) use ($monthlyCommissionByDate) {
+                return (object) [
+                    'month' => $month,
+                    'orders' => $rows->sum('orders'),
+                    'revenue' => (float) $rows->sum('revenue'),
+                    'commission' => (float) $rows->sum(fn ($row) => (float) ($monthlyCommissionByDate[$row->date] ?? 0)),
+                ];
+            })
+            ->sortByDesc('month')
+            ->values();
+
         $capabilities = $this->branchCapabilities($request);
 
-        return view('branch.reports', compact('branch', 'summary', 'topRestaurants', 'peakHours', 'capabilities'));
+        return view('branch.reports', compact(
+            'branch', 'summary', 'topRestaurants', 'peakHours', 'capabilities',
+            'dailyIncome', 'monthlyIncome'
+        ));
+    }
+
+    /**
+     * Shared by incomeDetails() (the "View All" filtered page) and
+     * exportIncomeDetails() (its Excel export) so the two can never
+     * disagree about what a given filter means.
+     */
+    private function buildIncomeRows(Request $request, $branch, $restaurantIds): array
+    {
+        $orders = $this->branchOrderQuery($branch, $restaurantIds);
+        $creditedOrders = $this->creditedBranchOrderQuery($branch, $restaurantIds);
+
+        $type = $request->get('type') === 'month' ? 'month' : 'day';
+
+        if ($type === 'day') {
+            $from = $request->filled('from') ? \Carbon\Carbon::parse($request->input('from'))->startOfDay() : now()->subDays(89)->startOfDay();
+            $to = $request->filled('to') ? \Carbon\Carbon::parse($request->input('to'))->endOfDay() : now()->endOfDay();
+
+            $rows = (clone $orders)
+                ->where('status', 'delivered')
+                ->whereBetween('created_at', [$from, $to])
+                ->selectRaw('DATE(created_at) as period, COUNT(*) as orders, SUM(total) as revenue')
+                ->groupBy('period')
+                ->orderByDesc('period')
+                ->get();
+            $commissionByPeriod = (clone $creditedOrders)
+                ->whereBetween('created_at', [$from, $to])
+                ->selectRaw('DATE(created_at) as period, SUM(branch_commission) as commission')
+                ->groupBy('period')
+                ->pluck('commission', 'period');
+
+            $rows = $rows->map(fn ($row) => (object) [
+                'period' => $row->period,
+                'period_label' => \Carbon\Carbon::parse($row->period)->format('d M Y'),
+                'orders' => $row->orders,
+                'revenue' => (float) $row->revenue,
+                'commission' => (float) ($commissionByPeriod[$row->period] ?? 0),
+            ]);
+        } else {
+            $from = $request->filled('from') ? \Carbon\Carbon::parse($request->input('from'))->startOfMonth() : now()->subMonths(23)->startOfMonth();
+            $to = $request->filled('to') ? \Carbon\Carbon::parse($request->input('to'))->endOfMonth() : now()->endOfMonth();
+
+            // Month-wise has no safe single-engine SQL function (MySQL's
+            // DATE_FORMAT has no SQLite equivalent), so day-level rows
+            // (DB-safe via DATE()) are rolled up into months in PHP, same
+            // approach as reports() above.
+            $dayRows = (clone $orders)
+                ->where('status', 'delivered')
+                ->whereBetween('created_at', [$from, $to])
+                ->selectRaw('DATE(created_at) as date, COUNT(*) as orders, SUM(total) as revenue')
+                ->groupBy('date')
+                ->get();
+            $dayCommission = (clone $creditedOrders)
+                ->whereBetween('created_at', [$from, $to])
+                ->selectRaw('DATE(created_at) as date, SUM(branch_commission) as commission')
+                ->groupBy('date')
+                ->pluck('commission', 'date');
+
+            $rows = $dayRows
+                ->groupBy(fn ($row) => \Carbon\Carbon::parse($row->date)->format('Y-m'))
+                ->map(function ($group, $month) use ($dayCommission) {
+                    return (object) [
+                        'period' => $month,
+                        'period_label' => \Carbon\Carbon::createFromFormat('Y-m', $month)->format('F Y'),
+                        'orders' => $group->sum('orders'),
+                        'revenue' => (float) $group->sum('revenue'),
+                        'commission' => (float) $group->sum(fn ($row) => (float) ($dayCommission[$row->date] ?? 0)),
+                    ];
+                })
+                ->sortByDesc('period')
+                ->values();
+        }
+
+        return ['type' => $type, 'from' => $from, 'to' => $to, 'rows' => $rows];
+    }
+
+    public function incomeDetails(Request $request)
+    {
+        $branch = $this->currentBranch($request);
+        $this->authorizeBranch($request, 'branch.reports.view', ['view_reports']);
+        $restaurantIds = $this->restaurantIdsForBranchZones($branch);
+
+        ['type' => $type, 'from' => $from, 'to' => $to, 'rows' => $rows] = $this->buildIncomeRows($request, $branch, $restaurantIds);
+
+        $perPage = 30;
+        $page = max(1, (int) $request->get('page', 1));
+        $paginated = new \Illuminate\Pagination\LengthAwarePaginator(
+            $rows->forPage($page, $perPage)->values(),
+            $rows->count(),
+            $perPage,
+            $page,
+            ['path' => $request->url(), 'query' => $request->query()]
+        );
+
+        $totals = [
+            'orders' => $rows->sum('orders'),
+            'revenue' => $rows->sum('revenue'),
+            'commission' => $rows->sum('commission'),
+        ];
+
+        $capabilities = $this->branchCapabilities($request);
+
+        return view('branch.reports-income', compact('branch', 'type', 'from', 'to', 'paginated', 'totals', 'capabilities'));
+    }
+
+    public function exportIncomeDetails(Request $request)
+    {
+        $branch = $this->currentBranch($request);
+        $this->authorizeBranch($request, 'branch.reports.export', ['view_reports']);
+        $restaurantIds = $this->restaurantIdsForBranchZones($branch);
+
+        ['type' => $type, 'rows' => $rows] = $this->buildIncomeRows($request, $branch, $restaurantIds);
+
+        $exportRows = $rows->map(fn ($row) => [
+            $row->period_label,
+            $row->orders,
+            (float) $row->revenue,
+            (float) $row->commission,
+        ]);
+
+        return Excel::download(new BranchCollectionExport($exportRows, [
+            $type === 'month' ? 'Month' : 'Date',
+            'Orders',
+            'Revenue',
+            'Branch Commission',
+        ]), 'branch-income-' . $type . '-' . now()->format('Y-m-d-His') . '.xlsx');
     }
 
     public function exportReports(Request $request)
@@ -1478,6 +1843,136 @@ class BranchDashboardController extends Controller
         return redirect()->route('branch.tickets')->with('success', 'Support ticket created.');
     }
 
+    /**
+     * Support Desk: branch owners' real ticket outlet, replacing the old
+     * BranchTicket flow above (kept in place, unlinked, as read-only
+     * history -- it never had a reply/resolve UI at all). These tickets
+     * flow into the exact same SupportConversation queue a support agent
+     * already works for customers/restaurants/drivers, tagged
+     * requester_role=branch, skipping the bot-triage stage since branch
+     * issues (payouts, zones, platform bugs) aren't FAQ-shaped.
+     */
+    public function support(Request $request)
+    {
+        $branch = $this->currentBranch($request);
+        $this->authorizeBranch($request, 'branch.tickets.view', ['manage_support_tickets', 'view_assigned_tasks']);
+
+        $conversations = SupportConversation::where('branch_id', $branch->id)
+            ->with('latestMessage')
+            ->orderByDesc('last_message_at')
+            ->paginate(20);
+
+        return view('branch.support', compact('branch', 'conversations'));
+    }
+
+    public function supportStore(Request $request)
+    {
+        $branch = $this->currentBranch($request);
+        $this->authorizeBranch($request, 'branch.tickets.create', ['manage_support_tickets']);
+
+        $data = $request->validate([
+            'category' => ['required', Rule::in(['Settlement Issue', 'Payment Issue', 'Restaurant Issue', 'Driver Issue', 'Technical Issue'])],
+            'subject' => ['required', 'string', 'max:255'],
+            'description' => ['required', 'string'],
+        ]);
+
+        $conversation = SupportConversation::create([
+            'conversation_number' => 'SUP-' . Str::upper(Str::random(8)),
+            'user_id' => $request->user()->id,
+            'requester_role' => 'branch',
+            'branch_id' => $branch->id,
+            'category' => $data['category'],
+            'stage' => 'human',
+            'status' => 'open',
+            'priority' => 'normal',
+            'last_message_at' => now(),
+        ]);
+
+        $message = $conversation->messages()->create([
+            'sender_id' => $request->user()->id,
+            'sender_type' => 'branch',
+            'message_type' => 'text',
+            'message' => $data['subject'] . "\n\n" . $data['description'],
+            'delivered_at' => now(),
+        ]);
+
+        broadcast(new SupportMessageSent($message))->toOthers();
+        $this->notifySupportTeam($conversation, $message, $branch);
+
+        return redirect()->route('branch.support.show', $conversation->id)->with('success', 'Support ticket created.');
+    }
+
+    public function supportShow(Request $request, SupportConversation $conversation)
+    {
+        $branch = $this->currentBranch($request);
+        $this->authorizeBranch($request, 'branch.tickets.view', ['manage_support_tickets', 'view_assigned_tasks']);
+        abort_unless((int) $conversation->branch_id === (int) $branch->id, 404);
+
+        $conversation->load(['messages' => fn ($query) => $query->with('sender')->orderBy('created_at')]);
+
+        return view('branch.support-show', compact('branch', 'conversation'));
+    }
+
+    public function supportReply(Request $request, SupportConversation $conversation)
+    {
+        $branch = $this->currentBranch($request);
+        $this->authorizeBranch($request, 'branch.tickets.create', ['manage_support_tickets']);
+        abort_unless((int) $conversation->branch_id === (int) $branch->id, 404);
+
+        if ($conversation->stage === 'resolved') {
+            return redirect()->route('branch.support.show', $conversation->id)
+                ->with('error', 'This ticket is resolved. Create a new ticket if you need more help.');
+        }
+
+        $validated = $request->validate(['message' => 'required|string|max:2000']);
+
+        $message = $conversation->messages()->create([
+            'sender_id' => $request->user()->id,
+            'sender_type' => 'branch',
+            'message_type' => 'text',
+            'message' => $validated['message'],
+            'delivered_at' => now(),
+        ]);
+
+        $conversation->update(['last_message_at' => now()]);
+        broadcast(new SupportMessageSent($message))->toOthers();
+        $this->notifySupportTeam($conversation, $message, $branch);
+
+        return redirect()->route('branch.support.show', $conversation->id)->with('success', 'Message sent.');
+    }
+
+    /**
+     * Mirrors Api\SupportController::notifyAdmins() exactly -- same
+     * assigned-first-else-whole-team fallback, same role list (super_admin,
+     * admin, support), so a branch ticket surfaces in the Support Desk's
+     * notifications identically to a customer/restaurant/driver one.
+     */
+    private function notifySupportTeam(SupportConversation $conversation, SupportMessage $message, $branch): void
+    {
+        $recipientIds = $conversation->assigned_to
+            ? [$conversation->assigned_to]
+            : User::role(['super_admin', 'admin', 'support'])->pluck('id')->all();
+
+        $preview = $message->message_type === 'image' ? 'Shared an image' : $message->message;
+
+        foreach (User::whereIn('id', $recipientIds)->get() as $recipient) {
+            try {
+                $recipient->notify(new AppDatabaseNotification(
+                    'New support message',
+                    $branch->name . ': ' . \Illuminate\Support\Str::limit($preview, 120),
+                    [
+                        'type' => 'support_message',
+                        'deep_link' => '/support/' . $conversation->id,
+                        'conversation_id' => $conversation->id,
+                        'conversation_number' => $conversation->conversation_number,
+                    ]
+                ));
+            } catch (\Throwable $e) {
+                \Log::warning('Support team notification failed: ' . $e->getMessage());
+            }
+        }
+    }
+
     private function currentBranch(Request $request)
     {
         $branch = $this->branches->branchForUser($request->user());
@@ -1502,6 +1997,7 @@ class BranchDashboardController extends Controller
             'reports_export' => $this->branchCan($request, 'branch.reports.export', ['view_reports']),
             'wallet_view' => $this->branchCan($request, 'branch.wallet.view', ['view_wallet', 'view_earnings']),
             'wallet_export' => $this->branchCan($request, 'branch.wallet.export', ['view_wallet', 'view_earnings']),
+            'delivery_charges_view' => $this->branchCan($request, 'branch.wallet.view', ['view_wallet', 'view_earnings']),
             'withdrawals_create' => $this->branchCan($request, 'branch.withdrawals.create', ['view_wallet', 'submit_settlement_requests']),
             'settlements_view' => $this->branchCan($request, 'branch.settlements.view', ['submit_settlement_requests', 'view_wallet']),
             'restaurants_view' => $this->branchCan($request, 'branch.restaurants.view', ['manage_restaurants']),
@@ -1540,6 +2036,14 @@ class BranchDashboardController extends Controller
                 ' Extra %s%s credited to driver wallet.',
                 $currencySymbol,
                 number_format($result['excess_credit_amount'], $decimals)
+            );
+        }
+
+        if (($result['unapplied_amount'] ?? 0) > 0) {
+            $message .= sprintf(
+                ' %s%s could not be matched to this branch\'s pending orders and was NOT collected -- it may be owed against another branch or an unassigned order. Re-check the amount before recording it as received.',
+                $currencySymbol,
+                number_format($result['unapplied_amount'], $decimals)
             );
         }
 
@@ -1758,6 +2262,7 @@ class BranchDashboardController extends Controller
             'pincode' => ['required', 'string', 'max:10'],
             'latitude' => ['nullable', 'numeric', 'between:-90,90'],
             'longitude' => ['nullable', 'numeric', 'between:-180,180'],
+            'delivery_area_id' => ['nullable', 'exists:delivery_areas,id'],
             'delivery_radius' => ['required', 'numeric', 'min:0', 'max:100'],
             'restaurant_type' => ['required', Rule::in(Restaurant::validServiceTypes())],
             'is_pure_veg' => ['nullable', 'boolean'],
@@ -1962,6 +2467,40 @@ class BranchDashboardController extends Controller
             ]);
     }
 
+    private function resolveBranchDeliveryAreaId($branch, Request $request, array $data): ?int
+    {
+        $branchAreaIds = $this->branchDeliveryAreas($branch)->pluck('id')->all();
+
+        // A manually picked zone always wins -- only fall back to
+        // auto-matching by coordinates when left blank, and only among
+        // zones this branch actually owns.
+        if ($request->filled('delivery_area_id') && in_array((int) $request->delivery_area_id, $branchAreaIds, true)) {
+            return (int) $request->delivery_area_id;
+        }
+
+        $latitude = isset($data['latitude']) && $data['latitude'] !== '' ? (float) $data['latitude'] : null;
+        $longitude = isset($data['longitude']) && $data['longitude'] !== '' ? (float) $data['longitude'] : null;
+
+        if ($latitude === null || $longitude === null) {
+            return null;
+        }
+
+        $resolved = $this->deliveryAreaResolver->resolve($latitude, $longitude)?->id;
+        if ($resolved && in_array($resolved, $branchAreaIds, true)) {
+            return $resolved;
+        }
+
+        // The global resolver picked a zone this branch doesn't own
+        // (overlapping zones belonging to a different branch) -- fall
+        // back to any of the branch's own zones that actually contains
+        // the point, since ensureInsideBranchZone() already guarantees
+        // one exists by the time this runs.
+        $zones = $branch->zones()->with('deliveryArea')->where('is_active', true)->get();
+
+        return $zones->first(fn (BranchZone $zone) => $zone->deliveryArea && $zone->deliveryArea->containsPoint($latitude, $longitude))
+            ?->deliveryArea?->id;
+    }
+
     private function weeklyTimingsFromFlatHours(?array $existing, ?string $openTime, ?string $closeTime): array
     {
         $timings = $existing ?: Restaurant::getDefaultWeeklyTimings();
@@ -2007,6 +2546,208 @@ class BranchDashboardController extends Controller
             'mollie_organization_id' => $provider === 'mollie' ? $gatewayAccountId : null,
             'mercadopago_collector_id' => $provider === 'mercadopago' ? $gatewayAccountId : null,
         ];
+    }
+
+    /**
+     * Powers branch/orders-show.blade.php's richer layout -- mirrors
+     * Admin\OrderController::getOrderTimeline()/getStatusTimestamp()/
+     * calculateDeliveryDistanceKm() exactly (same duplication precedent
+     * Restaurant\OrderController already uses its own copy too), so the
+     * branch order-details page can look the same as the admin one without
+     * risking a shared-code change to the admin controller.
+     */
+    private function getOrderTimeline($order)
+    {
+        $statuses = [
+            'pending' => 'Order Placed',
+            'confirmed' => 'Order Confirmed',
+            'preparing' => 'Preparing Food',
+            'ready_for_pickup' => 'Ready for Pickup',
+            'reached_pickup' => 'Reached Pickup',
+            'picked_up' => 'Picked Up',
+            'on_the_way' => 'On The Way',
+            'delivered' => 'Delivered',
+        ];
+
+        $statusOrder = array_keys($statuses);
+        $currentIndex = array_search($order->status, $statusOrder);
+
+        $timeline = [];
+        foreach ($statusOrder as $index => $status) {
+            $timeline[] = [
+                'status' => $status,
+                'label' => $statuses[$status],
+                'completed' => $index <= $currentIndex,
+                'timestamp' => $this->getStatusTimestamp($order, $status, $index, $currentIndex),
+            ];
+        }
+
+        return $timeline;
+    }
+
+    private function getStatusTimestamp($order, $status, $index, $currentIndex)
+    {
+        return match ($status) {
+            'pending' => $order->created_at,
+            'confirmed' => $order->confirmed_at,
+            'preparing' => $order->preparing_at ?? $order->confirmed_at,
+            'ready_for_pickup' => $order->ready_at,
+            'reached_pickup' => $order->reached_at,
+            'picked_up', 'on_the_way' => $order->getAttribute('picked_up_at')
+                ?? $order->driver_accepted_at
+                ?? $order->reached_at
+                ?? $order->ready_at,
+            'delivered' => $order->delivered_at,
+            'cancelled' => $order->cancelled_at,
+            default => null,
+        };
+    }
+
+    private function calculateDeliveryDistanceKm(Order $order): ?float
+    {
+        if (($order->order_type ?? 'delivery') === 'takeaway') {
+            return null;
+        }
+
+        if (! $order->restaurant ||
+            $order->restaurant->latitude === null ||
+            $order->restaurant->longitude === null ||
+            $order->delivery_lat === null ||
+            $order->delivery_lng === null) {
+            return null;
+        }
+
+        $earthRadiusKm = 6371;
+        $restaurantLat = deg2rad((float) $order->restaurant->latitude);
+        $restaurantLng = deg2rad((float) $order->restaurant->longitude);
+        $deliveryLat = deg2rad((float) $order->delivery_lat);
+        $deliveryLng = deg2rad((float) $order->delivery_lng);
+
+        $latDelta = $deliveryLat - $restaurantLat;
+        $lngDelta = $deliveryLng - $restaurantLng;
+
+        $a = sin($latDelta / 2) ** 2 + cos($restaurantLat) * cos($deliveryLat) * sin($lngDelta / 2) ** 2;
+        $c = 2 * atan2(sqrt($a), sqrt(1 - $a));
+
+        return round($earthRadiusKm * $c, 2);
+    }
+
+    /**
+     * Normalizes an order's line items for display (name/qty/price/image/
+     * customizations), preferring the real orderItems relation and falling
+     * back to the legacy items JSON column -- the same logic
+     * admin/orders/show.blade.php runs inline in its @php block, moved into
+     * the controller here since branch's view reuses it as-is rather than
+     * duplicating ~90 lines of Blade @php.
+     */
+    private function buildOrderItemsForDisplay(Order $order)
+    {
+        $itemImageUrl = function ($image) {
+            if (is_array($image)) {
+                $image = collect($image)->filter()->first();
+            }
+
+            if (!$image) {
+                return null;
+            }
+
+            $image = (string) $image;
+
+            if (str_starts_with($image, 'http://') || str_starts_with($image, 'https://') || str_starts_with($image, '/')) {
+                return $image;
+            }
+
+            return Storage::disk('public')->url($image);
+        };
+
+        $money = fn ($value) => number_format((float) $value, 2);
+
+        $formatCustomizations = function ($variant, $addOns) use ($money) {
+            $label = function ($option) use ($money) {
+                if (is_string($option)) {
+                    return trim($option) ?: null;
+                }
+                if (!is_array($option)) {
+                    return null;
+                }
+                $name = trim((string) ($option['name'] ?? $option['label'] ?? $option['title'] ?? ''));
+                if ($name === '') {
+                    return null;
+                }
+                $price = (float) ($option['price'] ?? $option['additional_price'] ?? $option['amount'] ?? 0);
+                return $price > 0 ? $name . ' (+' . $money($price) . ')' : $name;
+            };
+
+            $parts = [];
+            $variantName = is_array($variant) ? trim((string) ($variant['name'] ?? '')) : '';
+            if (strcasecmp($variantName, 'Promotion info') !== 0 && ($variantLabel = $label($variant))) {
+                $parts[] = $variantLabel;
+            }
+            foreach ((array) $addOns as $addOn) {
+                if ($addOnLabel = $label($addOn)) {
+                    $parts[] = $addOnLabel;
+                }
+            }
+            return $parts;
+        };
+
+        if ($order->orderItems && $order->orderItems->count() > 0) {
+            return $order->orderItems->map(function ($item) use ($itemImageUrl, $formatCustomizations) {
+                $qty = max(1, (int) ($item->quantity ?? 1));
+                $unitPrice = (float) ($item->unit_price ?? $item->price ?? 0);
+                $totalPrice = (float) ($item->total_price ?? ($unitPrice * $qty));
+
+                if ($unitPrice <= 0 && $totalPrice > 0) {
+                    $unitPrice = $totalPrice / $qty;
+                }
+
+                return [
+                    'name' => optional($item->menuItem)->name ?? $item->item_name ?? 'Item',
+                    'qty' => $qty,
+                    'price' => $unitPrice,
+                    'total' => $totalPrice,
+                    'image' => $itemImageUrl(optional($item->menuItem)->image_url ?? optional($item->menuItem)->image ?? optional($item->menuItem)->images),
+                    'notes' => $item->special_instructions,
+                    'customizations' => $formatCustomizations($item->selected_variant, $item->selected_add_ons),
+                ];
+            })->values();
+        }
+
+        $rawItems = is_array($order->items) ? $order->items : (is_string($order->items) ? (json_decode($order->items, true) ?: []) : []);
+
+        return collect($rawItems)->map(function ($item) use ($itemImageUrl, $formatCustomizations) {
+            if (!is_array($item)) {
+                return null;
+            }
+
+            $qty = max(1, (int) ($item['quantity'] ?? $item['qty'] ?? 1));
+            $unitPrice = (float) ($item['unit_price'] ?? $item['price'] ?? 0);
+            $totalPrice = (float) ($item['total_price'] ?? $item['total'] ?? ($unitPrice * $qty));
+
+            if ($unitPrice <= 0 && $totalPrice > 0) {
+                $unitPrice = $totalPrice / $qty;
+            }
+
+            return [
+                'name' => $item['name'] ?? $item['item_name'] ?? $item['title'] ?? data_get($item, 'menu_item.name') ?? 'Item',
+                'qty' => $qty,
+                'price' => $unitPrice,
+                'total' => $totalPrice,
+                'image' => $itemImageUrl(
+                    $item['image_url']
+                    ?? $item['image']
+                    ?? $item['thumbnail']
+                    ?? $item['images']
+                    ?? data_get($item, 'menu_item.image_url')
+                    ?? data_get($item, 'menu_item.images')
+                ),
+                'notes' => $item['special_instructions'] ?? $item['notes'] ?? null,
+                'customizations' => $formatCustomizations(
+                    $item['selected_variant'] ?? $item['variant'] ?? null,
+                    $item['selected_add_ons'] ?? $item['addons'] ?? null
+                ),
+            ];
+        })->filter()->values();
     }
 }
 

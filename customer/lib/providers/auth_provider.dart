@@ -357,6 +357,7 @@ class AuthProvider extends ChangeNotifier {
     required String name,
     required String phone,
     String? profileImagePath,
+    DateTime? dateOfBirth,
   }) async {
     _setLoading(true);
 
@@ -365,6 +366,7 @@ class AuthProvider extends ChangeNotifier {
         name: name,
         phone: phone,
         profileImagePath: profileImagePath,
+        dateOfBirth: dateOfBirth,
       );
       _setCurrentUser(user);
       _setLoading(false);

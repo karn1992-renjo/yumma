@@ -31,7 +31,8 @@
     <link rel="apple-touch-icon" href="{{ $iconUrl }}">
     <link rel="manifest" href="{{ asset('manifest.webmanifest') }}">
 
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Nunito+Sans:wght@400;500;600;700;800;900&display=swap" onload="this.onload=null;this.rel='stylesheet'">
+    <noscript><link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Nunito+Sans:wght@400;500;600;700;800;900&display=swap" rel="stylesheet"></noscript>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 
     <style>
@@ -51,7 +52,7 @@
             --fm-border: #E2E8F0;
             --fm-shadow: 0 1px 3px rgba(15, 23, 42, .06);
             --fm-shadow-lg: 0 30px 70px rgba(15, 23, 42, .14);
-            --fm-radius: 12px;
+            --fm-radius: 8px;
             --fm-radius-sm: 8px;
             --fm-radius-lg: 24px;
             --fm-radius-full: 9999px;
@@ -72,7 +73,7 @@
         }
 
         body {
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            font-family: 'Nunito Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
             background: var(--fm-bg);
             min-height: 100vh;
             min-height: 100dvh;
@@ -83,6 +84,10 @@
             overflow-x: hidden;
             -webkit-font-smoothing: antialiased;
             -moz-osx-font-smoothing: grayscale;
+        }
+
+        h1, h2, h3, .fm-auth-hero-logo span {
+            font-family: 'Plus Jakarta Sans', sans-serif;
         }
 
         /* ==========================================
@@ -392,10 +397,10 @@
         .fm-auth-input {
             width: 100%;
             padding: 12px 14px 12px 44px;
-            border: 1px solid #D1D5DB;
+            border: 1.2px solid #D8DCE2;
             border-radius: var(--fm-radius);
             font-size: 14px;
-            font-family: 'Inter', sans-serif;
+            font-family: 'Nunito Sans', sans-serif;
             color: var(--fm-text);
             background: #fff;
             transition: all var(--fm-transition);
@@ -405,7 +410,16 @@
 
         .fm-auth-input:focus {
             border-color: var(--fm-primary);
+            border-width: 1.4px;
             box-shadow: 0 0 0 3px color-mix(in srgb, var(--fm-primary) 16%, transparent);
+        }
+
+        #otpCode {
+            font-size: 22px;
+            font-weight: 800;
+            letter-spacing: 10px;
+            text-align: center;
+            padding-left: 14px;
         }
 
         .fm-auth-input::placeholder {
@@ -487,21 +501,35 @@
            SUBMIT BUTTON
            ========================================== */
         .fm-auth-submit {
+            position: relative;
             width: 100%;
+            height: 58px;
             border: none;
             border-radius: var(--fm-radius);
             padding: 13px;
             font-size: 15px;
             font-weight: 700;
-            font-family: 'Inter', sans-serif;
+            font-family: 'Plus Jakarta Sans', sans-serif;
             color: white;
-            background: linear-gradient(135deg, var(--fm-primary), var(--fm-primary-dark));
+            background: linear-gradient(180deg, color-mix(in srgb, var(--fm-primary) 85%, white), var(--fm-primary) 45%, var(--fm-primary-dark));
             cursor: pointer;
-            transition: all var(--fm-transition);
+            transition: transform 0.15s ease, box-shadow 0.15s ease;
             box-shadow: 0 10px 24px color-mix(in srgb, var(--fm-primary) 28%, transparent);
             display: flex;
             align-items: center;
             justify-content: center;
+            overflow: hidden;
+        }
+
+        .fm-auth-submit::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 50%;
+            background: linear-gradient(180deg, rgba(255, 255, 255, 0.22), transparent);
+            pointer-events: none;
         }
 
         .fm-auth-submit span::after {
@@ -521,7 +549,8 @@
         }
 
         .fm-auth-submit:active {
-            transform: scale(0.98);
+            transform: translateY(1px) scale(0.98);
+            box-shadow: 0 4px 12px color-mix(in srgb, var(--fm-primary) 28%, transparent);
         }
 
         .fm-auth-submit:disabled {

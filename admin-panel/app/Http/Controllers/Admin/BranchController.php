@@ -425,8 +425,99 @@ class BranchController extends Controller
             'branch_commission' => Order::whereNotNull('branch_id')->sum('branch_commission'),
             'admin_commission' => Order::whereNotNull('branch_id')->sum('admin_commission'),
         ];
+        $branchWiseSummary = $this->branchWiseSummary($branches);
+        $deliveryCharges = $branch ? $this->branchDeliveryCharges($branch) : null;
+        $incomeType = $request->get('income_type') === 'month' ? 'month' : 'day';
+        $incomeRows = $branch ? $this->branchIncomeRows($branch, $incomeType) : null;
 
-        return view('admin.branches.reports', compact('branches', 'branch', 'analytics', 'global'));
+        return view('admin.branches.reports', compact(
+            'branches', 'branch', 'analytics', 'global',
+            'branchWiseSummary', 'deliveryCharges', 'incomeRows', 'incomeType'
+        ));
+    }
+
+    // Delivery charges this month, per branch -- the admin-wide "which
+    // branch is costing the most in salaried-driver delivery payouts" view
+    // that only existed per-branch (via the branch owner's own dashboard)
+    // before this.
+    private function branchWiseSummary($branches): \Illuminate\Support\Collection
+    {
+        $monthStart = now()->startOfMonth();
+
+        return $branches->map(function (Branch $branch) use ($monthStart) {
+            $deliveryChargesThisMonth = (float) BranchWalletTransaction::where('branch_id', $branch->id)
+                ->where('type', 'salaried_driver_delivery_earning')
+                ->where('created_at', '>=', $monthStart)
+                ->sum('amount');
+            $revenueThisMonth = (float) Order::where('branch_id', $branch->id)
+                ->where('status', 'delivered')
+                ->where('created_at', '>=', $monthStart)
+                ->sum('total');
+
+            return (object) [
+                'branch' => $branch,
+                'delivery_charges_this_month' => $deliveryChargesThisMonth,
+                'revenue_this_month' => $revenueThisMonth,
+            ];
+        });
+    }
+
+    private function branchDeliveryCharges(Branch $branch): array
+    {
+        $query = BranchWalletTransaction::where('branch_id', $branch->id)
+            ->where('type', 'salaried_driver_delivery_earning');
+
+        return [
+            'today' => (float) (clone $query)->whereDate('created_at', today())->sum('amount'),
+            'this_month' => (float) (clone $query)->whereYear('created_at', now()->year)->whereMonth('created_at', now()->month)->sum('amount'),
+            'lifetime' => (float) (clone $query)->sum('amount'),
+        ];
+    }
+
+    // Mirrors BranchDashboardController::buildIncomeRows()'s day/month
+    // toggle and DB-portable date grouping (DATE() works identically on
+    // SQLite and MySQL; month rollups are done in PHP since there's no
+    // single-engine-safe DATE_FORMAT/strftime equivalent).
+    private function branchIncomeRows(Branch $branch, string $type): \Illuminate\Support\Collection
+    {
+        $orders = Order::where('branch_id', $branch->id)->where('status', 'delivered');
+
+        if ($type === 'day') {
+            $from = now()->subDays(29)->startOfDay();
+            $rows = (clone $orders)
+                ->where('created_at', '>=', $from)
+                ->selectRaw('DATE(created_at) as period, COUNT(*) as orders, SUM(total) as revenue, SUM(branch_commission) as commission')
+                ->groupBy('period')
+                ->orderByDesc('period')
+                ->get();
+
+            return $rows->map(fn ($row) => (object) [
+                'period_label' => \Carbon\Carbon::parse($row->period)->format('d M Y'),
+                'orders' => $row->orders,
+                'revenue' => (float) $row->revenue,
+                'commission' => (float) $row->commission,
+            ]);
+        }
+
+        $from = now()->subMonths(11)->startOfMonth();
+        $dayRows = (clone $orders)
+            ->where('created_at', '>=', $from)
+            ->selectRaw('DATE(created_at) as date, COUNT(*) as orders, SUM(total) as revenue, SUM(branch_commission) as commission')
+            ->groupBy('date')
+            ->get();
+
+        return $dayRows
+            ->groupBy(fn ($row) => \Carbon\Carbon::parse($row->date)->format('Y-m'))
+            ->map(function ($rows, $month) {
+                return (object) [
+                    'period_label' => \Carbon\Carbon::parse($month.'-01')->format('M Y'),
+                    'orders' => $rows->sum('orders'),
+                    'revenue' => (float) $rows->sum('revenue'),
+                    'commission' => (float) $rows->sum('commission'),
+                ];
+            })
+            ->sortByDesc(fn ($row, $month) => $month)
+            ->values();
     }
 
     public function auditLogs()
@@ -615,6 +706,19 @@ class BranchController extends Controller
     {
         $orders = $branch->orders();
 
+        // MySQL's TIMESTAMPDIFF()/HOUR() have no SQLite equivalent -- without
+        // these branches this crashes with a 500 against the local sqlite
+        // dev DB. Mirrors the same fix already applied in
+        // Admin\DashboardController::deliveryMinutesExpression() and
+        // Restaurant\DashboardController (day/hour grouping).
+        $isSqlite = DB::connection()->getDriverName() === 'sqlite';
+        $deliveryMinutesExpression = $isSqlite
+            ? '((julianday(delivered_at) - julianday(created_at)) * 24 * 60)'
+            : 'TIMESTAMPDIFF(MINUTE, created_at, delivered_at)';
+        $hourExpression = $isSqlite
+            ? "CAST(strftime('%H', created_at) AS INTEGER)"
+            : 'HOUR(created_at)';
+
         return [
             'total_orders' => (clone $orders)->count(),
             'completed_orders' => (clone $orders)->where('status', 'delivered')->count(),
@@ -626,10 +730,10 @@ class BranchController extends Controller
             'settlement_due' => (float) ($branch->wallet?->balance ?? 0),
             'driver_count' => User::role('delivery_partner')->where('branch_id', $branch->id)->count(),
             'restaurant_count' => $branch->restaurants()->count(),
-            'average_delivery_time' => (clone $orders)->whereNotNull('delivered_at')->avg(DB::raw('TIMESTAMPDIFF(MINUTE, created_at, delivered_at)')),
+            'average_delivery_time' => (clone $orders)->whereNotNull('delivered_at')->avg(DB::raw($deliveryMinutesExpression)),
             'top_restaurants' => Restaurant::where('branch_id', $branch->id)->withCount('orders')->orderByDesc('orders_count')->limit(5)->get(),
             'top_drivers' => User::role('delivery_partner')->where('branch_id', $branch->id)->withCount('orders')->orderByDesc('orders_count')->limit(5)->get(),
-            'peak_hours' => (clone $orders)->selectRaw('HOUR(created_at) as hour, COUNT(*) as orders_count')->groupBy('hour')->orderByDesc('orders_count')->limit(5)->get(),
+            'peak_hours' => (clone $orders)->selectRaw("{$hourExpression} as hour, COUNT(*) as orders_count")->groupBy('hour')->orderByDesc('orders_count')->limit(5)->get(),
         ];
     }
 

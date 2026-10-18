@@ -19,13 +19,13 @@
     <div class="col-md-4">
         <div class="stat-card">
             <p class="text-muted mb-1 small">Available Balance</p>
-            <h3 class="mb-0 fw-bold">{{ $currencySymbol }}{{ number_format($wallet->balance, 2) }}</h3>
+            <h3 class="mb-0 fw-bold">{{ $currencySymbol }}{{ number_format($wallet->balance, $currencyDecimals) }}</h3>
         </div>
     </div>
     <div class="col-md-4">
         <div class="stat-card">
             <p class="text-muted mb-1 small">Locked Balance</p>
-            <h3 class="mb-0 fw-bold">{{ $currencySymbol }}{{ number_format($wallet->locked_balance, 2) }}</h3>
+            <h3 class="mb-0 fw-bold">{{ $currencySymbol }}{{ number_format($wallet->locked_balance, $currencyDecimals) }}</h3>
         </div>
     </div>
     <div class="col-md-4">
@@ -57,8 +57,8 @@
                         <td>{{ optional($transaction->created_at)->format('d M Y, h:i A') }}</td>
                         <td><span class="badge bg-light text-dark border">{{ ucfirst(str_replace('_', ' ', $transaction->type)) }}</span></td>
                         <td>{{ $transaction->description ?: '-' }}</td>
-                        <td class="text-end fw-semibold">{{ $currencySymbol }}{{ number_format($transaction->amount, 2) }}</td>
-                        <td class="text-end">{{ $currencySymbol }}{{ number_format($transaction->balance_after, 2) }}</td>
+                        <td class="text-end fw-semibold">{{ $currencySymbol }}{{ number_format($transaction->amount, $currencyDecimals) }}</td>
+                        <td class="text-end">{{ $currencySymbol }}{{ number_format($transaction->balance_after, $currencyDecimals) }}</td>
                     </tr>
                 @empty
                     <tr>

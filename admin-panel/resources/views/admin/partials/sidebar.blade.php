@@ -30,11 +30,31 @@
     $badge = fn ($count) => $count > 99 ? '99+' : $count;
     $aiFeatureEnabled = app(\App\Services\Ai\AiSettingsService::class)->bool('ai_enabled');
 
+    // A custom role (support, or any role made via admin.roles.*) only sees a
+    // sidebar item once granted the matching permission -- same permission
+    // names RolePermissionController gates the actual routes with, so the
+    // menu never promises a page the user can't actually open. An item with
+    // no 'perm' key at all has no permission representing it yet (its route
+    // is still super_admin|admin only, see routes/web.php's "PERMISSION-GATED
+    // ADMIN SECTIONS" block), so it stays admin-only here too -- fail closed,
+    // not open.
+    $isFullAdmin = auth()->user()->hasAnyRole(['super_admin', 'admin']);
+    $itemVisible = function ($item) use ($isFullAdmin) {
+        if ($isFullAdmin) {
+            return true;
+        }
+
+        return ! empty($item['perm']) && auth()->user()->hasAnyPermission($item['perm']);
+    };
+    $sectionVisible = function ($section) use ($itemVisible) {
+        return (bool) array_filter($section['items'], $itemVisible);
+    };
+
     $sections = [
         [
             'label' => 'Main',
             'items' => [
-                ['label' => 'Dashboard', 'icon' => 'chart-line', 'url' => route('admin.dashboard'), 'active' => ['admin.dashboard']],
+                ['label' => 'Dashboard', 'icon' => 'chart-line', 'url' => route('admin.dashboard'), 'active' => ['admin.dashboard'], 'perm' => ['view_dashboard']],
             ],
         ],
         [
@@ -44,6 +64,7 @@
                     'label' => 'Branch Management',
                     'icon' => 'code-branch',
                     'active' => ['admin.branches*'],
+                    'perm' => ['manage_branches', 'manage_branch_restaurants', 'manage_branch_drivers', 'manage_branch_zones', 'manage_branch_staff'],
                     'children' => [
                         ['label' => 'All Branches', 'url' => route('admin.branches.index'), 'active' => ['admin.branches.index']],
                         ['label' => 'Create Branch', 'url' => route('admin.branches.create'), 'active' => ['admin.branches.create']],
@@ -60,32 +81,34 @@
                     'label' => 'Theatre Management',
                     'icon' => 'film',
                     'active' => ['admin.theatres*'],
+                    'perm' => ['view_theatres', 'create_theatres', 'edit_theatres', 'delete_theatres', 'manage_theatres'],
                     'children' => [
                         ['label' => 'All Theatres', 'url' => route('admin.theatres.index'), 'active' => ['admin.theatres.index']],
                         ['label' => 'Create Theatre', 'url' => route('admin.theatres.create'), 'active' => ['admin.theatres.create']],
                     ],
                 ],
-                ['label' => 'Restaurants', 'icon' => 'store', 'url' => route('admin.restaurants.index'), 'active' => ['admin.restaurants.*']],
-                ['label' => 'Delivery Areas', 'icon' => 'map-location-dot', 'url' => route('admin.delivery-areas.index'), 'active' => ['admin.delivery-areas.*']],
-                ['label' => 'Live Orders', 'icon' => 'bolt', 'url' => route('admin.orders.live'), 'active' => request()->routeIs('admin.orders.live')],
-                ['label' => 'Order Queue', 'icon' => 'clock', 'url' => route('admin.orders.index', ['status' => 'action_required']), 'active' => request()->routeIs('admin.orders.index') && request('status') === 'action_required', 'badge' => $pendingOrdersCount ? $badge($pendingOrdersCount) : null, 'badge_id' => 'adminOrderQueueSidebarBadge'],
-                ['label' => 'Order List', 'icon' => 'box', 'url' => route('admin.orders.index'), 'active' => request()->routeIs('admin.orders.*') && !request()->routeIs('admin.orders.live') && !(request()->routeIs('admin.orders.index') && request('status') === 'action_required')],
-                ['label' => 'POS Dashboard', 'icon' => 'cash-register', 'url' => route('admin.pos.index'), 'active' => ['admin.pos.*']],
-                ['label' => 'Users', 'icon' => 'users', 'url' => route('admin.users.index'), 'active' => ['admin.users.*']],
-                ['label' => 'Drivers', 'icon' => 'truck-fast', 'url' => route('admin.drivers.index'), 'active' => ['admin.drivers.*']],
-                ['label' => 'Restaurant Onboardings', 'icon' => 'store-alt', 'url' => route('admin.restaurant-onboardings.index'), 'active' => ['admin.restaurant-onboardings.*'], 'badge' => $pendingDriverRestaurantOnboardings ? $badge($pendingDriverRestaurantOnboardings) : null],
+                ['label' => 'Restaurants', 'icon' => 'store', 'url' => route('admin.restaurants.index'), 'active' => ['admin.restaurants.*'], 'perm' => ['view_restaurants', 'create_restaurants', 'edit_restaurants', 'delete_restaurants']],
+                ['label' => 'Delivery Areas', 'icon' => 'map-location-dot', 'url' => route('admin.delivery-areas.index'), 'active' => ['admin.delivery-areas.*'], 'perm' => ['view_delivery_areas', 'create_delivery_areas', 'edit_delivery_areas', 'delete_delivery_areas', 'manage_delivery_areas']],
+                ['label' => 'Live Orders', 'icon' => 'bolt', 'url' => route('admin.orders.live'), 'active' => request()->routeIs('admin.orders.live'), 'perm' => ['view_orders', 'create_orders', 'update_order_status', 'cancel_orders', 'view_order_details', 'manage_orders']],
+                ['label' => 'Order Queue', 'icon' => 'clock', 'url' => route('admin.orders.index', ['status' => 'action_required']), 'active' => request()->routeIs('admin.orders.index') && request('status') === 'action_required', 'badge' => $pendingOrdersCount ? $badge($pendingOrdersCount) : null, 'badge_id' => 'adminOrderQueueSidebarBadge', 'perm' => ['view_orders', 'create_orders', 'update_order_status', 'cancel_orders', 'view_order_details', 'manage_orders']],
+                ['label' => 'Order List', 'icon' => 'box', 'url' => route('admin.orders.index'), 'active' => request()->routeIs('admin.orders.*') && !request()->routeIs('admin.orders.live') && !(request()->routeIs('admin.orders.index') && request('status') === 'action_required'), 'perm' => ['view_orders', 'create_orders', 'update_order_status', 'cancel_orders', 'view_order_details', 'manage_orders']],
+                ['label' => 'POS Dashboard', 'icon' => 'cash-register', 'url' => route('admin.pos.index'), 'active' => ['admin.pos.*'], 'perm' => ['view_pos', 'manage_pos']],
+                ['label' => 'Users', 'icon' => 'users', 'url' => route('admin.users.index'), 'active' => ['admin.users.*'], 'perm' => ['view_users', 'create_users', 'edit_users', 'delete_users', 'block_users', 'manage_users']],
+                ['label' => 'Drivers', 'icon' => 'truck-fast', 'url' => route('admin.drivers.index'), 'active' => ['admin.drivers.*'], 'perm' => ['view_drivers', 'create_drivers', 'edit_drivers', 'delete_drivers', 'assign_drivers', 'manage_drivers']],
+                ['label' => 'Restaurant Onboardings', 'icon' => 'store-alt', 'url' => route('admin.restaurant-onboardings.index'), 'active' => ['admin.restaurant-onboardings.*'], 'badge' => $pendingDriverRestaurantOnboardings ? $badge($pendingDriverRestaurantOnboardings) : null, 'perm' => ['view_restaurant_onboardings', 'manage_restaurant_onboardings']],
                 [
                     'label' => 'COD Management',
                     'icon' => 'hand-holding-dollar',
                     'active' => ['admin.cod*'],
+                    'perm' => ['view_cod', 'manage_cod'],
                     'children' => [
                         ['label' => 'Pending Collection', 'url' => route('admin.cod.index'), 'active' => ['admin.cod.index']],
                         ['label' => 'Reconciliation History', 'url' => route('admin.cod.history'), 'active' => ['admin.cod.history']],
                     ],
                 ],
-                ['label' => 'Fleet Dashboard', 'icon' => 'route', 'url' => route('admin.fleet.dashboard'), 'active' => ['admin.fleet.*']],
+                ['label' => 'Fleet Dashboard', 'icon' => 'route', 'url' => route('admin.fleet.dashboard'), 'active' => ['admin.fleet.*'], 'perm' => ['view_fleet']],
 
-                ['label' => 'Partner Applications', 'icon' => 'handshake', 'url' => route('admin.partner-applications.index'), 'active' => ['admin.partner-applications.*'], 'badge' => $pendingPartnerApplications ? $badge($pendingPartnerApplications) : null],
+                ['label' => 'Partner Applications', 'icon' => 'handshake', 'url' => route('admin.partner-applications.index'), 'active' => ['admin.partner-applications.*'], 'badge' => $pendingPartnerApplications ? $badge($pendingPartnerApplications) : null, 'perm' => ['view_partner_applications', 'manage_partner_applications']],
             ],
         ],
         ...($aiFeatureEnabled ? [[
@@ -95,6 +118,7 @@
                     'label' => 'AI Control Center',
                     'icon' => 'brain',
                     'active' => ['admin.ai.*'],
+                    'perm' => ['ai.view', 'ai.configure', 'ai.autonomy.change', 'ai.decisions.view', 'ai.actions.execute', 'ai.approvals.manage', 'ai.finance.view', 'ai.accounting.view', 'ai.cost.view', 'ai.kill_switch'],
                     'children' => [
                         ['label' => 'Dashboard', 'url' => route('admin.ai.index'), 'active' => ['admin.ai.index']],
                         ['label' => 'Settings', 'url' => route('admin.ai.settings'), 'active' => ['admin.ai.settings']],
@@ -108,26 +132,28 @@
         [
             'label' => 'Catalog',
             'items' => [
-                ['label' => 'Banners', 'icon' => 'image', 'url' => route('admin.banners.index'), 'active' => ['admin.banners.*']],
-                ['label' => 'Cuisines', 'icon' => 'egg', 'url' => route('admin.cuisines.index'), 'active' => ['admin.cuisines.*']],
-                ['label' => 'Global Categories', 'icon' => 'layer-group', 'url' => route('admin.global-menu-categories.index'), 'active' => ['admin.global-menu-categories.*']],
-                ['label' => 'Listed Menu', 'icon' => 'utensils', 'url' => route('admin.listed-menu.index'), 'active' => ['admin.listed-menu.*']],
-                ['label' => 'Global Menu Items', 'icon' => 'list-check', 'url' => url('/admin/master-menu-items'), 'active' => ['admin.master-menu-items.index', 'admin.master-menu-items.edit']],
-                ['label' => 'Add Global Item', 'icon' => 'plus-circle', 'url' => url('/admin/master-menu-items/create'), 'active' => ['admin.master-menu-items.create']],
+                ['label' => 'Banners', 'icon' => 'image', 'url' => route('admin.banners.index'), 'active' => ['admin.banners.*'], 'perm' => ['view_banners', 'create_banners', 'edit_banners', 'delete_banners', 'manage_banners']],
+                ['label' => 'Cuisines', 'icon' => 'egg', 'url' => route('admin.cuisines.index'), 'active' => ['admin.cuisines.*'], 'perm' => ['view_cuisines', 'create_cuisines', 'edit_cuisines', 'delete_cuisines', 'manage_cuisines']],
+                ['label' => 'Global Categories', 'icon' => 'layer-group', 'url' => route('admin.global-menu-categories.index'), 'active' => ['admin.global-menu-categories.*'], 'perm' => ['view_global_categories', 'create_global_categories', 'edit_global_categories', 'delete_global_categories']],
+                ['label' => 'Listed Menu', 'icon' => 'utensils', 'url' => route('admin.listed-menu.index'), 'active' => ['admin.listed-menu.*'], 'perm' => ['view_listed_menu', 'create_listed_menu', 'edit_listed_menu', 'delete_listed_menu']],
+                ['label' => 'Global Menu Items', 'icon' => 'list-check', 'url' => url('/admin/master-menu-items'), 'active' => ['admin.master-menu-items.index', 'admin.master-menu-items.edit'], 'perm' => ['view_menu_items', 'create_menu_items', 'edit_menu_items', 'delete_menu_items', 'manage_menu']],
+                ['label' => 'Add Global Item', 'icon' => 'plus-circle', 'url' => url('/admin/master-menu-items/create'), 'active' => ['admin.master-menu-items.create'], 'perm' => ['view_menu_items', 'create_menu_items', 'edit_menu_items', 'delete_menu_items', 'manage_menu']],
             ],
         ],
         [
             'label' => 'Finance',
             'items' => [
-                ['label' => 'Payouts', 'icon' => 'money-bill-wave', 'url' => route('admin.payouts.index'), 'active' => ['admin.payouts.index']],
-                ['label' => 'Restaurant Approvals', 'icon' => 'clipboard-check', 'url' => route('admin.restaurant-approvals.index'), 'active' => ['admin.restaurant-approvals.*'], 'badge' => $pendingRestaurantApprovals ? $badge($pendingRestaurantApprovals) : null],
-                ['label' => 'Wallets', 'icon' => 'wallet', 'url' => route('admin.wallets.index'), 'active' => ['admin.wallets.*']],
-                ['label' => 'Gift Cards', 'icon' => 'gift', 'url' => route('admin.gift-cards.index'), 'active' => ['admin.gift-cards.*']],
-                ['label' => 'Refunds', 'icon' => 'rotate-left', 'url' => route('admin.refunds.index'), 'active' => ['admin.refunds.*']],
-                ['label' => 'Returns', 'icon' => 'box-open', 'url' => route('admin.returns.index'), 'active' => ['admin.returns.*']],
-                ['label' => 'Awaiting Food Return', 'icon' => 'bolt', 'url' => route('admin.orders.index', ['resale_status' => 'expired']), 'active' => [], 'badge' => $awaitingFoodReturnCount ? $badge($awaitingFoodReturnCount) : null],
-                ['label' => 'Commissions', 'icon' => 'percent', 'url' => route('admin.commissions'), 'active' => ['admin.commissions*']],
-                ['label' => 'Analytics', 'icon' => 'chart-pie', 'url' => route('admin.analytics'), 'active' => ['admin.analytics', 'admin.reports.*']],
+                ['label' => 'Payouts', 'icon' => 'money-bill-wave', 'url' => route('admin.payouts.index'), 'active' => ['admin.payouts.index'], 'perm' => ['view_payouts', 'create_payouts', 'process_payouts', 'approve_payouts', 'manage_payouts']],
+                ['label' => 'Restaurant Approvals', 'icon' => 'clipboard-check', 'url' => route('admin.restaurant-approvals.index'), 'active' => ['admin.restaurant-approvals.*'], 'badge' => $pendingRestaurantApprovals ? $badge($pendingRestaurantApprovals) : null, 'perm' => ['view_restaurant_approvals', 'manage_restaurant_approvals']],
+                ['label' => 'Wallets', 'icon' => 'wallet', 'url' => route('admin.wallets.index'), 'active' => ['admin.wallets.*'], 'perm' => ['view_payouts', 'create_payouts', 'process_payouts', 'approve_payouts', 'manage_payouts']],
+                ['label' => 'Gift Cards', 'icon' => 'gift', 'url' => route('admin.gift-cards.index'), 'active' => ['admin.gift-cards.*'], 'perm' => ['view_payouts', 'create_payouts', 'process_payouts', 'approve_payouts', 'manage_payouts']],
+                ['label' => 'Refunds', 'icon' => 'rotate-left', 'url' => route('admin.refunds.index'), 'active' => ['admin.refunds.*'], 'perm' => ['view_refunds', 'manage_refunds']],
+                ['label' => 'Payment Recovery', 'icon' => 'triangle-exclamation', 'url' => route('admin.payment-recovery.index'), 'active' => ['admin.payment-recovery.*'], 'perm' => ['view_refunds', 'manage_refunds']],
+                ['label' => 'Returns', 'icon' => 'box-open', 'url' => route('admin.returns.index'), 'active' => ['admin.returns.*'], 'perm' => ['view_returns', 'manage_returns']],
+                ['label' => 'Awaiting Food Return', 'icon' => 'bolt', 'url' => route('admin.orders.index', ['resale_status' => 'expired']), 'active' => [], 'badge' => $awaitingFoodReturnCount ? $badge($awaitingFoodReturnCount) : null, 'perm' => ['view_orders', 'create_orders', 'update_order_status', 'cancel_orders', 'view_order_details', 'manage_orders']],
+                ['label' => 'Commissions', 'icon' => 'percent', 'url' => route('admin.commissions'), 'active' => ['admin.commissions*'], 'perm' => ['manage_commissions']],
+                ['label' => 'Subscription Plans', 'icon' => 'layer-group', 'url' => route('admin.subscription-plans.index'), 'active' => ['admin.subscription-plans.*'], 'perm' => ['manage_commissions']],
+                ['label' => 'Analytics', 'icon' => 'chart-pie', 'url' => route('admin.analytics'), 'active' => ['admin.analytics', 'admin.reports.*'], 'perm' => ['view_reports', 'export_reports', 'view_sales_report', 'view_earning_report']],
             ],
         ],
         [
@@ -137,6 +163,7 @@
                     'label' => 'Promotion Engine',
                     'icon' => 'tags',
                     'active' => ['admin.promotion-engine.*'],
+                    'perm' => ['view_promos', 'create_promos', 'edit_promos', 'delete_promos', 'manage_promos'],
                     'children' => [
                         ['label' => 'Promotions', 'url' => route('admin.promotion-engine.index'), 'active' => ['admin.promotion-engine.index', 'admin.promotion-engine.create', 'admin.promotion-engine.edit']],
                         ['label' => 'Coupon Library', 'url' => route('admin.promotion-engine.coupons'), 'active' => ['admin.promotion-engine.coupons']],
@@ -152,22 +179,24 @@
                     'label' => 'Ad Campaigns',
                     'icon' => 'rectangle-ad',
                     'active' => ['admin.ads-engine.*'],
+                    'perm' => ['view_ads', 'manage_ads'],
                     'children' => [
                         ['label' => 'Campaigns', 'url' => route('admin.ads-engine.index'), 'active' => ['admin.ads-engine.index']],
                         ['label' => 'Click Log', 'url' => route('admin.ads-engine.click-log'), 'active' => ['admin.ads-engine.click-log']],
                         ['label' => 'Fraud Signals', 'url' => route('admin.ads-engine.fraud-signals'), 'active' => ['admin.ads-engine.fraud-signals']],
                     ],
                 ],
-                ['label' => 'Campaigns', 'icon' => 'bullhorn', 'url' => route('admin.campaigns.index'), 'active' => ['admin.campaigns*']],
-                ['label' => 'Push Notifications', 'icon' => 'paper-plane', 'url' => route('admin.push-notifications.index'), 'active' => ['admin.push-notifications*']],
-                ['label' => 'Notification Templates', 'icon' => 'file-lines', 'url' => route('admin.notification-templates.index'), 'active' => ['admin.notification-templates*']],
-                ['label' => 'Email Templates', 'icon' => 'envelope-open-text', 'url' => route('admin.email-templates.index'), 'active' => ['admin.email-templates*']],
-                ['label' => 'Notification Log', 'icon' => 'list-check', 'url' => route('admin.notification-logs.index'), 'active' => ['admin.notification-logs*']],
-                ['label' => 'Dining Bookings', 'icon' => 'utensils', 'url' => route('admin.dining-bookings.index'), 'active' => ['admin.dining-bookings.*'], 'badge' => $pendingDiningBookings ? $badge($pendingDiningBookings) : null],
-                ['label' => 'Celebration Types', 'icon' => 'champagne-glasses', 'url' => route('admin.celebration-types.index'), 'active' => ['admin.celebration-types*']],
-                ['label' => 'Customer Reviews', 'icon' => 'star', 'url' => route('admin.reviews.index'), 'active' => ['admin.reviews.*']],
-                ['label' => 'Support', 'icon' => 'headset', 'url' => route('admin.support.index'), 'active' => ['admin.support.*'], 'badge' => $openTicketsCount ? $badge($openTicketsCount) : null],
-                ['label' => 'Call History', 'icon' => 'phone-volume', 'url' => route('admin.call-history.index'), 'active' => ['admin.call-history.*']],
+                ['label' => 'Campaigns', 'icon' => 'bullhorn', 'url' => route('admin.campaigns.index'), 'active' => ['admin.campaigns*'], 'perm' => ['manage_campaigns']],
+                ['label' => 'Push Notifications', 'icon' => 'paper-plane', 'url' => route('admin.push-notifications.index'), 'active' => ['admin.push-notifications*'], 'perm' => ['manage_push_notifications']],
+                ['label' => 'Notification Templates', 'icon' => 'file-lines', 'url' => route('admin.notification-templates.index'), 'active' => ['admin.notification-templates*'], 'perm' => ['manage_notification_templates']],
+                ['label' => 'Email Templates', 'icon' => 'envelope-open-text', 'url' => route('admin.email-templates.index'), 'active' => ['admin.email-templates*'], 'perm' => ['manage_email_templates']],
+                ['label' => 'Notification Log', 'icon' => 'list-check', 'url' => route('admin.notification-logs.index'), 'active' => ['admin.notification-logs*'], 'perm' => ['view_notification_logs']],
+                ['label' => 'Dining Bookings', 'icon' => 'utensils', 'url' => route('admin.dining-bookings.index'), 'active' => ['admin.dining-bookings.*'], 'badge' => $pendingDiningBookings ? $badge($pendingDiningBookings) : null, 'perm' => ['view_dining_bookings', 'manage_dining_bookings']],
+                ['label' => 'Celebration Types', 'icon' => 'champagne-glasses', 'url' => route('admin.celebration-types.index'), 'active' => ['admin.celebration-types*'], 'perm' => ['manage_celebration_types']],
+                ['label' => 'Customer Reviews', 'icon' => 'star', 'url' => route('admin.reviews.index'), 'active' => ['admin.reviews.*'], 'perm' => ['view_reviews', 'manage_reviews']],
+                ['label' => 'Restaurant Stories', 'icon' => 'camera-retro', 'url' => route('admin.restaurant-stories.index'), 'active' => ['admin.restaurant-stories.*'], 'perm' => ['view_reviews', 'manage_reviews']],
+                ['label' => 'Support', 'icon' => 'headset', 'url' => route('support.index'), 'active' => ['support.*'], 'badge' => $openTicketsCount ? $badge($openTicketsCount) : null, 'perm' => ['view_support_tickets', 'reply_support_tickets', 'resolve_support_tickets', 'manage_support_tickets']],
+                ['label' => 'Call History', 'icon' => 'phone-volume', 'url' => route('admin.call-history.index'), 'active' => ['admin.call-history.*'], 'perm' => ['view_call_history']],
             ],
         ],
         [
@@ -177,6 +206,7 @@
                     'label' => 'Driver Gigs',
                     'icon' => 'calendar-alt',
                     'active' => ['admin.gigs.*'],
+                    'perm' => ['view_gigs', 'create_gigs', 'edit_gigs', 'delete_gigs', 'book_gigs', 'manage_gigs'],
                     'children' => [
                         ['label' => 'Gig Slots', 'url' => route('admin.gigs.index'), 'active' => ['admin.gigs.index', 'admin.gigs.edit']],
                         ['label' => 'Create Slot', 'url' => route('admin.gigs.create'), 'active' => ['admin.gigs.create']],
@@ -187,9 +217,10 @@
                         ['label' => 'Disputes', 'url' => route('admin.gigs.disputes'), 'active' => ['admin.gigs.disputes']],
                     ],
                 ],
-                ['label' => 'Offline Reasons', 'icon' => 'clock', 'url' => route('admin.offline-reasons.index'), 'active' => ['admin.offline-reasons*']],
-                ['label' => 'Cancellation Limits', 'icon' => 'ban', 'url' => route('admin.cancellation-limits'), 'active' => ['admin.cancellation-limits*']],
-                ['label' => 'Refund Policies', 'icon' => 'hand-holding-dollar', 'url' => route('admin.refund-policies.index'), 'active' => ['admin.refund-policies.*']],
+                ['label' => 'Offline Reasons', 'icon' => 'clock', 'url' => route('admin.offline-reasons.index'), 'active' => ['admin.offline-reasons*'], 'perm' => ['manage_offline_reasons']],
+                ['label' => 'Cancellation Limits', 'icon' => 'ban', 'url' => route('admin.cancellation-limits'), 'active' => ['admin.cancellation-limits*'], 'perm' => ['manage_cancellation_limits']],
+                ['label' => 'Refund Policies', 'icon' => 'hand-holding-dollar', 'url' => route('admin.refund-policies.index'), 'active' => ['admin.refund-policies.*'], 'perm' => ['manage_refund_policies']],
+                ['label' => 'Blog Posts', 'icon' => 'newspaper', 'url' => route('admin.blog.index'), 'active' => ['admin.blog.*'], 'perm' => ['manage_blog_posts']],
             ],
         ],
         [
@@ -199,10 +230,12 @@
                     'label' => 'Settings',
                     'icon' => 'gear',
                     'id' => 'settings-menu',
-                    'active' => ['admin.settings.*', 'admin.home-sections.*', 'admin.delivery-charges*', 'admin.taxes*', 'admin.payout-settings.*', 'admin.restaurant-onboardings.settings', 'admin.settings.tax-charges'],
-                    'children' => [
+                    'active' => ['admin.settings.*', 'admin.home-sections.*', 'admin.delivery-charges*', 'admin.taxes*', 'admin.payout-settings.*', 'admin.restaurant-onboardings.settings', 'admin.settings.tax-charges', 'admin.roles.*'],
+                    'perm' => ['view_settings', 'update_settings', 'manage_settings', 'manage_app_branding', 'manage_payment_gateways'],
+                    'children' => array_values(array_filter([
                         ['label' => 'General Settings', 'url' => route('admin.settings.index'), 'active' => ['admin.settings.index']],
                         ['label' => 'Homepage Content', 'url' => route('admin.settings.homepage'), 'active' => ['admin.settings.homepage']],
+                        ['label' => 'SEO', 'url' => route('admin.settings.seo'), 'active' => ['admin.settings.seo']],
                         ['label' => 'Home Sections', 'url' => route('admin.home-sections.index'), 'active' => ['admin.home-sections.*']],
                         ['label' => 'Privacy & Legal', 'url' => route('admin.settings.privacy'), 'active' => ['admin.settings.privacy']],
                         ['label' => 'Driver Assignment', 'url' => route('admin.settings.driver_assignment'), 'active' => ['admin.settings.driver_assignment']],
@@ -211,6 +244,7 @@
                         ['label' => 'Notifications', 'url' => route('admin.settings.notifications'), 'active' => ['admin.settings.notifications']],
                         ['label' => 'Tax & Charges', 'url' => route('admin.settings.tax-charges'), 'active' => ['admin.settings.tax-charges', 'admin.delivery-charges*', 'admin.taxes*']],
                         ['label' => 'Branding', 'url' => route('admin.settings.branding'), 'active' => ['admin.settings.branding']],
+                        ['label' => 'App Download QR', 'url' => route('admin.settings.app-download'), 'active' => ['admin.settings.app-download']],
                         ['label' => 'Payments', 'url' => route('admin.settings.payment'), 'active' => ['admin.settings.payment']],
                         ['label' => 'Payout Gateway', 'url' => route('admin.payout-settings.edit'), 'active' => ['admin.payout-settings.*']],
                         ['label' => 'Driver Restaurant Onboarding', 'url' => route('admin.restaurant-onboardings.settings'), 'active' => ['admin.restaurant-onboardings.settings']],
@@ -218,7 +252,10 @@
                         ['label' => 'Voice AI', 'url' => route('admin.settings.voice-ai'), 'active' => ['admin.settings.voice-ai']],
                         ['label' => 'Storage Settings', 'url' => route('admin.settings.index') . '#media-storage-settings', 'active' => [], 'attrs' => 'data-storage-settings-link'],
                         ['label' => 'Cron Jobs', 'url' => route('admin.settings.cron'), 'active' => ['admin.settings.cron']],
-                    ],
+                        auth()->user()->hasRole('super_admin')
+                            ? ['label' => 'Roles & Permissions', 'url' => route('admin.roles.index'), 'active' => ['admin.roles.*']]
+                            : null,
+                    ])),
                 ],
             ],
         ],
@@ -272,6 +309,7 @@
             $accItems[] = ['label' => 'Journals', 'icon' => 'file-lines', 'url' => route('admin.accounting.gl.journals'), 'active' => ['admin.accounting.gl.journals']];
             $accItems[] = ['label' => 'Chart of Accounts', 'icon' => 'sitemap', 'url' => route('admin.accounting.gl.chart'), 'active' => ['admin.accounting.gl.chart']];
             $accItems[] = ['label' => 'Documents', 'icon' => 'folder-open', 'url' => route('admin.accounting.documents'), 'active' => ['admin.accounting.documents']];
+            $accItems = array_map(fn ($item) => $item + ['perm' => ['view_accounting', 'manage_accounting']], $accItems);
             $sections[] = ['label' => 'Business Accounting', 'items' => $accItems];
         }
 
@@ -289,10 +327,12 @@
 
     <nav class="sidebar-nav-wrapper admin-sidebar-scroll" aria-label="Admin navigation">
         @foreach($sections as $section)
+            @continue(! $sectionVisible($section))
             <div class="sidebar-section" data-sidebar-section>
                 <div class="sidebar-section-title">{{ $section['label'] }}</div>
                 <ul class="sidebar-nav">
                 @foreach($section['items'] as $item)
+                    @continue(! $itemVisible($item))
                     @php
                         $hasChildren = !empty($item['children']);
                         $activeConfig = $item['active'] ?? [];

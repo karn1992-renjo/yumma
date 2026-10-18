@@ -40,6 +40,8 @@ class OrderProcessingService
                 // No driver available, cancel order
                 $order->status = 'cancelled';
                 $order->cancellation_reason = 'No delivery partners available in your area';
+                $order->cancelled_by_role = 'system';
+                $order->cancelled_by_name = 'Automatic - no driver available';
                 $order->save();
                 app(OrderStatusPushService::class)->notifyParticipants(
                     $order->fresh(['customer', 'restaurant']),

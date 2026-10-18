@@ -75,16 +75,16 @@ class PayoutCalculationService
         $restaurantEarning = $commissionBase - $platformCommission - $gstOnCommission - $gatewayFee - $restaurantDeliverySubsidy - $restaurantPromotionLiability - $longDistanceCharge;
 
         return [
-            'subtotal' => round($commissionBase, 2),
+            'subtotal' => round($commissionBase, AppSetting::currencyDecimals()),
             'commission_type' => $commissionDefinition['type'],
             'commission_value' => $commissionDefinition['value'],
-            'platform_commission' => round($platformCommission, 2),
-            'gst_on_commission' => round($gstOnCommission, 2),
-            'payment_gateway_fee' => round($gatewayFee, 2),
-            'restaurant_delivery_subsidy' => round($restaurantDeliverySubsidy, 2),
-            'promotion_restaurant_liability' => round($restaurantPromotionLiability, 2),
-            'long_distance_charge' => round($longDistanceCharge, 2),
-            'restaurant_earning' => max(0, round($restaurantEarning, 2))
+            'platform_commission' => round($platformCommission, AppSetting::currencyDecimals()),
+            'gst_on_commission' => round($gstOnCommission, AppSetting::currencyDecimals()),
+            'payment_gateway_fee' => round($gatewayFee, AppSetting::currencyDecimals()),
+            'restaurant_delivery_subsidy' => round($restaurantDeliverySubsidy, AppSetting::currencyDecimals()),
+            'promotion_restaurant_liability' => round($restaurantPromotionLiability, AppSetting::currencyDecimals()),
+            'long_distance_charge' => round($longDistanceCharge, AppSetting::currencyDecimals()),
+            'restaurant_earning' => max(0, round($restaurantEarning, AppSetting::currencyDecimals()))
         ];
     }
     
@@ -103,20 +103,73 @@ class PayoutCalculationService
         // separately and never commissioned.
         $grossEarning = $chargeableDeliveryFee + $longDistanceCharge + $multipleOrderBonus;
         $driverCommission = CommissionSetting::calculate(CommissionSetting::DRIVER, $grossEarning);
-        $finalEarning = $grossEarning - $driverCommission;
+        $finalEarning = max(0, round($grossEarning - $driverCommission, AppSetting::currencyDecimals()));
+
+        // A salaried driver is already paid via monthly_salary -- crediting
+        // them the per-order delivery fee too would double-pay for the same
+        // delivery. Divert what would have been their earning to admin/branch
+        // instead (see DeliveryChargeSetting::getSalaryDriverDeliveryRecipient()).
+        $isSalariedDriver = $order->driver?->earning_mode === 'salary';
+        $driverEarning = $isSalariedDriver ? 0.0 : $finalEarning;
+        $divertedDeliveryEarning = $isSalariedDriver ? $finalEarning : 0.0;
 
         return [
             'delivery_fee' => $customerDeliveryFee,
-            'delivery_base' => round($chargeableDeliveryFee, 2),
-            'chargeable_delivery_fee' => round($chargeableDeliveryFee, 2),
-            'free_delivery_contribution' => round($freeDeliveryContribution, 2),
-            'long_distance_charge' => round($longDistanceCharge, 2),
-            'gross_earning' => round($grossEarning, 2),
-            'driver_commission' => round($driverCommission, 2),
+            'delivery_base' => round($chargeableDeliveryFee, AppSetting::currencyDecimals()),
+            'chargeable_delivery_fee' => round($chargeableDeliveryFee, AppSetting::currencyDecimals()),
+            'free_delivery_contribution' => round($freeDeliveryContribution, AppSetting::currencyDecimals()),
+            'long_distance_charge' => round($longDistanceCharge, AppSetting::currencyDecimals()),
+            'gross_earning' => round($grossEarning, AppSetting::currencyDecimals()),
+            'driver_commission' => round($driverCommission, AppSetting::currencyDecimals()),
             'driver_commission_type' => CommissionSetting::getCalculationType(CommissionSetting::DRIVER),
             'driver_commission_value' => (float) CommissionSetting::getRate(CommissionSetting::DRIVER),
-            'multiple_order_bonus' => round($multipleOrderBonus, 2),
-            'driver_earning' => max(0, round($finalEarning, 2))
+            'multiple_order_bonus' => round($multipleOrderBonus, AppSetting::currencyDecimals()),
+            'driver_earning' => $driverEarning,
+            'is_salaried_driver' => $isSalariedDriver,
+            'diverted_delivery_earning' => round($divertedDeliveryEarning, AppSetting::currencyDecimals()),
+        ];
+    }
+
+    /**
+     * Splits a salaried driver's diverted delivery earning between branch and
+     * admin per DeliveryChargeSetting. Falls back to 100% admin when the
+     * recipient is 'admin' or the order has no branch to share with.
+     */
+    protected function divertedDeliveryEarningShares(Order $order, float $divertedEarning): array
+    {
+        if ($divertedEarning <= 0) {
+            return ['branch' => 0.0, 'admin' => 0.0, 'driver_branch_id' => null, 'driver_branch_amount' => 0.0];
+        }
+
+        // A salaried driver's own branch mapping is a stronger, unambiguous
+        // signal than the order's own branch_id -- when the driver belongs
+        // to a branch, 100% of the diverted delivery earning goes to that
+        // branch (not the admin/branch % split below, and not order.branch_id,
+        // which may be a different branch or null). Credited independently
+        // by the caller via BranchManagementService::creditDriverSalaryDeliveryEarning()
+        // so it never touches order.branch_commission.
+        $driverBranchId = $order->driver?->branch_id;
+        if ($driverBranchId) {
+            return [
+                'branch' => 0.0,
+                'admin' => 0.0,
+                'driver_branch_id' => (int) $driverBranchId,
+                'driver_branch_amount' => round($divertedEarning, AppSetting::currencyDecimals()),
+            ];
+        }
+
+        $recipient = DeliveryChargeSetting::getSalaryDriverDeliveryRecipient();
+        if ($recipient !== 'branch' || ! $order->branch_id) {
+            return ['branch' => 0.0, 'admin' => round($divertedEarning, AppSetting::currencyDecimals()), 'driver_branch_id' => null, 'driver_branch_amount' => 0.0];
+        }
+
+        $branchShare = round($divertedEarning * $this->normalizePercentage(DeliveryChargeSetting::getSalaryDriverBranchSharePercent()), AppSetting::currencyDecimals());
+
+        return [
+            'branch' => $branchShare,
+            'admin' => round($divertedEarning - $branchShare, AppSetting::currencyDecimals()),
+            'driver_branch_id' => null,
+            'driver_branch_amount' => 0.0,
         ];
     }
 
@@ -147,18 +200,18 @@ class PayoutCalculationService
                     'vendor_type' => 'restaurant',
                     'vendor_id' => (int) $restaurantId,
                     'user_id' => $restaurant?->owner_id,
-                    'gross_amount' => round($gross, 2),
-                    'platform_commission' => round($commission, 2),
-                    'gst_on_commission' => round($gst, 2),
-                    'payment_gateway_fee' => round($gatewayFee, 2),
-                    'delivery_fee' => round($delivery, 2),
-                    'admin_delivery_subsidy' => round($adminDeliverySubsidy, 2),
-                    'restaurant_delivery_subsidy' => round($restaurantDeliverySubsidy, 2),
-                    'amount' => round($net, 2),
+                    'gross_amount' => round($gross, AppSetting::currencyDecimals()),
+                    'platform_commission' => round($commission, AppSetting::currencyDecimals()),
+                    'gst_on_commission' => round($gst, AppSetting::currencyDecimals()),
+                    'payment_gateway_fee' => round($gatewayFee, AppSetting::currencyDecimals()),
+                    'delivery_fee' => round($delivery, AppSetting::currencyDecimals()),
+                    'admin_delivery_subsidy' => round($adminDeliverySubsidy, AppSetting::currencyDecimals()),
+                    'restaurant_delivery_subsidy' => round($restaurantDeliverySubsidy, AppSetting::currencyDecimals()),
+                    'amount' => round($net, AppSetting::currencyDecimals()),
                     'order_ids' => $orders->pluck('id')->values()->all(),
                     'breakdown' => [
                         'order_count' => $orders->count(),
-                        'long_distance_charge' => round($longDistanceCharge, 2),
+                        'long_distance_charge' => round($longDistanceCharge, AppSetting::currencyDecimals()),
                         'commission_rules' => $orders->map(fn ($order) => [
                             'type' => $order->restaurant_commission_type,
                             'value' => (float) $order->restaurant_commission_value,
@@ -197,19 +250,19 @@ class PayoutCalculationService
                     'vendor_type' => 'driver',
                     'vendor_id' => (int) $driverId,
                     'user_id' => (int) $driverId,
-                    'gross_amount' => round($gross, 2),
-                    'platform_commission' => round($driverCommission, 2),
-                    'delivery_fee' => round($gross, 2),
-                    'admin_delivery_subsidy' => round($adminDeliverySubsidy, 2),
+                    'gross_amount' => round($gross, AppSetting::currencyDecimals()),
+                    'platform_commission' => round($driverCommission, AppSetting::currencyDecimals()),
+                    'delivery_fee' => round($gross, AppSetting::currencyDecimals()),
+                    'admin_delivery_subsidy' => round($adminDeliverySubsidy, AppSetting::currencyDecimals()),
                     'restaurant_delivery_subsidy' => 0,
                     'admin_delivery_commission' => 0,
-                    'driver_deduction' => round($driverCommission, 2),
-                    'batch_bonus' => round($batchBonus, 2),
-                    'amount' => round($net, 2),
+                    'driver_deduction' => round($driverCommission, AppSetting::currencyDecimals()),
+                    'batch_bonus' => round($batchBonus, AppSetting::currencyDecimals()),
+                    'amount' => round($net, AppSetting::currencyDecimals()),
                     'order_ids' => $orders->pluck('id')->values()->all(),
                     'breakdown' => [
                         'order_count' => $orders->count(),
-                        'long_distance_charge' => round($longDistanceCharge, 2),
+                        'long_distance_charge' => round($longDistanceCharge, AppSetting::currencyDecimals()),
                         'driver_commission_rules' => $orders->map(fn ($order) => [
                             'type' => $order->driver_deduction_type,
                             'value' => (float) $order->driver_deduction_value,
@@ -227,7 +280,7 @@ class PayoutCalculationService
             ->get()
             ->groupBy('driver_id')
             ->each(function ($incentives, $driverId) use ($rows) {
-                $amount = round((float) $incentives->sum('amount'), 2);
+                $amount = round((float) $incentives->sum('amount'), AppSetting::currencyDecimals());
                 $row = $rows->get((int) $driverId, [
                     'driver_id' => (int) $driverId,
                     'vendor_type' => 'driver',
@@ -249,8 +302,8 @@ class PayoutCalculationService
                     ],
                 ]);
 
-                $row['gross_amount'] = round((float) ($row['gross_amount'] ?? 0) + $amount, 2);
-                $row['amount'] = round((float) ($row['amount'] ?? 0) + $amount, 2);
+                $row['gross_amount'] = round((float) ($row['gross_amount'] ?? 0) + $amount, AppSetting::currencyDecimals());
+                $row['amount'] = round((float) ($row['amount'] ?? 0) + $amount, AppSetting::currencyDecimals());
                 $row['breakdown']['restaurant_onboarding_incentive_amount'] = $amount;
                 $row['breakdown']['onboarding_incentive_count'] = $incentives->count();
                 $row['breakdown']['onboarding_incentive_ids'] = $incentives->pluck('id')->values()->all();
@@ -304,7 +357,7 @@ class PayoutCalculationService
 
                 $claimableIncentiveIds = $incentives->pluck('id')->values()->all();
                 $incentiveOnboardingIds = $incentives->pluck('restaurant_onboarding_id')->values()->all();
-                $incentiveAmount = round((float) $incentives->sum('amount'), 2);
+                $incentiveAmount = round((float) $incentives->sum('amount'), AppSetting::currencyDecimals());
             }
 
             if ($claimableIds === [] && $claimableIncentiveIds === []) {
@@ -318,8 +371,8 @@ class PayoutCalculationService
             if (! $isRestaurantPayout && ($incentiveIds !== [] || isset($row['breakdown']['restaurant_onboarding_incentive_amount']))) {
                 $originalIncentiveAmount = (float) ($row['breakdown']['restaurant_onboarding_incentive_amount'] ?? 0);
                 $orderAmount = max(0, (float) ($row['amount'] ?? 0) - $originalIncentiveAmount);
-                $row['amount'] = round($orderAmount + $incentiveAmount, 2);
-                $row['gross_amount'] = round((float) ($row['gross_amount'] ?? 0) - $originalIncentiveAmount + $incentiveAmount, 2);
+                $row['amount'] = round($orderAmount + $incentiveAmount, AppSetting::currencyDecimals());
+                $row['gross_amount'] = round((float) ($row['gross_amount'] ?? 0) - $originalIncentiveAmount + $incentiveAmount, AppSetting::currencyDecimals());
                 $row['breakdown']['restaurant_onboarding_incentive_amount'] = $incentiveAmount;
                 $row['breakdown']['onboarding_incentive_count'] = count($claimableIncentiveIds);
                 $row['breakdown']['onboarding_incentive_ids'] = $claimableIncentiveIds;
@@ -333,9 +386,9 @@ class PayoutCalculationService
 
             // --- Income-tax TDS / GST TCS at settlement (toggle-gated) ------
             $taxDeductions = $this->resolveSettlementTaxes($row, $orderIds, $isRestaurantPayout, $amount);
-            $taxTotal = round(($taxDeductions['tds']?->amount ?? 0) + ($taxDeductions['tcs']?->amount ?? 0), 2);
+            $taxTotal = round(($taxDeductions['tds']?->amount ?? 0) + ($taxDeductions['tcs']?->amount ?? 0), AppSetting::currencyDecimals());
 
-            $deduction = round((float) ($row['deduction_amount'] ?? 0) + $taxTotal, 2);
+            $deduction = round((float) ($row['deduction_amount'] ?? 0) + $taxTotal, AppSetting::currencyDecimals());
             $netAmount = max(0, $amount - $deduction);
             $wallet = Wallet::where('user_id', $row['user_id'] ?? 0)->lockForUpdate()->first();
             if (! $wallet || (float) $wallet->balance < $netAmount) {
@@ -343,9 +396,9 @@ class PayoutCalculationService
                     'vendor_type' => $row['vendor_type'] ?? null,
                     'vendor_id' => $row['vendor_id'] ?? null,
                     'user_id' => $row['user_id'] ?? null,
-                    'required' => round($netAmount, 2),
-                    'wallet_balance' => $wallet ? round((float) $wallet->balance, 2) : null,
-                    'wallet_locked' => $wallet ? round((float) $wallet->locked_balance, 2) : null,
+                    'required' => round($netAmount, AppSetting::currencyDecimals()),
+                    'wallet_balance' => $wallet ? round((float) $wallet->balance, AppSetting::currencyDecimals()) : null,
+                    'wallet_locked' => $wallet ? round((float) $wallet->locked_balance, AppSetting::currencyDecimals()) : null,
                     'order_ids' => $orderIds,
                     'batch_id' => $batchId,
                 ]);
@@ -375,7 +428,7 @@ class PayoutCalculationService
                 'amount' => $netAmount,
                 'deduction_amount' => $deduction,
                 'net_amount' => $netAmount,
-                'pre_tax_amount' => round($amount - (float) ($row['deduction_amount'] ?? 0), 2),
+                'pre_tax_amount' => round($amount - (float) ($row['deduction_amount'] ?? 0), AppSetting::currencyDecimals()),
                 'tds_amount' => $taxDeductions['tds']?->amount ?? null,
                 'tds_section' => $taxDeductions['tds']?->applies() ? $taxDeductions['tds']->section : null,
                 'tcs_amount' => $taxDeductions['tcs']?->amount ?? null,
@@ -475,7 +528,7 @@ class PayoutCalculationService
             $out['party'] = $party;
 
             // 194-O base = gross food sales ex-GST = sum(orders.subtotal).
-            $grossExGst = round((float) ($row['gross_amount'] ?? 0), 2);
+            $grossExGst = round((float) ($row['gross_amount'] ?? 0), AppSetting::currencyDecimals());
             $out['tds'] = $tds->restaurant194O($party, $grossExGst, $fy);
 
             $orders = Order::whereIn('id', $orderIds)->get(['id', 'tax_breakdown']);
@@ -542,14 +595,14 @@ class PayoutCalculationService
         $orders = Order::whereIn('id', $orderIds)->get();
 
         if ($isRestaurantPayout) {
-            $row['gross_amount'] = round((float) $orders->sum('subtotal'), 2);
-            $row['platform_commission'] = round((float) $orders->sum('platform_commission'), 2);
-            $row['gst_on_commission'] = round((float) $orders->sum('gst_on_commission'), 2);
-            $row['payment_gateway_fee'] = round((float) $orders->sum('payment_gateway_fee'), 2);
-            $row['delivery_fee'] = round((float) $orders->sum('delivery_fee'), 2);
-            $row['admin_delivery_subsidy'] = round((float) $orders->sum('admin_delivery_subsidy'), 2);
-            $row['restaurant_delivery_subsidy'] = round((float) $orders->sum('restaurant_delivery_subsidy'), 2);
-            $row['amount'] = round((float) $orders->sum('restaurant_earning'), 2);
+            $row['gross_amount'] = round((float) $orders->sum('subtotal'), AppSetting::currencyDecimals());
+            $row['platform_commission'] = round((float) $orders->sum('platform_commission'), AppSetting::currencyDecimals());
+            $row['gst_on_commission'] = round((float) $orders->sum('gst_on_commission'), AppSetting::currencyDecimals());
+            $row['payment_gateway_fee'] = round((float) $orders->sum('payment_gateway_fee'), AppSetting::currencyDecimals());
+            $row['delivery_fee'] = round((float) $orders->sum('delivery_fee'), AppSetting::currencyDecimals());
+            $row['admin_delivery_subsidy'] = round((float) $orders->sum('admin_delivery_subsidy'), AppSetting::currencyDecimals());
+            $row['restaurant_delivery_subsidy'] = round((float) $orders->sum('restaurant_delivery_subsidy'), AppSetting::currencyDecimals());
+            $row['amount'] = round((float) $orders->sum('restaurant_earning'), AppSetting::currencyDecimals());
         } else {
             $gross = (float) $orders->sum('driver_delivery_base');
             $driverCommission = (float) $orders->sum(fn ($order) =>
@@ -558,15 +611,15 @@ class PayoutCalculationService
             $batchBonus = (float) $orders->sum('batch_bonus');
             $adminDeliverySubsidy = (float) $orders->sum('admin_delivery_subsidy');
 
-            $row['gross_amount'] = round($gross, 2);
-            $row['platform_commission'] = round($driverCommission, 2);
-            $row['delivery_fee'] = round($gross, 2);
-            $row['admin_delivery_subsidy'] = round($adminDeliverySubsidy, 2);
+            $row['gross_amount'] = round($gross, AppSetting::currencyDecimals());
+            $row['platform_commission'] = round($driverCommission, AppSetting::currencyDecimals());
+            $row['delivery_fee'] = round($gross, AppSetting::currencyDecimals());
+            $row['admin_delivery_subsidy'] = round($adminDeliverySubsidy, AppSetting::currencyDecimals());
             $row['restaurant_delivery_subsidy'] = 0;
             $row['admin_delivery_commission'] = 0;
-            $row['driver_deduction'] = round($driverCommission, 2);
-            $row['batch_bonus'] = round($batchBonus, 2);
-            $row['amount'] = round((float) $orders->sum('driver_earning'), 2);
+            $row['driver_deduction'] = round($driverCommission, AppSetting::currencyDecimals());
+            $row['batch_bonus'] = round($batchBonus, AppSetting::currencyDecimals());
+            $row['amount'] = round((float) $orders->sum('driver_earning'), AppSetting::currencyDecimals());
         }
 
         $row['order_ids'] = array_values($orderIds);
@@ -604,6 +657,15 @@ class PayoutCalculationService
                 return false;
             }
 
+            // For a salaried driver, calculateDriverEarning() already zeroes
+            // driver_earning, so no wallet double-pay happens below. The
+            // diverted amount is NOT re-attributed to branch_commission here
+            // (unlike the normal processOrderEarnings() path) -- a failed
+            // delivery's flash-resale outcome is resolved separately, later,
+            // by finalizeRestaurantEarningForFailedDelivery(), and re-deriving
+            // a consistent branch/admin split across both calls for this rare
+            // overlap isn't worth the complexity. It just stays as retained
+            // admin revenue instead, which is safe (no money is lost).
             $driverEarningData = $this->calculateDriverEarning($order);
 
             $order->update([
@@ -677,7 +739,7 @@ class PayoutCalculationService
             }
 
             if ($outcome === 'returned') {
-                $restaurantEarning = round((float) $order->subtotal * 0.5, 2);
+                $restaurantEarning = round((float) $order->subtotal * 0.5, AppSetting::currencyDecimals());
                 $order->update([
                     'restaurant_earning' => $restaurantEarning,
                     'restaurant_earning_processed_at' => now(),
@@ -689,7 +751,7 @@ class PayoutCalculationService
                 $restaurantEarning = (float) $restaurantEarningData['restaurant_earning'];
                 $restaurantCommission = (float) $restaurantEarningData['platform_commission'];
                 $branchShare = $this->branchCommissionShare($order, $restaurantCommission);
-                $adminRestaurantShare = round($restaurantCommission - $branchShare, 2);
+                $adminRestaurantShare = round($restaurantCommission - $branchShare, AppSetting::currencyDecimals());
                 $adminDeliverySubsidy = max(0, (float) ($order->admin_delivery_subsidy ?? 0));
 
                 $order->update([
@@ -746,7 +808,7 @@ class PayoutCalculationService
         DB::beginTransaction();
         
         try {
-            $order = Order::with(['restaurant', 'branch'])->lockForUpdate()->findOrFail($order->id);
+            $order = Order::with(['restaurant', 'branch', 'driver'])->lockForUpdate()->findOrFail($order->id);
             if ($order->status !== 'delivered' || $order->payout_processed) {
                 DB::rollBack();
                 return false;
@@ -761,9 +823,10 @@ class PayoutCalculationService
             $driverEarningData = $this->calculateDriverEarning($order);
             $restaurantCommission = (float) $restaurantEarningData['platform_commission'];
             $branchShare = $this->branchCommissionShare($order, $restaurantCommission);
-            $adminRestaurantShare = round($restaurantCommission - $branchShare, 2);
+            $adminRestaurantShare = round($restaurantCommission - $branchShare, AppSetting::currencyDecimals());
             $adminDeliverySubsidy = max(0, (float) ($order->admin_delivery_subsidy ?? 0));
             $restaurantEarningForRecord = $isResaleOrder ? 0.0 : (float) $restaurantEarningData['restaurant_earning'];
+            $divertedShares = $this->divertedDeliveryEarningShares($order, (float) $driverEarningData['diverted_delivery_earning']);
 
             $order->update([
                 'platform_commission' => $isResaleOrder ? 0 : $restaurantEarningData['platform_commission'],
@@ -781,12 +844,13 @@ class PayoutCalculationService
                 'driver_deduction_type' => $driverEarningData['driver_commission_type'],
                 'driver_deduction_value' => $driverEarningData['driver_commission_value'],
                 'batch_bonus' => $driverEarningData['multiple_order_bonus'],
-                'branch_commission' => $branchShare,
+                'branch_commission' => round($branchShare + $divertedShares['branch'], AppSetting::currencyDecimals()),
                 'admin_commission' => round(
                     $adminRestaurantShare
                     + (float) $driverEarningData['driver_commission']
                     + (float) ($order->platform_fee ?? 0)
-                    - $adminDeliverySubsidy,
+                    - $adminDeliverySubsidy
+                    + $divertedShares['admin'],
                     2
                 ),
                 'payout_processed' => true,
@@ -825,7 +889,16 @@ class PayoutCalculationService
                 }
             }
             
+            if (($divertedShares['driver_branch_id'] ?? null) && ($divertedShares['driver_branch_amount'] ?? 0) > 0) {
+                app(BranchManagementService::class)->creditDriverSalaryDeliveryEarning(
+                    $order,
+                    $divertedShares['driver_branch_id'],
+                    $divertedShares['driver_branch_amount']
+                );
+            }
+
             app(RestaurantOnboardingService::class)->markFirstSuccessfulOrder($order->restaurant, $order->driver);
+            app(DriverReferralService::class)->settleOnFirstDelivery($order);
 
             DB::commit();
             return true;
@@ -845,6 +918,12 @@ class PayoutCalculationService
 
     protected function restaurantCommissionAmount(Order $order, float $base): float
     {
+        if ($order->restaurant?->isOnSubscriptionBilling()) {
+            // Subscription billing replaces commission entirely -- the flat
+            // subscription fee is the restaurant's only platform cost.
+            return 0.0;
+        }
+
         $restaurantRate = $order->restaurant?->commission_rate;
         $type = $order->restaurant?->commission_calculation_type;
 
@@ -857,11 +936,15 @@ class PayoutCalculationService
             ? (float) $restaurantRate
             : $base * $this->normalizePercentage($restaurantRate);
 
-        return round(min($base, max(0, $amount)), 2);
+        return round(min($base, max(0, $amount)), AppSetting::currencyDecimals());
     }
 
     protected function restaurantCommissionDefinition(Order $order): array
     {
+        if ($order->restaurant?->isOnSubscriptionBilling()) {
+            return ['type' => CommissionSetting::TYPE_PERCENTAGE, 'value' => 0.0];
+        }
+
         $type = $order->restaurant?->commission_calculation_type;
         $value = $order->restaurant?->commission_rate;
 
@@ -886,7 +969,7 @@ class PayoutCalculationService
 
         $branchShareRate = (float) ($order->branch?->branch_share_percent ?? 70);
 
-        return round($restaurantCommission * $this->normalizePercentage($branchShareRate), 2);
+        return round($restaurantCommission * $this->normalizePercentage($branchShareRate), AppSetting::currencyDecimals());
     }
 
     protected function creditIncomeWallet(User $user, float $amount, string $referenceType, int $referenceId, string $description): void
@@ -998,7 +1081,7 @@ class PayoutCalculationService
             );
         }
 
-        return round((float) DeliveryChargeSetting::getDeliveryCharge($distance), 2);
+        return round((float) DeliveryChargeSetting::getDeliveryCharge($distance), AppSetting::currencyDecimals());
     }
 
     protected function freeDeliveryContribution(Order $order, float $chargeableDeliveryFee): float
@@ -1036,7 +1119,7 @@ class PayoutCalculationService
             return 0.0;
         }
 
-        return round($chargeableDeliveryFee * min($contributionPercent, 100) / 100, 2);
+        return round($chargeableDeliveryFee * min($contributionPercent, 100) / 100, AppSetting::currencyDecimals());
     }
 
     protected function bonusForBatchCount(int $batchCount): float

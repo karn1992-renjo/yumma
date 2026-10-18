@@ -7,8 +7,13 @@
 <div class="page-header">
     <div class="d-flex justify-content-between align-items-center">
         <div>
-            <h1>Edit Category</h1>
-            <p>Update category: <strong>{{ $category->name }}</strong></p>
+            <h1>{{ $category->parent_id ? 'Edit Subcategory' : 'Edit Category' }}</h1>
+            <p>
+                Update: <strong>{{ $category->name }}</strong>
+                @if($category->parent)
+                    <span class="badge bg-light text-dark border ms-2">Subcategory of {{ $category->parent->name }}</span>
+                @endif
+            </p>
         </div>
         <a href="{{ route('restaurant.categories.index') }}" class="btn btn-outline-primary rounded-3">
             <i class="fas fa-arrow-left me-2"></i> Back to Categories

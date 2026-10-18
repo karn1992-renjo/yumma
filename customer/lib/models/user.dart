@@ -20,6 +20,7 @@ class User {
   final int rewardPointsBalance;
   final int? deliveredOrdersCount;
   final String? driverCode;
+  final DateTime? dateOfBirth;
   final DateTime createdAt;
   final Map<String, dynamic> settings;
 
@@ -39,6 +40,7 @@ class User {
     this.rewardPointsBalance = 0,
     this.deliveredOrdersCount,
     this.driverCode,
+    this.dateOfBirth,
     required this.createdAt,
     this.settings = const {},
   });
@@ -77,6 +79,9 @@ class User {
       deliveredOrdersCount: json['delivered_orders_count'] != null
           ? int.tryParse('${json['delivered_orders_count']}')
           : null,
+      dateOfBirth: json['date_of_birth'] != null
+          ? DateTime.tryParse(json['date_of_birth'].toString())
+          : null,
       createdAt: DateTime.parse(
         json['created_at'] ?? DateTime.now().toIso8601String(),
       ),
@@ -99,6 +104,7 @@ class User {
       'referral_code': referralCode,
       'referred_by_user_id': referredByUserId,
       'reward_points_balance': rewardPointsBalance,
+      'date_of_birth': dateOfBirth?.toIso8601String(),
       'created_at': createdAt.toIso8601String(),
       'settings': settings,
     };

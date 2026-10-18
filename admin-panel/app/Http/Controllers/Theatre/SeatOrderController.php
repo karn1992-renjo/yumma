@@ -63,6 +63,7 @@ class SeatOrderController extends Controller
                 'screen_name' => $screen->name,
                 'aisle_handoff_only' => (bool) $theatre->aisle_handoff_only,
                 'currency_symbol' => CurrencyFormatter::symbolFor($currency),
+                'currency_decimals' => AppSetting::currencyDecimals(),
                 // Only Razorpay has a browser SDK wired up here; on a
                 // deployment running another provider the page falls back
                 // to wallet/COD rather than pretending to offer a gateway

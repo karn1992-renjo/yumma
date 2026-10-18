@@ -2,6 +2,109 @@
 
 @section('title', 'Track Order')
 
+@section('styles')
+<style>
+    .status-chip {
+        display: inline-block;
+        border-radius: 6px;
+        padding: 6px 10px;
+        font-size: 11.5px;
+        font-weight: 900;
+        text-transform: uppercase;
+        letter-spacing: 0.03em;
+    }
+
+    .status-chip.status-cancelled { color: #E11D28; background: #FFECEC; }
+    .status-chip.status-delivered { color: #169B3A; background: #E8F8EA; }
+    .status-chip.status-live { color: #11832D; background: #E6F7E7; }
+    .status-chip.status-confirmed { color: #2563EB; background: #EAF2FF; }
+
+    .order-timeline {
+        display: flex;
+        flex-direction: column;
+    }
+
+    .timeline-step {
+        display: flex;
+        gap: 14px;
+    }
+
+    .timeline-marker {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+    }
+
+    .timeline-circle {
+        width: 20px;
+        height: 20px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 10px;
+        color: white;
+        flex-shrink: 0;
+        background: #F2F2F2;
+        border: 2px solid #D8D8D8;
+        box-sizing: border-box;
+    }
+
+    .timeline-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--primary);
+    }
+
+    .timeline-step.done .timeline-circle {
+        background: var(--primary);
+        border-color: var(--primary);
+    }
+
+    .timeline-step.current .timeline-circle {
+        background: white;
+        border-color: var(--primary);
+    }
+
+    .timeline-line {
+        width: 2px;
+        flex: 1;
+        min-height: 24px;
+        background: #E4E4E4;
+    }
+
+    .timeline-step.done .timeline-line {
+        background: var(--primary);
+    }
+
+    .timeline-content {
+        padding-bottom: 22px;
+    }
+
+    .timeline-label {
+        font-size: 14px;
+        font-weight: 800;
+        color: #9A9A9A;
+    }
+
+    .timeline-step.done .timeline-label {
+        color: #171717;
+    }
+
+    .timeline-step.current .timeline-label {
+        color: var(--primary);
+    }
+
+    .timeline-sub {
+        font-size: 12px;
+        color: var(--app-muted, #6B7280);
+        margin-top: 2px;
+        font-weight: 500;
+    }
+</style>
+@endsection
+
 @section('content')
 @php
     $currencySymbol = App\Models\AppSetting::sanitizedCurrencySymbol();
@@ -27,6 +130,12 @@
     $currentStatus = $isTakeaway && $order->status === 'picked_up' ? 'delivered' : $order->status;
     $currentIndex = array_search($currentStatus, $statusOrder, true);
     $currentIndex = $currentIndex === false ? 0 : $currentIndex;
+    $trackChipClass = match(true) {
+        $order->status === 'cancelled' => 'status-cancelled',
+        in_array($order->status, ['delivered', 'completed']) => 'status-delivered',
+        in_array($order->status, ['on_the_way', 'picked_up', 'out_for_delivery']) => 'status-live',
+        default => 'status-confirmed',
+    };
 @endphp
 <div class="container py-5" style="max-width: 980px;">
     <div class="d-flex justify-content-between align-items-center mb-4">
@@ -41,32 +150,40 @@
         <div class="card-body p-4 p-lg-5">
             <div class="row g-4 align-items-start">
                 <div class="col-lg-7">
+                    <div class="order-timeline">
                     @foreach($steps as $key => $step)
-                        @php($index = array_search($key, $statusOrder, true))
-                        @php($active = $index <= $currentIndex)
-                        <div class="d-flex gap-3 position-relative pb-4">
-                            @if(!$loop->last)
-                                <div class="position-absolute" style="left:22px;top:46px;bottom:0;width:2px;background:{{ $active ? '#10B981' : '#E5E7EB' }}"></div>
-                            @endif
-                            <div class="rounded-circle d-inline-flex align-items-center justify-content-center flex-shrink-0" style="width:46px;height:46px;background:{{ $active ? '#10B981' : '#F3F4F6' }};color:{{ $active ? 'white' : '#9CA3AF' }};">
-                                <i class="fas {{ $step['icon'] }}"></i>
+                        @php
+                            $index = array_search($key, $statusOrder, true);
+                            $isDone = $index < $currentIndex;
+                            $isCurrent = $index == $currentIndex;
+                            $stepState = $isDone ? 'done' : ($isCurrent ? 'current' : 'pending');
+                        @endphp
+                        <div class="timeline-step {{ $stepState }}">
+                            <div class="timeline-marker">
+                                <span class="timeline-circle">
+                                    @if($isDone)
+                                        <i class="fas fa-check"></i>
+                                    @elseif($isCurrent)
+                                        <span class="timeline-dot"></span>
+                                    @endif
+                                </span>
+                                @if(!$loop->last)<span class="timeline-line"></span>@endif
                             </div>
-                            <div>
-                                <div class="fw-bold">{{ $step['label'] }}</div>
-                                <div class="text-muted small">{{ $active ? 'Updated' : 'Waiting' }}</div>
+                            <div class="timeline-content">
+                                <div class="timeline-label">{{ $step['label'] }}</div>
+                                <div class="timeline-sub">{{ $isDone ? 'Completed' : ($isCurrent ? 'In progress' : 'Pending') }}</div>
                             </div>
                         </div>
                     @endforeach
+                    </div>
                 </div>
                 <div class="col-lg-5">
-                    <div class="p-4 rounded-4" style="background:#FFF7F5;">
+                    <div class="p-4 rounded-4" style="background: var(--app-bg, #FAFAFA); border: 1px solid var(--app-border, #E5E7EB);">
                         <div class="fw-bold mb-2">Current status</div>
-                        <div class="display-6 fw-bold text-danger mb-3">{{ ucfirst(str_replace('_', ' ', $order->status)) }}</div>
+                        <div class="mb-3"><span class="status-chip {{ $trackChipClass }}" style="font-size: 14px; padding: 8px 14px;">{{ ucfirst(str_replace('_', ' ', $order->status)) }}</span></div>
                         <div class="small text-muted mb-3">
                             @if($isTakeaway)
                                 Pickup from {{ $order->restaurant->address ?? 'restaurant counter' }}
-                            @elseif($order->order_type === 'theatre_delivery')
-                                Screen {{ $order->screen_id ?? '-' }} · Seat {{ $order->seat_label ?? '-' }}
                             @else
                                 {{ $order->delivery_address }}
                             @endif

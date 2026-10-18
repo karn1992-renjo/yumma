@@ -92,12 +92,22 @@
                             </div>
                             <div class="col-md-6">
                                 <label class="form-label fw-semibold">Category</label>
+                                @php($selectedCategoryId = old('category_id', $menuItem->subcategory_id ?: $menuItem->category_id))
                                 <select name="category_id" class="form-select @error('category_id') is-invalid @enderror">
                                     <option value="">Select Category</option>
                                     @foreach($categories as $category)
-                                        <option value="{{ $category->id }}" {{ old('category_id', $menuItem->category_id) == $category->id ? 'selected' : '' }}>
+                                        <option value="{{ $category->id }}" {{ $selectedCategoryId == $category->id ? 'selected' : '' }}>
                                             {{ $category->name }}
                                         </option>
+                                        @if($category->children->isNotEmpty())
+                                            <optgroup label="{{ $category->name }} subcategories">
+                                                @foreach($category->children as $subcategory)
+                                                    <option value="{{ $subcategory->id }}" {{ $selectedCategoryId == $subcategory->id ? 'selected' : '' }}>
+                                                        &nbsp;&nbsp;— {{ $subcategory->name }}
+                                                    </option>
+                                                @endforeach
+                                            </optgroup>
+                                        @endif
                                     @endforeach
                                 </select>
                                 @error('category_id')<div class="invalid-feedback">{{ $message }}</div>@enderror

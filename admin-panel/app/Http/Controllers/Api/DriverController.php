@@ -653,6 +653,13 @@ class DriverController extends Controller
     }
     public function acceptOrder(AutoAssignDriverService $autoAssignService, $orderId)
     {
+        if (auth()->user()?->isSuspended()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Your account has been suspended by the admin. You cannot accept deliveries.',
+            ], 403);
+        }
+
         $order = Order::where('driver_id', auth()->id())
             ->whereIn('status', ['confirmed', 'preparing', 'ready_for_pickup'])
             ->find($orderId);
@@ -907,6 +914,19 @@ class DriverController extends Controller
         $request->validate([
             'is_online' => 'required|boolean',
         ]);
+
+        $user = auth()->user();
+        if ($request->boolean('is_online') && $user?->isSuspended()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Your account has been suspended by the admin. You cannot go online.',
+                'data' => [
+                    'is_online' => false,
+                    'can_go_online' => false,
+                    'suspended' => true,
+                ],
+            ], 403);
+        }
 
         $driverId = auth()->id();
         $activeGig = $this->activeBookedGig($driverId);

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'grid_seat_map_painter.dart';
 import 'seat_map_painter.dart';
 import 'theatre_cart_provider.dart';
 import 'theatre_food_court_screen.dart';
@@ -27,6 +28,30 @@ class TheatreSeatPickerScreen extends StatefulWidget {
 
 class _TheatreSeatPickerScreenState extends State<TheatreSeatPickerScreen> {
   String? _selectedSeat;
+  DateTime? _lastTapMissedFeedback;
+
+  // A tap that lands outside every seat's own catchment previously did
+  // nothing visible at all -- whatever was already selected just stayed
+  // highlighted, which reads exactly like "I tapped a different seat and
+  // it picked the wrong one." Throttled to avoid stacking snackbars on
+  // rapid repeated mis-taps.
+  void _showTapMissedFeedback() {
+    final now = DateTime.now();
+    if (_lastTapMissedFeedback != null &&
+        now.difference(_lastTapMissedFeedback!) < const Duration(seconds: 1)) {
+      return;
+    }
+    _lastTapMissedFeedback = now;
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        const SnackBar(
+          content: Text('Tap didn\'t land on a seat -- try tapping closer to its center.'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+  }
 
   void _confirm() {
     if (_selectedSeat == null) return;
@@ -156,13 +181,23 @@ class _TheatreSeatPickerScreenState extends State<TheatreSeatPickerScreen> {
             Expanded(
               child: Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 12),
-                child: SeatMapView(
-                  rows: widget.screen.rows,
-                  sections: sections,
-                  selectedSeat: _selectedSeat,
-                  onSeatSelected: (seat) =>
-                      setState(() => _selectedSeat = seat),
-                ),
+                child: widget.screen.isGridLayout
+                    ? GridSeatMapView(
+                        rows: widget.screen.rows,
+                        sections: sections,
+                        rowGroupGapAfter: widget.screen.rowGroupGapAfter,
+                        selectedSeat: _selectedSeat,
+                        onSeatSelected: (seat) =>
+                            setState(() => _selectedSeat = seat),
+                      )
+                    : SeatMapView(
+                        rows: widget.screen.rows,
+                        sections: sections,
+                        selectedSeat: _selectedSeat,
+                        onSeatSelected: (seat) =>
+                            setState(() => _selectedSeat = seat),
+                        onTapMissed: _showTapMissedFeedback,
+                      ),
               ),
             ),
 

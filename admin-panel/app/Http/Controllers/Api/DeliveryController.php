@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\Order;
 use App\Models\AppSetting;
+use App\Models\PaymentAttempt;
 use App\Models\Wallet;
 use App\Models\WalletTransaction;
 use App\Services\OrderStatusPushService;
@@ -50,13 +51,39 @@ class DeliveryController extends Controller
             $order->delivered_at = now();
             $order->otp_verified = true;
             $order->otp_verified_at = now();
-            $order->delivery_payment_mode = $request->payment_mode;
 
-            if ($request->payment_mode === 'cash') {
+            // An order that's ALREADY payment_status=success via a REAL
+            // online gateway (customer-app prepaid, or a driver-QR
+            // collection whose webhook already landed) must never be
+            // re-attributed as a cash collection just because the app
+            // happened to submit payment_mode=cash -- that would overwrite
+            // the real payment_method back to 'cod' and wrongly debit the
+            // driver's wallet for cash they never actually held (the
+            // customer paid the gateway directly, not the driver). See
+            // resolvePayment()'s matching guard above -- never trust a
+            // client-submitted value for something the server already
+            // knows authoritatively.
+            //
+            // Critically, payment_status=success is ALSO set by the
+            // driver app's own "Cash collected from customer" button
+            // (OrderPaymentService::markDriverCashReceived(), source
+            // driver_cash) -- a real cash collection that has NOT yet
+            // debited the driver's wallet. A plain payment_status check
+            // can't tell these apart, so branch on payment_source instead:
+            // only customer_app/driver_qr (real gateways) count as
+            // "already paid online". Everything else -- never paid, or
+            // paid via the driver's own cash button -- must still run the
+            // wallet debit below (idempotent, so it's safe even if the
+            // driver-cash endpoint already ran).
+            $alreadyPaidOnline = $order->payment_status === 'success'
+                && $order->payment_source !== PaymentAttempt::SOURCE_DRIVER_CASH;
+            $order->delivery_payment_mode = $alreadyPaidOnline ? 'online' : 'cod';
+
+            if (! $alreadyPaidOnline) {
                 $order->payment_method = 'cod';
                 $order->payment_status = 'success';
-                $order->cash_collected_amount = $order->total;
-                $order->cash_collected_at = now();
+                $order->cash_collected_amount = $order->cash_collected_amount ?: $order->total;
+                $order->cash_collected_at = $order->cash_collected_at ?: now();
                 $this->debitDriverWalletForCodCollection($order);
             } else {
                 $order->payment_status = 'success';
@@ -118,6 +145,15 @@ class DeliveryController extends Controller
 
     private function resolvePayment(Order $order, Request $request): array
     {
+        // Authoritative check first: if the order is already paid (customer
+        // prepaid, or a driver-QR collection whose webhook already
+        // completed while the driver was mid-delivery), completion just
+        // succeeds regardless of whatever payment_mode the app submits --
+        // see the matching guard in verifyOtp()'s transaction below.
+        if ($order->payment_status === 'success') {
+            return ['success' => true];
+        }
+
         if ($request->payment_mode === 'cash') {
             if (!$request->boolean('cash_collected')) {
                 return [
@@ -127,10 +163,6 @@ class DeliveryController extends Controller
                 ];
             }
 
-            return ['success' => true];
-        }
-
-        if ($order->payment_status === 'success') {
             return ['success' => true];
         }
 

@@ -8,6 +8,7 @@ import 'package:flutter_easyloading/flutter_easyloading.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'firebase_options.dart';
+import 'services/appsflyer_deep_link_service.dart';
 import 'services/notification_service.dart';
 import 'services/incoming_order_alert_service.dart';
 import 'services/navigation_service.dart';
@@ -41,6 +42,7 @@ import 'screens/driver/privacy_legal_screen.dart';
 import 'screens/driver/driver_support_screen.dart';
 import 'screens/driver/driver_cod_deposit_screen.dart';
 import 'screens/runner/runner_dashboard.dart';
+import 'screens/driver/driver_referral_screen.dart';
 import 'widgets/common/network_image_loader.dart';
 
 void main() {
@@ -136,6 +138,9 @@ Future<void> _initializeStartup(
   });
   await step('incoming order alerts', () async {
     await IncomingOrderAlertService.instance.initialize();
+  });
+  await step('appsflyer deep links', () async {
+    await AppsFlyerDeepLinkService.instance.initialize();
   });
   if (authProvider.isAuthenticated && !authProvider.canUseCurrentApp) {
     await step('logout wrong-app user', () async {
@@ -378,6 +383,10 @@ class _FoodDeliveryAppState extends State<FoodDeliveryApp>
           builder: (_) => DriverSupportScreen(
             openChat: args is Map && args['openChat'] == true,
           ),
+        );
+      case '/referrals':
+        return MaterialPageRoute(
+          builder: (_) => const DriverReferralScreen(),
         );
       case '/driver/cod-deposit':
         final args = settings.arguments;

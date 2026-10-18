@@ -11,6 +11,8 @@ class MasterMenuItem extends Model
         'name',
         'category_name',
         'subcategory_name',
+        'global_category_id',
+        'global_subcategory_id',
         'cuisine_id',
         'description',
         'food_type',
@@ -39,6 +41,16 @@ class MasterMenuItem extends Model
     public function cuisine()
     {
         return $this->belongsTo(Cuisine::class);
+    }
+
+    public function globalCategory()
+    {
+        return $this->belongsTo(GlobalMenuCategory::class, 'global_category_id');
+    }
+
+    public function globalSubcategory()
+    {
+        return $this->belongsTo(GlobalMenuCategory::class, 'global_subcategory_id');
     }
 
     public function getImageAttribute(): ?string

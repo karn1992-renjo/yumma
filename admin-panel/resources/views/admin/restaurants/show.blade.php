@@ -12,6 +12,7 @@
         : number_format($commissionRule['value'], 2) . '%';
     $statusChip = $restaurant->is_open ? ['Open', 'success', 'store'] : ['Closed', 'neutral', 'store-slash'];
     $verificationChip = $restaurant->is_verified ? ['Verified', 'success', 'circle-check'] : ['Pending Verification', 'warning', 'clock'];
+    $isSuspended = $restaurant->isSuspended();
     $statTiles = [
         ['label' => 'Total Orders', 'value' => number_format($totalOrders), 'icon' => 'receipt', 'tone' => '#8b5cf6'],
         ['label' => 'Delivered Revenue', 'value' => $money($totalRevenue), 'icon' => 'indian-rupee-sign', 'tone' => '#16a34a'],
@@ -92,23 +93,57 @@
             <div class="d-flex flex-wrap gap-2 mt-2">
                 <span class="restaurant-chip {{ $statusChip[1] }}"><i class="fas fa-{{ $statusChip[2] }}"></i>{{ $statusChip[0] }}</span>
                 <span class="restaurant-chip {{ $verificationChip[1] }}"><i class="fas fa-{{ $verificationChip[2] }}"></i>{{ $verificationChip[0] }}</span>
+                @if($isSuspended)
+                    <span class="restaurant-chip" style="color:#991b1b;background:#fee2e2;border-color:#fecaca;"><i class="fas fa-ban"></i>Suspended{{ $restaurant->suspended_until ? ' until '.$restaurant->suspended_until->format('d M Y') : ' (permanent)' }}</span>
+                @endif
                 @if(\App\Models\RestaurantAdCampaign::active()->where('restaurant_id', $restaurant->id)->exists())
                     <span class="restaurant-chip primary"><i class="fas fa-bullhorn"></i>Sponsored</span>
                 @endif
             </div>
         </div>
         <div class="restaurant-page-actions">
+            @can('edit_restaurants')
             <button class="btn btn-outline-primary" data-bs-toggle="modal" data-bs-target="#adjustPricesModal">
                 <i class="fas fa-percent me-2"></i>Adjust Prices
             </button>
             <a href="{{ route('admin.restaurants.edit', $restaurant) }}" class="btn btn-primary">
                 <i class="fas fa-edit me-2"></i>Edit
             </a>
+            <a href="{{ route('admin.restaurants.petpooja.show', $restaurant) }}" class="btn btn-outline-primary">
+                <i class="fas fa-plug me-2"></i>Petpooja
+            </a>
+            @if($isSuspended)
+                <form method="POST" action="{{ route('admin.restaurants.reactivate', $restaurant) }}" class="d-inline" onsubmit="return confirm('Reactivate {{ $restaurant->name }}? It will immediately be allowed to receive orders again.');">
+                    @csrf
+                    <button class="btn btn-success"><i class="fas fa-circle-check me-2"></i>Reactivate</button>
+                </form>
+            @else
+                <button class="btn btn-outline-danger" data-bs-toggle="modal" data-bs-target="#suspendRestaurantModal">
+                    <i class="fas fa-ban me-2"></i>Suspend
+                </button>
+            @endif
+            @endcan
             <a href="{{ route('admin.restaurants.index') }}" class="btn btn-light">
                 <i class="fas fa-arrow-left me-2"></i>Back
             </a>
         </div>
     </section>
+
+    @if($isSuspended)
+        <section class="restaurant-info-panel" style="border-color:#fecaca;background:#fef2f2;">
+            <div class="restaurant-info-body" style="padding:15px 18px;">
+                <strong style="color:#991b1b;"><i class="fas fa-ban me-2"></i>This restaurant is suspended</strong>
+                <div style="color:#7f1d1d;margin-top:4px;font-size:13px;">
+                    {{ $restaurant->suspension_reason ?: 'No reason recorded.' }}
+                    &middot;
+                    {{ $restaurant->suspended_until ? 'Suspended until '.$restaurant->suspended_until->format('d M Y, h:i A').' (then it will auto-reactivate).' : 'Permanent, until an admin reactivates it.' }}
+                    @if($restaurant->suspended_by)
+                        &middot; by {{ \App\Models\User::find($restaurant->suspended_by)->name ?? 'admin' }}
+                    @endif
+                </div>
+            </div>
+        </section>
+    @endif
 
     <section class="restaurant-stat-grid">
         @foreach($statTiles as $tile)
@@ -308,6 +343,45 @@
                 <div class="modal-footer border-0 p-4 pt-0">
                     <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancel</button>
                     <button class="btn btn-primary">Apply Adjustment</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="suspendRestaurantModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content border-0 rounded-4">
+            <form method="POST" action="{{ route('admin.restaurants.suspend', $restaurant) }}">
+                @csrf
+                <div class="modal-header border-0" style="background: linear-gradient(135deg, #7f1d1d, #b91c1c);">
+                    <h5 class="modal-title text-white fw-bold">Suspend {{ $restaurant->name }}</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body p-4">
+                    <div class="row g-3">
+                        <div class="col-12">
+                            <label class="form-label fw-bold">Duration</label>
+                            <select class="form-select" name="suspension_type" onchange="document.getElementById('restaurantSuspendUntilWrap').style.display = this.value === 'limited' ? 'block' : 'none';">
+                                <option value="limited">Limited time</option>
+                                <option value="permanent">Permanent</option>
+                            </select>
+                        </div>
+                        <div class="col-12" id="restaurantSuspendUntilWrap">
+                            <label class="form-label fw-bold">Suspended until</label>
+                            <input class="form-control" type="datetime-local" name="suspended_until">
+                            <div class="form-text">The restaurant reactivates automatically once this passes.</div>
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label fw-bold">Reason</label>
+                            <textarea class="form-control" name="suspension_reason" rows="3" placeholder="Optional, shown to admins reviewing this restaurant"></textarea>
+                        </div>
+                    </div>
+                    <div class="form-text mt-3">While suspended, this restaurant stops receiving orders and shows a suspended notice to its owner. Only an admin can lift a permanent suspension.</div>
+                </div>
+                <div class="modal-footer border-0 p-4 pt-0">
+                    <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancel</button>
+                    <button class="btn btn-danger">Suspend Restaurant</button>
                 </div>
             </form>
         </div>

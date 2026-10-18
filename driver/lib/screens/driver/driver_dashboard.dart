@@ -34,6 +34,7 @@ import 'driver_orders_screen.dart';
 import 'driver_gigs_screen.dart';
 import 'driver_earnings_screen.dart';
 import 'driver_profile_screen.dart';
+import 'driver_referral_screen.dart';
 import 'driver_restaurant_onboarding_screen.dart';
 import 'driver_wallet_screen.dart';
 
@@ -429,9 +430,19 @@ class _DriverDashboardState extends State<DriverDashboard>
       }
     } catch (e) {
       debugPrint('Toggle status error: $e');
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Failed to toggle status: $e')));
+      final message = _cleanApiError(e);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            message.toLowerCase().contains('suspended')
+                ? message
+                : 'Failed to toggle status: $message',
+          ),
+          backgroundColor: message.toLowerCase().contains('suspended')
+              ? Colors.red
+              : null,
+        ),
+      );
     }
   }
 
@@ -1543,6 +1554,15 @@ class _DriverDashboardState extends State<DriverDashboard>
         () => Navigator.of(context).push(
               MaterialPageRoute(
                 builder: (_) => const DriverRestaurantOnboardingScreen(),
+              ),
+            ),
+      ),
+      (
+        Icons.card_giftcard,
+        'Refer',
+        () => Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (_) => const DriverReferralScreen(),
               ),
             ),
       ),

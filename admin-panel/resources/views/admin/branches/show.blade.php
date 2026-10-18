@@ -9,11 +9,13 @@
         <p>{{ $branch->code }} · {{ ucfirst($branch->status) }} · {{ ucfirst($branch->settlement_cycle) }} settlement</p>
     </div>
     <div class="d-flex gap-2">
+        @can('manage_branches')
         <a href="{{ route('admin.branches.edit', $branch) }}" class="btn btn-light"><i class="fas fa-edit me-2"></i>Edit</a>
         <form action="{{ route('admin.branches.destroy', $branch) }}" method="POST" onsubmit="return confirm('Delete this branch from the database? Branch-owned records will be removed and linked orders, restaurants, and users will be unassigned.')">
             @csrf @method('DELETE')
             <button class="btn btn-outline-danger"><i class="fas fa-trash me-2"></i>Delete</button>
         </form>
+        @endcan
     </div>
 </div>
 

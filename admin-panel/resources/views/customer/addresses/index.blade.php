@@ -4,87 +4,147 @@
 
 @section('styles')
 <style>
-    .address-card {
-        background: white;
-        border-radius: 16px;
-        padding: 20px;
-        margin-bottom: 16px;
-        border: 1px solid #e2e8f0;
-        transition: all 0.3s;
-        position: relative;
-    }
-    
-    .address-card:hover {
-        box-shadow: 0 10px 25px -5px rgba(0,0,0,0.1);
-        transform: translateY(-2px);
-    }
-    
-    .address-card.default {
-        border: 2px solid #FF6B35;
-        background: #FFF7F5;
-    }
-    
-    .default-badge {
-        position: absolute;
-        top: 20px;
-        right: 20px;
-        background: #FF6B35;
-        color: white;
-        padding: 4px 12px;
-        border-radius: 20px;
-        font-size: 12px;
-        font-weight: 600;
-    }
-    
-    .address-type {
-        display: inline-block;
-        padding: 4px 12px;
-        border-radius: 20px;
-        font-size: 12px;
-        font-weight: 600;
-        background: #e2e8f0;
-        color: #475569;
-        margin-bottom: 12px;
-    }
-    
-    .address-type.home { background: #DBEAFE; color: #1E40AF; }
-    .address-type.work { background: #D1FAE5; color: #065F46; }
-    .address-type.other { background: #FEF3C7; color: #92400E; }
-    
-    .action-buttons {
+    .add-address-tile {
         display: flex;
-        gap: 8px;
-        margin-top: 16px;
+        align-items: center;
+        gap: 14px;
+        padding: 16px;
+        border-radius: 18px;
+        border: 1.4px dashed color-mix(in srgb, var(--primary) 50%, transparent);
+        background: transparent;
+        cursor: pointer;
+        margin-bottom: 16px;
+        width: 100%;
+        text-align: left;
     }
-    
-    .btn-icon {
-        padding: 6px 12px;
-        border-radius: 8px;
-        font-size: 13px;
+
+    .add-address-tile:hover {
+        background: color-mix(in srgb, var(--primary) 4%, transparent);
     }
-    
-    .add-address-btn {
-        position: fixed;
-        bottom: 30px;
-        right: 30px;
-        width: 56px;
-        height: 56px;
-        border-radius: 28px;
-        background: #FF6B35;
-        color: white;
+
+    .add-address-icon {
+        width: 42px;
+        height: 42px;
+        border-radius: 13px;
+        background: color-mix(in srgb, var(--primary) 12%, white);
+        color: var(--primary);
         display: flex;
         align-items: center;
         justify-content: center;
-        box-shadow: 0 4px 15px rgba(255,107,53,0.4);
-        cursor: pointer;
-        transition: all 0.3s;
-        z-index: 100;
-        border: none;
+        flex-shrink: 0;
+        font-size: 16px;
     }
-    
-    .add-address-btn:hover {
-        transform: scale(1.1);
-        background: #E55A2B;
+
+    .add-address-title {
+        font-weight: 800;
+        font-size: 15px;
+        color: var(--app-ink, #111827);
+    }
+
+    .add-address-sub {
+        font-size: 12.5px;
+        color: var(--app-muted, #6B7280);
+        font-weight: 500;
+    }
+
+    .add-address-tile .fa-chevron-right {
+        margin-left: auto;
+        color: #9CA3AF;
+    }
+
+    .address-card {
+        background: white;
+        border-radius: 16px;
+        padding: 16px;
+        margin-bottom: 16px;
+        border: 1px solid var(--app-border, #E5E7EB);
+        transition: all 0.2s;
+        position: relative;
+    }
+
+    .address-card:hover {
+        box-shadow: 0 10px 25px -5px rgba(0,0,0,0.08);
+    }
+
+    .address-card-top {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 10px;
+    }
+
+    .address-icon-tile {
+        width: 44px;
+        height: 44px;
+        border-radius: 13px;
+        background: #F3F4F6;
+        color: #4B5563;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+        font-size: 16px;
+    }
+
+    .address-name-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex: 1;
+        min-width: 0;
+    }
+
+    .address-name {
+        font-weight: 800;
+        font-size: 16px;
+        color: var(--app-ink, #111827);
+    }
+
+    .default-pill {
+        display: inline-flex;
+        align-items: center;
+        border-radius: 999px;
+        padding: 3px 10px;
+        font-size: 11px;
+        font-weight: 800;
+        background: color-mix(in srgb, var(--primary) 12%, white);
+        color: var(--primary);
+        border: 1px solid color-mix(in srgb, var(--primary) 24%, transparent);
+    }
+
+    .address-line {
+        font-size: 12.5px;
+        color: var(--app-muted, #6B7280);
+        font-weight: 500;
+        line-height: 1.5;
+        margin-bottom: 4px;
+    }
+
+    .address-divider {
+        border-top: 1px solid var(--app-border, #E5E7EB);
+        margin: 12px 0;
+    }
+
+    .address-actions {
+        display: flex;
+        gap: 18px;
+    }
+
+    .address-action-link {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 13px;
+        font-weight: 700;
+        color: var(--app-muted, #6B7280);
+        background: none;
+        border: none;
+        padding: 0;
+        cursor: pointer;
+    }
+
+    .address-action-link.danger {
+        color: var(--app-danger, #E53935);
     }
 </style>
 @endsection
@@ -99,9 +159,6 @@
                     <h2 class="fw-bold mb-1">My Addresses</h2>
                     <p class="text-muted">Manage your delivery addresses</p>
                 </div>
-                <button class="btn btn-primary rounded-pill" data-bs-toggle="modal" data-bs-target="#addressModal">
-                    <i class="fas fa-plus me-2"></i> Add New
-                </button>
             </div>
             
             <!-- Success/Error Messages -->
@@ -112,44 +169,58 @@
                 </div>
             @endif
             
+            <!-- Add Address tile (dashed, matches the app's add-address entry point) -->
+            <button type="button" class="add-address-tile" data-bs-toggle="modal" data-bs-target="#addressModal">
+                <span class="add-address-icon"><i class="fas fa-plus"></i></span>
+                <span>
+                    <span class="add-address-title d-block">Add a new address</span>
+                    <span class="add-address-sub">Home, work or a go-to spot</span>
+                </span>
+                <i class="fas fa-chevron-right"></i>
+            </button>
+
             <!-- Addresses List -->
             @if($addresses->isEmpty())
-                <div class="card shadow-sm text-center py-5">
+                <div class="card shadow-sm text-center py-5" style="border-radius: var(--app-card-radius, 24px);">
                     <div class="card-body">
                         <i class="fas fa-map-marker-alt fa-4x text-muted mb-3"></i>
                         <h4>No Addresses Saved</h4>
                         <p class="text-muted">Add your first delivery address</p>
-                        <button class="btn btn-primary rounded-pill mt-3" data-bs-toggle="modal" data-bs-target="#addressModal">
-                            <i class="fas fa-plus me-2"></i> Add Address
-                        </button>
                     </div>
                 </div>
             @else
                 @foreach($addresses as $address)
-                <div class="address-card {{ $address->is_default ? 'default' : '' }}">
-                    @if($address->is_default)
-                        <div class="default-badge">
-                            <i class="fas fa-star me-1"></i> Default
+                @php
+                    $nameLower = strtolower($address->name ?? '');
+                    $addrIcon = match(true) {
+                        $nameLower === 'home' => 'fa-house',
+                        $nameLower === 'work' => 'fa-briefcase',
+                        str_contains($nameLower, 'hotel') || str_contains($nameLower, 'guest') => 'fa-bed',
+                        default => 'fa-location-dot',
+                    };
+                @endphp
+                <div class="address-card">
+                    <div class="address-card-top">
+                        <span class="address-icon-tile"><i class="fas {{ $addrIcon }}"></i></span>
+                        <div class="address-name-row">
+                            <span class="address-name">{{ $address->name }}</span>
+                            @if($address->is_default)
+                                <span class="default-pill">Default</span>
+                            @endif
                         </div>
-                    @endif
-                    
-                    <span class="address-type {{ $address->name == 'Home' ? 'home' : ($address->name == 'Work' ? 'work' : 'other') }}">
-                        <i class="fas fa-{{ $address->name == 'Home' ? 'home' : ($address->name == 'Work' ? 'briefcase' : 'map-pin') }} me-1"></i>
-                        {{ $address->name }}
-                    </span>
-                    
-                    <h6 class="fw-bold mb-2">{{ auth()->user()->name }}</h6>
-                    <p class="mb-1 text-muted">{{ $address->address }}</p>
-                    <p class="mb-1 text-muted">{{ $address->city }}, {{ $address->state }} - {{ $address->pincode }}</p>
-                    <p class="mb-0 text-muted"><i class="fas fa-phone me-2"></i>{{ $address->phone }}</p>
-                    
-                    <div class="action-buttons">
+                    </div>
+                    <p class="address-line mb-0">{{ $address->address }}, {{ $address->city }}, {{ $address->state }} - {{ $address->pincode }}</p>
+                    <p class="address-line mb-0"><i class="fas fa-phone me-1"></i>{{ $address->phone }}</p>
+
+                    <div class="address-divider"></div>
+
+                    <div class="address-actions">
                         @if(!$address->is_default)
-                            <button class="btn btn-sm btn-outline-success btn-icon set-default-btn" data-id="{{ $address->id }}">
-                                <i class="fas fa-star me-1"></i> Set Default
+                            <button class="address-action-link set-default-btn" data-id="{{ $address->id }}">
+                                <i class="fas fa-star"></i> Set default
                             </button>
                         @endif
-                        <button class="btn btn-sm btn-outline-primary btn-icon edit-address" 
+                        <button class="address-action-link edit-address"
                                 data-id="{{ $address->id }}"
                                 data-name="{{ $address->name }}"
                                 data-address="{{ $address->address }}"
@@ -159,10 +230,10 @@
                                 data-phone="{{ $address->phone }}"
                                 data-latitude="{{ $address->latitude }}"
                                 data-longitude="{{ $address->longitude }}">
-                            <i class="fas fa-edit me-1"></i> Edit
+                            <i class="fas fa-pen"></i> Edit
                         </button>
-                        <button class="btn btn-sm btn-outline-danger btn-icon delete-address" data-id="{{ $address->id }}">
-                            <i class="fas fa-trash me-1"></i> Delete
+                        <button class="address-action-link danger delete-address" data-id="{{ $address->id }}">
+                            <i class="fas fa-trash"></i> Delete
                         </button>
                     </div>
                 </div>
@@ -257,10 +328,6 @@
     </div>
 </div>
 
-<!-- Floating Action Button -->
-<button class="add-address-btn" data-bs-toggle="modal" data-bs-target="#addressModal">
-    <i class="fas fa-plus fa-lg"></i>
-</button>
 
 <script>
     let currentDeleteId = null;

@@ -406,7 +406,17 @@ class ApiService {
   }) async {
     if (kDebugMode) print('📥 Status: ${response.statusCode}');
 
-    if (response.body.trim().isEmpty) {
+    // http.Response.body decodes bodyBytes using the charset declared in the
+    // Content-Type header, defaulting to latin1 when the server (our own
+    // Laravel API) sends `application/json` without `; charset=utf-8`. That
+    // silently mangles every multi-byte UTF-8 character coming back from the
+    // backend -- restaurant/dish names, and the ₹ currency symbol rendered
+    // as "From <mojibake>" on cards like "Recommended For You". Decoding
+    // bodyBytes as UTF-8 explicitly here, once, fixes it everywhere this
+    // response is read (text or JSON) regardless of what the server declares.
+    final body = utf8.decode(response.bodyBytes, allowMalformed: true);
+
+    if (body.trim().isEmpty) {
       if (response.statusCode >= 200 && response.statusCode < 300) {
         return {'success': true};
       }
@@ -414,7 +424,7 @@ class ApiService {
     }
 
     final contentType = response.headers['content-type'] ?? '';
-    final trimmedBody = response.body.trimLeft();
+    final trimmedBody = body.trimLeft();
     if (contentType.contains('text/html') ||
         trimmedBody.startsWith('<!DOCTYPE html>') ||
         trimmedBody.startsWith('<html')) {
@@ -422,15 +432,15 @@ class ApiService {
         await clearToken();
         throw ApiException('Session expired. Please login again.');
       }
-      if (kDebugMode) print('HTML response body: ${response.body}');
+      if (kDebugMode) print('HTML response body: $body');
       throw ApiException('Server returned HTML instead of JSON.');
     }
 
     dynamic data;
     try {
-      data = jsonDecode(response.body);
+      data = jsonDecode(body);
     } catch (e) {
-      if (kDebugMode) print('Response body: ${response.body}');
+      if (kDebugMode) print('Response body: $body');
       throw ApiException('Invalid JSON response from server');
     }
 

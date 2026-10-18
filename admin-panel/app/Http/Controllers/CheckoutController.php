@@ -20,6 +20,7 @@ use App\Services\OrderReleaseService;
 use App\Services\PrinterService;
 use App\Services\PromotionEngineService;
 use App\Services\PromotionRewardOrderItemService;
+use App\Support\JsonHttp;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Auth;
@@ -232,7 +233,7 @@ class CheckoutController extends Controller
             
             $deliveryFee = DeliveryChargeSetting::getDeliveryCharge();
             $platformFee = DeliveryChargeSetting::getPlatformFee();
-            $tax = round((float) TaxSetting::calculateTax($subtotal, $deliveryFee), 2);
+            $tax = round((float) TaxSetting::calculateTax($subtotal, $deliveryFee), AppSetting::currencyDecimals());
             $total = $subtotal + $deliveryFee + $platformFee + $tax;
             $discount = 0;
             $promo = null;
@@ -416,6 +417,8 @@ class CheckoutController extends Controller
                     'status' => 'cancelled',
                     'cancelled_at' => now(),
                     'cancellation_reason' => 'Checkout setup failed: ' . $e->getMessage(),
+                    'cancelled_by_role' => 'system',
+                    'cancelled_by_name' => 'Automatic - checkout setup failed',
                 ]);
             }
             Log::error('Order creation failed', [
@@ -491,6 +494,8 @@ class CheckoutController extends Controller
                 'status' => 'cancelled',
                 'cancelled_at' => now(),
                 'cancellation_reason' => $validated['message'] ?: 'Payment was cancelled before confirmation.',
+                'cancelled_by_role' => 'customer',
+                'cancelled_by_name' => Auth::user()->name ?? 'Customer',
             ]);
         }
 
@@ -547,6 +552,8 @@ class CheckoutController extends Controller
                 'status' => 'cancelled',
                 'cancelled_at' => now(),
                 'cancellation_reason' => 'Stripe checkout cancelled by customer.',
+                'cancelled_by_role' => 'customer',
+                'cancelled_by_name' => Auth::user()->name ?? 'Customer',
             ]);
         }
 
@@ -593,6 +600,8 @@ class CheckoutController extends Controller
                 'status' => 'cancelled',
                 'cancelled_at' => now(),
                 'cancellation_reason' => ucfirst($provider) . ' checkout cancelled by customer.',
+                'cancelled_by_role' => 'customer',
+                'cancelled_by_name' => Auth::user()->name ?? 'Customer',
             ]);
         }
 
@@ -665,7 +674,7 @@ class CheckoutController extends Controller
         return response()->json([
             'success' => true,
             'data' => array_merge([
-                'subtotal' => round($subtotal, 2),
+                'subtotal' => round($subtotal, AppSetting::currencyDecimals()),
             ], $pricing),
         ]);
     }
@@ -805,7 +814,7 @@ class CheckoutController extends Controller
             $currencyCode = \App\Models\CountryTaxProfile::where('country_code', $taxOverride->detailed['country_code'] ?? '')->value('currency_code');
         }
 
-        return [            'delivery_fee' => round($deliveryFee, 2),
+        return [            'delivery_fee' => round($deliveryFee, AppSetting::currencyDecimals()),
             'order_type' => $orderType,
             'platform_fee' => $platformFee,
             'tax' => $tax,
@@ -816,7 +825,7 @@ class CheckoutController extends Controller
             'currency_code' => $currencyCode,
             'discount' => $discount,
             'reward_lines' => $promotionResult['reward_lines'] ?? [],
-            'total' => max(0, round($subtotal + $deliveryFee + $platformFee + $tax - $discount, 2)),
+            'total' => max(0, round($subtotal + $deliveryFee + $platformFee + $tax - $discount, AppSetting::currencyDecimals())),
             'promo' => $promo,
             'promotion_result' => $promotionResult,
             'promotion_context' => $promotionContext,
@@ -840,7 +849,7 @@ class CheckoutController extends Controller
             return 0.0;
         }
 
-        return round((float) DeliveryChargeSetting::getDeliveryCharge($distance), 2);
+        return round((float) DeliveryChargeSetting::getDeliveryCharge($distance), AppSetting::currencyDecimals());
     }
 
     private function calculateDistance($lat1, $lon1, $lat2, $lon2): float
@@ -986,13 +995,16 @@ class CheckoutController extends Controller
 
         $currency = strtoupper(AppSetting::getValue('currency_code', 'INR') ?: 'INR');
         $cashfreeOrderId = 'ORDER_' . $order->id . '_' . time();
-        $response = Http::withHeaders([
+        // (float) + JsonHttp::post() -- Cashfree rejects a bare-integer
+        // order_amount for a whole-rupee total (PHP's json_encode() drops
+        // the decimal point from a whole-number float). See App\Support\JsonHttp.
+        $response = JsonHttp::post(Http::withHeaders([
             'x-api-version' => $apiVersion,
             'x-client-id' => $clientId,
             'x-client-secret' => $clientSecret,
-        ])->post($this->cashfreeBaseUrl() . '/pg/orders', [
+        ]), $this->cashfreeBaseUrl() . '/pg/orders', [
             'order_id' => $cashfreeOrderId,
-            'order_amount' => round((float) $order->total, 2),
+            'order_amount' => (float) round((float) $order->total, 2),
             'order_currency' => $currency,
             'customer_details' => [
                 'customer_id' => 'CUST_' . $order->customer_id,

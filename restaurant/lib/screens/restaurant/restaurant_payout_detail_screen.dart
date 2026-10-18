@@ -288,10 +288,13 @@ class _PayoutBreakdown extends StatelessWidget {
     final commission = _toDouble(payout['platform_commission']);
     final gst = _toDouble(payout['gst_on_commission']);
     final gatewayFee = _toDouble(payout['payment_gateway_fee']);
+    final longDistanceCharge = _toDouble(payout['long_distance_charge']);
+    final freeKm = _toDouble(payout['long_distance_free_km']);
     final deduction = _toDouble(payout['deduction_amount']);
     final net = _toDouble(payout['net_amount'] ?? payout['amount']);
 
-    final deductTotal = commission + gst + gatewayFee + deduction;
+    final deductTotal =
+        commission + gst + gatewayFee + longDistanceCharge + deduction;
     final base = gross <= 0 ? (net + deductTotal) : gross;
     return Container(
       padding: const EdgeInsets.all(16),
@@ -332,6 +335,13 @@ class _PayoutBreakdown extends StatelessWidget {
           _moneyRow(context, 'Platform commission', commission, negative: true),
           _moneyRow(context, 'GST on commission', gst, negative: true),
           _moneyRow(context, 'Payment gateway fee', gatewayFee, negative: true),
+          if (longDistanceCharge > 0)
+            _moneyRow(
+              context,
+              'Fulfillment charge beyond ${freeKm.toStringAsFixed(freeKm == freeKm.roundToDouble() ? 0 : 1)}km',
+              longDistanceCharge,
+              negative: true,
+            ),
           if (deduction > 0)
             _moneyRow(context, 'Other deduction', deduction, negative: true),
           Divider(height: 20, color: foodflow.line),

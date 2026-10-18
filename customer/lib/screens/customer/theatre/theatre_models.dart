@@ -70,6 +70,10 @@ class SeatMapRow {
   final double curveOffset;
   final List<int> gaps;
   final String section;
+  // Grid layout only (see [[movie-theatre-in-seat-ordering]]): seat counts
+  // per horizontal block, left to right, with an aisle gap between blocks.
+  // Empty for curved rows, which have no block concept.
+  final List<int> columnBlocks;
 
   const SeatMapRow({
     required this.id,
@@ -80,6 +84,7 @@ class SeatMapRow {
     required this.curveOffset,
     required this.gaps,
     required this.section,
+    this.columnBlocks = const [],
   });
 
   factory SeatMapRow.fromJson(Map<String, dynamic> json) {
@@ -98,6 +103,9 @@ class SeatMapRow {
           .map((g) => (g as num).toInt())
           .toList(),
       section: (json['section'] ?? 'standard').toString(),
+      columnBlocks: (json['column_blocks'] as List? ?? const [])
+          .map((b) => (b as num).toInt())
+          .toList(),
     );
   }
 
@@ -140,6 +148,13 @@ class TheatreScreenSeatMap {
   final String name;
   final List<SeatMapRow> rows;
   final Map<String, SeatMapSection> sections;
+  // 'curve' (default, the original free-form bezier canvas) or 'grid' (a
+  // straight rows x columns layout with aisle gaps) -- two interchangeable
+  // layout styles a theatre owner picks per screen in the builder. Existing
+  // screens saved before 'grid' existed have no layout_type key at all and
+  // correctly default to 'curve', so their rendering is unaffected.
+  final String layoutType;
+  final List<String> rowGroupGapAfter;
 
   const TheatreScreenSeatMap({
     required this.id,
@@ -147,7 +162,11 @@ class TheatreScreenSeatMap {
     required this.name,
     required this.rows,
     required this.sections,
+    this.layoutType = 'curve',
+    this.rowGroupGapAfter = const [],
   });
+
+  bool get isGridLayout => layoutType == 'grid';
 
   factory TheatreScreenSeatMap.fromJson(Map<String, dynamic> json) {
     final config = json['seat_map_config'] as Map? ?? {};
@@ -169,6 +188,10 @@ class TheatreScreenSeatMap {
           SeatMapSection.fromJson(Map<String, dynamic>.from(value as Map)),
         ),
       ),
+      layoutType: config['layout_type'] == 'grid' ? 'grid' : 'curve',
+      rowGroupGapAfter: (config['row_group_gap_after'] as List? ?? const [])
+          .map((v) => v.toString())
+          .toList(),
     );
   }
 }

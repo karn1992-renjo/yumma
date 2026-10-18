@@ -15,11 +15,15 @@ import androidx.core.content.ContextCompat
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
+import io.flutter.plugins.googlemobileads.GoogleMobileAdsPlugin
 
 class MainActivity : FlutterActivity() {
     private val audioChannelName = "com.adgraph.yumma/order_audio"
     private val alertChannelName = "com.adgraph.yumma/order_alerts"
     private val configChannelName = "com.adgraph.yumma/app_config"
+    // Must match the factoryId Dart passes to NativeAd(...) in
+    // lib/widgets/common/native_ad_widget.dart.
+    private val nativeAdFactoryId = "listTileNativeAd"
     private var previousRingerMode: Int? = null
     private var previousAudioMode: Int? = null
     private var previousSpeakerphone: Boolean? = null
@@ -29,6 +33,12 @@ class MainActivity : FlutterActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+
+        GoogleMobileAdsPlugin.registerNativeAdFactory(
+            flutterEngine,
+            nativeAdFactoryId,
+            ListTileNativeAdFactory(layoutInflater)
+        )
 
         MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
@@ -103,6 +113,11 @@ class MainActivity : FlutterActivity() {
             }
         }
 
+    }
+
+    override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
+        GoogleMobileAdsPlugin.unregisterNativeAdFactory(flutterEngine, nativeAdFactoryId)
+        super.cleanUpFlutterEngine(flutterEngine)
     }
 
     private fun startOrderAlertService(status: String, fullScreen: Boolean = false) {

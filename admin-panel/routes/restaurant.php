@@ -15,6 +15,8 @@ use App\Http\Controllers\Restaurant\StaffController;
 use App\Http\Controllers\Restaurant\WalletController;
 use App\Http\Controllers\Restaurant\PosController;
 use App\Http\Controllers\Restaurant\AiApprovalController;
+use App\Http\Controllers\Restaurant\PetpoojaConfigController;
+use App\Http\Controllers\Restaurant\BillingController;
 
 Route::middleware(['auth', 'role:restaurant_owner|restaurant_staff'])->prefix('restaurant')->name('restaurant.')->group(function () {
 
@@ -23,6 +25,14 @@ Route::middleware(['auth', 'role:restaurant_owner|restaurant_staff'])->prefix('r
     Route::post('/toggle-status', [DashboardController::class, 'toggleStatus'])
         ->middleware('restaurant.permission:view_dashboard')
         ->name('toggle-status');
+
+    // Subscription billing choice (lapsed-subscription blocking view's targets --
+    // must stay reachable regardless of needsBillingChoice(), so it is NOT nested
+    // under the role:restaurant_owner-only group below)
+    Route::prefix('billing')->name('billing.')->group(function () {
+        Route::get('/', [BillingController::class, 'index'])->name('index');
+        Route::post('/switch-to-commission', [BillingController::class, 'switchToCommission'])->name('switch-to-commission');
+    });
 
     // AI proposals (restaurant-funded promotions / menu price suggestions) awaiting this restaurant's approval
     Route::prefix('ai-proposals')->name('ai-proposals.')->group(function () {
@@ -75,9 +85,14 @@ Route::middleware(['auth', 'role:restaurant_owner|restaurant_staff'])->prefix('r
     Route::middleware('restaurant.permission:manage_menu')->group(function () {
         Route::get('/categories/create', [CategoryController::class, 'create'])->name('categories.create');
         Route::post('/categories', [CategoryController::class, 'store'])->name('categories.store');
+        Route::get('/categories/export', [CategoryController::class, 'export'])->name('categories.export');
+        Route::get('/categories/import/template', [CategoryController::class, 'downloadTemplate'])->name('categories.import.template');
+        Route::post('/categories/import', [CategoryController::class, 'import'])->name('categories.import');
         Route::get('/categories/{category}/edit', [CategoryController::class, 'edit'])->name('categories.edit');
         Route::put('/categories/{category}', [CategoryController::class, 'update'])->name('categories.update');
         Route::delete('/categories/{category}', [CategoryController::class, 'destroy'])->name('categories.destroy');
+        Route::get('/categories/{category}/subcategories/create', [CategoryController::class, 'createSubcategory'])->name('categories.subcategories.create');
+        Route::post('/categories/{category}/subcategories', [CategoryController::class, 'storeSubcategory'])->name('categories.subcategories.store');
     });
     
     // Analytics
@@ -133,6 +148,15 @@ Route::middleware(['auth', 'role:restaurant_owner|restaurant_staff'])->prefix('r
             Route::put('/{id}', [StoreController::class, 'update'])->name('update');
             Route::post('/switch', [StoreController::class, 'switchStore'])->name('switch');
             Route::get('/current', [StoreController::class, 'getCurrentStore'])->name('current');
+        });
+
+        // Petpooja POS integration (self-service config, scoped to this
+        // owner's own restaurant only)
+        Route::prefix('petpooja')->name('petpooja.')->group(function () {
+            Route::get('/', [PetpoojaConfigController::class, 'show'])->name('show');
+            Route::post('/', [PetpoojaConfigController::class, 'store'])->name('store');
+            Route::post('/sync-menu', [PetpoojaConfigController::class, 'syncMenu'])->name('sync-menu');
+            Route::get('/syncs', [PetpoojaConfigController::class, 'syncHistory'])->name('syncs');
         });
 
         // Printer Settings

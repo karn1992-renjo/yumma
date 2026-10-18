@@ -8,6 +8,7 @@ use App\Models\CommissionSetting;
 use App\Models\Restaurant;
 use App\Models\User;
 use App\Models\Cuisine;
+use App\Services\DeliveryAreaResolver;
 use App\Services\RestaurantOnboardingService;
 use App\Rules\UniqueUserContactForRole;
 use Illuminate\Http\Request;
@@ -20,6 +21,28 @@ use App\Services\MenuPriceAdjustmentService;
 
 class RestaurantController extends Controller
 {
+    public function __construct(private readonly DeliveryAreaResolver $deliveryAreaResolver)
+    {
+    }
+
+    private function resolveDeliveryAreaId(Request $request): ?int
+    {
+        // A manually picked zone always wins -- only fall back to
+        // auto-matching by coordinates when the admin left it blank.
+        if ($request->filled('delivery_area_id')) {
+            return (int) $request->delivery_area_id;
+        }
+
+        if (!$request->filled('latitude') || !$request->filled('longitude')) {
+            return null;
+        }
+
+        return $this->deliveryAreaResolver->resolve(
+            (float) $request->latitude,
+            (float) $request->longitude
+        )?->id;
+    }
+
     public function increaseMenuPrices(Request $request, Restaurant $restaurant, MenuPriceAdjustmentService $adjuster)
     {
         $data = $request->validate([
@@ -136,6 +159,7 @@ class RestaurantController extends Controller
             'pincode' => 'required|string|max:10',
             'latitude' => 'nullable|numeric|between:-90,90',
             'longitude' => 'nullable|numeric|between:-180,180',
+            'delivery_area_id' => 'nullable|exists:delivery_areas,id',
             'delivery_radius' => 'required|numeric|min:0|max:100',
             'restaurant_type' => 'required|in:' . implode(',', Restaurant::validServiceTypes()),
             'is_pure_veg' => 'nullable|boolean',
@@ -168,33 +192,51 @@ class RestaurantController extends Controller
             'logo' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:2048',
             'banner' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:5120',
             
-            // Owner Information
-            'owner_name' => 'required|string|max:255',
-            'owner_email' => ['required', 'email', UniqueUserContactForRole::email('restaurant_owner')],
-            'owner_phone' => ['required', 'string', 'max:20', UniqueUserContactForRole::phone('restaurant_owner')],
-            'owner_password' => 'required|string|min:8|confirmed',
+            // Owner Information -- either a brand-new owner login, or map
+            // this restaurant onto an existing restaurant_owner's account so
+            // one vendor can run several restaurants (see "My Stores" in the
+            // restaurant panel, which already supports multi-restaurant
+            // ownership -- this form just never had a way to reuse an owner
+            // from the admin side).
+            'owner_mode' => 'nullable|in:new,existing',
+            'existing_owner_id' => 'nullable|required_if:owner_mode,existing|exists:users,id',
+            'owner_name' => 'nullable|required_if:owner_mode,new|string|max:255',
+            'owner_email' => array_filter([
+                'nullable', 'required_if:owner_mode,new', 'email',
+                $request->input('owner_mode', 'new') === 'new' ? UniqueUserContactForRole::email('restaurant_owner') : null,
+            ]),
+            'owner_phone' => array_filter([
+                'nullable', 'required_if:owner_mode,new', 'string', 'max:20',
+                $request->input('owner_mode', 'new') === 'new' ? UniqueUserContactForRole::phone('restaurant_owner') : null,
+            ]),
+            'owner_password' => 'nullable|required_if:owner_mode,new|string|min:8|confirmed',
         ]);
-        
+
         try {
-            // Create owner user
-            $owner = User::create(array_merge([
-                'name' => $request->owner_name,
-                'email' => $request->owner_email,
-                'phone' => $request->owner_phone,
-                'password' => Hash::make($request->owner_password),
-                'email_verified_at' => now(),
-                'account_holder_name' => $request->account_holder_name,
-                'bank_name' => $request->bank_name,
-                'account_number' => $request->account_number,
-                'ifsc_code' => $request->routing_code ?: $request->ifsc_code,
-                'routing_code' => $request->routing_code ?: $request->ifsc_code,
-                'upi_id' => $request->upi_id,
-                'stripe_account_id' => $request->stripe_account_id,
-            ], $this->payoutProviderAccountAttributes($request)));
-            
-            // Assign role
-            $owner->assignRole('restaurant_owner');
-            
+            if ($request->input('owner_mode') === 'existing') {
+                $owner = User::findOrFail($request->existing_owner_id);
+                abort_unless($owner->hasRole('restaurant_owner'), 422, 'Selected user is not a restaurant owner.');
+            } else {
+                // Create owner user
+                $owner = User::create(array_merge([
+                    'name' => $request->owner_name,
+                    'email' => $request->owner_email,
+                    'phone' => $request->owner_phone,
+                    'password' => Hash::make($request->owner_password),
+                    'email_verified_at' => now(),
+                    'account_holder_name' => $request->account_holder_name,
+                    'bank_name' => $request->bank_name,
+                    'account_number' => $request->account_number,
+                    'ifsc_code' => $request->routing_code ?: $request->ifsc_code,
+                    'routing_code' => $request->routing_code ?: $request->ifsc_code,
+                    'upi_id' => $request->upi_id,
+                    'stripe_account_id' => $request->stripe_account_id,
+                ], $this->payoutProviderAccountAttributes($request)));
+
+                // Assign role
+                $owner->assignRole('restaurant_owner');
+            }
+
             // Generate unique slug
             $slug = Str::slug($request->name);
             $originalSlug = $slug;
@@ -227,6 +269,7 @@ class RestaurantController extends Controller
                 'pincode' => $request->pincode,
                 'latitude' => $request->latitude ?? 0,
                 'longitude' => $request->longitude ?? 0,
+                'delivery_area_id' => $this->resolveDeliveryAreaId($request),
                 'delivery_radius' => $request->delivery_radius,
                 'restaurant_type' => $request->restaurant_type,
                 'is_pure_veg' => $request->boolean('is_pure_veg'),
@@ -258,8 +301,11 @@ class RestaurantController extends Controller
                 $restaurant->update(['banner_image' => $bannerPath]);
             }
             
-            return redirect()->route('admin.restaurants.index')
-                ->with('success', "Restaurant '{$restaurant->name}' created successfully! Owner credentials have been set.");
+            $successMessage = $request->input('owner_mode') === 'existing'
+                ? "Restaurant '{$restaurant->name}' created and added to {$owner->name}'s account."
+                : "Restaurant '{$restaurant->name}' created successfully! Owner credentials have been set.";
+
+            return redirect()->route('admin.restaurants.index')->with('success', $successMessage);
                 
         } catch (\Exception $e) {
             \Log::error('Restaurant creation failed: ' . $e->getMessage());
@@ -557,6 +603,7 @@ class RestaurantController extends Controller
             'pincode' => 'required|string|max:10',
             'latitude' => 'nullable|numeric|between:-90,90',
             'longitude' => 'nullable|numeric|between:-180,180',
+            'delivery_area_id' => 'nullable|exists:delivery_areas,id',
             'delivery_radius' => 'required|numeric|min:0|max:100',
             'restaurant_type' => 'required|in:' . implode(',', Restaurant::validServiceTypes()),
             'is_pure_veg' => 'nullable|boolean',
@@ -614,6 +661,7 @@ class RestaurantController extends Controller
                 'is_pure_veg' => $request->boolean('is_pure_veg'),
                 'latitude' => $request->latitude ?? 0,
                 'longitude' => $request->longitude ?? 0,
+                'delivery_area_id' => $this->resolveDeliveryAreaId($request),
                 'weekly_timings' => $this->weeklyTimingsFromFlatHours(
                     $restaurant->weekly_timings,
                     $request->open_time,
@@ -718,7 +766,38 @@ class RestaurantController extends Controller
             ], 500);
         }
     }
-    
+
+    /**
+     * Admin-only suspension. Independent of `is_open`/`offline_reason`
+     * (which the restaurant owner controls) — a suspended restaurant stays
+     * closed to orders no matter what the owner does, and only an admin
+     * action (or the auto-expiry scheduler, for a time-limited suspension)
+     * can lift it.
+     */
+    public function suspend(Request $request, Restaurant $restaurant)
+    {
+        $validated = $request->validate([
+            'suspension_reason' => 'nullable|string|max:1000',
+            'suspension_type' => 'required|in:limited,permanent',
+            'suspended_until' => 'required_if:suspension_type,limited|nullable|date|after:now',
+        ]);
+
+        $until = $validated['suspension_type'] === 'limited'
+            ? \Carbon\Carbon::parse($validated['suspended_until'])
+            : null;
+
+        $restaurant->suspend($validated['suspension_reason'] ?? null, $until, $request->user()->id);
+
+        return redirect()->back()->with('success', "Restaurant \"{$restaurant->name}\" has been suspended.");
+    }
+
+    public function reactivate(Restaurant $restaurant)
+    {
+        $restaurant->liftSuspension();
+
+        return redirect()->back()->with('success', "Restaurant \"{$restaurant->name}\" has been reactivated.");
+    }
+
     /**
      * Bulk delete restaurants
      */

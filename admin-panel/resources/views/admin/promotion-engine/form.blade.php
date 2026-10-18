@@ -1918,7 +1918,7 @@ document.addEventListener('DOMContentLoaded', function () {
         const actual = selectedOptions.reduce((sum, option) => sum + Number(option.dataset.price || 0), 0);
         const effective = Number(priceInput?.value || rewardValueInput?.value || 0);
         const percent = actual > 0 && effective > 0 ? Math.max(0, ((actual - effective) / actual) * 100) : 0;
-        if (actualInput) actualInput.value = actual ? actual.toFixed(2) : '';
+        if (actualInput) actualInput.value = actual ? actual.toFixed(window.currencyDecimals || 2) : '';
         if (percentInput) percentInput.value = percent ? percent.toFixed(2) : '';
     }
 

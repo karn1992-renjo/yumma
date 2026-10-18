@@ -53,6 +53,8 @@ class DeliveryChargeController extends Controller
             'zone_free_delivery.*.threshold' => 'nullable|numeric|min:0',
             'admin_contribution_percent' => 'required|numeric|min:0|max:100',
             'restaurant_contribution_percent' => 'required|numeric|min:0|max:100',
+            'salary_driver_delivery_recipient' => 'required|in:admin,branch',
+            'salary_driver_branch_share_percent' => 'required_if:salary_driver_delivery_recipient,branch|nullable|numeric|min:0|max:100',
         ]);
 
         foreach ($validated['zone_free_delivery'] ?? [] as $areaId => $freeDelivery) {
@@ -92,6 +94,8 @@ class DeliveryChargeController extends Controller
                 'free_delivery_area_ids' => [],
                 'admin_contribution_percent' => $validated['admin_contribution_percent'],
                 'restaurant_contribution_percent' => $validated['restaurant_contribution_percent'],
+                'salary_driver_delivery_recipient' => $validated['salary_driver_delivery_recipient'],
+                'salary_driver_branch_share_percent' => $validated['salary_driver_branch_share_percent'] ?? 70,
             ])->save();
 
             DeliveryChargeSetting::query()->whereKeyNot($settings->getKey())->delete();

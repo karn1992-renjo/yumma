@@ -67,6 +67,13 @@ return [
         'onelink_path' => env('APPSFLYER_ONELINK_PATH', 'HZOC/2f2m39o2'),
         'onelink_api_token' => env('APPSFLYER_ONELINK_API_TOKEN'),
         'short_link_ttl' => env('APPSFLYER_ONELINK_SHORT_LINK_TTL', '30d'),
+        // Driver app referral links reuse the customer OneLink setup unless
+        // a separate AppsFlyer app/OneLink has been registered for the
+        // driver app in the AppsFlyer dashboard and these are overridden.
+        'driver_onelink_id' => env('APPSFLYER_DRIVER_ONELINK_ID', env('APPSFLYER_ONELINK_ID', 'HZOC')),
+        'driver_onelink_domain' => env('APPSFLYER_DRIVER_ONELINK_DOMAIN', env('APPSFLYER_ONELINK_DOMAIN', 'yumma.onelink.me')),
+        'driver_onelink_path' => env('APPSFLYER_DRIVER_ONELINK_PATH', env('APPSFLYER_ONELINK_PATH', 'HZOC/2f2m39o2')),
+        'driver_onelink_api_token' => env('APPSFLYER_DRIVER_ONELINK_API_TOKEN', env('APPSFLYER_ONELINK_API_TOKEN')),
     ],
 
 ];

@@ -8,7 +8,9 @@
         <h1>Branches</h1>
         <p>Franchise branches, territory isolation, local finance, and operations.</p>
     </div>
+    @can('manage_branches')
     <a href="{{ route('admin.branches.create') }}" class="btn btn-light"><i class="fas fa-plus me-2"></i>Create Branch</a>
+    @endcan
 </div>
 
 <div class="row g-3 mb-4">
@@ -49,6 +51,7 @@
                     <td><span class="badge bg-{{ $branch->status === 'active' ? 'success' : 'secondary' }}">{{ ucfirst($branch->status) }}</span></td>
                     <td class="text-end">
                         <a href="{{ route('admin.branches.show', $branch) }}" class="btn btn-sm btn-outline-primary"><i class="fas fa-eye"></i></a>
+                        @can('manage_branches')
                         <a href="{{ route('admin.branches.edit', $branch) }}" class="btn btn-sm btn-outline-secondary"><i class="fas fa-edit"></i></a>
                         <form action="{{ route('admin.branches.destroy', $branch) }}" method="POST" class="d-inline" id="deleteBranchForm{{ $branch->id }}">
                             @csrf
@@ -57,6 +60,7 @@
                                 <i class="fas fa-trash"></i>
                             </button>
                         </form>
+                        @endcan
                     </td>
                 </tr>
             @empty

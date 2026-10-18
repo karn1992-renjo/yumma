@@ -166,12 +166,14 @@
                 <p>Manage partner stores, owner accounts, verification, payout readiness, and live availability.</p>
             </div>
             <div class="ar-actions">
+                @can('create_restaurants')
                 <button type="button" class="btn btn-outline-primary fw-bold" data-bs-toggle="modal" data-bs-target="#restaurantBulkUploadModal">
                     <i class="fas fa-file-arrow-up me-2"></i>Bulk Upload
                 </button>
                 <a href="{{ route('admin.restaurants.create') }}" class="btn btn-primary fw-bold">
                     <i class="fas fa-plus me-2"></i>Add Restaurant
                 </a>
+                @endcan
             </div>
         </div>
     </section>
@@ -346,7 +348,10 @@
                             <td data-label="Actions">
                                 <div class="d-flex justify-content-end gap-2">
                                     <a href="{{ route('admin.restaurants.show', $restaurant) }}" class="ar-action" title="View"><i class="fas fa-eye"></i></a>
+                                    @can('edit_restaurants')
                                     <a href="{{ route('admin.restaurants.edit', $restaurant) }}" class="ar-action" title="Edit"><i class="fas fa-pen"></i></a>
+                                    @endcan
+                                    @can('delete_restaurants')
                                     <form action="{{ route('admin.restaurants.destroy', $restaurant) }}" method="POST" id="deleteForm{{ $restaurant->id }}">
                                         @csrf
                                         @method('DELETE')
@@ -354,6 +359,7 @@
                                             <i class="fas fa-trash"></i>
                                         </button>
                                     </form>
+                                    @endcan
                                 </div>
                             </td>
                         </tr>

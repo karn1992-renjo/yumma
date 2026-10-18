@@ -13,6 +13,27 @@ use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Route;
 
+Route::get('/admin/settings/security', [\App\Http\Controllers\AdminSecurityController::class, 'index'])
+    ->middleware(['auth', 'role:admin|super_admin'])->name('admin.security.index');
+Route::prefix('admin-mfa/security')->name('admin-mfa.security.')->group(function () {
+    Route::get('/', [\App\Http\Controllers\AdminSecurityController::class, 'show'])->name('show');
+    foreach (['start', 'verify', 'resend', 'confirm'] as $action) {
+        Route::post('/'.$action, [\App\Http\Controllers\AdminSecurityController::class, $action])
+            ->middleware('throttle:admin-security')->name($action);
+    }
+    Route::post('/firebase', [\App\Http\Controllers\AdminSecurityController::class, 'firebase'])
+        ->middleware('throttle:admin-security')->name('firebase');
+    Route::post('/cancel', [\App\Http\Controllers\AdminSecurityController::class, 'cancel'])->name('cancel');
+});
+Route::post('/admin-mfa/continue', [\App\Http\Controllers\AdminMfaController::class, 'continueLogin'])->name('admin-mfa.continue');
+
+Route::get('/admin-mfa', [\App\Http\Controllers\AdminMfaController::class, 'show'])->name('admin-mfa.show');
+Route::post('/admin-mfa', [\App\Http\Controllers\AdminMfaController::class, 'verify'])
+    ->middleware('throttle:admin-mfa')->name('admin-mfa.verify');
+Route::post('/admin-mfa/cancel', [\App\Http\Controllers\AdminMfaController::class, 'cancel'])->name('admin-mfa.cancel');
+Route::get('/admin-mfa/recovery', [\App\Http\Controllers\AdminMfaController::class, 'recovery'])
+    ->middleware('auth')->name('admin-mfa.recovery');
+
 Route::get('login', function () {
     if (! File::exists(storage_path('app/installed.lock'))) {
         return redirect()->route('install.show');
@@ -197,8 +218,10 @@ Route::middleware('auth')->group(function () {
     Route::patch('/profile', [ProfileController::class, 'update'])->name('profile.update');
     Route::put('/password', [ProfileController::class, 'updatePassword'])->name('profile.password.update');
     Route::delete('/profile', [ProfileController::class, 'destroy'])->name('profile.destroy');
-    Route::post('/logout', function () {
+    Route::post('/logout', function (Request $request) {
         auth()->logout();
+        $request->session()->invalidate();
+        $request->session()->regenerateToken();
         return redirect('/');
     })->name('logout');
 });
