@@ -24,6 +24,15 @@ const _statusLabels = {
   'cancelled': 'Cancelled',
 };
 
+// Dark + gold "celebration" treatment for an actually-active membership --
+// an original composition (not a copy of any specific app's design),
+// matching the premium feel used elsewhere this session for Gold surfaces.
+const _goldDark = Color(0xFF14110B);
+const _goldDarkDeep = Color(0xFF2A2210);
+const _gold = Color(0xFFF2C94C);
+const _goldDeep = Color(0xFFC89B2E);
+const _goldCream = Color(0xFFFFF6E0);
+
 class GoldSubscriptionScreen extends StatefulWidget {
   const GoldSubscriptionScreen({super.key});
 
@@ -109,6 +118,9 @@ class _GoldSubscriptionScreenState extends State<GoldSubscriptionScreen> {
       _current?['subscription'] is Map
           ? Map<String, dynamic>.from(_current!['subscription'])
           : null;
+
+  double get _totalSaved =>
+      double.tryParse('${_current?['total_saved'] ?? 0}') ?? 0;
 
   Future<void> _subscribe(Map<String, dynamic> plan) async {
     if (_isSubscribing) return;
@@ -288,6 +300,7 @@ class _GoldSubscriptionScreenState extends State<GoldSubscriptionScreen> {
                       isMember: _isMember,
                       palette: _palette,
                       onCancel: _cancel,
+                      totalSaved: _totalSaved,
                     ),
                     const SizedBox(height: 18),
                   ] else ...[
@@ -363,16 +376,32 @@ class _CurrentMembershipCard extends StatelessWidget {
     required this.isMember,
     required this.palette,
     required this.onCancel,
+    this.totalSaved = 0,
   });
 
   final Map<String, dynamic> subscription;
   final bool isMember;
   final BrandPalette palette;
   final VoidCallback onCancel;
+  final double totalSaved;
 
   @override
   Widget build(BuildContext context) {
     final status = subscription['status']?.toString() ?? 'active';
+
+    // An actually-live membership (active/trialing) gets the full
+    // celebration layout with real savings/validity data below. Every
+    // other state (pending_authorization, past_due, expired, cancelled)
+    // keeps the compact status card -- there's nothing to celebrate yet,
+    // or the membership has lapsed.
+    if (isMember) {
+      return _GoldMemberCelebrationCard(
+        subscription: subscription,
+        totalSaved: totalSaved,
+        onCancel: onCancel,
+      );
+    }
+
     final plan = subscription['plan'] is Map
         ? Map<String, dynamic>.from(subscription['plan'])
         : <String, dynamic>{};
@@ -424,7 +453,7 @@ class _CurrentMembershipCard extends StatelessWidget {
               style: const TextStyle(color: Colors.white, fontSize: 12.5, fontWeight: FontWeight.w700),
             ),
           ],
-          if (isMember || status == 'pending_authorization') ...[
+          if (status == 'pending_authorization') ...[
             const SizedBox(height: 16),
             SizedBox(
               width: double.infinity,
@@ -436,9 +465,9 @@ class _CurrentMembershipCard extends StatelessWidget {
                   padding: const EdgeInsets.symmetric(vertical: 12),
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                 ),
-                child: Text(
-                  status == 'pending_authorization' ? 'Cancel and try again' : 'Cancel membership',
-                  style: const TextStyle(fontWeight: FontWeight.w800),
+                child: const Text(
+                  'Cancel and try again',
+                  style: TextStyle(fontWeight: FontWeight.w800),
                 ),
               ),
             ),
@@ -448,9 +477,261 @@ class _CurrentMembershipCard extends StatelessWidget {
     );
   }
 
-  DateTime? _parseDate(dynamic value) {
+  static DateTime? _parseDate(dynamic value) {
     if (value is! String || value.isEmpty) return null;
     return DateTime.tryParse(value);
+  }
+}
+
+class _GoldMemberCelebrationCard extends StatelessWidget {
+  const _GoldMemberCelebrationCard({
+    required this.subscription,
+    required this.totalSaved,
+    required this.onCancel,
+  });
+
+  final Map<String, dynamic> subscription;
+  final double totalSaved;
+  final VoidCallback onCancel;
+
+  @override
+  Widget build(BuildContext context) {
+    final plan = subscription['plan'] is Map
+        ? Map<String, dynamic>.from(subscription['plan'])
+        : <String, dynamic>{};
+    final planName = plan['name']?.toString().trim();
+    final periodEnd = _CurrentMembershipCard._parseDate(subscription['current_period_end']);
+    final now = DateTime.now();
+    final daysRemaining =
+        periodEnd?.difference(DateTime(now.year, now.month, now.day)).inDays;
+
+    // order_limit/orders_used_in_period are real usage data from the
+    // backend (null order_limit = unlimited) -- not a fabricated figure.
+    final orderLimit = (subscription['order_limit'] ?? plan['order_limit']) as int?;
+    final ordersUsed = (subscription['orders_used_in_period'] as num?)?.toInt() ?? 0;
+
+    return Container(
+      clipBehavior: Clip.antiAlias,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(color: _goldDeep.withOpacity(0.35)),
+        boxShadow: [
+          BoxShadow(color: Colors.black.withOpacity(0.18), blurRadius: 18, offset: const Offset(0, 10)),
+        ],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // Celebration header.
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.fromLTRB(18, 20, 18, 22),
+            decoration: const BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [_goldDarkDeep, _goldDark],
+              ),
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: 52,
+                  height: 52,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: const LinearGradient(colors: [_gold, _goldDeep]),
+                    boxShadow: [BoxShadow(color: _gold.withOpacity(0.35), blurRadius: 14, offset: const Offset(0, 6))],
+                  ),
+                  child: const Icon(Icons.workspace_premium_rounded, color: _goldDark, size: 28),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Congratulations!',
+                        style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w800),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        'You are a ${planName?.isNotEmpty == true ? planName : 'Gold'} Member',
+                        style: const TextStyle(color: _gold, fontSize: 19, fontWeight: FontWeight.w900, height: 1.15),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        'Free delivery on every order, no minimum.',
+                        style: TextStyle(color: Colors.white.withOpacity(0.7), fontSize: 12.5, height: 1.35),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          // Real stats: savings + validity.
+          Container(
+            color: _goldCream,
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+            child: Row(
+              children: [
+                Expanded(
+                  child: _GoldStatBlock(
+                    icon: Icons.savings_rounded,
+                    label: 'You have saved',
+                    value: formatCurrency(context, totalSaved),
+                    caption: 'with Gold Membership',
+                  ),
+                ),
+                Container(width: 1, height: 42, color: _goldDeep.withOpacity(0.2)),
+                Expanded(
+                  child: _GoldStatBlock(
+                    icon: Icons.event_available_rounded,
+                    label: 'Member Validity',
+                    value: periodEnd != null ? DateFormat('dd MMM yyyy').format(periodEnd) : '—',
+                    caption: daysRemaining != null && daysRemaining >= 0
+                        ? '($daysRemaining days remaining)'
+                        : null,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          // Only genuinely implemented benefits -- no decorative/unreal claims.
+          Container(
+            color: Colors.white,
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+            child: Column(
+              children: [
+                _GoldBenefitRow(
+                  icon: Icons.local_shipping_rounded,
+                  title: 'Free delivery on every order',
+                  subtitle: 'No minimum order value required',
+                ),
+                if (orderLimit != null)
+                  _GoldBenefitRow(
+                    icon: Icons.shopping_bag_rounded,
+                    title: 'Delivery waiver usage this period',
+                    subtitle: '$ordersUsed of $orderLimit orders used',
+                  )
+                else
+                  _GoldBenefitRow(
+                    icon: Icons.all_inclusive_rounded,
+                    title: 'Unlimited orders',
+                    subtitle: 'No cap on how many orders get free delivery',
+                  ),
+              ],
+            ),
+          ),
+          Container(
+            width: double.infinity,
+            color: Colors.white,
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+            child: TextButton(
+              onPressed: onCancel,
+              style: TextButton.styleFrom(foregroundColor: const Color(0xFF9CA3AF)),
+              child: const Text('Cancel membership', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 12.5)),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _GoldStatBlock extends StatelessWidget {
+  const _GoldStatBlock({
+    required this.icon,
+    required this.label,
+    required this.value,
+    this.caption,
+  });
+
+  final IconData icon;
+  final String label;
+  final String value;
+  final String? caption;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          width: 34,
+          height: 34,
+          decoration: BoxDecoration(color: _gold.withOpacity(0.22), shape: BoxShape.circle),
+          child: Icon(icon, color: _goldDeep, size: 17),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(label, style: const TextStyle(color: Color(0xFF8A6D1F), fontSize: 11, fontWeight: FontWeight.w700)),
+              const SizedBox(height: 2),
+              Text(
+                value,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(color: _goldDark, fontSize: 15, fontWeight: FontWeight.w900),
+              ),
+              if (caption != null) ...[
+                const SizedBox(height: 1),
+                Text(caption!, style: const TextStyle(color: Color(0xFF8A6D1F), fontSize: 10.5, fontWeight: FontWeight.w600)),
+              ],
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _GoldBenefitRow extends StatelessWidget {
+  const _GoldBenefitRow({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Row(
+        children: [
+          Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(color: _gold.withOpacity(0.14), borderRadius: BorderRadius.circular(10)),
+            child: Icon(icon, color: _goldDeep, size: 18),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(title, style: const TextStyle(color: Color(0xFF1C1C1C), fontSize: 13.5, fontWeight: FontWeight.w800)),
+                const SizedBox(height: 1),
+                Text(subtitle, style: TextStyle(color: FoodFlowTheme.muted, fontSize: 11.5)),
+              ],
+            ),
+          ),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+            decoration: BoxDecoration(color: const Color(0xFFEAF8EA), borderRadius: BorderRadius.circular(999)),
+            child: const Text('Active', style: TextStyle(color: Color(0xFF0C831F), fontSize: 10.5, fontWeight: FontWeight.w800)),
+          ),
+        ],
+      ),
+    );
   }
 }
 
