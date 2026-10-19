@@ -137,6 +137,7 @@ Route::get('/content/legal', function () {
 // Public Restaurant Discovery Routes
 Route::get('/restaurants/nearby', [RestaurantController::class, 'nearby']);
 Route::get('/restaurants/search', [RestaurantController::class, 'search']);
+Route::get('/restaurants/under-price', [RestaurantController::class, 'underPrice']);
 Route::get('/restaurants/{id}', [RestaurantController::class, 'show']);
 Route::get('/restaurants/{restaurantId}/menu', [MenuController::class, 'index']);
 Route::get('/restaurants/{restaurantId}/menu/search', [MenuController::class, 'search']);

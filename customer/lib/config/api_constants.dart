@@ -73,6 +73,7 @@ class ApiConstants {
   // Restaurant Customer endpoints
   static const String nearbyRestaurants = '/restaurants/nearby';
   static const String searchRestaurants = '/restaurants/search';
+  static const String underPriceRestaurants = '/restaurants/under-price';
   static const String universalSearch = '/v1/search';
   static const String advancedSearch = '/v1/search';
   static const String searchSuggestions = '/v1/search/suggestions';

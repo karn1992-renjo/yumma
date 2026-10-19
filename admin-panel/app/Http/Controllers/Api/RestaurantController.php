@@ -3776,6 +3776,99 @@ class RestaurantController extends Controller
     }
 
     /**
+     * Restaurants with at least one real, in-stock menu item priced under
+     * the given threshold (default 99) -- auto-computed from live menu
+     * data every call, never a curated/admin-picked list. Each restaurant
+     * in the response carries its own cheapest qualifying item's price
+     * (cheapest_item_price) so the client can show "From ₹X" accurately.
+     */
+    public function underPrice(Request $request)
+    {
+        try {
+            $validated = $request->validate([
+                'lat' => 'required|numeric',
+                'lng' => 'required|numeric',
+                'radius' => 'nullable|numeric',
+                'threshold' => 'nullable|numeric|min:1',
+            ]);
+
+            $threshold = (float) ($validated['threshold'] ?? 99);
+            $latitude = (float) $validated['lat'];
+            $longitude = (float) $validated['lng'];
+            $radius = isset($validated['radius'])
+                ? min(200.0, (float) $validated['radius'])
+                : $this->discoveryRadiusForLocation($latitude, $longitude);
+
+            $qualifyingRestaurantIds = MenuItem::query()
+                ->where('is_available', true)
+                ->whereRaw('COALESCE(discounted_price, price) < ?', [$threshold])
+                ->distinct()
+                ->pluck('restaurant_id');
+
+            if ($qualifyingRestaurantIds->isEmpty()) {
+                return response()->json([
+                    'success' => true,
+                    'data' => [],
+                    'threshold' => $threshold,
+                ]);
+            }
+
+            $restaurants = Restaurant::query()
+                ->where('is_verified', true)
+                ->customerVisible()
+                ->whereIn('id', $qualifyingRestaurantIds)
+                ->nearby($latitude, $longitude, $radius)
+                ->get();
+
+            $this->stampSponsoredRestaurants($restaurants, 'under_price');
+
+            // One cheap query for every qualifying restaurant's cheapest
+            // item, instead of N+1 per-restaurant queries below.
+            $cheapestByRestaurant = MenuItem::query()
+                ->where('is_available', true)
+                ->whereRaw('COALESCE(discounted_price, price) < ?', [$threshold])
+                ->whereIn('restaurant_id', $restaurants->pluck('id'))
+                ->selectRaw('restaurant_id, MIN(COALESCE(discounted_price, price)) as cheapest_price')
+                ->groupBy('restaurant_id')
+                ->pluck('cheapest_price', 'restaurant_id');
+
+            $data = $restaurants
+                ->map(function (Restaurant $restaurant) use ($latitude, $longitude, $threshold, $cheapestByRestaurant) {
+                    $resource = $this->augmentRestaurantResource($restaurant, $latitude, $longitude);
+                    $resource['cheapest_item_price'] = isset($cheapestByRestaurant[$restaurant->id])
+                        ? (float) $cheapestByRestaurant[$restaurant->id]
+                        : null;
+                    $resource['under_price_threshold'] = $threshold;
+
+                    return $resource;
+                })
+                ->sortBy('cheapest_item_price')
+                ->values();
+
+            $data = $this->pinSponsoredResultsToTop($data);
+
+            return response()->json([
+                'success' => true,
+                'data' => $data,
+                'threshold' => $threshold,
+            ]);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Invalid location parameters provided.',
+                'errors' => $e->errors(),
+            ], 422);
+        } catch (\Exception $e) {
+            Log::error('Under-price restaurants error: ' . $e->getMessage());
+
+            return response()->json([
+                'success' => false,
+                'message' => 'An unexpected error occurred while processing the request.',
+            ], 500);
+        }
+    }
+
+    /**
      * Search restaurants by query.
      */
     public function search(Request $request)

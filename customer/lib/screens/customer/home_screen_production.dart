@@ -48,6 +48,7 @@ import '../customer/orders_screen.dart';
 import '../customer/profile_screen.dart';
 import '../customer/restaurant_detail_screen.dart';
 import '../customer/search_screen.dart';
+import '../customer/under_price_screen.dart';
 
 const _homeAccent = Color(0xFFFF6B00);
 const _homeAccentDeep = Color(0xFFFF7A00);
@@ -1136,6 +1137,17 @@ class _CustomerHomeScreenProductionState
                                 return;
                               }
                               Navigator.pushNamed(context, '/ai-voice');
+                              return;
+                            }
+                            if (index == -2) {
+                              Navigator.of(context).push(
+                                MaterialPageRoute(
+                                  builder: (_) => UnderPriceScreen(
+                                    initialLat: _currentLat,
+                                    initialLng: _currentLng,
+                                  ),
+                                ),
+                              );
                               return;
                             }
                             if ((index == 2 || index == 3) &&
@@ -15132,6 +15144,13 @@ class _HomeBottomNavBar extends StatelessWidget {
                       onTap: () => onTap(0),
                     ),
                     _NavItem(
+                      icon: AppIcons.offer,
+                      iconAsset: 'assets/images/under_99_logo.png',
+                      label: 'Under ₹99',
+                      active: false,
+                      onTap: () => onTap(-2),
+                    ),
+                    _NavItem(
                       icon: AppIcons.search,
                       label: 'Search',
                       active: currentIndex == 1,
@@ -15171,9 +15190,11 @@ class _NavItem extends StatelessWidget {
     required this.label,
     required this.active,
     required this.onTap,
+    this.iconAsset,
   });
 
   final IconData icon;
+  final String? iconAsset;
   final String label;
   final bool active;
   final VoidCallback onTap;
@@ -15203,11 +15224,17 @@ class _NavItem extends StatelessWidget {
                   Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      AppIcon(
-                        icon,
-                        size: 22,
-                        color: active ? primary : const Color(0xFF6B7280),
-                      ),
+                      iconAsset != null
+                          ? Image.asset(
+                              iconAsset!,
+                              width: 22,
+                              height: 22,
+                            )
+                          : AppIcon(
+                              icon,
+                              size: 22,
+                              color: active ? primary : const Color(0xFF6B7280),
+                            ),
                       const SizedBox(height: 4),
                       Text(
                         label,
