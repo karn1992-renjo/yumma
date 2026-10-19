@@ -35,6 +35,16 @@ class GoldSubscriptionService
             throw new RuntimeException("{$gatewayName} is not available right now. Please choose a different payment method.");
         }
 
+        // A pending_authorization row older than this never had its gateway
+        // mandate completed (the customer backed out of the checkout/webview,
+        // or the app was killed mid-flow) -- nothing else ever expires it, so
+        // without this it permanently blocks every future subscribe attempt
+        // with a flatly wrong "already have an active membership" error.
+        CustomerSubscription::where('user_id', $user->id)
+            ->where('status', 'pending_authorization')
+            ->where('created_at', '<', now()->subMinutes(30))
+            ->delete();
+
         $existing = CustomerSubscription::where('user_id', $user->id)
             ->whereIn('status', ['pending_authorization', 'trialing', 'active', 'past_due'])
             ->first();
@@ -54,15 +64,24 @@ class GoldSubscriptionService
             'gateway' => $gatewayName,
         ]);
 
-        $gatewayCustomerId = $gateway->resolveCustomerId(
-            $user->name ?? 'Customer',
-            $user->email ?? '',
-            $user->phone ?? null,
-            null
-        );
-        $gatewayPlanId = $gateway->resolvePlanId($plan);
+        try {
+            $gatewayCustomerId = $gateway->resolveCustomerId(
+                $user->name ?? 'Customer',
+                $user->email ?? '',
+                $user->phone ?? null,
+                null
+            );
+            $gatewayPlanId = $gateway->resolvePlanId($plan);
 
-        $result = $gateway->createSubscription($subscription, $gatewayCustomerId, $gatewayPlanId);
+            $result = $gateway->createSubscription($subscription, $gatewayCustomerId, $gatewayPlanId);
+        } catch (\Throwable $e) {
+            // The gateway call failed outright (bad credentials, transient
+            // API error, etc.) -- delete the row immediately rather than
+            // leaving it stuck in pending_authorization with no mandate and
+            // no way to retry.
+            $subscription->delete();
+            throw $e;
+        }
 
         $subscription->update([
             'gateway_customer_id' => $gatewayCustomerId,

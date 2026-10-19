@@ -217,12 +217,15 @@ class _GoldSubscriptionScreenState extends State<GoldSubscriptionScreen> {
   }
 
   Future<void> _cancel() async {
+    final isPending = _subscription?['status']?.toString() == 'pending_authorization';
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: const Text('Cancel membership?'),
-        content: const Text(
-          'You will stop getting free delivery once your current period ends.',
+        title: Text(isPending ? 'Cancel and try again?' : 'Cancel membership?'),
+        content: Text(
+          isPending
+              ? 'This will clear your stuck membership setup so you can subscribe again.'
+              : 'You will stop getting free delivery once your current period ends.',
         ),
         actions: [
           TextButton(
@@ -421,7 +424,7 @@ class _CurrentMembershipCard extends StatelessWidget {
               style: const TextStyle(color: Colors.white, fontSize: 12.5, fontWeight: FontWeight.w700),
             ),
           ],
-          if (isMember) ...[
+          if (isMember || status == 'pending_authorization') ...[
             const SizedBox(height: 16),
             SizedBox(
               width: double.infinity,
@@ -433,7 +436,10 @@ class _CurrentMembershipCard extends StatelessWidget {
                   padding: const EdgeInsets.symmetric(vertical: 12),
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                 ),
-                child: const Text('Cancel membership', style: TextStyle(fontWeight: FontWeight.w800)),
+                child: Text(
+                  status == 'pending_authorization' ? 'Cancel and try again' : 'Cancel membership',
+                  style: const TextStyle(fontWeight: FontWeight.w800),
+                ),
               ),
             ),
           ],
