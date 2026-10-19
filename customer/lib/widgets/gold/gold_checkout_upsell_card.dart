@@ -103,9 +103,13 @@ class _GoldCheckoutUpsellCardState extends State<GoldCheckoutUpsellCard> {
                   const SizedBox(height: 3),
                   Row(
                     children: [
-                      Text(
-                        'Free delivery on every order • ',
-                        style: TextStyle(color: FoodFlowTheme.muted, fontSize: 11.5),
+                      Flexible(
+                        child: Text(
+                          'Free delivery on every order • ',
+                          style: TextStyle(color: FoodFlowTheme.muted, fontSize: 11.5),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
                       ),
                       if (hasPromo) ...[
                         Text(
