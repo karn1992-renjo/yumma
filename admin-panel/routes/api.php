@@ -115,6 +115,7 @@ Route::get('/offers/active', [ContentController::class, 'activeOffers']);
 Route::get('/promotions', [PromotionController::class, 'index']);
 Route::get('/promotions/{promotion}', [PromotionController::class, 'show'])->whereNumber('promotion');
 Route::get('/app/branding', [AuthController::class, 'branding']);
+Route::get('/splash-campaign/active', [ContentController::class, 'activeSplashCampaign']);
 Route::get('/content/legal', function () {
     $settings = AppSetting::all()->pluck('value', 'key')->toArray();
     $legalText = static function (string $key, string $fallback) use ($settings): string {
@@ -138,6 +139,7 @@ Route::get('/content/legal', function () {
 Route::get('/restaurants/nearby', [RestaurantController::class, 'nearby']);
 Route::get('/restaurants/search', [RestaurantController::class, 'search']);
 Route::get('/restaurants/under-price', [RestaurantController::class, 'underPrice']);
+Route::get('/menu-items/under-price', [RestaurantController::class, 'underPriceMenuItems']);
 Route::get('/restaurants/{id}', [RestaurantController::class, 'show']);
 Route::get('/restaurants/{restaurantId}/menu', [MenuController::class, 'index']);
 Route::get('/restaurants/{restaurantId}/menu/search', [MenuController::class, 'search']);

@@ -82,6 +82,7 @@
                         <option value="promo" @selected(old('banner_type') === 'promo')>Promo Banner</option>
                         <option value="search_bar" @selected(old('banner_type') === 'search_bar')>Search Bar Banner</option>
                         <option value="category" @selected(old('banner_type') === 'category')>Category Banner</option>
+                        <option value="under_99" @selected(old('banner_type') === 'under_99')>Under &#8377;99 Screen Banner</option>
                     </select>
                     @error('banner_type') <div class="invalid-feedback">{{ $message }}</div> @enderror
                 </div>

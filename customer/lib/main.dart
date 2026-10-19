@@ -10,7 +10,11 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_easyloading/flutter_easyloading.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:google_mobile_ads/google_mobile_ads.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'firebase_options.dart';
+import 'models/splash_campaign.dart';
+import 'screens/promo_splash_screen.dart';
+import 'services/splash_campaign_service.dart';
 import 'services/notification_service.dart';
 import 'services/navigation_service.dart';
 import 'services/sound_service.dart';
@@ -84,6 +88,12 @@ Future<void> main() async {
   final authProvider = AuthProvider();
   final cartProvider = CartProvider();
   final startupFuture = _initializeStartup(authProvider, cartProvider);
+  // Kicked off in parallel with the rest of startup so it's ready by the
+  // time AppSplashScreen's own minimum display delay elapses -- the promo
+  // splash gate below should rarely, if ever, have to wait on it.
+  final splashCampaignFuture = AppConfig.isCustomerApp
+      ? SplashCampaignService.instance.loadActiveCampaign()
+      : Future<SplashCampaign?>.value(null);
 
   _logStartupStep('runApp');
 
@@ -96,7 +106,10 @@ Future<void> main() async {
         ChangeNotifierProvider(create: (_) => RestaurantProvider()),
         ChangeNotifierProvider(create: (_) => DiningProvider()),
       ],
-      child: FoodDeliveryApp(startupFuture: startupFuture),
+      child: FoodDeliveryApp(
+        startupFuture: startupFuture,
+        splashCampaignFuture: splashCampaignFuture,
+      ),
     ),
   );
 
@@ -305,9 +318,11 @@ class FoodDeliveryApp extends StatefulWidget {
   const FoodDeliveryApp({
     super.key,
     required this.startupFuture,
+    required this.splashCampaignFuture,
   });
 
   final Future<void> startupFuture;
+  final Future<SplashCampaign?> splashCampaignFuture;
 
   @override
   State<FoodDeliveryApp> createState() => _FoodDeliveryAppState();
@@ -595,7 +610,12 @@ class _FoodDeliveryAppState extends State<FoodDeliveryApp> {
               ? const HomeScreen()
               : const LoginScreen();
           if (!AppConfig.isCustomerApp) return destination;
-          return LocationGateScreen(destinationBuilder: (_) => destination);
+          final locationGated =
+              LocationGateScreen(destinationBuilder: (_) => destination);
+          return _PromoSplashGate(
+            campaignFuture: widget.splashCampaignFuture,
+            destinationBuilder: (_) => locationGated,
+          );
         },
       ),
       navigatorObservers: [routeObserver],
@@ -1157,5 +1177,111 @@ class _FoodDeliveryAppState extends State<FoodDeliveryApp> {
         ),
       ),
     );
+  }
+}
+
+/// Resolves the active promotional splash campaign (started in parallel
+/// with the rest of app startup, see main()) and shows it exactly once per
+/// cold start, before handing off to [destinationBuilder]. A campaign whose
+/// artwork fails to precache is treated the same as "no campaign" so a
+/// broken image URL never renders as a blank/broken promo screen.
+class _PromoSplashGate extends StatefulWidget {
+  const _PromoSplashGate({
+    required this.campaignFuture,
+    required this.destinationBuilder,
+  });
+
+  final Future<SplashCampaign?> campaignFuture;
+  final WidgetBuilder destinationBuilder;
+
+  @override
+  State<_PromoSplashGate> createState() => _PromoSplashGateState();
+}
+
+class _PromoSplashGateState extends State<_PromoSplashGate> {
+  SplashCampaign? _campaign;
+  bool _resolved = false;
+  bool _showingPromo = false;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.campaignFuture.then(_onCampaignResolved).catchError((_) {
+      if (mounted) setState(() => _resolved = true);
+    });
+  }
+
+  Future<void> _onCampaignResolved(SplashCampaign? campaign) async {
+    if (campaign == null) {
+      if (mounted) setState(() => _resolved = true);
+      return;
+    }
+    final artworkReady = await _precache(campaign.imageUrl);
+    if (!mounted) return;
+    setState(() {
+      _resolved = true;
+      _showingPromo = artworkReady;
+      _campaign = artworkReady ? campaign : null;
+    });
+  }
+
+  Future<bool> _precache(String url) async {
+    try {
+      await precacheImage(CachedNetworkImageProvider(url), context)
+          .timeout(const Duration(seconds: 3));
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  void _onPromoFinished({required bool tapped}) {
+    final campaign = _campaign;
+    if (!mounted) return;
+    setState(() => _showingPromo = false);
+    if (tapped && campaign != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _runTapAction(context, campaign);
+      });
+    }
+  }
+
+  void _runTapAction(BuildContext context, SplashCampaign campaign) {
+    // Allowlist only -- the server can never make the client navigate
+    // anywhere outside these named, already-registered in-app routes.
+    switch (campaign.tapAction) {
+      case 'offers':
+        Navigator.of(context).pushNamed('/offers');
+        break;
+      case 'gold':
+        Navigator.of(context).pushNamed('/gold');
+        break;
+      case 'restaurant':
+        if (campaign.tapRestaurantId != null) {
+          Navigator.of(context).pushNamed(
+            '/restaurant/detail',
+            arguments: {'restaurantId': campaign.tapRestaurantId},
+          );
+        }
+        break;
+      case 'home':
+      case 'none':
+      default:
+        break;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_resolved) {
+      return const Scaffold(backgroundColor: Color(0xFF5C0298));
+    }
+    if (_showingPromo && _campaign != null) {
+      return PromoSplashScreen(
+        campaign: _campaign!,
+        onFinished: _onPromoFinished,
+      );
+    }
+    return widget.destinationBuilder(context);
   }
 }

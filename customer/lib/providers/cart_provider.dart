@@ -378,6 +378,28 @@ class CartProvider extends ChangeNotifier {
         .fold(0, (sum, item) => sum + item.quantity);
   }
 
+  // Like quantityForItem, but looks at a specific restaurant's cart rather
+  // than only the currently-active one -- needed by any screen (e.g. a
+  // cross-restaurant item feed) whose cards span more restaurants than just
+  // the one addItem() most recently activated.
+  int quantityForItemInRestaurant(int restaurantId, MenuItem menuItem) {
+    final items = _restaurantCarts[restaurantId]?.items ?? const <CartItem>[];
+    final exactQuantity = items
+        .where(
+            (item) => !item.isPromotionReward && item.menuItem.id == menuItem.id)
+        .fold(0, (sum, item) => sum + item.quantity);
+    if (exactQuantity > 0) return exactQuantity;
+
+    final normalizedName = menuItem.name.trim().toLowerCase();
+    return items
+        .where(
+          (item) =>
+              !item.isPromotionReward &&
+              item.menuItem.name.trim().toLowerCase() == normalizedName,
+        )
+        .fold(0, (sum, item) => sum + item.quantity);
+  }
+
   int quantityForSelection(
     int menuItemId, {
     MenuOption? selectedVariant,

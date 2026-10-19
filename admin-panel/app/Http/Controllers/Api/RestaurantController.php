@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Events\OrderStatusUpdatedEvent;
 use App\Http\Controllers\Controller;
+use App\Http\Resources\MenuItemResource;
 use App\Http\Resources\RestaurantResource;
 use App\Jobs\AutoMarkOrderPreparingJob;
 use App\Models\AppSetting;
@@ -3801,7 +3802,13 @@ class RestaurantController extends Controller
 
             $qualifyingRestaurantIds = MenuItem::query()
                 ->where('is_available', true)
-                ->whereRaw('COALESCE(discounted_price, price) < ?', [$threshold])
+                // A bound float placeholder gets sent to SQLite as a TEXT
+                // param, and SQLite's storage-class ordering (NUMERIC < TEXT)
+                // then makes EVERY numeric price satisfy "< 'text'" -- the
+                // filter silently became a no-op. $threshold is already
+                // numeric-validated above, so inlining it is safe and
+                // guarantees an actual numeric comparison.
+                ->whereRaw('COALESCE(discounted_price, price) < ' . (float) $threshold)
                 ->distinct()
                 ->pluck('restaurant_id');
 
@@ -3826,7 +3833,13 @@ class RestaurantController extends Controller
             // item, instead of N+1 per-restaurant queries below.
             $cheapestByRestaurant = MenuItem::query()
                 ->where('is_available', true)
-                ->whereRaw('COALESCE(discounted_price, price) < ?', [$threshold])
+                // A bound float placeholder gets sent to SQLite as a TEXT
+                // param, and SQLite's storage-class ordering (NUMERIC < TEXT)
+                // then makes EVERY numeric price satisfy "< 'text'" -- the
+                // filter silently became a no-op. $threshold is already
+                // numeric-validated above, so inlining it is safe and
+                // guarantees an actual numeric comparison.
+                ->whereRaw('COALESCE(discounted_price, price) < ' . (float) $threshold)
                 ->whereIn('restaurant_id', $restaurants->pluck('id'))
                 ->selectRaw('restaurant_id, MIN(COALESCE(discounted_price, price)) as cheapest_price')
                 ->groupBy('restaurant_id')
@@ -3860,6 +3873,119 @@ class RestaurantController extends Controller
             ], 422);
         } catch (\Exception $e) {
             Log::error('Under-price restaurants error: ' . $e->getMessage());
+
+            return response()->json([
+                'success' => false,
+                'message' => 'An unexpected error occurred while processing the request.',
+            ], 500);
+        }
+    }
+
+    /**
+     * Flat, cross-restaurant list of the real menu items backing the
+     * "Under X" screen -- every in-stock item priced under the threshold
+     * (default 99) from a nearby, customer-visible restaurant, each
+     * carrying its own restaurant info so the client can add straight to
+     * that restaurant's cart without a second lookup. `categories` is the
+     * distinct, auto-derived set of category names actually present among
+     * the qualifying items, for the screen's filter chips -- never an
+     * admin-curated list.
+     */
+    public function underPriceMenuItems(Request $request)
+    {
+        try {
+            $validated = $request->validate([
+                'lat' => 'required|numeric',
+                'lng' => 'required|numeric',
+                'radius' => 'nullable|numeric',
+                'threshold' => 'nullable|numeric|min:1',
+            ]);
+
+            $threshold = (float) ($validated['threshold'] ?? 99);
+            $latitude = (float) $validated['lat'];
+            $longitude = (float) $validated['lng'];
+            $radius = isset($validated['radius'])
+                ? min(200.0, (float) $validated['radius'])
+                : $this->discoveryRadiusForLocation($latitude, $longitude);
+
+            $restaurants = Restaurant::query()
+                ->where('is_verified', true)
+                ->customerVisible()
+                ->nearby($latitude, $longitude, $radius)
+                ->get();
+
+            if ($restaurants->isEmpty()) {
+                return response()->json(['success' => true, 'data' => [], 'categories' => [], 'threshold' => $threshold]);
+            }
+
+            $items = MenuItem::query()
+                ->where('is_available', true)
+                ->where(function ($statusQuery) {
+                    $statusQuery->whereNull('approval_status')
+                        ->orWhere('approval_status', 'approved');
+                })
+                // A bound float placeholder gets sent to SQLite as a TEXT
+                // param, and SQLite's storage-class ordering (NUMERIC < TEXT)
+                // then makes EVERY numeric price satisfy "< 'text'" -- the
+                // filter silently became a no-op. $threshold is already
+                // numeric-validated above, so inlining it is safe and
+                // guarantees an actual numeric comparison.
+                ->whereRaw('COALESCE(discounted_price, price) < ' . (float) $threshold)
+                ->whereIn('restaurant_id', $restaurants->pluck('id'))
+                ->with(['category:id,name'])
+                ->get()
+                // is_available/approval_status are static flags; a menu item
+                // can still be outside its own schedule window right now
+                // (MenuItem::getIsScheduledAvailableAttribute()) -- same
+                // real-time check MenuController::index() applies before
+                // showing an item in a restaurant's own menu.
+                ->filter(fn (MenuItem $item) => $item->is_scheduled_available)
+                ->values();
+
+            if ($items->isEmpty()) {
+                return response()->json(['success' => true, 'data' => [], 'categories' => [], 'threshold' => $threshold]);
+            }
+
+            $restaurantResourceById = $restaurants
+                ->whereIn('id', $items->pluck('restaurant_id')->unique())
+                ->mapWithKeys(fn (Restaurant $restaurant) => [
+                    $restaurant->id => $this->augmentRestaurantResource($restaurant, $latitude, $longitude),
+                ]);
+
+            $data = $items
+                ->map(function (MenuItem $item) use ($restaurantResourceById, $threshold) {
+                    $itemData = (new MenuItemResource($item))->resolve();
+                    $itemData['restaurant'] = $restaurantResourceById[$item->restaurant_id] ?? null;
+                    $itemData['under_price_threshold'] = $threshold;
+
+                    return $itemData;
+                })
+                ->filter(fn (array $row) => $row['restaurant'] !== null)
+                ->sortBy('final_price')
+                ->values();
+
+            $categories = $data
+                ->pluck('category_name')
+                ->filter(fn ($name) => is_string($name) && trim($name) !== '')
+                ->map(fn ($name) => trim($name))
+                ->unique(fn ($name) => mb_strtolower($name))
+                ->sort(fn ($a, $b) => strcasecmp($a, $b))
+                ->values();
+
+            return response()->json([
+                'success' => true,
+                'data' => $data,
+                'categories' => $categories,
+                'threshold' => $threshold,
+            ]);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Invalid location parameters provided.',
+                'errors' => $e->errors(),
+            ], 422);
+        } catch (\Exception $e) {
+            Log::error('Under-price menu items error: ' . $e->getMessage());
 
             return response()->json([
                 'success' => false,

@@ -51,6 +51,7 @@ use App\Http\Controllers\Admin\SettingController;
 use App\Http\Controllers\Admin\AiControlCenterController;
 use App\Http\Controllers\Admin\VoiceAiSettingsController;
 use App\Http\Controllers\Admin\CuisineController;
+use App\Http\Controllers\Admin\SplashCampaignController;
 use App\Http\Controllers\Admin\SubscriptionPlanController;
 use App\Http\Controllers\Admin\GlobalMenuCategoryController;
 use App\Http\Controllers\Admin\MasterMenuItemController;
@@ -830,6 +831,18 @@ Route::middleware(['auth', 'role_or_permission:super_admin|admin|manage_commissi
         Route::put('/{subscriptionPlan}', [SubscriptionPlanController::class, 'update'])->name('update');
         Route::delete('/{subscriptionPlan}', [SubscriptionPlanController::class, 'destroy'])->name('destroy');
         Route::post('/{subscriptionPlan}/toggle-status', [SubscriptionPlanController::class, 'toggleStatus'])->name('toggle-status');
+    });
+});
+
+Route::middleware(['auth', 'role_or_permission:super_admin|admin|manage_splash_campaigns'])->prefix('admin')->name('admin.')->group(function () {
+    Route::prefix('splash-campaigns')->name('splash-campaigns.')->group(function () {
+        Route::get('/', [SplashCampaignController::class, 'index'])->name('index');
+        Route::get('/create', [SplashCampaignController::class, 'create'])->name('create');
+        Route::post('/', [SplashCampaignController::class, 'store'])->name('store');
+        Route::get('/{splashCampaign}/edit', [SplashCampaignController::class, 'edit'])->name('edit');
+        Route::put('/{splashCampaign}', [SplashCampaignController::class, 'update'])->name('update');
+        Route::delete('/{splashCampaign}', [SplashCampaignController::class, 'destroy'])->name('destroy');
+        Route::post('/{splashCampaign}/toggle-status', [SplashCampaignController::class, 'toggleStatus'])->name('toggle-status');
     });
 });
 

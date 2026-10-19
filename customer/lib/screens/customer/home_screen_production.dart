@@ -15225,10 +15225,13 @@ class _NavItem extends StatelessWidget {
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
                       iconAsset != null
-                          ? Image.asset(
-                              iconAsset!,
-                              width: 22,
+                          ? SizedBox(
+                              width: 34,
                               height: 22,
+                              child: Image.asset(
+                                iconAsset!,
+                                fit: BoxFit.contain,
+                              ),
                             )
                           : AppIcon(
                               icon,

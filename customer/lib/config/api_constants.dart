@@ -21,6 +21,7 @@ class ApiConstants {
   static const String logout = '/logout';
   static const String user = '/user';
   static const String appBranding = '/app/branding';
+  static const String activeSplashCampaign = '/splash-campaign/active';
   static const String services = '/services';
   static const String languages = '/languages';
   static String translations(String languageCode) =>
@@ -74,6 +75,7 @@ class ApiConstants {
   static const String nearbyRestaurants = '/restaurants/nearby';
   static const String searchRestaurants = '/restaurants/search';
   static const String underPriceRestaurants = '/restaurants/under-price';
+  static const String underPriceMenuItems = '/menu-items/under-price';
   static const String universalSearch = '/v1/search';
   static const String advancedSearch = '/v1/search';
   static const String searchSuggestions = '/v1/search/suggestions';

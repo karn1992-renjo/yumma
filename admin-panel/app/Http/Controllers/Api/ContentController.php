@@ -7,10 +7,12 @@ use App\Models\AppSetting;
 use App\Models\Banner;
 use App\Models\Cuisine;
 use App\Models\DeliveryArea;
+use App\Models\SplashCampaign;
 use App\Services\HomeSectionService;
 use App\Services\MediaStorage;
 use App\Services\PromotionEngineService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 
 class ContentController extends Controller
 {
@@ -438,6 +440,60 @@ class ContentController extends Controller
     private function bannerMediaType(?string $path): string
     {
         return str_ends_with(strtolower((string) $path), '.json') ? 'lottie' : 'image';
+    }
+
+    /**
+     * Public, read-only promotional splash config. Returns only the single
+     * best-eligible campaign (or null) so an installed app can show a
+     * remotely-managed promo screen after Flutter initializes, without a
+     * new app release. Scheduling/active-state/platform filtering all
+     * happen in the query -- a disabled, expired, not-yet-started, or
+     * platform-ineligible campaign is never returned as active.
+     */
+    public function activeSplashCampaign(Request $request)
+    {
+        try {
+            $platform = $request->input('platform');
+            $platform = in_array($platform, ['android', 'ios'], true) ? $platform : 'both';
+
+            $data = Cache::remember(
+                "splash_campaign_active:{$platform}",
+                now()->addMinutes(2),
+                function () use ($platform) {
+                    $campaign = SplashCampaign::eligibleForPlatform($platform)
+                        ->orderByDesc('sort_order')
+                        ->orderByDesc('updated_at')
+                        ->first();
+
+                    if (!$campaign) {
+                        return null;
+                    }
+
+                    return [
+                        'id' => $campaign->id,
+                        'version' => $campaign->version,
+                        'is_active' => true,
+                        'image_url' => MediaStorage::url($campaign->image_path),
+                        'logo_url' => $campaign->logo_path ? MediaStorage::url($campaign->logo_path) : null,
+                        'headline' => $campaign->headline,
+                        'subtitle' => $campaign->subtitle,
+                        'background_color' => $campaign->background_color,
+                        'display_duration_seconds' => $campaign->display_duration_seconds,
+                        'tap_action' => $campaign->tap_action,
+                        'tap_action_params' => $campaign->tap_action === 'restaurant'
+                            ? ['restaurant_id' => $campaign->tap_restaurant_id]
+                            : [],
+                        'start_at' => optional($campaign->start_at)->toIso8601String(),
+                        'end_at' => optional($campaign->end_at)->toIso8601String(),
+                    ];
+                }
+            );
+
+            return response()->json(['success' => true, 'data' => $data]);
+        } catch (\Exception $e) {
+            \Log::error('Active splash campaign fetch error: ' . $e->getMessage());
+            return response()->json(['success' => false, 'message' => 'Error fetching splash campaign', 'data' => null]);
+        }
     }
 }
 

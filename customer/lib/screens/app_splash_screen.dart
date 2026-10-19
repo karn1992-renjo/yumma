@@ -28,10 +28,10 @@ class _AppSplashScreenState extends State<AppSplashScreen> {
   @override
   void initState() {
     super.initState();
-    _startup = Future.wait<void>([
-      widget.startupFuture,
-      Future<void>.delayed(const Duration(seconds: 5)),
-    ]);
+    // TEMPORARY: the artificial minimum display delay is removed for now
+    // (was `Future.wait([startupFuture, Future.delayed(5s)])`) -- restore
+    // the 5s floor once this is no longer needed for testing.
+    _startup = widget.startupFuture;
   }
 
   @override

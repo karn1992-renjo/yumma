@@ -133,6 +133,7 @@
             'label' => 'Catalog',
             'items' => [
                 ['label' => 'Banners', 'icon' => 'image', 'url' => route('admin.banners.index'), 'active' => ['admin.banners.*'], 'perm' => ['view_banners', 'create_banners', 'edit_banners', 'delete_banners', 'manage_banners']],
+                ['label' => 'Splash Campaigns', 'icon' => 'bolt-lightning', 'url' => route('admin.splash-campaigns.index'), 'active' => ['admin.splash-campaigns.*'], 'perm' => ['manage_splash_campaigns']],
                 ['label' => 'Cuisines', 'icon' => 'egg', 'url' => route('admin.cuisines.index'), 'active' => ['admin.cuisines.*'], 'perm' => ['view_cuisines', 'create_cuisines', 'edit_cuisines', 'delete_cuisines', 'manage_cuisines']],
                 ['label' => 'Global Categories', 'icon' => 'layer-group', 'url' => route('admin.global-menu-categories.index'), 'active' => ['admin.global-menu-categories.*'], 'perm' => ['view_global_categories', 'create_global_categories', 'edit_global_categories', 'delete_global_categories']],
                 ['label' => 'Listed Menu', 'icon' => 'utensils', 'url' => route('admin.listed-menu.index'), 'active' => ['admin.listed-menu.*'], 'perm' => ['view_listed_menu', 'create_listed_menu', 'edit_listed_menu', 'delete_listed_menu']],
