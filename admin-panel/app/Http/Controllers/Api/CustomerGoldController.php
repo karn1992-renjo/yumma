@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\CustomerSubscription;
+use App\Models\Order;
 use App\Models\SubscriptionPlan;
 use App\Services\GoldSubscriptionService;
 use App\Services\Subscription\SubscriptionGatewayResolver;
@@ -41,11 +42,21 @@ class CustomerGoldController extends Controller
             ->latest()
             ->first();
 
+        // Real, not estimated: the exact sum of gold_delivery_waiver_amount
+        // across every order this customer actually placed with the waiver
+        // applied (set once, at order time, in OrderController::
+        // buildPricingSummary() -- never recomputed after the fact, so this
+        // total only ever grows with orders that were genuinely waived).
+        $totalSaved = (float) Order::where('customer_id', $request->user()->id)
+            ->where('gold_delivery_waived', true)
+            ->sum('gold_delivery_waiver_amount');
+
         return response()->json([
             'success' => true,
             'data' => [
                 'is_gold_member' => $subscription?->isLive() ?? false,
                 'subscription' => $subscription ? $this->formatSubscription($subscription) : null,
+                'total_saved' => round($totalSaved, 2),
             ],
         ]);
     }

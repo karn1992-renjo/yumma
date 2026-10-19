@@ -21,6 +21,16 @@ const _profileSubtext = FoodFlowTheme.muted;
 const _profileBg = Colors.white;
 const _profileAccent = Color(0xFFFF6A00);
 
+// Gold-member hero card -- a dark + gold "premium" treatment distinct from
+// the rest of the (light) profile screen, shown only when the signed-in
+// customer has an active Gold membership. An original composition (plain
+// dark gradient + gold accents, no borrowed geometric pattern or logo),
+// not a copy of any specific app's design.
+const _goldDark = Color(0xFF14110B);
+const _goldDarkDeep = Color(0xFF221C10);
+const _gold = Color(0xFFF2C94C);
+const _goldDeep = Color(0xFFC89B2E);
+
 Color _profilePrimary(BuildContext context) =>
     FoodFlowTheme.brandPrimary(context);
 
@@ -43,6 +53,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
   int _savedRestaurantCount = 0;
   int _offersCount = 0;
   int _unreadNotificationCount = 0;
+  bool _isGoldMember = false;
+  String? _goldPlanName;
+  double _goldTotalSaved = 0;
   final ApiService _api = ApiService();
 
   @override
@@ -139,6 +152,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       ApiConstants.addresses,
       ApiConstants.savedRestaurants,
       ApiConstants.activeOffers,
+      ApiConstants.goldCurrent,
     ];
     final results = await Future.wait<dynamic>(endpoints.map(safelyLoad));
 
@@ -171,6 +185,17 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
     if (endpoint == ApiConstants.activeOffers) {
       _offersCount = _extractProfileItems(response).length;
+      return;
+    }
+
+    if (endpoint == ApiConstants.goldCurrent) {
+      final goldData = response is Map ? response['data'] : null;
+      _isGoldMember = goldData is Map && goldData['is_gold_member'] == true;
+      final subscription = goldData is Map ? goldData['subscription'] : null;
+      final plan = subscription is Map ? subscription['plan'] : null;
+      _goldPlanName = plan is Map ? plan['name']?.toString() : null;
+      _goldTotalSaved =
+          double.tryParse('${goldData is Map ? goldData['total_saved'] ?? 0 : 0}') ?? 0;
     }
   }
 
@@ -269,6 +294,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       savedRestaurantCount: _savedRestaurantCount,
                       offersCount: _offersCount,
                       onEdit: _openEditProfileScreen,
+                      isGoldMember: _isGoldMember,
+                      goldPlanName: _goldPlanName,
+                      goldTotalSaved: _goldTotalSaved,
                     ),
                     const SizedBox(height: 22),
                     const _ProfileGroupLabel('QUICK ACCESS'),
@@ -800,6 +828,9 @@ class _ProfileHeroWithStats extends StatelessWidget {
     required this.savedRestaurantCount,
     required this.offersCount,
     required this.onEdit,
+    required this.isGoldMember,
+    this.goldPlanName,
+    this.goldTotalSaved = 0,
   });
 
   final User? user;
@@ -808,12 +839,18 @@ class _ProfileHeroWithStats extends StatelessWidget {
   final int savedRestaurantCount;
   final int offersCount;
   final VoidCallback onEdit;
+  final bool isGoldMember;
+  final String? goldPlanName;
+  final double goldTotalSaved;
 
   @override
   Widget build(BuildContext context) {
     final name =
         user?.name.trim().isNotEmpty == true ? user!.name.trim() : 'Guest User';
     final phone = user?.phone.trim() ?? '';
+    final isDark = isGoldMember;
+    final nameColor = isDark ? Colors.white : const Color(0xFF111827);
+    final phoneColor = isDark ? Colors.white.withOpacity(0.65) : const Color(0xFF6B7280);
 
     return InkWell(
       onTap: onEdit,
@@ -821,12 +858,19 @@ class _ProfileHeroWithStats extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.fromLTRB(14, 14, 14, 12),
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: isDark ? null : Colors.white,
+          gradient: isDark
+              ? const LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [_goldDarkDeep, _goldDark],
+                )
+              : null,
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: const Color(0xFFE9E2DD)),
+          border: Border.all(color: isDark ? _goldDeep.withOpacity(0.4) : const Color(0xFFE9E2DD)),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.025),
+              color: isDark ? Colors.black.withOpacity(0.3) : Colors.black.withOpacity(0.025),
               blurRadius: 12,
               offset: const Offset(0, 6),
             ),
@@ -837,7 +881,7 @@ class _ProfileHeroWithStats extends StatelessWidget {
           children: [
             Row(
               children: [
-                _ProfilePhoto(user: user, onEdit: onEdit),
+                _ProfilePhoto(user: user, onEdit: onEdit, isDark: isDark),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Column(
@@ -848,8 +892,8 @@ class _ProfileHeroWithStats extends StatelessWidget {
                         name,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: Color(0xFF111827),
+                        style: TextStyle(
+                          color: nameColor,
                           fontSize: 17,
                           height: 1.1,
                           fontWeight: FontWeight.w900,
@@ -859,19 +903,15 @@ class _ProfileHeroWithStats extends StatelessWidget {
                         const SizedBox(height: 6),
                         Row(
                           children: [
-                            const Icon(
-                              LucideIcons.phone,
-                              size: 14,
-                              color: Color(0xFF6B7280),
-                            ),
+                            Icon(LucideIcons.phone, size: 14, color: phoneColor),
                             const SizedBox(width: 6),
                             Expanded(
                               child: Text(
                                 phone,
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  color: Color(0xFF6B7280),
+                                style: TextStyle(
+                                  color: phoneColor,
                                   fontSize: 12.5,
                                   fontWeight: FontWeight.w600,
                                 ),
@@ -888,47 +928,91 @@ class _ProfileHeroWithStats extends StatelessWidget {
                   width: 34,
                   height: 34,
                   decoration: BoxDecoration(
-                    color: const Color(0xFFFFF2E8),
+                    color: isDark ? _gold.withOpacity(0.16) : const Color(0xFFFFF2E8),
                     borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: const Color(0xFFFFDFC8)),
+                    border: Border.all(color: isDark ? _gold.withOpacity(0.35) : const Color(0xFFFFDFC8)),
                   ),
-                  child: const Icon(
+                  child: Icon(
                     LucideIcons.pencil,
-                    color: _profileAccent,
+                    color: isDark ? _gold : _profileAccent,
                     size: 17,
                   ),
                 ),
               ],
             ),
+            if (isGoldMember) ...[
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.06),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: _gold.withOpacity(0.25)),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.workspace_premium_rounded, color: _gold, size: 18),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        goldPlanName?.isNotEmpty == true ? goldPlanName! : 'Gold member',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: _gold,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                    if (goldTotalSaved > 0) ...[
+                      const SizedBox(width: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: _gold.withOpacity(0.16),
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                        child: Text(
+                          'saved ${formatCurrency(context, goldTotalSaved)}',
+                          style: const TextStyle(color: _gold, fontSize: 11, fontWeight: FontWeight.w800),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ],
             const SizedBox(height: 12),
             _StatsPanel(
+              isDark: isDark,
               stats: [
                 _ProfileStatData(
                   icon: LucideIcons.shopping_bag,
                   value: '$orderCount',
                   label: 'Orders',
-                  color: _profileAccent,
+                  color: isDark ? _gold : _profileAccent,
                   background: Colors.transparent,
                 ),
                 _ProfileStatData(
                   icon: LucideIcons.wallet_cards,
                   value: formatCurrency(context, walletBalance),
                   label: 'Wallet',
-                  color: _profileAccent,
+                  color: isDark ? _gold : _profileAccent,
                   background: Colors.transparent,
                 ),
                 _ProfileStatData(
                   icon: LucideIcons.ticket_percent,
                   value: '$offersCount',
                   label: 'Offers',
-                  color: _profileAccent,
+                  color: isDark ? _gold : _profileAccent,
                   background: Colors.transparent,
                 ),
                 _ProfileStatData(
                   icon: LucideIcons.heart,
                   value: '$savedRestaurantCount',
                   label: 'Saved',
-                  color: _profileAccent,
+                  color: isDark ? _gold : _profileAccent,
                   background: Colors.transparent,
                 ),
               ],
@@ -944,10 +1028,12 @@ class _ProfilePhoto extends StatelessWidget {
   const _ProfilePhoto({
     required this.user,
     required this.onEdit,
+    this.isDark = false,
   });
 
   final User? user;
   final VoidCallback onEdit;
+  final bool isDark;
 
   @override
   Widget build(BuildContext context) {
@@ -957,28 +1043,34 @@ class _ProfilePhoto extends StatelessWidget {
         Container(
           width: 66,
           height: 66,
-          decoration: const BoxDecoration(
+          padding: isDark ? const EdgeInsets.all(2) : EdgeInsets.zero,
+          decoration: BoxDecoration(
             shape: BoxShape.circle,
-            gradient: LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              colors: [Color(0xFFFFE6D7), Color(0xFFFFC093)],
-            ),
+            gradient: isDark
+                ? null
+                : const LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [Color(0xFFFFE6D7), Color(0xFFFFC093)],
+                  ),
+            border: isDark ? Border.all(color: _gold, width: 2) : null,
           ),
           clipBehavior: Clip.antiAlias,
-          child: user?.profileImage?.isNotEmpty == true
-              ? AppCachedImage(
-                  imageUrl: user!.profileImage!,
-                  fit: BoxFit.cover,
-                  width: 66,
-                  height: 66,
-                  errorBuilder: (_, __, ___) => _ProfileAvatarFallback(
+          child: ClipOval(
+            child: user?.profileImage?.isNotEmpty == true
+                ? AppCachedImage(
+                    imageUrl: user!.profileImage!,
+                    fit: BoxFit.cover,
+                    width: 66,
+                    height: 66,
+                    errorBuilder: (_, __, ___) => _ProfileAvatarFallback(
+                      name: user?.name ?? 'Guest User',
+                    ),
+                  )
+                : _ProfileAvatarFallback(
                     name: user?.name ?? 'Guest User',
                   ),
-                )
-              : _ProfileAvatarFallback(
-                  name: user?.name ?? 'Guest User',
-                ),
+          ),
         ),
         Positioned(
           right: -2,
@@ -989,13 +1081,13 @@ class _ProfilePhoto extends StatelessWidget {
               width: 24,
               height: 24,
               decoration: BoxDecoration(
-                color: _profileAccent,
+                color: isDark ? _gold : _profileAccent,
                 shape: BoxShape.circle,
-                border: Border.all(color: Colors.white, width: 2),
+                border: Border.all(color: isDark ? _goldDark : Colors.white, width: 2),
               ),
-              child: const Icon(
+              child: Icon(
                 LucideIcons.pencil,
-                color: Colors.white,
+                color: isDark ? _goldDark : Colors.white,
                 size: 12,
               ),
             ),
@@ -1046,18 +1138,19 @@ class _ProfileStatData {
 }
 
 class _StatsPanel extends StatelessWidget {
-  const _StatsPanel({required this.stats});
+  const _StatsPanel({required this.stats, this.isDark = false});
 
   final List<_ProfileStatData> stats;
+  final bool isDark;
 
   @override
   Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 9),
       decoration: BoxDecoration(
-        color: const Color(0xFFFFFAF6),
+        color: isDark ? Colors.white.withOpacity(0.06) : const Color(0xFFFFFAF6),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFFF0E3DA)),
+        border: Border.all(color: isDark ? Colors.white.withOpacity(0.1) : const Color(0xFFF0E3DA)),
         boxShadow: const [],
       ),
       child: Row(
@@ -1067,11 +1160,11 @@ class _StatsPanel extends StatelessWidget {
               width: 1,
               height: 34,
               margin: const EdgeInsets.symmetric(horizontal: 4),
-              color: const Color(0xFFE0E0E4),
+              color: isDark ? Colors.white.withOpacity(0.12) : const Color(0xFFE0E0E4),
             );
           }
           final stat = stats[index ~/ 2];
-          return Expanded(child: _ProfileStatItem(stat: stat));
+          return Expanded(child: _ProfileStatItem(stat: stat, isDark: isDark));
         }),
       ),
     );
@@ -1079,12 +1172,15 @@ class _StatsPanel extends StatelessWidget {
 }
 
 class _ProfileStatItem extends StatelessWidget {
-  const _ProfileStatItem({required this.stat});
+  const _ProfileStatItem({required this.stat, this.isDark = false});
 
   final _ProfileStatData stat;
+  final bool isDark;
 
   @override
   Widget build(BuildContext context) {
+    final valueColor = isDark ? Colors.white : const Color(0xFF111827);
+    final labelColor = isDark ? Colors.white.withOpacity(0.55) : const Color(0xFF6B7280);
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -1094,8 +1190,8 @@ class _ProfileStatItem extends StatelessWidget {
           stat.value,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
-          style: const TextStyle(
-            color: Color(0xFF111827),
+          style: TextStyle(
+            color: valueColor,
             fontSize: 13,
             height: 1,
             fontWeight: FontWeight.w900,
@@ -1107,8 +1203,8 @@ class _ProfileStatItem extends StatelessWidget {
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
           textAlign: TextAlign.center,
-          style: const TextStyle(
-            color: Color(0xFF6B7280),
+          style: TextStyle(
+            color: labelColor,
             fontSize: 10.5,
             fontWeight: FontWeight.w500,
           ),
