@@ -5,6 +5,9 @@ import '../../theme/foodflow_theme.dart';
 import '../../utils/currency_utils.dart';
 import '../common/network_image_loader.dart';
 
+// Items priced below this get a quick "Under ₹X" budget-finder badge.
+const double _budgetPriceThreshold = 99;
+
 class MenuItemCard extends StatelessWidget {
   final MenuItem item;
   final int quantity;
@@ -71,14 +74,16 @@ class MenuItemCard extends StatelessWidget {
                       color: FoodFlowTheme.ink,
                     ),
                   ),
-                  if (itemTags.isNotEmpty) ...[
+                  if (itemTags.isNotEmpty || item.finalPrice < _budgetPriceThreshold) ...[
                     const SizedBox(height: 8),
                     Wrap(
                       spacing: 6,
                       runSpacing: 6,
-                      children: itemTags
-                          .map((tag) => _MenuTagBadge(label: tag))
-                          .toList(),
+                      children: [
+                        if (item.finalPrice < _budgetPriceThreshold)
+                          const _BudgetPriceBadge(),
+                        ...itemTags.map((tag) => _MenuTagBadge(label: tag)),
+                      ],
                     ),
                   ],
                   if (highlightTag != null) ...[
@@ -685,6 +690,37 @@ class _FoodTypeBadge extends StatelessWidget {
   }
 }
 
+class _BudgetPriceBadge extends StatelessWidget {
+  const _BudgetPriceBadge();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: const Color(0xFFEDFAF2),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: const Color(0xFF83D4A5)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.sell_rounded, color: Color(0xFF0A9443), size: 11),
+          const SizedBox(width: 4),
+          Text(
+            'Under ${getCurrencySymbol(context)}${_budgetPriceThreshold.toInt()}',
+            style: const TextStyle(
+              fontSize: 10.5,
+              fontWeight: FontWeight.w700,
+              color: Color(0xFF0A9443),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _MenuTagBadge extends StatelessWidget {
   final String label;
 
@@ -1044,6 +1080,12 @@ class RestaurantMenuGridCard extends StatelessWidget {
                       left: 8,
                       top: 8,
                       child: _GridPopularBadge(),
+                    )
+                  else if (item.finalPrice < _budgetPriceThreshold)
+                    const Positioned(
+                      left: 8,
+                      top: 8,
+                      child: _GridBudgetBadge(),
                     ),
                   if (hasRating)
                     Positioned(
@@ -1156,6 +1198,42 @@ class _GridPopularBadge extends StatelessWidget {
           fontSize: 11,
           fontWeight: FontWeight.w700,
         ),
+      ),
+    );
+  }
+}
+
+class _GridBudgetBadge extends StatelessWidget {
+  const _GridBudgetBadge();
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0A9443),
+        borderRadius: BorderRadius.circular(999),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.14),
+            blurRadius: 6,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.sell_rounded, color: Colors.white, size: 11),
+          const SizedBox(width: 4),
+          Text(
+            'Under ${getCurrencySymbol(context)}${_budgetPriceThreshold.toInt()}',
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
       ),
     );
   }
