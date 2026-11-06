@@ -45,6 +45,7 @@ class SubscriptionPlanController extends Controller
         $validated['slug'] = SubscriptionPlan::generateUniqueSlug($validated['name']);
         $validated['is_active'] = $request->has('is_active');
         $validated['includes_stories'] = $request->has('includes_stories');
+        $validated['story_menu_link'] = $request->boolean('story_menu_link');
 
         SubscriptionPlan::create($validated);
 
@@ -54,7 +55,85 @@ class SubscriptionPlanController extends Controller
 
     public function edit(SubscriptionPlan $subscriptionPlan)
     {
+        // A stories plan is edited in its own form.
+        if ($subscriptionPlan->audience === 'restaurant' && $subscriptionPlan->scope === 'stories_addon') {
+            return redirect()->route('admin.subscription-plans.stories.edit', $subscriptionPlan);
+        }
+
         return view('admin.subscription-plans.edit', ['plan' => $subscriptionPlan]);
+    }
+
+    public function createStories()
+    {
+        return view('admin.subscription-plans.stories');
+    }
+
+    public function storeStories(Request $request)
+    {
+        $data = $this->storiesPlanData($request);
+        $data['slug'] = SubscriptionPlan::generateUniqueSlug($data['name']);
+
+        SubscriptionPlan::create($data);
+
+        return redirect()->route('admin.subscription-plans.index', ['audience' => 'restaurant'])->with('success', 'Stories plan created.');
+    }
+
+    public function editStories(SubscriptionPlan $subscriptionPlan)
+    {
+        abort_unless($subscriptionPlan->audience === 'restaurant' && $subscriptionPlan->scope === 'stories_addon', 404);
+
+        return view('admin.subscription-plans.stories', ['plan' => $subscriptionPlan]);
+    }
+
+    public function updateStories(Request $request, SubscriptionPlan $subscriptionPlan)
+    {
+        abort_unless($subscriptionPlan->audience === 'restaurant' && $subscriptionPlan->scope === 'stories_addon', 404);
+
+        $data = $this->storiesPlanData($request, $subscriptionPlan->id);
+        if ($data['name'] !== $subscriptionPlan->name) {
+            $data['slug'] = SubscriptionPlan::generateUniqueSlug($data['name'], $subscriptionPlan->id);
+        }
+        $subscriptionPlan->update($data);
+
+        return redirect()->route('admin.subscription-plans.index', ['audience' => 'restaurant'])->with('success', 'Stories plan updated.');
+    }
+
+    /** Only what a pay-as-you-go stories plan needs; everything else is fixed here so the plan always behaves the same. */
+    private function storiesPlanData(Request $request, ?int $ignoreId = null): array
+    {
+        $v = $request->validate([
+            'name' => ['required', 'string', 'max:150', Rule::unique('subscription_plans', 'name')->ignore($ignoreId)],
+            'duration_days' => 'required|integer|min:1|max:3650',
+            'price' => 'required|numeric|min:0',
+            'compare_at_price' => 'nullable|numeric|min:0|gt:price',
+            'currency' => 'nullable|string|size:3',
+            'sort_order' => 'nullable|integer|min:0',
+            'description' => 'nullable|string|max:1000',
+            'stories_per_day' => 'nullable|integer|min:1|max:1000',
+            'story_duration_hours' => 'nullable|integer|min:1|max:720',
+            'story_menu_link' => 'nullable|boolean',
+        ]);
+
+        return [
+            'audience' => 'restaurant',
+            'scope' => 'stories_addon',
+            'name' => $v['name'],
+            'billing_period' => 'monthly',               // unused: the plan is priced per validity_days
+            'validity_days' => (int) $v['duration_days'],
+            'price' => $v['price'],
+            'compare_at_price' => $v['compare_at_price'] ?? null,
+            'currency' => strtoupper($v['currency'] ?? '') ?: (\App\Models\AppSetting::getValue('currency_code', 'INR') ?: 'INR'),
+            'order_limit' => null,
+            'menu_item_limit' => null,
+            'trial_days' => 0,
+            'includes_stories' => true,
+            'stories_per_day' => $v['stories_per_day'] ?? null,
+            'story_duration_hours' => $v['story_duration_hours'] ?? null,
+            'story_menu_link' => $request->boolean('story_menu_link'),
+            'sort_order' => (int) ($v['sort_order'] ?? 0),
+            'description' => $v['description'] ?? null,
+            'is_active' => $request->has('is_active'),
+        ];
     }
 
     public function update(Request $request, SubscriptionPlan $subscriptionPlan)
@@ -67,6 +146,7 @@ class SubscriptionPlanController extends Controller
 
         $validated['is_active'] = $request->has('is_active');
         $validated['includes_stories'] = $request->has('includes_stories');
+        $validated['story_menu_link'] = $request->boolean('story_menu_link');
 
         $subscriptionPlan->update($validated);
 

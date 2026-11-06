@@ -169,7 +169,9 @@ class TheatreController extends Controller
             ->where('restaurants.is_open', true)
             ->get(['restaurants.id', 'restaurants.name', 'restaurants.logo_image', 'restaurants.cuisine', 'restaurants.rating', 'restaurants.is_open']);
 
-        return response()->json(['success' => true, 'data' => $restaurants]);
+        $cards = app(\App\Services\SponsoredListingService::class)->stampCards($restaurants->map(fn ($r) => $r->toArray())->all(), 'theatre');
+
+        return response()->json(['success' => true, 'data' => $cards]);
     }
 
     /**

@@ -46,6 +46,14 @@ class HomeSectionStoreRequest extends FormRequest
             'remove_background_image' => ['nullable', 'boolean'],
             'hero_media' => ['nullable', 'file', 'mimes:jpg,jpeg,png,webp,gif,svg,json', 'max:8192'],
             'remove_hero_media' => ['nullable', 'boolean'],
+            // Lets the admin pin this banner-type section directly above or
+            // below another already-placed section (built-in or dynamic),
+            // instead of guessing a numeric display_order or drag-reordering
+            // it afterwards. Only meaningful for banner_carousel/hero_banner
+            // -- see HomeSectionController's handling and
+            // HomeSectionService::positionSectionRelativeTo().
+            'position_anchor_token' => ['nullable', 'string', 'max:60'],
+            'position_direction' => ['nullable', 'required_with:position_anchor_token', 'in:above,below'],
         ];
     }
 

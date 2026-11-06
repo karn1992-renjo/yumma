@@ -832,6 +832,11 @@ class _FoodDeliveryAppState extends State<FoodDeliveryApp> {
                   : null,
               initialScratchCards:
                   _parseScratchCardsArgument(args['scratchCards']),
+              goldDeliveryWaived: args['goldDeliveryWaived'] == true,
+              goldDeliveryWaiverAmount: (args['goldDeliveryWaiverAmount'] is num)
+                  ? (args['goldDeliveryWaiverAmount'] as num).toDouble()
+                  : double.tryParse(
+                      args['goldDeliveryWaiverAmount']?.toString() ?? ''),
             ),
           );
         }

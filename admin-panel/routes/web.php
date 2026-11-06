@@ -53,6 +53,7 @@ use App\Http\Controllers\Admin\VoiceAiSettingsController;
 use App\Http\Controllers\Admin\CuisineController;
 use App\Http\Controllers\Admin\SplashCampaignController;
 use App\Http\Controllers\Admin\SubscriptionPlanController;
+use App\Http\Controllers\Admin\GoldMemberController;
 use App\Http\Controllers\Admin\GlobalMenuCategoryController;
 use App\Http\Controllers\Admin\MasterMenuItemController;
 use App\Http\Controllers\Admin\ListedMenuController;
@@ -189,6 +190,19 @@ Route::prefix('api')->group(function () {
 
 // ==================== RESTAURANT DETAIL PAGE ====================
 Route::get('/restaurants/{slug}', [HomeController::class, 'showRestaurant'])->name('restaurant.show');
+
+// Pay for a cart started in WhatsApp (signed link; same pay-then-order checkout as the app).
+Route::middleware(['signed', 'throttle:60,1'])->group(function () {
+    Route::get('/pay/{token}', [\App\Http\Controllers\PublicPaymentController::class, 'show'])->name('order.pay');
+    Route::post('/pay/{token}/start', [\App\Http\Controllers\PublicPaymentController::class, 'start'])->name('order.pay.start');
+    Route::post('/pay/{token}/complete', [\App\Http\Controllers\PublicPaymentController::class, 'complete'])->name('order.pay.complete');
+});
+
+// Login-free live order tracking (signed, expiring link shared on WhatsApp).
+Route::middleware(['signed', 'throttle:120,1'])->group(function () {
+    Route::get('/track/{order}', [\App\Http\Controllers\PublicTrackingController::class, 'show'])->name('track.public');
+    Route::get('/track/{order}/data', [\App\Http\Controllers\PublicTrackingController::class, 'data'])->name('track.public.data');
+});
 Route::get('/restaurants-in-{citySlug}', [HomeController::class, 'showCity'])->name('city.restaurants');
 
 // Partner Registration Routes
@@ -826,11 +840,23 @@ Route::middleware(['auth', 'role_or_permission:super_admin|admin|manage_commissi
     Route::prefix('subscription-plans')->name('subscription-plans.')->group(function () {
         Route::get('/', [SubscriptionPlanController::class, 'index'])->name('index');
         Route::get('/create', [SubscriptionPlanController::class, 'create'])->name('create');
+        // Stories-only (pay as you go) plans have their own, simpler form.
+        Route::get('/stories/create', [SubscriptionPlanController::class, 'createStories'])->name('stories.create');
+        Route::post('/stories', [SubscriptionPlanController::class, 'storeStories'])->name('stories.store');
+        Route::get('/stories/{subscriptionPlan}/edit', [SubscriptionPlanController::class, 'editStories'])->name('stories.edit');
+        Route::put('/stories/{subscriptionPlan}', [SubscriptionPlanController::class, 'updateStories'])->name('stories.update');
         Route::post('/', [SubscriptionPlanController::class, 'store'])->name('store');
         Route::get('/{subscriptionPlan}/edit', [SubscriptionPlanController::class, 'edit'])->name('edit');
         Route::put('/{subscriptionPlan}', [SubscriptionPlanController::class, 'update'])->name('update');
         Route::delete('/{subscriptionPlan}', [SubscriptionPlanController::class, 'destroy'])->name('destroy');
         Route::post('/{subscriptionPlan}/toggle-status', [SubscriptionPlanController::class, 'toggleStatus'])->name('toggle-status');
+    });
+
+    Route::prefix('gold-members')->name('gold-members.')->group(function () {
+        Route::get('/', [GoldMemberController::class, 'index'])->name('index');
+        Route::post('/', [GoldMemberController::class, 'store'])->name('store');
+        Route::post('/{goldMember}/revoke', [GoldMemberController::class, 'revoke'])->name('revoke');
+        Route::post('/share-template', [GoldMemberController::class, 'updateShareTemplate'])->name('share-template');
     });
 });
 
@@ -843,6 +869,18 @@ Route::middleware(['auth', 'role_or_permission:super_admin|admin|manage_splash_c
         Route::put('/{splashCampaign}', [SplashCampaignController::class, 'update'])->name('update');
         Route::delete('/{splashCampaign}', [SplashCampaignController::class, 'destroy'])->name('destroy');
         Route::post('/{splashCampaign}/toggle-status', [SplashCampaignController::class, 'toggleStatus'])->name('toggle-status');
+    });
+
+    // The video the restaurant app plays on opening (skippable, once per person).
+    Route::prefix('app-open-videos')->name('app-open-videos.')->group(function () {
+        Route::get('/', [\App\Http\Controllers\Admin\AppOpenVideoController::class, 'index'])->name('index');
+        Route::get('/create', [\App\Http\Controllers\Admin\AppOpenVideoController::class, 'create'])->name('create');
+        Route::post('/', [\App\Http\Controllers\Admin\AppOpenVideoController::class, 'store'])->name('store');
+        Route::get('/{appOpenVideo}/edit', [\App\Http\Controllers\Admin\AppOpenVideoController::class, 'edit'])->name('edit');
+        Route::put('/{appOpenVideo}', [\App\Http\Controllers\Admin\AppOpenVideoController::class, 'update'])->name('update');
+        Route::delete('/{appOpenVideo}', [\App\Http\Controllers\Admin\AppOpenVideoController::class, 'destroy'])->name('destroy');
+        Route::post('/{appOpenVideo}/toggle-status', [\App\Http\Controllers\Admin\AppOpenVideoController::class, 'toggleStatus'])->name('toggle-status');
+        Route::post('/{appOpenVideo}/reset-views', [\App\Http\Controllers\Admin\AppOpenVideoController::class, 'resetViews'])->name('reset-views');
     });
 });
 
@@ -986,6 +1024,23 @@ Route::middleware(['auth', 'role_or_permission:super_admin|admin|view_settings|u
     Route::get('/settings/business', [SettingController::class, 'business'])->name('settings.business');
     Route::get('/settings/tax-charges', [SettingController::class, 'taxCharges'])->name('settings.tax-charges');
     Route::get('/settings/integrations', [SettingController::class, 'integrations'])->name('settings.integrations');
+    Route::get('/whatsapp', [\App\Http\Controllers\Admin\WhatsAppController::class, 'settings'])->name('whatsapp.settings');
+    Route::post('/whatsapp', [\App\Http\Controllers\Admin\WhatsAppController::class, 'save'])->name('whatsapp.save');
+    Route::post('/whatsapp/test', [\App\Http\Controllers\Admin\WhatsAppController::class, 'test'])->name('whatsapp.test');
+    Route::post('/whatsapp/catalog/sync', [\App\Http\Controllers\Admin\WhatsAppController::class, 'catalogSync'])->name('whatsapp.catalog.sync');
+    Route::post('/whatsapp/catalog/cart', [\App\Http\Controllers\Admin\WhatsAppController::class, 'catalogCart'])->name('whatsapp.catalog.cart');
+    Route::get('/whatsapp/messages', [\App\Http\Controllers\Admin\WhatsAppController::class, 'messages'])->name('whatsapp.messages');
+    Route::get('/whatsapp/inbox', [\App\Http\Controllers\Admin\WhatsAppInboxController::class, 'inbox'])->name('whatsapp.inbox');
+    Route::get('/whatsapp/inbox/{contact}', [\App\Http\Controllers\Admin\WhatsAppInboxController::class, 'thread'])->name('whatsapp.thread');
+    Route::post('/whatsapp/inbox/{contact}/reply', [\App\Http\Controllers\Admin\WhatsAppInboxController::class, 'reply'])->name('whatsapp.reply');
+    Route::post('/whatsapp/inbox/{contact}/hand-back', [\App\Http\Controllers\Admin\WhatsAppInboxController::class, 'handBack'])->name('whatsapp.hand-back');
+    Route::get('/whatsapp/broadcasts', [\App\Http\Controllers\Admin\WhatsAppInboxController::class, 'broadcasts'])->name('whatsapp.broadcasts');
+    Route::post('/whatsapp/broadcasts', [\App\Http\Controllers\Admin\WhatsAppInboxController::class, 'storeBroadcast'])->name('whatsapp.broadcasts.store');
+    Route::post('/whatsapp/broadcasts/{broadcast}/cancel', [\App\Http\Controllers\Admin\WhatsAppInboxController::class, 'cancelBroadcast'])->name('whatsapp.broadcasts.cancel');
+    Route::post('/whatsapp/broadcast-templates', [\App\Http\Controllers\Admin\WhatsAppInboxController::class, 'storeTemplate'])->name('whatsapp.templates.store');
+    Route::post('/whatsapp/broadcast-templates/{template}', [\App\Http\Controllers\Admin\WhatsAppInboxController::class, 'updateTemplate'])->name('whatsapp.templates.update');
+    Route::delete('/whatsapp/broadcast-templates/{template}', [\App\Http\Controllers\Admin\WhatsAppInboxController::class, 'destroyTemplate'])->name('whatsapp.templates.destroy');
+    Route::get('/whatsapp/reports', [\App\Http\Controllers\Admin\WhatsAppInboxController::class, 'reports'])->name('whatsapp.reports');
     Route::post('/settings/integrations/ping/{target}', [SettingController::class, 'integrationsPing'])->name('settings.integrations.ping');
     Route::post('/settings/integrations/retry/{delivery}', [SettingController::class, 'integrationsRetry'])->name('settings.integrations.retry');
     Route::post('/settings/integrations/sync/{target}', [SettingController::class, 'integrationsSync'])->name('settings.integrations.sync');

@@ -6,6 +6,7 @@
         ['route' => 'admin.settings.tax-charges', 'icon' => 'fas fa-receipt', 'label' => 'Tax & Charges'],
         ['route' => 'admin.settings.country-tax', 'icon' => 'fas fa-globe', 'label' => 'Country & Tax'],
         ['route' => 'admin.settings.integrations', 'icon' => 'fas fa-plug', 'label' => 'Integrations'],
+        ['route' => 'admin.whatsapp.settings', 'icon' => 'fab fa-whatsapp', 'label' => 'WhatsApp'],
         ['route' => 'admin.settings.branding', 'icon' => 'fas fa-palette', 'label' => 'Branding'],
         ['route' => 'admin.settings.app-download', 'icon' => 'fas fa-qrcode', 'label' => 'App QR'],
         ['route' => 'admin.settings.payment', 'icon' => 'fas fa-credit-card', 'label' => 'Payment'],

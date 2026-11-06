@@ -20,9 +20,9 @@
     <label class="form-label fw-semibold">Scope</label>
     <select name="scope" class="form-select @error('scope') is-invalid @enderror">
         <option value="full_plan" {{ old('scope', $plan->scope ?? 'full_plan') === 'full_plan' ? 'selected' : '' }}>Full Plan</option>
-        <option value="stories_addon" {{ old('scope', $plan->scope ?? '') === 'stories_addon' ? 'selected' : '' }}>Stories Add-on only</option>
+        <option value="stories_addon" {{ old('scope', $plan->scope ?? '') === 'stories_addon' ? 'selected' : '' }}>Stories only (pay as you go)</option>
     </select>
-    <small class="text-muted">A "Stories Add-on" plan can be bought standalone by a restaurant that's on commission billing, just to unlock Stories.</small>
+    <small class="text-muted">For a <b>stories-only, pay-as-you-go</b> plan use the simpler <b>New Stories Plan</b> button on the Subscription Plans page instead.</small>
     @error('scope') <div class="invalid-feedback">{{ $message }}</div> @enderror
 </div>
 
@@ -136,6 +136,11 @@
             <input type="checkbox" name="includes_stories" class="form-check-input" id="includesStories"
                    {{ old('includes_stories', $plan->includes_stories ?? false) ? 'checked' : '' }}>
             <label class="form-check-label" for="includesStories">Includes Stories access</label>
+        </div>
+        <div class="form-check mt-1">
+            <input type="checkbox" name="story_menu_link" value="1" class="form-check-input" id="storyMenuLink"
+                   {{ old('story_menu_link', $plan->story_menu_link ?? false) ? 'checked' : '' }}>
+            <label class="form-check-label" for="storyMenuLink">Stories can link a menu item with a button (CTA)</label>
         </div>
     </div>
     <div class="col-md-6">

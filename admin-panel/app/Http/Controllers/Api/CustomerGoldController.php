@@ -51,12 +51,19 @@ class CustomerGoldController extends Controller
             ->where('gold_delivery_waived', true)
             ->sum('gold_delivery_waiver_amount');
 
+        // Premium background image an admin uploads for the "share your
+        // Gold savings" card on the order confirmation screen -- see
+        // Admin\GoldMemberController::updateShareTemplate(). Null until an
+        // admin sets one; the client falls back to a plain gradient card.
+        $templatePath = \App\Models\AppSetting::getValue('gold_share_template_image');
+
         return response()->json([
             'success' => true,
             'data' => [
                 'is_gold_member' => $subscription?->isLive() ?? false,
                 'subscription' => $subscription ? $this->formatSubscription($subscription) : null,
                 'total_saved' => round($totalSaved, 2),
+                'gold_share_template_url' => $templatePath ? \App\Services\MediaStorage::url($templatePath) : null,
             ],
         ]);
     }
@@ -73,7 +80,7 @@ class CustomerGoldController extends Controller
             ->findOrFail($validated['plan_id']);
 
         try {
-            $result = $goldService->startSubscription(
+            $result = $goldService->startCheckout(
                 $request->user(),
                 $plan,
                 $validated['payment_method'] ?? 'razorpay'
@@ -89,9 +96,40 @@ class CustomerGoldController extends Controller
         return response()->json([
             'success' => true,
             'data' => [
+                'requires_payment' => $result['requires_payment'],
                 'subscription' => $this->formatSubscription($result['subscription']),
                 'checkout' => $result['checkout'],
             ],
+        ]);
+    }
+
+    /**
+     * Called by the client immediately after its gateway SDK reports a
+     * successful payment -- verified synchronously here, no webhook
+     * involved. See GoldSubscriptionService::verifyAndActivate().
+     */
+    public function verify(Request $request, GoldSubscriptionService $goldService)
+    {
+        $validated = $request->validate([
+            'subscription_id' => 'required|integer|exists:customer_subscriptions,id',
+            'payment_id' => 'required|string',
+            'payment_method' => 'required|in:razorpay,cashfree',
+            'razorpay_order_id' => 'required_if:payment_method,razorpay|string',
+            'razorpay_signature' => 'required_if:payment_method,razorpay|string',
+        ]);
+
+        $subscription = CustomerSubscription::where('user_id', $request->user()->id)
+            ->findOrFail($validated['subscription_id']);
+
+        try {
+            $goldService->verifyAndActivate($subscription, $validated);
+        } catch (\RuntimeException $e) {
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 422);
+        }
+
+        return response()->json([
+            'success' => true,
+            'data' => ['subscription' => $this->formatSubscription($subscription->fresh())],
         ]);
     }
 

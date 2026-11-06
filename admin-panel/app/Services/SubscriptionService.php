@@ -25,8 +25,15 @@ class SubscriptionService
      * charged here -- activation happens via the webhook once the customer
      * completes that UI.
      */
-    public function startSubscription(Restaurant $restaurant, SubscriptionPlan $plan, string $scope = 'full_plan', string $gatewayName = 'razorpay'): array
+    public function startSubscription(Restaurant $restaurant, SubscriptionPlan $plan, string $scope = 'full_plan', string $gatewayName = 'razorpay', ?RestaurantSubscription $replacing = null): array
     {
+        // Stories-only plans are pay-as-you-go: one payment per period, no gateway mandate.
+        if (RestaurantPrepaidSubscriptionService::isPrepaidPlan($plan)) {
+            $result = app(RestaurantPrepaidSubscriptionService::class)->start($restaurant, $plan, $gatewayName, $replacing);
+
+            return ['subscription' => $result['subscription'], 'checkout' => $result['checkout'], 'payment_mode' => 'prepaid'];
+        }
+
         if (! in_array($gatewayName, SubscriptionGatewayResolver::SUPPORTED, true)) {
             throw new RuntimeException("Unsupported subscription gateway: {$gatewayName}");
         }
@@ -34,13 +41,16 @@ class SubscriptionService
             throw new RuntimeException("{$gatewayName} is not available right now. Please choose a different payment method.");
         }
 
+        // A checkout that was started but never paid (failed or abandoned payment) must not block trying again.
+        $this->discardUnpaidAttempts($restaurant, $scope);
+
         $existing = $restaurant->subscriptions()
             ->where('scope', $scope)
-            ->whereIn('status', ['pending_authorization', 'trialing', 'active', 'past_due', 'billing_choice_required'])
+            ->whereIn('status', ['trialing', 'active', 'past_due', 'billing_choice_required'])
             ->first();
 
-        if ($existing) {
-            throw new RuntimeException('This restaurant already has a live subscription for this scope.');
+        if ($existing && ! $replacing) {
+            throw new RuntimeException('This restaurant already has a live subscription for this scope. Use upgrade to change plan.');
         }
 
         $gateway = $this->gateways->resolve($gatewayName);
@@ -53,6 +63,7 @@ class SubscriptionService
             'status' => 'pending_authorization',
             'trial_ends_at' => $trialEndsAt,
             'gateway' => $gatewayName,
+            'replaces_subscription_id' => $replacing?->id,
         ]);
 
         $owner = $restaurant->owner;
@@ -74,7 +85,75 @@ class SubscriptionService
         return [
             'subscription' => $subscription->fresh(),
             'checkout' => $result['checkout'],
+            'payment_mode' => 'recurring',
         ];
+    }
+
+    /**
+     * Moves a restaurant to a higher-priced plan of the same kind. The new plan is paid first; the current one keeps
+     * running (and keeps its benefits) until that payment succeeds, then it is ended. A failed payment changes nothing.
+     * There is no proration: the new plan's period starts when it is paid.
+     */
+    public function startUpgrade(Restaurant $restaurant, SubscriptionPlan $target, string $gatewayName = 'razorpay'): array
+    {
+        $current = $restaurant->subscriptions()->where('scope', $target->scope)
+            ->whereIn('status', ['trialing', 'active', 'past_due'])->latest()->first();
+        if (! $current || ! $current->isLive()) {
+            throw new RuntimeException('There is no active plan to upgrade. Choose a plan to subscribe instead.');
+        }
+        if ((int) $current->subscription_plan_id === (int) $target->id) {
+            throw new RuntimeException('You are already on this plan.');
+        }
+        if ((float) $target->price <= (float) ($current->plan?->price ?? 0)) {
+            throw new RuntimeException('Choose a plan with a higher price to upgrade.');
+        }
+
+        return $this->startSubscription($restaurant, $target, $target->scope, $gatewayName, $current);
+    }
+
+    /** Ends the subscription this one was bought to replace (stopping its gateway charges). */
+    private function endReplaced(RestaurantSubscription $new): void
+    {
+        if (! $new->replaces_subscription_id) {
+            return;
+        }
+        $old = RestaurantSubscription::find($new->replaces_subscription_id);
+        if (! $old || ! in_array($old->status, ['trialing', 'active', 'past_due', 'billing_choice_required'], true)) {
+            return;
+        }
+        try {
+            if ($old->gateway && $old->gateway_subscription_id) {
+                $this->gateways->resolve($old->gateway)->cancel($old);
+            }
+        } catch (\Throwable $e) {
+            report($e);
+        }
+        $old->update(['status' => 'cancelled', 'cancelled_at' => now(), 'auto_renew' => false]);
+    }
+
+    /**
+     * The gateway confirmed the mandate (before any charge). A plan with a free trial starts its trial now, so
+     * the restaurant has access straight away instead of seeing "Setting up" until the first charge.
+     */
+    public function markAuthorized(RestaurantSubscription $subscription): void
+    {
+        if ($subscription->status !== 'pending_authorization' || ! $subscription->plan?->hasTrial()) {
+            return;       // without a trial the first charge activates it
+        }
+
+        DB::transaction(function () use ($subscription) {
+            $locked = RestaurantSubscription::whereKey($subscription->id)->lockForUpdate()->firstOrFail();
+            if ($locked->status !== 'pending_authorization') {
+                return;
+            }
+            $trialEnds = $locked->trial_ends_at ?: now()->addDays((int) $locked->plan->trial_days);
+            $locked->update(['status' => 'trialing', 'trial_ends_at' => $trialEnds, 'current_period_start' => now(), 'current_period_end' => $trialEnds]);
+
+            if ($locked->scope === 'full_plan') {
+                $locked->restaurant->forceFill(['billing_mode' => 'subscription', 'active_subscription_id' => $locked->id])->save();
+            }
+            $this->endReplaced($locked);
+        });
     }
 
     /**
@@ -124,6 +203,8 @@ class SubscriptionService
                     'active_subscription_id' => $locked->id,
                 ])->save();
             }
+
+            $this->endReplaced($locked);
         });
     }
 
@@ -158,13 +239,40 @@ class SubscriptionService
         $subscription->update(['status' => 'billing_choice_required']);
     }
 
+    /** Subscriptions whose payment never completed: still waiting for the mandate/first charge. */
+    public function discardUnpaidAttempts(Restaurant $restaurant, string $scope = 'full_plan'): void
+    {
+        $restaurant->subscriptions()->where('scope', $scope)->where('status', 'pending_authorization')->get()
+            ->each(function (RestaurantSubscription $sub) {
+                try {
+                    if ($sub->gateway && $sub->gateway_subscription_id) {
+                        $this->gateways->resolve($sub->gateway)->cancel($sub);
+                    }
+                } catch (\Throwable) {
+                    // an unpaid gateway subscription may not be cancellable; it is closed locally either way
+                }
+                $sub->update(['status' => 'cancelled', 'cancelled_at' => now(), 'auto_renew' => false]);
+            });
+    }
+
     public function switchToCommissionWithConsent(Restaurant $restaurant, float $rateShown, User $actor): void
     {
         DB::transaction(function () use ($restaurant, $rateShown) {
-            $activeSub = $restaurant->activeSubscription;
-            if ($activeSub) {
-                $activeSub->update(['status' => 'cancelled', 'cancelled_at' => now()]);
-            }
+            // Every live plan subscription ends, including a payment that was never completed or one that
+            // has lapsed, so nothing keeps showing as the restaurant's plan after the switch.
+            $restaurant->subscriptions()->where('scope', 'full_plan')
+                ->whereIn('status', ['pending_authorization', 'trialing', 'active', 'past_due', 'billing_choice_required'])
+                ->get()
+                ->each(function (RestaurantSubscription $sub) {
+                    if ($sub->status !== 'pending_authorization' && $sub->gateway && $sub->gateway_subscription_id) {
+                        try {
+                            $this->gateways->resolve($sub->gateway)->cancel($sub);
+                        } catch (\Throwable $e) {
+                            report($e);        // stop future charges best-effort; the switch itself must not fail
+                        }
+                    }
+                    $sub->update(['status' => 'cancelled', 'cancelled_at' => now(), 'auto_renew' => false]);
+                });
 
             $restaurant->forceFill([
                 'billing_mode' => 'commission',

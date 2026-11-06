@@ -31,6 +31,14 @@ class IncomingOrderAlertService with WidgetsBindingObserver {
   Timer? _alarmFallbackTimer;
   AppLifecycleState _state = AppLifecycleState.resumed;
   bool _initialized = false;
+  // The very first didChangeAppLifecycleState(resumed) after a cold start
+  // fires almost immediately once the observer is registered -- there is
+  // no real backgrounded-service to "restart" yet, and kicking off a
+  // foreground-service start this early can race Android 12+'s background-
+  // start eligibility check (ActivityManager hasn't always caught up with
+  // the newly-resumed activity yet). Skip the restart only on that first
+  // callback; every subsequent genuine foreground transition still acts.
+  bool _hasHandledFirstLifecycleEvent = false;
 
   Future<void> initialize() async {
     if (_initialized) return;
@@ -58,7 +66,9 @@ class IncomingOrderAlertService with WidgetsBindingObserver {
   }
 
   Future<void> onAppForeground() async {
-    if (await _shouldKeepOrderListenerAlive()) {
+    final isFirstEvent = !_hasHandledFirstLifecycleEvent;
+    _hasHandledFirstLifecycleEvent = true;
+    if (!isFirstEvent && await _shouldKeepOrderListenerAlive()) {
       await ForegroundServiceManager.handleServiceRestart();
     }
     await retryFailedResponses();

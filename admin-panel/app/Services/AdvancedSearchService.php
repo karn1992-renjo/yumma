@@ -364,7 +364,7 @@ class AdvancedSearchService
             ->get()
             ->keyBy('id');
 
-        return $rows->map(function (SearchIndex $row) use ($restaurants) {
+        $cards = $rows->map(function (SearchIndex $row) use ($restaurants) {
             $restaurant = $restaurants->get($row->entity_id);
             if (!$restaurant) {
                 return null;
@@ -377,6 +377,10 @@ class AdvancedSearchService
 
             return $card;
         })->filter()->values()->all();
+
+        // The live auction decides which restaurants are sponsored here (and logs the impressions),
+        // the same as the nearby and search lists.
+        return app(\App\Services\SponsoredListingService::class)->stampCards($cards, 'search');
     }
 
     private function serializeMenuItems(Collection $rows): array

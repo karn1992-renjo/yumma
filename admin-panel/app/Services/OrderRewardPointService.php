@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\Order;
 use App\Models\RewardPointTransaction;
+use App\Models\AppSetting;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
@@ -13,13 +14,34 @@ class OrderRewardPointService
     public const REFERENCE_EARNING = 'order_earning';
     public const REFERENCE_REVERSAL = 'order_earning_reversal';
 
+    /** Who earns points on orders: every customer ('all') or only active Gold members ('gold'). */
+    public function earningAudience(): string
+    {
+        return AppSetting::getValue('reward_points_earning_audience', 'all') === 'gold' ? 'gold' : 'all';
+    }
+
+    public function isEligibleToEarn(?int $userId): bool
+    {
+        if ($this->earningAudience() !== 'gold') {
+            return true;
+        }
+
+        return $userId ? app(GoldSubscriptionService::class)->isActiveFor($userId) : false;
+    }
+
+    /** Points an order of this total earns for this customer (0 when they are not eligible). */
+    public function pointsFor(float $total, ?int $userId): int
+    {
+        return $this->isEligibleToEarn($userId) ? (int) floor(max(0, $total)) : 0;
+    }
+
     public function creditForDeliveredOrder(Order $order): ?RewardPointTransaction
     {
         if ($order->status !== 'delivered' || ! $order->customer_id) {
             return null;
         }
 
-        $points = (int) floor(max(0, (float) $order->total));
+        $points = $this->pointsFor((float) $order->total, (int) $order->customer_id);
         if ($points <= 0) {
             return null;
         }

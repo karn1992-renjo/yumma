@@ -25,6 +25,8 @@ class Order {
   final double platformFee;
   final double tax;
   final double discount;
+  final bool goldDeliveryWaived;
+  final double? goldDeliveryWaiverAmount;
   final double surgeFee;
   final double nightSurcharge;
   final double total;
@@ -114,6 +116,8 @@ class Order {
     this.nightSurcharge = 0,
     required this.tax,
     required this.discount,
+    this.goldDeliveryWaived = false,
+    this.goldDeliveryWaiverAmount,
     required this.total,
     this.tip,
     this.tipPaidAt,
@@ -228,6 +232,8 @@ class Order {
       platformFee: parseDoubleValue(json['platform_fee']),
       tax: parseDoubleValue(json['tax']),
       discount: parseDoubleValue(json['discount']),
+      goldDeliveryWaived: json['gold_delivery_waived'] == true,
+      goldDeliveryWaiverAmount: parseNullableDouble(json['gold_delivery_waiver_amount']),
       surgeFee: parseDoubleValue(json['surge_fee']),
       nightSurcharge: parseDoubleValue(json['night_surcharge']),
       total: parseDoubleValue(json['total']),

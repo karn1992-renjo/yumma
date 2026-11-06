@@ -11,6 +11,9 @@ class RestaurantStory extends Model
 {
     protected $fillable = [
         'restaurant_id',
+        'menu_item_id',
+        'cta_label',
+        'layout',
         'media_path',
         'media_type',
         'thumbnail_path',
@@ -19,6 +22,8 @@ class RestaurantStory extends Model
         'posted_at',
         'expires_at',
         'view_count',
+        'like_count',
+        'share_count',
         'sort_order',
     ];
 
@@ -27,12 +32,42 @@ class RestaurantStory extends Model
         'expires_at' => 'datetime',
         'duration_seconds' => 'integer',
         'view_count' => 'integer',
+        'like_count' => 'integer',
+        'share_count' => 'integer',
         'sort_order' => 'integer',
     ];
 
     public function restaurant(): BelongsTo
     {
         return $this->belongsTo(Restaurant::class);
+    }
+
+    public const LAYOUTS = ['classic', 'spotlight', 'split', 'poster'];
+
+    public function menuItem(): BelongsTo
+    {
+        return $this->belongsTo(MenuItem::class);
+    }
+
+    /**
+     * The dish linked to this story, for the app's card + button; null when none is linked or it can no longer be ordered.
+     *
+     * @return array<string, mixed>|null
+     */
+    public function menuItemCard(): ?array
+    {
+        $item = $this->menu_item_id ? $this->menuItem : null;
+        if (! $item || ! $item->is_available) {
+            return null;
+        }
+
+        return [
+            'id' => $item->id,
+            'name' => $item->name,
+            'price' => round((float) $item->getFinalPriceAttribute(), 2),
+            'image_url' => $item->image_url,
+            'is_veg' => (bool) $item->is_veg,
+        ];
     }
 
     public function views(): HasMany

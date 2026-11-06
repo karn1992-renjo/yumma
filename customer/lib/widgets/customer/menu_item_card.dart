@@ -18,6 +18,13 @@ class MenuItemCard extends StatelessWidget {
   final ValueChanged<int>? onQuantityChanged;
   final bool orderingEnabled;
   final String? promotionTag;
+  // Only set by screens that list items from more than one restaurant at
+  // once (e.g. the Under ₹X feed) -- null everywhere else (a restaurant's
+  // own menu screen already makes that obvious from context).
+  final String? restaurantName;
+  // Only meaningful alongside [restaurantName] -- null/empty falls back to a
+  // plain storefront icon.
+  final String? restaurantLogoUrl;
 
   const MenuItemCard({
     super.key,
@@ -30,6 +37,8 @@ class MenuItemCard extends StatelessWidget {
     this.onQuantityChanged,
     this.orderingEnabled = true,
     this.promotionTag,
+    this.restaurantName,
+    this.restaurantLogoUrl,
   });
 
   @override
@@ -74,7 +83,41 @@ class MenuItemCard extends StatelessWidget {
                       color: FoodFlowTheme.ink,
                     ),
                   ),
-                  if (itemTags.isNotEmpty || item.finalPrice < _budgetPriceThreshold) ...[
+                  if (restaurantName?.trim().isNotEmpty == true) ...[
+                    const SizedBox(height: 4),
+                    Row(
+                      children: [
+                        if (restaurantLogoUrl?.trim().isNotEmpty == true)
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(999),
+                            child: NetworkImageLoader(
+                              imageUrl: restaurantLogoUrl!.trim(),
+                              width: 14,
+                              height: 14,
+                              fit: BoxFit.cover,
+                            ),
+                          )
+                        else
+                          const Icon(Icons.storefront_rounded, size: 12, color: FoodFlowTheme.muted),
+                        const SizedBox(width: 4),
+                        Flexible(
+                          child: Text(
+                            restaurantName!.trim(),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 11.5,
+                              fontWeight: FontWeight.w600,
+                              color: FoodFlowTheme.muted,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                  if (itemTags.isNotEmpty ||
+                      highlightTag != null ||
+                      item.finalPrice < _budgetPriceThreshold) ...[
                     const SizedBox(height: 8),
                     Wrap(
                       spacing: 6,
@@ -82,31 +125,8 @@ class MenuItemCard extends StatelessWidget {
                       children: [
                         if (item.finalPrice < _budgetPriceThreshold)
                           const _BudgetPriceBadge(),
+                        if (highlightTag != null) const _HighlyOrderedBadge(),
                         ...itemTags.map((tag) => _MenuTagBadge(label: tag)),
-                      ],
-                    ),
-                  ],
-                  if (highlightTag != null) ...[
-                    const SizedBox(height: 6),
-                    Row(
-                      children: [
-                        Container(
-                          width: 32,
-                          height: 8,
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF0E924C),
-                            borderRadius: BorderRadius.circular(999),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Text(
-                          highlightTag,
-                          style: const TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w500,
-                            color: FoodFlowTheme.muted,
-                          ),
-                        ),
                       ],
                     ),
                   ],
@@ -130,6 +150,19 @@ class MenuItemCard extends StatelessWidget {
                             fontSize: 12,
                             fontWeight: FontWeight.w500,
                             decoration: TextDecoration.lineThrough,
+                          ),
+                        ),
+                      ],
+                      if (item.rating != null && item.rating! > 0) ...[
+                        const SizedBox(width: 8),
+                        Icon(Icons.star_rounded, size: 14, color: const Color(0xFF1BA672)),
+                        const SizedBox(width: 2),
+                        Text(
+                          item.rating!.toStringAsFixed(1),
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                            color: Color(0xFF1BA672),
                           ),
                         ),
                       ],
@@ -713,6 +746,37 @@ class _BudgetPriceBadge extends StatelessWidget {
               fontSize: 10.5,
               fontWeight: FontWeight.w700,
               color: Color(0xFF0A9443),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _HighlyOrderedBadge extends StatelessWidget {
+  const _HighlyOrderedBadge();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: const Color(0xFFE8F6EE),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: const Color(0xFF8FD3AC)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.local_fire_department_rounded, color: Color(0xFF0E924C), size: 11),
+          const SizedBox(width: 4),
+          const Text(
+            'Highly ordered',
+            style: TextStyle(
+              fontSize: 10.5,
+              fontWeight: FontWeight.w700,
+              color: Color(0xFF0E924C),
             ),
           ),
         ],

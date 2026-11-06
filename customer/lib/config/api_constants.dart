@@ -100,11 +100,17 @@ class ApiConstants {
   static const String goldPlans = '/gold/plans';
   static const String goldCurrent = '/gold/current';
   static const String goldSubscribe = '/gold/subscribe';
+  static const String goldVerify = '/gold/verify';
   static const String goldCancel = '/gold/cancel';
 
   // Restaurant Stories
   static String restaurantStories(int restaurantId) => '/restaurants/$restaurantId/stories';
   static String storyMarkViewed(int storyId) => '/stories/$storyId/viewed';
+  static String storyLike(int storyId) => '/stories/$storyId/like';
+  static String storyShared(int storyId) => '/stories/$storyId/shared';
+  // Admin-uploaded video played when the app opens
+  static const String customerAppVideo = '/customer/app-video';
+  static String customerAppVideoViewed(int id) => '/customer/app-video/$id/viewed';
 
   // Content endpoints
   static const String homeSections = '/home/sections';

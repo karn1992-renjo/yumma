@@ -24,6 +24,8 @@ class BannerController extends Controller
 
     public function index()
     {
+        $this->homeSectionService->syncOrphanedHomeBanners();
+
         $banners = Banner::with(['redirectCategory', 'redirectRestaurant', 'redirectMenuItem'])->orderBy('display_order')->get();
         $bannerDurationSeconds = $this->bannerDurationSeconds();
 
@@ -55,6 +57,7 @@ class BannerController extends Controller
                 'defaultLayoutMode' => $request->query('layout_mode'),
                 'displaySurfaceLabels' => Banner::DISPLAY_SURFACE_LABELS,
                 'deliveryAreas' => DeliveryArea::where('is_active', true)->orderBy('name')->get(['id', 'name']),
+                'positionableSections' => $this->positionableSections(),
             ],
         ));
     }
@@ -68,10 +71,11 @@ class BannerController extends Controller
             'image' => ['required', 'file'],
             'badge_image' => ['nullable', 'image'],
             'link' => 'nullable|url',
-            'redirect_type' => ['nullable', Rule::in(['category', 'restaurant', 'menu_item'])],
+            'redirect_type' => ['nullable', Rule::in(['category', 'restaurant', 'menu_item', 'app_screen'])],
             'redirect_category_id' => ['nullable', 'required_if:redirect_type,category', 'exists:categories,id'],
             'redirect_restaurant_id' => ['nullable', 'required_if:redirect_type,restaurant', 'exists:restaurants,id'],
             'redirect_menu_item_id' => ['nullable', 'required_if:redirect_type,menu_item', 'exists:menu_items,id'],
+            'redirect_screen' => ['nullable', 'required_if:redirect_type,app_screen', Rule::in(array_keys(Banner::REDIRECT_SCREENS))],
             'display_order' => 'nullable|integer|min:0',
             'banner_type' => 'required|in:home,driver,restaurant,search_bar,category,promo,under_99',
             'display_surface' => ['required', Rule::in(Banner::DISPLAY_SURFACES)],
@@ -81,6 +85,13 @@ class BannerController extends Controller
             'end_date' => 'nullable|date|after:start_date',
             'is_active' => 'nullable|boolean',
             'delivery_area_id' => 'nullable|exists:delivery_areas,id',
+            // Only meaningful for banner_type=home -- lets the admin place
+            // this banner's shared "Home Banners" carousel section directly
+            // above/below another home section, right from this form,
+            // instead of going to Home Section Management separately. See
+            // HomeSectionService::attachHomeBanner()/positionSectionRelativeTo().
+            'position_anchor_token' => ['nullable', 'string', 'max:60'],
+            'position_direction' => ['nullable', 'required_with:position_anchor_token', 'in:above,below'],
         ]);
 
         if ($request->hasFile('image')) {
@@ -94,6 +105,9 @@ class BannerController extends Controller
         $validated['display_surface'] = Banner::normalizeDisplaySurface($validated['display_surface'] ?? 'both') ?? 'both';
         $validated['image_ratio'] = (int) ($validated['image_ratio'] ?? 46);
         $validated = $this->normalizeRedirectTarget($validated);
+        $positionAnchorToken = $validated['position_anchor_token'] ?? null;
+        $positionDirection = $validated['position_direction'] ?? null;
+        unset($validated['position_anchor_token'], $validated['position_direction']);
 
         $banner = Banner::create($validated);
 
@@ -103,11 +117,18 @@ class BannerController extends Controller
             return redirect()->route('admin.home-sections.index')
                 ->with('success', 'Promo widget created and added to the "Promo Widgets" home section below.');
         }
-        
+
+        if ($banner->banner_type === 'home') {
+            $homeBannerSection = $this->homeSectionService->attachHomeBanner($banner);
+            if (filled($positionAnchorToken) && filled($positionDirection)) {
+                $this->homeSectionService->positionSectionRelativeTo($homeBannerSection, $positionAnchorToken, $positionDirection);
+            }
+        }
+
         return redirect()->route('admin.banners.index')
             ->with('success', 'Banner created successfully!');
     }
-    
+
     public function edit(Banner $banner)
     {
         return view('admin.banners.edit', array_merge(
@@ -116,6 +137,7 @@ class BannerController extends Controller
             [
                 'displaySurfaceLabels' => Banner::DISPLAY_SURFACE_LABELS,
                 'deliveryAreas' => DeliveryArea::where('is_active', true)->orderBy('name')->get(['id', 'name']),
+                'positionableSections' => $this->positionableSections(),
             ]
         ));
     }
@@ -130,10 +152,11 @@ class BannerController extends Controller
             'badge_image' => ['nullable', 'image'],
             'remove_badge_image' => 'nullable|boolean',
             'link' => 'nullable|url',
-            'redirect_type' => ['nullable', Rule::in(['category', 'restaurant', 'menu_item'])],
+            'redirect_type' => ['nullable', Rule::in(['category', 'restaurant', 'menu_item', 'app_screen'])],
             'redirect_category_id' => ['nullable', 'required_if:redirect_type,category', 'exists:categories,id'],
             'redirect_restaurant_id' => ['nullable', 'required_if:redirect_type,restaurant', 'exists:restaurants,id'],
             'redirect_menu_item_id' => ['nullable', 'required_if:redirect_type,menu_item', 'exists:menu_items,id'],
+            'redirect_screen' => ['nullable', 'required_if:redirect_type,app_screen', Rule::in(array_keys(Banner::REDIRECT_SCREENS))],
             'display_order' => 'nullable|integer|min:0',
             'banner_type' => 'required|in:home,driver,restaurant,search_bar,category,promo,under_99',
             'display_surface' => ['required', Rule::in(Banner::DISPLAY_SURFACES)],
@@ -143,6 +166,8 @@ class BannerController extends Controller
             'start_date' => 'nullable|date',
             'end_date' => 'nullable|date|after:start_date',
             'delivery_area_id' => 'nullable|exists:delivery_areas,id',
+            'position_anchor_token' => ['nullable', 'string', 'max:60'],
+            'position_direction' => ['nullable', 'required_with:position_anchor_token', 'in:above,below'],
         ]);
 
         if ($request->hasFile('image')) {
@@ -169,18 +194,31 @@ class BannerController extends Controller
         $validated['display_surface'] = Banner::normalizeDisplaySurface($validated['display_surface'] ?? 'both') ?? 'both';
         $validated['image_ratio'] = (int) ($validated['image_ratio'] ?? 46);
         $validated = $this->normalizeRedirectTarget($validated);
+        $positionAnchorToken = $validated['position_anchor_token'] ?? null;
+        $positionDirection = $validated['position_direction'] ?? null;
+        unset($validated['position_anchor_token'], $validated['position_direction']);
 
         $banner->update($validated);
 
         if ($this->shouldAttachToPromoWidgets($banner)) {
             $this->homeSectionService->attachPromoWidget($banner);
+            $this->homeSectionService->detachHomeBanner($banner);
 
             return redirect()->route('admin.home-sections.index')
                 ->with('success', 'Promo widget updated. Make sure the "Promo Widgets" home section below is shown on the homepage.');
         }
 
         $this->homeSectionService->detachPromoWidget($banner);
-        
+
+        if ($banner->banner_type === 'home') {
+            $homeBannerSection = $this->homeSectionService->attachHomeBanner($banner);
+            if (filled($positionAnchorToken) && filled($positionDirection)) {
+                $this->homeSectionService->positionSectionRelativeTo($homeBannerSection, $positionAnchorToken, $positionDirection);
+            }
+        } else {
+            $this->homeSectionService->detachHomeBanner($banner);
+        }
+
         return redirect()->route('admin.banners.index')
             ->with('success', 'Banner updated successfully!');
     }
@@ -195,6 +233,7 @@ class BannerController extends Controller
         }
 
         $this->homeSectionService->detachPromoWidget($banner);
+        $this->homeSectionService->detachHomeBanner($banner);
         $banner->delete();
 
         return redirect()->route('admin.banners.index')
@@ -214,6 +253,18 @@ class BannerController extends Controller
         }
         
         return response()->json(['success' => true]);
+    }
+
+    /**
+     * Sections a "Home Banner" can be positioned above/below -- the shared
+     * "Home Banners" carousel section itself is excluded (positioning it
+     * relative to itself is meaningless).
+     */
+    private function positionableSections()
+    {
+        return $this->homeSectionService->adminSections()
+            ->reject(fn (array $section) => $section['title'] === 'Home Banners')
+            ->values();
     }
 
     private function redirectOptions(): array
@@ -247,6 +298,7 @@ class BannerController extends Controller
         $validated['redirect_category_id'] = $type === 'category' ? ($validated['redirect_category_id'] ?? null) : null;
         $validated['redirect_restaurant_id'] = $type === 'restaurant' ? ($validated['redirect_restaurant_id'] ?? null) : null;
         $validated['redirect_menu_item_id'] = $type === 'menu_item' ? ($validated['redirect_menu_item_id'] ?? null) : null;
+        $validated['redirect_screen'] = $type === 'app_screen' ? ($validated['redirect_screen'] ?? null) : null;
 
         if (!$type) {
             $validated['redirect_type'] = null;

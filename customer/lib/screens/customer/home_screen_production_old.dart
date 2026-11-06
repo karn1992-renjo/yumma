@@ -9528,25 +9528,9 @@ class _HomeSectionContainer extends StatelessWidget {
 class _SectionArtworkClipper extends CustomClipper<Path> {
   const _SectionArtworkClipper();
 
+  // A plain straight edge: sections keep a normal background (no scalloped top).
   @override
-  Path getClip(Size size) {
-    final path = Path()..lineTo(0, 16);
-    final segment = size.width / 8;
-    for (var i = 0; i < 8; i++) {
-      final start = segment * i;
-      path.quadraticBezierTo(
-        start + segment / 2,
-        i.isEven ? 0 : 32,
-        start + segment,
-        16,
-      );
-    }
-    path
-      ..lineTo(size.width, size.height)
-      ..lineTo(0, size.height)
-      ..close();
-    return path;
-  }
+  Path getClip(Size size) => Path()..addRect(Offset.zero & size);
 
   @override
   bool shouldReclip(covariant CustomClipper<Path> oldClipper) => false;

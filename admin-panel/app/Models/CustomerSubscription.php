@@ -22,6 +22,7 @@ class CustomerSubscription extends Model
         'gateway',
         'gateway_customer_id',
         'gateway_subscription_id',
+        'gateway_order_id',
         'gateway_payment_method_label',
     ];
 
@@ -50,9 +51,41 @@ class CustomerSubscription extends Model
         return $this->hasMany(SubscriptionPayment::class);
     }
 
+    /**
+     * Gold membership is pay-as-you-go (no recurring mandate, no webhook) --
+     * nothing auto-flips `status` the moment a paid period ends, so "live"
+     * must also check current_period_end/trial_ends_at directly rather than
+     * trusting status alone. Mirrored by scopeLive() below for query-time
+     * checks (GoldSubscriptionService::isActiveFor()/activeSubscriptionFor()).
+     */
     public function isLive(): bool
     {
-        return in_array($this->status, ['trialing', 'active', 'past_due'], true);
+        if ($this->status === 'trialing') {
+            return $this->trial_ends_at === null || now()->lte($this->trial_ends_at);
+        }
+
+        if (! in_array($this->status, ['active', 'past_due'], true)) {
+            return false;
+        }
+
+        return $this->current_period_end === null || now()->lte($this->current_period_end);
+    }
+
+    public function scopeLive($query)
+    {
+        return $query->where(function ($outer) {
+            $outer->where(function ($q) {
+                $q->where('status', 'trialing')
+                    ->where(function ($q2) {
+                        $q2->whereNull('trial_ends_at')->orWhere('trial_ends_at', '>=', now());
+                    });
+            })->orWhere(function ($q) {
+                $q->whereIn('status', ['active', 'past_due'])
+                    ->where(function ($q2) {
+                        $q2->whereNull('current_period_end')->orWhere('current_period_end', '>=', now());
+                    });
+            });
+        });
     }
 
     public function hasOrderCapacity(): bool

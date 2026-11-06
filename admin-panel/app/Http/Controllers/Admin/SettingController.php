@@ -680,6 +680,7 @@ class SettingController extends Controller
             'home_menu_price_filter_min_price' => 'nullable|numeric|min:0|max:1000000',
             'home_menu_price_filter_max_price' => 'nullable|numeric|min:0|max:1000000',
             'reward_points_redemption_enabled' => 'nullable|in:0,1',
+            'reward_points_earning_audience' => 'nullable|in:all,gold',
             'reward_points_per_currency' => 'required_if:redirect_to,admin.settings.rewards|numeric|min:0.0001|max:1000000',
             'reward_points_min_redeem' => 'required_if:redirect_to,admin.settings.rewards|integer|min:1|max:100000000',
             'driver_referral_enabled' => 'nullable|in:0,1',
@@ -996,6 +997,8 @@ class SettingController extends Controller
         $request->validate([
             'payment_gateway_enabled' => 'nullable|in:0,1',
             'cod_enabled' => 'nullable|in:0,1',
+            // Global floor on cart subtotal (item total, before delivery/tax)
+            'minimum_order_amount' => 'nullable|numeric|min:0|max:100000',
             'payment_gateway_provider' => 'nullable|in:' . implode(',', array_keys(GatewayRegistry::paymentProviders())),
             'enabled_payment_gateways' => 'nullable|array',
             'enabled_payment_gateways.*' => 'nullable|in:' . implode(',', array_keys(GatewayRegistry::customerSelectablePaymentProviders())),
@@ -1060,6 +1063,7 @@ class SettingController extends Controller
         $settings = $request->only([
             'payment_gateway_enabled',
             'cod_enabled',
+            'minimum_order_amount',
             'payment_gateway_provider',
             'payout_gateway_provider',
             'auto_payout_enabled',

@@ -176,6 +176,24 @@ class OrderController extends Controller
                 ];
             }
 
+            // Platform-wide floor (Settings -> Payment) -- a restaurant's own
+            // min_order_amount can only raise this, never lower it below the
+            // global policy.
+            $effectiveMinOrderAmount = max(
+                (float) AppSetting::getValue('minimum_order_amount', 0),
+                (float) ($restaurant->min_order_amount ?? 0)
+            );
+            if ($effectiveMinOrderAmount > 0 && $subtotal < $effectiveMinOrderAmount) {
+                DB::rollBack();
+
+                $symbol = AppSetting::sanitizedCurrencySymbol();
+
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Minimum order amount is ' . $symbol . number_format($effectiveMinOrderAmount, AppSetting::currencyDecimals()) . '. Please add more items to your cart.',
+                ], 422);
+            }
+
             $deliveryFee = $this->calculateDeliveryFee(
                 $request->restaurant_id,
                 $request->delivery_lat,
@@ -543,9 +561,9 @@ class OrderController extends Controller
                         ->map(fn ($card) => $scratchCardService->payload($card))
                         ->values(),
                     'requires_payment' => $requiresPayment,
-                    'reward_points_earned' => (int) floor((float) $order->total),
+                    'reward_points_earned' => $placedPoints = app(OrderRewardPointService::class)->pointsFor((float) $order->total, auth()->id()),
                     'reward_points_balance' => (int) (auth()->user()?->reward_points_balance ?? 0),
-                    'reward_points_message' => 'You will earn ' . ((int) floor((float) $order->total)) . ' points after delivery.',
+                    'reward_points_message' => $placedPoints > 0 ? 'You will earn ' . $placedPoints . ' points after delivery.' : null,
                     'refund_policy' => $this->getRefundPolicySummary(),
                 ],
             ], 201);
@@ -1699,7 +1717,16 @@ class OrderController extends Controller
 
         $promo = $promotionResult['promo'] ?? null;
         $total = max(0, round($billableSubtotal + $payableDeliveryFee + $platformFee + $tax + $surgeFee + $nightSurcharge - $orderDiscount, AppSetting::currencyDecimals()));
-        $orderEarnedPoints = (int) floor($total);
+        $orderEarnedPoints = app(OrderRewardPointService::class)->pointsFor((float) $total, auth()->id());
+
+        // Platform-wide floor (Settings -> Payment) -- a restaurant's own
+        // min_order_amount can only raise this, never lower it below the
+        // global policy. Enforced for real at order placement in store();
+        // surfaced here so the client can show/disable checkout proactively.
+        $effectiveMinOrderAmount = max(
+            (float) AppSetting::getValue('minimum_order_amount', 0),
+            (float) ($restaurant->min_order_amount ?? 0)
+        );
 
         return [
             'surge_fee' => round($surgeFee, AppSetting::currencyDecimals()),
@@ -1721,6 +1748,9 @@ class OrderController extends Controller
             'order_type' => $orderType,
             'subtotal' => round($billableSubtotal, AppSetting::currencyDecimals()),
             'original_subtotal' => round($subtotal, AppSetting::currencyDecimals()),
+            'minimum_order_amount' => round($effectiveMinOrderAmount, AppSetting::currencyDecimals()),
+            'minimum_order_shortfall' => round(max(0, $effectiveMinOrderAmount - $subtotal), AppSetting::currencyDecimals()),
+            'meets_minimum_order' => $subtotal >= $effectiveMinOrderAmount,
             'embedded_item_discount' => round($embeddedDiscount, AppSetting::currencyDecimals()),
             'platform_fee' => $platformFee,
             'tax' => $tax,
@@ -2089,7 +2119,7 @@ class OrderController extends Controller
         $payload['active_payment_attempt'] = $payload['payment_summary']['active_attempt'] ?? null;
         $orderPoints = $order->status === 'delivered'
             ? app(OrderRewardPointService::class)->earnedPointsForOrder($order)
-            : (int) floor(max(0, (float) $order->total));
+            : app(OrderRewardPointService::class)->pointsFor((float) $order->total, (int) $order->customer_id);
         $payload['reward_points_earned'] = $orderPoints;
         $payload['reward_points_balance'] = (int) ($order->customer?->reward_points_balance ?? auth()->user()?->reward_points_balance ?? 0);
         $payload['reward_points_message'] = $orderPoints > 0

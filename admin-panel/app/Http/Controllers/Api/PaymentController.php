@@ -152,10 +152,12 @@ class PaymentController extends Controller
             }
 
             try {
-                // (float) cast + JsonHttp::post() -- see App\Support\JsonHttp
-                // and the matching comment in createCashfreeCheckoutPayment():
+                // (float) cast + JsonHttp::post() -- see App\Support\JsonHttp:
                 // Cashfree rejects a bare-integer order_amount for a
-                // whole-rupee total.
+                // whole-rupee total, and separately on a server where
+                // serialize_precision isn't -1, a plain json_encode() can
+                // dump a float's full raw binary precision instead of a
+                // clean decimal, which Cashfree also rejects.
                 $cashfreeOrder = JsonHttp::post(Http::withHeaders([
                     'x-api-version' => $apiVersion,
                     'x-client-id' => $clientId,
@@ -587,9 +589,11 @@ class PaymentController extends Controller
         $validated = $request->validate([
             'checkout_payment_token' => 'required|string',
             'payment_method' => 'required|in:razorpay,stripe,cashfree',
-            'payment_id' => 'required|string',
+            // Razorpay may be re-checked with only the order id after the SDK
+            // reported an error (see verifyRazorpayCheckoutPayment).
+            'payment_id' => 'required_unless:payment_method,razorpay|nullable|string',
             'razorpay_order_id' => 'required_if:payment_method,razorpay|string',
-            'razorpay_signature' => 'required_if:payment_method,razorpay|string',
+            'razorpay_signature' => 'nullable|string',
             'stripe_payment_intent_id' => 'required_if:payment_method,stripe|string',
         ]);
 
@@ -964,9 +968,15 @@ class PaymentController extends Controller
             abort(503, 'Razorpay is not configured.');
         }
 
+        if (! $request->filled('razorpay_signature') || ! $request->filled('payment_id')) {
+            return $this->verifyRazorpayCheckoutPaymentByOrder($request, $checkout, $secret);
+        }
+
         $expected = hash_hmac('sha256', $request->razorpay_order_id . '|' . $request->payment_id, $secret);
         if (! hash_equals($expected, (string) $request->razorpay_signature)) {
-            abort(422, 'Payment signature verification failed.');
+            // The signature can be missing/garbled on a UPI hand-off even
+            // though the money moved -- ask Razorpay directly before failing.
+            return $this->verifyRazorpayCheckoutPaymentByOrder($request, $checkout, $secret);
         }
 
         return [
@@ -975,6 +985,58 @@ class PaymentController extends Controller
             'payload' => [
                 'razorpay_order_id' => $request->razorpay_order_id,
                 'razorpay_signature' => $request->razorpay_signature,
+            ],
+        ];
+    }
+
+    /**
+     * Server-side check of a Razorpay order's payments, used when the app's
+     * SDK callback reported an error/cancel (common on UPI app hand-offs)
+     * but the customer may in fact have been charged. Trusts only Razorpay's
+     * own API response, never the client.
+     */
+    private function verifyRazorpayCheckoutPaymentByOrder(Request $request, array $checkout, string $secret): array
+    {
+        $key = AppSetting::getValue('razorpay_key', config('services.razorpay.key'));
+        $orderId = (string) $request->razorpay_order_id;
+
+        $captured = null;
+        for ($attempt = 0; $attempt < 4; $attempt++) {
+            $response = Http::withBasicAuth($key, $secret)
+                ->acceptJson()
+                ->get('https://api.razorpay.com/v1/orders/' . $orderId . '/payments');
+
+            if ($response->successful()) {
+                $captured = collect($response->json('items') ?? [])->first(
+                    fn ($p) => in_array($p['status'] ?? '', ['captured', 'authorized'], true)
+                );
+                if ($captured) {
+                    $captured = \App\Support\RazorpayCapture::ensureCaptured($captured, (string) $key, $secret, (int) round(((float) ($checkout['amount'] ?? 0)) * 100));
+                    break;
+                }
+            }
+
+            if ($attempt < 3) {
+                usleep(750000);
+            }
+        }
+
+        if (! $captured) {
+            abort(422, 'Payment signature verification failed.');
+        }
+
+        $expectedMinor = (int) round(((float) ($checkout['amount'] ?? 0)) * 100);
+        if ((int) ($captured['amount'] ?? 0) !== $expectedMinor) {
+            abort(422, 'Razorpay paid amount does not match checkout total.');
+        }
+
+        return [
+            'payment_id' => $captured['id'],
+            'gateway_reference' => $orderId,
+            'payload' => [
+                'razorpay_order_id' => $orderId,
+                'payment' => $captured,
+                'verified_via' => 'razorpay_order_payments_api',
             ],
         ];
     }
@@ -1183,8 +1245,10 @@ class PaymentController extends Controller
 
         // All retries exhausted -- the payment is confirmed charged but no
         // order could be created. This must never be a silent 500: log it
-        // at a level that pages/alerts so it can be reconciled manually
-        // (refund or retry) rather than lost.
+        // at a level that pages/alerts, AND persist it (not just log it) so
+        // an admin can resolve it from a UI any time later -- the
+        // checkout_payment cache this replay relied on is only 20 minutes,
+        // long gone by the time anyone reacts to a log line.
         Log::critical('CHARGED BUT NO ORDER: payment confirmed, order creation failed after all retries.', [
             'payment_method' => $paymentMethod,
             'payment_id' => $verification['payment_id'] ?? null,
@@ -1435,6 +1499,8 @@ class PaymentController extends Controller
             if (($payment['order_id'] ?? null) !== $razorpayOrderId) {
                 throw new \RuntimeException('Razorpay order does not match this payment.');
             }
+            // "authorized" = charged but not captured yet: capture it instead of showing a failed payment.
+            $payment = \App\Support\RazorpayCapture::ensureCaptured($payment, (string) $key, (string) $secret, $expectedMinor);
             if (($payment['status'] ?? null) !== 'captured') {
                 throw new \RuntimeException('Razorpay payment is not captured yet.');
             }

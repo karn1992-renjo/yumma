@@ -254,6 +254,10 @@ class RazorpayGateway implements PaymentGatewayContract
 
         $payload = $response->json();
         foreach (($payload['items'] ?? []) as $payment) {
+            // A QR payment is "authorized" until captured (account auto-capture off): capture it when the amount matches.
+            if (strtolower((string) ($payment['status'] ?? '')) === 'authorized') {
+                $payment = \App\Support\RazorpayCapture::ensureCaptured($payment, $this->key(), $this->secret(), (int) round(((float) $attempt->amount) * 100));
+            }
             $status = strtolower((string) ($payment['status'] ?? ''));
             $amount = isset($payment['amount']) ? ((float) $payment['amount'] / 100) : null;
             if ($status !== 'captured' || $amount === null || round($amount, 2) !== round((float) $attempt->amount, 2)) {
@@ -277,6 +281,13 @@ class RazorpayGateway implements PaymentGatewayContract
                 ],
             ];
         }
+
+        Log::info('Razorpay QR poll: no captured payment matching this attempt yet.', [
+            'payment_attempt_id' => $attempt->id,
+            'qr_id' => $attempt->gateway_reference,
+            'expected_amount' => (float) $attempt->amount,
+            'payments_seen' => collect($payload['items'] ?? [])->map(fn ($p) => ['id' => $p['id'] ?? null, 'status' => $p['status'] ?? null, 'amount' => isset($p['amount']) ? $p['amount'] / 100 : null])->all(),
+        ]);
 
         return null;
     }

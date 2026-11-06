@@ -433,8 +433,12 @@ class FlexibleOrderPaymentService {
     }));
   }
 
-  void _onRazorpayError(PaymentFailureResponse _) =>
-      _complete(_GatewayPaymentResult.failure());
+  void _onRazorpayError(PaymentFailureResponse response) {
+    // Keep what Razorpay actually said (code/message/metadata), so a "payment didn't go through" can be diagnosed.
+    _paymentTrace(
+        'razorpay.error code=${response.code} message=${response.message} error=${response.error}');
+    _complete(_GatewayPaymentResult.failure());
+  }
 
   void _onCashfreeSuccess(String orderId) {
     _paymentTrace('cashfree.success orderId=$orderId');
@@ -616,25 +620,46 @@ extension FlexibleOrderPaymentCheckout on FlexibleOrderPaymentService {
       // re-checks Cashfree's own order status rather than trusting this
       // callback. For other gateways there's no reliable id to re-verify
       // with on failure, so keep the original give-up-immediately behavior.
+      // Razorpay has the same UPI hand-off race (SDK reports an error while
+      // the bank still charges the customer), so re-check it with the order
+      // id we created; the server asks Razorpay whether it was captured.
+      final razorpayOrderId = resolved == 'razorpay'
+          ? _firstNonEmptyString(data, const ['order_id', 'razorpay_order_id'])
+          : null;
+      var verifyData = result.data;
+      var recheckOnly = false;
       if (!result.success) {
-        final canRecheck = resolved == 'cashfree' &&
-            _firstNonEmptyString(result.data, const ['payment_id']) != null;
+        final canRecheck = (resolved == 'cashfree' &&
+                _firstNonEmptyString(result.data, const ['payment_id']) !=
+                    null) ||
+            razorpayOrderId != null;
         if (!canRecheck) {
           return null;
         }
+        recheckOnly = resolved == 'razorpay';
+        if (recheckOnly) verifyData = {'razorpay_order_id': razorpayOrderId};
       }
 
-      final verifyResponse = await _api.post(
-        ApiConstants.verifyCheckoutPayment,
-        data: {
-          'checkout_payment_token': token,
-          'payment_method': resolved,
-          'gateway': resolved,
-          'payment_gateway': resolved,
-          'payment_gateway_provider': resolved,
-          ...result.data,
-        },
-      );
+      Map<String, dynamic> verifyResponse;
+      try {
+        verifyResponse = await _api.post(
+          ApiConstants.verifyCheckoutPayment,
+          data: {
+            'checkout_payment_token': token,
+            'payment_method': resolved,
+            'gateway': resolved,
+            'payment_gateway': resolved,
+            'payment_gateway_provider': resolved,
+            ...verifyData,
+          },
+        );
+      } catch (_) {
+        // A re-check after an SDK error that finds nothing paid is just a
+        // cancelled/failed payment, not an error worth surfacing.
+        if (recheckOnly) return null;
+        rethrow;
+      }
+      if (recheckOnly && verifyResponse['success'] != true) return null;
 
       _paymentTrace(
           'checkoutVerify.response success=${verifyResponse['success']} message=${verifyResponse['message']} dataKeys=${_mapKeys(verifyResponse['data'])}');

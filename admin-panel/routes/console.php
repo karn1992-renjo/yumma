@@ -162,6 +162,16 @@ Schedule::call(function () {
             ->markBillingChoiceRequired($subscription));
 })->when(fn () => $cronTaskEnabled('process_subscription_past_due_to_billing_choice'))->everyMinute();
 
+// Pay-as-you-go plans (stories-only) have no gateway to end them: once the paid period is over the plan expires.
+Schedule::call(function () {
+    \App\Models\RestaurantSubscription::query()
+        ->where('payment_mode', 'prepaid')
+        ->whereIn('status', ['active', 'trialing', 'past_due'])
+        ->whereNotNull('current_period_end')
+        ->where('current_period_end', '<', now())
+        ->update(['status' => 'expired', 'updated_at' => now()]);
+})->everyTenMinutes();
+
 // Reopen a restaurant Petpooja closed for online orders once its
 // requested reopen time has passed.
 Schedule::call(function () {
@@ -277,3 +287,9 @@ Schedule::command('weather:apply-surge')
     ->everyThirtyMinutes()
     ->withoutOverlapping(20);
 
+Schedule::command('whatsapp:reminders')->name('whatsapp-reminders')->dailyAt('10:00')->withoutOverlapping()
+    ->when(fn () => app(\App\Services\WhatsApp\WhatsAppService::class)->enabled());
+Schedule::command('whatsapp:catalog-sync')->name('whatsapp-catalog-sync')->everyFifteenMinutes()->withoutOverlapping()
+    ->when(fn () => app(\App\Services\WhatsApp\WhatsAppCatalogSync::class)->ready());
+Schedule::command('whatsapp:broadcasts')->name('whatsapp-broadcasts')->everyMinute()->withoutOverlapping()
+    ->when(fn () => app(\App\Services\WhatsApp\WhatsAppService::class)->enabled());

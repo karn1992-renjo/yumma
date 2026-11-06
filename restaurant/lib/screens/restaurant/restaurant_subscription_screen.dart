@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 import '../../config/api_constants.dart';
 import '../../providers/auth_provider.dart';
 import '../../services/api_service.dart';
+import '../../services/prepaid_plan_checkout_service.dart';
 import '../../services/subscription_checkout_service.dart';
 import '../../theme/foodflow_theme.dart';
 import '../../theme/aurora_theme.dart';
@@ -45,6 +46,8 @@ class _RestaurantSubscriptionScreenState
     extends State<RestaurantSubscriptionScreen> {
   final ApiService _api = ApiService();
   SubscriptionCheckoutService? _checkout;
+  PrepaidPlanCheckoutService? _prepaid;
+  List<Map<String, dynamic>> _storiesPlans = [];
 
   Map<String, dynamic>? _current;
   List<Map<String, dynamic>> _plans = [];
@@ -62,6 +65,7 @@ class _RestaurantSubscriptionScreenState
   @override
   void dispose() {
     _checkout?.dispose();
+    _prepaid?.dispose();
     super.dispose();
   }
 
@@ -102,6 +106,89 @@ class _RestaurantSubscriptionScreenState
     } catch (e) {
       debugPrint('Load subscription plans error: $e');
     }
+    try {
+      final response = await _api.get(
+        ApiConstants.restaurantSubscriptionPlans,
+        queryParams: {'scope': 'stories_addon'},
+      );
+      if (response['success'] == true && mounted) {
+        setState(() {
+          _storiesPlans = (response['data'] as List? ?? [])
+              .whereType<Map>()
+              .map((row) => Map<String, dynamic>.from(row))
+              .toList();
+        });
+      }
+    } catch (e) {
+      debugPrint('Load stories plans error: $e');
+    }
+  }
+
+  List<Map<String, dynamic>> _planList(String key) =>
+      (_current?[key] as List? ?? [])
+          .whereType<Map>()
+          .map((row) => Map<String, dynamic>.from(row))
+          .toList();
+
+  Map<String, dynamic>? get _storiesSubscription =>
+      _current?['stories_addon_subscription'] is Map
+          ? Map<String, dynamic>.from(_current!['stories_addon_subscription'])
+          : null;
+
+  /// Pay-as-you-go plans (stories only) are bought with one payment per period; [upgrade] moves up to a higher plan.
+  Future<void> _startPrepaid(Map<String, dynamic> plan, {bool upgrade = false}) async {
+    if (_isSubscribing) return;
+    final paymentMethod = await _resolvePaymentMethod();
+    if (paymentMethod == null) return;
+
+    setState(() => _isSubscribing = true);
+    final user = context.read<AuthProvider>().currentUser;
+    _prepaid?.dispose();
+    _prepaid = PrepaidPlanCheckoutService(
+      onSuccess: () async {
+        if (!mounted) return;
+        setState(() => _isSubscribing = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(upgrade ? 'Plan upgraded.' : 'Payment received. Stories plan is active.')),
+        );
+        await _loadAll();
+      },
+      onFailure: (message) {
+        if (!mounted) return;
+        setState(() => _isSubscribing = false);
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+      },
+    );
+
+    try {
+      await _prepaid!.start(
+        planId: plan['id'] as int,
+        paymentMethod: paymentMethod,
+        user: user,
+        upgrade: upgrade,
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _isSubscribing = false);
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(_cleanError(e))));
+    }
+  }
+
+  /// Moves to a higher plan. The current plan keeps running until the new one is paid.
+  Future<void> _upgrade(Map<String, dynamic> plan) async {
+    if (plan['scope'] == 'stories_addon') {
+      return _startPrepaid(plan, upgrade: true);
+    }
+    final confirmed = await showAuroraConfirm(
+      context,
+      icon: Icons.trending_up_rounded,
+      title: 'Upgrade to ${plan['name']}?',
+      message:
+          'Your current plan stays active until the new plan is paid, then it is replaced. The new plan starts from today.',
+      confirmLabel: 'Upgrade',
+    );
+    if (!confirmed || _isSubscribing) return;
+    return _subscribe(plan, upgrade: true);
   }
 
   Map<String, dynamic>? get _subscription =>
@@ -109,8 +196,9 @@ class _RestaurantSubscriptionScreenState
           ? Map<String, dynamic>.from(_current!['subscription'])
           : null;
 
-  Future<void> _subscribe(Map<String, dynamic> plan) async {
+  Future<void> _subscribe(Map<String, dynamic> plan, {bool upgrade = false}) async {
     if (_isSubscribing) return;
+    if (plan['scope'] == 'stories_addon') return _startPrepaid(plan, upgrade: upgrade);
 
     final paymentMethod = await _resolvePaymentMethod();
     if (paymentMethod == null) return;
@@ -146,6 +234,7 @@ class _RestaurantSubscriptionScreenState
         planId: plan['id'] as int,
         paymentMethod: paymentMethod,
         user: user,
+        upgrade: upgrade,
       );
     } catch (e) {
       if (!mounted) return;
@@ -284,6 +373,59 @@ class _RestaurantSubscriptionScreenState
         : message;
   }
 
+  /// Stories-only plans (pay as you go) for restaurants that are not on a plan that already includes Stories.
+  List<Widget> _storiesSection() {
+    final subscription = _subscription;
+    final bundled = subscription != null &&
+        subscription['plan'] is Map &&
+        (subscription['plan'] as Map)['includes_stories'] == true;
+    if (bundled || _storiesPlans.isEmpty) return const [];
+
+    final active = _storiesSubscription;
+    final upgrades = _planList('stories_upgrade_plans');
+    final periodEnd = active == null ? null : DateTime.tryParse('${active['current_period_end'] ?? ''}');
+
+    return [
+      const SizedBox(height: 18),
+      Text(
+        'Stories — pay as you go',
+        style: TextStyle(color: foodflow.ink, fontSize: 15, fontWeight: FontWeight.w900),
+      ),
+      const SizedBox(height: 4),
+      Text(
+        active == null
+            ? 'Post Stories without a monthly plan. One payment buys one period; nothing is charged again.'
+            : '${(active['plan'] as Map?)?['name'] ?? 'Stories plan'} is active${periodEnd == null ? '' : ' until ${DateFormat('dd MMM yyyy').format(periodEnd.toLocal())}'}.',
+        style: TextStyle(color: foodflow.muted, fontSize: 12.5),
+      ),
+      const SizedBox(height: 10),
+      if (active == null)
+        ..._storiesPlans.map(
+          (plan) => Padding(
+            padding: const EdgeInsets.only(bottom: 10),
+            child: _PlanCard(
+              plan: plan,
+              isBusy: _isSubscribing,
+              buttonLabel: 'Buy',
+              onSubscribe: () => _startPrepaid(plan),
+            ),
+          ),
+        )
+      else
+        ...upgrades.map(
+          (plan) => Padding(
+            padding: const EdgeInsets.only(bottom: 10),
+            child: _PlanCard(
+              plan: plan,
+              isBusy: _isSubscribing,
+              buttonLabel: 'Upgrade',
+              onSubscribe: () => _upgrade(plan),
+            ),
+          ),
+        ),
+    ];
+  }
+
   @override
   Widget build(BuildContext context) {
     final topPad = MediaQuery.of(context).padding.top + 60;
@@ -317,15 +459,33 @@ class _RestaurantSubscriptionScreenState
                           onSwitchToCommission: _switchToCommission,
                         ),
                         const SizedBox(height: 18),
-                        Text(
-                          'Other plans',
-                          style: TextStyle(
-                            color: foodflow.ink,
-                            fontSize: 15,
-                            fontWeight: FontWeight.w900,
+                        if (_planList('upgrade_plans').isNotEmpty) ...[
+                          Text(
+                            'Upgrade your plan',
+                            style: TextStyle(
+                              color: foodflow.ink,
+                              fontSize: 15,
+                              fontWeight: FontWeight.w900,
+                            ),
                           ),
-                        ),
-                        const SizedBox(height: 10),
+                          const SizedBox(height: 4),
+                          Text(
+                            'Your current plan keeps running until the new one is paid.',
+                            style: TextStyle(color: foodflow.muted, fontSize: 12.5),
+                          ),
+                          const SizedBox(height: 10),
+                          ..._planList('upgrade_plans').map(
+                            (plan) => Padding(
+                              padding: const EdgeInsets.only(bottom: 10),
+                              child: _PlanCard(
+                                plan: plan,
+                                isBusy: _isSubscribing,
+                                buttonLabel: 'Upgrade',
+                                onSubscribe: () => _upgrade(plan),
+                              ),
+                            ),
+                          ),
+                        ],
                       ] else ...[
                         Text(
                           'Choose a plan',
@@ -342,21 +502,19 @@ class _RestaurantSubscriptionScreenState
                         ),
                         const SizedBox(height: 14),
                       ],
-                      ..._plans
-                          .where((plan) =>
-                              _subscription == null ||
-                              plan['id'] != _subscription!['plan']?['id'])
-                          .map(
-                            (plan) => Padding(
-                              padding: const EdgeInsets.only(bottom: 10),
-                              child: _PlanCard(
-                                plan: plan,
-                                isBusy: _isSubscribing,
-                                onSubscribe: () => _subscribe(plan),
-                              ),
+                      if (_subscription == null)
+                        ..._plans.map(
+                          (plan) => Padding(
+                            padding: const EdgeInsets.only(bottom: 10),
+                            child: _PlanCard(
+                              plan: plan,
+                              isBusy: _isSubscribing,
+                              onSubscribe: () => _subscribe(plan),
                             ),
                           ),
-                      if (_plans.isEmpty)
+                        ),
+                      ..._storiesSection(),
+                      if (_plans.isEmpty && _storiesPlans.isEmpty)
                         Padding(
                           padding: const EdgeInsets.only(top: 40),
                           child: Center(
@@ -552,11 +710,13 @@ class _PlanCard extends StatelessWidget {
     required this.plan,
     required this.isBusy,
     required this.onSubscribe,
+    this.buttonLabel,
   });
 
   final Map<String, dynamic> plan;
   final bool isBusy;
   final VoidCallback onSubscribe;
+  final String? buttonLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -586,7 +746,9 @@ class _PlanCard extends StatelessWidget {
                 ),
               ),
               Text(
-                '${formatCurrencyValue(context, price)}/$period',
+                plan['scope'] == 'stories_addon' && plan['validity_days'] != null
+                    ? '${formatCurrencyValue(context, price)} / ${plan['validity_days']} days'
+                    : '${formatCurrencyValue(context, price)}/$period',
                 style: TextStyle(color: foodflow.orange, fontSize: 14, fontWeight: FontWeight.w900),
               ),
             ],
@@ -604,6 +766,11 @@ class _PlanCard extends StatelessWidget {
               _Pill(text: orderLimit == null ? 'Unlimited orders' : '$orderLimit orders/period'),
               _Pill(text: menuItemLimit == null ? 'Unlimited menu items' : '$menuItemLimit menu items'),
               if (includesStories) const _Pill(text: 'Stories included', highlight: true),
+              if ((plan['stories_per_day'] as num?) != null)
+                _Pill(text: '${(plan['stories_per_day'] as num).toInt()} stories/day'),
+              if ((plan['story_duration_hours'] as num?) != null)
+                _Pill(text: 'Live ${(plan['story_duration_hours'] as num).toInt()}h'),
+              if (plan['story_menu_link'] == true) const _Pill(text: 'Dish + order button', highlight: true),
               if ((trialDays ?? 0) > 0) _Pill(text: '$trialDays-day free trial', highlight: true),
             ],
           ),
@@ -614,7 +781,7 @@ class _PlanCard extends StatelessWidget {
               onPressed: isBusy ? null : onSubscribe,
               style: FoodFlowTheme.zomatoPrimaryButton(radius: 10),
               child: Text(
-                (trialDays ?? 0) > 0 ? 'Start free trial' : 'Subscribe',
+                buttonLabel ?? ((trialDays ?? 0) > 0 ? 'Start free trial' : 'Subscribe'),
                 style: const TextStyle(fontWeight: FontWeight.w800),
               ),
             ),

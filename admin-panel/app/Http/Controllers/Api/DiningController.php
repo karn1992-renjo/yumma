@@ -49,8 +49,10 @@ class DiningController extends Controller
             ->orderBy('distance')
             ->limit(50)
             ->get();
-            
-        return response()->json(['success' => true, 'data' => $restaurants]);
+
+        $cards = app(\App\Services\SponsoredListingService::class)->stampCards($restaurants->map(fn ($r) => $r->toArray())->all(), 'dining');
+
+        return response()->json(['success' => true, 'data' => $cards]);
     }
     
     public function bookTable(Request $request)

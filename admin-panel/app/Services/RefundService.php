@@ -126,6 +126,12 @@ class RefundService
                 app(BranchManagementService::class)->reverseRefund($order->fresh(), (float) $refundAmount);
 
                 try {
+                    app(\App\Services\WhatsApp\WhatsAppNotifier::class)->refundIssued($order->fresh(), (float) $refundAmount);
+                } catch (\Throwable $e) {
+                    Log::warning('WhatsApp refund message failed', ['order_id' => $order->id, 'error' => $e->getMessage()]);
+                }
+
+                try {
                     $paidByWallet = in_array($order->payment_method, ['wallet', 'cod', 'cash'], true);
                     $refundTo = ($refundedToWallet || $paidByWallet) ? 'wallet' : 'bank';
                     $entry = app(\App\Services\Accounting\LedgerPostingService::class)->postRefund($order->fresh(), (float) $refundAmount, $refundTo);

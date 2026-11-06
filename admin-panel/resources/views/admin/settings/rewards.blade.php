@@ -6,6 +6,7 @@
 @php
     $pointsValue = old('reward_points_per_currency', $settings['reward_points_per_currency'] ?? '');
     $minimumPoints = old('reward_points_min_redeem', $settings['reward_points_min_redeem'] ?? '');
+    $earningAudience = old('reward_points_earning_audience', $settings['reward_points_earning_audience'] ?? 'all');
     $redemptionEnabled = old('reward_points_redemption_enabled', $settings['reward_points_redemption_enabled'] ?? '');
     $driverReferralEnabled = old('driver_referral_enabled', $settings['driver_referral_enabled'] ?? '');
     $driverReferrerBonus = old('driver_referral_referrer_bonus', $settings['driver_referral_referrer_bonus'] ?? '');
@@ -54,6 +55,16 @@
                 <input type="hidden" name="reward_points_redemption_enabled" value="0">
 
                 <div class="settings-grid">
+                    <div class="settings-field settings-span-12">
+                        <label class="form-label">Who Earns Points</label>
+                        <select name="reward_points_earning_audience" class="form-select @error('reward_points_earning_audience') is-invalid @enderror">
+                            <option value="all" @selected($earningAudience !== 'gold')>All customers</option>
+                            <option value="gold" @selected($earningAudience === 'gold')>Gold members only</option>
+                        </select>
+                        <div class="form-text">Points are earned on delivered orders (1 point per currency unit paid). With "Gold members only", customers without an active Gold membership when the order is delivered earn nothing, and checkout shows no points message for them.</div>
+                        @error('reward_points_earning_audience') <div class="invalid-feedback">{{ $message }}</div> @enderror
+                    </div>
+
                     <div class="settings-field settings-span-4">
                         <label class="form-label">Points Value</label>
                         <input

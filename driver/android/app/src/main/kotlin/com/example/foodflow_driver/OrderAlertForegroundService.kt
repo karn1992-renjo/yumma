@@ -14,6 +14,7 @@ import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import android.os.SystemClock
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 
@@ -30,20 +31,32 @@ class OrderAlertForegroundService : Service() {
             ?: currentTrackLocation
         ensureChannel()
         val notification = buildNotification(currentStatus, fullScreen)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            val locationServiceType = if (currentTrackLocation && hasLocationPermission()) {
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val locationServiceType = if (currentTrackLocation && hasLocationPermission()) {
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
+                } else {
+                    0
+                }
+                val serviceType = ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC or locationServiceType
+                startForeground(
+                    NOTIFICATION_ID,
+                    notification,
+                    serviceType
+                )
             } else {
-                0
+                startForeground(NOTIFICATION_ID, notification)
             }
-            val serviceType = ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC or locationServiceType
-            startForeground(
-                NOTIFICATION_ID,
-                notification,
-                serviceType
-            )
-        } else {
-            startForeground(NOTIFICATION_ID, notification)
+        } catch (e: Exception) {
+            // Android 12+ (API 31) can throw ForegroundServiceStartNotAllowedException
+            // here even though the start call itself succeeded -- the system decided
+            // the calling process wasn't in an eligible (foreground) state at the
+            // moment this was dispatched. A known race when this fires right on app
+            // cold-start, before ActivityManager has caught up with the newly-resumed
+            // activity. Never let a denied start crash the whole app.
+            Log.w("OrderAlertFgService", "startForeground() was not allowed, stopping service", e)
+            stopSelf()
+            return START_NOT_STICKY
         }
         return START_STICKY
     }

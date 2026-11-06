@@ -3,9 +3,7 @@
 namespace App\Http\Controllers\Webhook;
 
 use App\Http\Controllers\Controller;
-use App\Models\CustomerSubscription;
 use App\Models\RestaurantSubscription;
-use App\Services\GoldSubscriptionService;
 use App\Services\Subscription\CashfreeSubscriptionGateway;
 use App\Services\SubscriptionService;
 use Illuminate\Http\Request;
@@ -17,17 +15,34 @@ use Illuminate\Support\Facades\Log;
  * webhooks/cashfree/payout (vendor payout settlement) endpoints. Configure
  * this URL in Cashfree's dashboard against Subscription events, with its
  * own webhook secret stored as cashfree_subscription_webhook_secret.
+ *
+ * Restaurant subscriptions only -- Customer Gold membership is pay-as-you-go
+ * (one-time payment, verified synchronously by the client right after
+ * checkout) and never touches this or any other webhook. See
+ * GoldSubscriptionService::verifyAndActivate().
  */
 class CashfreeSubscriptionWebhookController extends Controller
 {
-    public function __invoke(Request $request, CashfreeSubscriptionGateway $gateway, SubscriptionService $subscriptionService, GoldSubscriptionService $goldService)
+    public function __invoke(Request $request, CashfreeSubscriptionGateway $gateway, SubscriptionService $subscriptionService)
     {
         $rawBody = $request->getContent();
         $signature = $request->header('x-webhook-signature', '');
         $timestamp = $request->header('x-webhook-timestamp', '');
 
+        // Distinguished from a genuine signature mismatch below -- an admin
+        // who never pasted the webhook secret into Settings -> Payment (or
+        // never registered this URL in Cashfree's dashboard) would otherwise
+        // see every webhook rejected as a "mismatch", which reads like a
+        // signing bug rather than the real, much simpler cause: every real
+        // subscription silently stuck in pending_authorization forever.
+        if (! \App\Models\AppSetting::getValue('cashfree_subscription_webhook_secret')) {
+            Log::warning('Rejected Cashfree subscription webhook: cashfree_subscription_webhook_secret is not set in Settings -> Payment. Every Cashfree subscription will stay stuck in pending_authorization until this is configured and the webhook URL is registered in Cashfree\'s dashboard.');
+
+            return response()->json(['success' => false], 400);
+        }
+
         if (! $gateway->verifyWebhookSignature($rawBody, $signature, $timestamp)) {
-            Log::warning('Rejected Cashfree subscription webhook: signature mismatch.');
+            Log::warning('Rejected Cashfree subscription webhook: signature mismatch (secret IS configured -- check it matches the one in Cashfree\'s dashboard for this exact webhook URL).');
 
             return response()->json(['success' => false], 400);
         }
@@ -64,18 +79,6 @@ class CashfreeSubscriptionWebhookController extends Controller
             return response()->json(['success' => true]);
         }
 
-        $goldSubscription = CustomerSubscription::where('gateway_subscription_id', $gatewaySubscriptionId)->first();
-        if ($goldSubscription) {
-            match ($type) {
-                'SUBSCRIPTION_PAYMENT_SUCCESS', 'SUBSCRIPTION_PAYMENT_CHARGED' => $goldService->activateFromCharge($goldSubscription, $chargeData),
-                'SUBSCRIPTION_PAYMENT_FAILED' => $goldService->markPastDue($goldSubscription, 'Cashfree reported a failed renewal charge.'),
-                'SUBSCRIPTION_STATUS_CHANGE' => $this->handleGoldStatusChange($goldSubscription, $data, $goldService),
-                default => null,
-            };
-
-            return response()->json(['success' => true]);
-        }
-
         Log::warning('Cashfree subscription webhook for unknown subscription.', ['gateway_subscription_id' => $gatewaySubscriptionId]);
 
         return response()->json(['success' => true]);
@@ -86,19 +89,9 @@ class CashfreeSubscriptionWebhookController extends Controller
         $status = strtoupper((string) ($data['subscription']['subscription_status'] ?? $data['subscription_status'] ?? ''));
 
         match ($status) {
+            'ACTIVE' => $subscriptionService->markAuthorized($subscription),
             'CANCELLED' => $subscription->update(['status' => 'cancelled', 'cancelled_at' => now()]),
             'ON_HOLD', 'COMPLETED' => $subscriptionService->markBillingChoiceRequired($subscription),
-            default => null,
-        };
-    }
-
-    private function handleGoldStatusChange(CustomerSubscription $subscription, array $data, GoldSubscriptionService $goldService): void
-    {
-        $status = strtoupper((string) ($data['subscription']['subscription_status'] ?? $data['subscription_status'] ?? ''));
-
-        match ($status) {
-            'CANCELLED' => $subscription->update(['status' => 'cancelled', 'cancelled_at' => now()]),
-            'ON_HOLD', 'COMPLETED' => $goldService->markExpired($subscription),
             default => null,
         };
     }

@@ -1,6 +1,7 @@
 // lib/screens/customer/under_price_screen.dart
 import 'dart:async';
 
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -8,6 +9,7 @@ import '../../config/api_constants.dart';
 import '../../models/menu_item.dart';
 import '../../models/restaurant.dart';
 import '../../providers/cart_provider.dart';
+import '../../services/app_image_cache.dart';
 import '../../services/api_service.dart';
 import '../../services/location_service.dart';
 import '../../theme/foodflow_theme.dart';
@@ -16,6 +18,13 @@ import '../../widgets/common/app_cached_image.dart';
 import '../../widgets/common/app_skeleton.dart';
 import '../../widgets/customer/menu_item_card.dart';
 import 'restaurant_detail_screen.dart';
+
+class _UnderPriceCategory {
+  const _UnderPriceCategory({required this.name, this.imageUrl});
+
+  final String name;
+  final String? imageUrl;
+}
 
 /// Real, in-stock menu items priced under the threshold the backend returns
 /// (default ₹99) -- see RestaurantController::underPriceMenuItems() in the
@@ -38,10 +47,11 @@ class _UnderPriceScreenState extends State<UnderPriceScreen> {
   final ApiService _api = ApiService();
   List<MenuItem> _items = [];
   final Map<int, Restaurant> _restaurantsById = {};
-  List<String> _categories = [];
+  List<_UnderPriceCategory> _categories = [];
   String _selectedCategory = _allCategoriesLabel;
   double _threshold = 99;
   bool _isLoading = true;
+  bool _allRestaurantsClosed = false;
   String? _error;
   List<Map<String, dynamic>> _banners = [];
 
@@ -65,6 +75,7 @@ class _UnderPriceScreenState extends State<UnderPriceScreen> {
     setState(() {
       _isLoading = true;
       _error = null;
+      _allRestaurantsClosed = false;
     });
 
     try {
@@ -118,14 +129,25 @@ class _UnderPriceScreenState extends State<UnderPriceScreen> {
             ..clear()
             ..addAll(restaurantsById);
           _categories = (response['categories'] as List? ?? [])
-              .map((c) => c.toString())
-              .where((c) => c.trim().isNotEmpty)
+              .whereType<Map>()
+              .map((row) {
+                final name = row['name']?.toString().trim() ?? '';
+                final imageUrl = row['image_url']?.toString();
+                return name.isEmpty
+                    ? null
+                    : _UnderPriceCategory(
+                        name: name,
+                        imageUrl: (imageUrl?.trim().isNotEmpty ?? false) ? imageUrl : null,
+                      );
+              })
+              .whereType<_UnderPriceCategory>()
               .toList(growable: false);
           if (_selectedCategory != _allCategoriesLabel &&
-              !_categories.contains(_selectedCategory)) {
+              !_categories.any((c) => c.name == _selectedCategory)) {
             _selectedCategory = _allCategoriesLabel;
           }
           _threshold = (response['threshold'] as num?)?.toDouble() ?? 99;
+          _allRestaurantsClosed = response['all_restaurants_closed'] == true;
           _isLoading = false;
         });
       } else if (mounted) {
@@ -291,7 +313,10 @@ class _UnderPriceScreenState extends State<UnderPriceScreen> {
           : _error != null
               ? _UnderPriceErrorState(message: _error!, onRetry: _load)
               : _items.isEmpty
-                  ? _UnderPriceEmptyState(threshold: _threshold)
+                  ? _UnderPriceEmptyState(
+                      threshold: _threshold,
+                      allRestaurantsClosed: _allRestaurantsClosed,
+                    )
                   : RefreshIndicator(
                       onRefresh: _load,
                       child: CustomScrollView(
@@ -306,7 +331,10 @@ class _UnderPriceScreenState extends State<UnderPriceScreen> {
                           if (_categories.isNotEmpty)
                             SliverToBoxAdapter(
                               child: _UnderPriceCategoryChips(
-                                categories: [_allCategoriesLabel, ..._categories],
+                                categories: [
+                                  _UnderPriceCategory(name: _allCategoriesLabel),
+                                  ..._categories,
+                                ],
                                 selected: _selectedCategory,
                                 onSelect: (category) =>
                                     setState(() => _selectedCategory = category),
@@ -323,6 +351,8 @@ class _UnderPriceScreenState extends State<UnderPriceScreen> {
                                 return Consumer<CartProvider>(
                                   builder: (context, cart, _) => MenuItemCard(
                                     item: item,
+                                    restaurantName: restaurant?.name,
+                                    restaurantLogoUrl: restaurant?.logoUrl,
                                     quantity: cart.quantityForItemInRestaurant(
                                         item.restaurantId, item),
                                     orderingEnabled: restaurant?.isOpen ?? true,
@@ -344,9 +374,13 @@ class _UnderPriceScreenState extends State<UnderPriceScreen> {
 }
 
 class _UnderPriceEmptyState extends StatelessWidget {
-  const _UnderPriceEmptyState({required this.threshold});
+  const _UnderPriceEmptyState({
+    required this.threshold,
+    this.allRestaurantsClosed = false,
+  });
 
   final double threshold;
+  final bool allRestaurantsClosed;
 
   @override
   Widget build(BuildContext context) {
@@ -356,10 +390,16 @@ class _UnderPriceEmptyState extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(Icons.sell_outlined, size: 48, color: Color(0xFFB8BDC9)),
+            Icon(
+              allRestaurantsClosed ? Icons.bedtime_outlined : Icons.sell_outlined,
+              size: 48,
+              color: const Color(0xFFB8BDC9),
+            ),
             const SizedBox(height: 14),
             Text(
-              'No dishes under ${getCurrencySymbol(context)}${threshold.toInt()} nearby right now.',
+              allRestaurantsClosed
+                  ? 'No restaurants are open near you right now.'
+                  : 'No dishes under ${getCurrencySymbol(context)}${threshold.toInt()} nearby right now.',
               textAlign: TextAlign.center,
               style: TextStyle(color: FoodFlowTheme.muted, fontSize: 13.5, fontWeight: FontWeight.w600),
             ),
@@ -397,9 +437,9 @@ class _UnderPriceErrorState extends StatelessWidget {
 }
 
 // Same circular-icon-chip shape as the home screen's cuisine/category rail
-// (_CategoryPill in home_screen_production.dart) -- auto-derived category
-// names here have no uploaded image, so each gets a deterministic accent
-// color + generic icon instead, with a colored ring marking the selection.
+// (_CategoryPill in home_screen_production.dart). Shows the category's real
+// uploaded image when available; falls back to a deterministic accent
+// color + generic icon otherwise. A colored ring marks the selection.
 class _UnderPriceCategoryChips extends StatelessWidget {
   const _UnderPriceCategoryChips({
     required this.categories,
@@ -407,7 +447,7 @@ class _UnderPriceCategoryChips extends StatelessWidget {
     required this.onSelect,
   });
 
-  final List<String> categories;
+  final List<_UnderPriceCategory> categories;
   final String selected;
   final ValueChanged<String> onSelect;
 
@@ -429,7 +469,7 @@ class _UnderPriceCategoryChips extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      height: 96,
+      height: 128,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.fromLTRB(14, 6, 14, 10),
@@ -437,15 +477,21 @@ class _UnderPriceCategoryChips extends StatelessWidget {
         separatorBuilder: (_, __) => const SizedBox(width: 10),
         itemBuilder: (context, index) {
           final category = categories[index];
-          final isSelected = category == selected;
-          final isAll = category == 'All';
-          final accent = _accentFor(category);
+          final isSelected = category.name == selected;
+          final isAll = category.name == 'All';
+          final accent = _accentFor(category.name);
+          final fallbackIcon = Icon(
+            isAll ? Icons.grid_view_rounded : Icons.restaurant_menu_rounded,
+            color: isSelected ? FoodFlowTheme.primaryColor : accent,
+            size: 26,
+          );
 
           return GestureDetector(
-            onTap: () => onSelect(category),
+            onTap: () => onSelect(category.name),
             child: SizedBox(
               width: 72,
               child: Column(
+                mainAxisSize: MainAxisSize.min,
                 children: [
                   AnimatedContainer(
                     duration: const Duration(milliseconds: 150),
@@ -468,21 +514,29 @@ class _UnderPriceCategoryChips extends StatelessWidget {
                         ),
                       ],
                     ),
-                    child: Icon(
-                      isAll ? Icons.grid_view_rounded : Icons.restaurant_menu_rounded,
-                      color: isSelected ? FoodFlowTheme.primaryColor : accent,
-                      size: 26,
+                    child: ClipOval(
+                      child: category.imageUrl != null
+                          ? AppCachedImage(
+                              imageUrl: category.imageUrl!,
+                              width: 64,
+                              height: 64,
+                              fit: BoxFit.cover,
+                              errorWidget: Center(child: fallbackIcon),
+                            )
+                          : Center(child: fallbackIcon),
                     ),
                   ),
                   const SizedBox(height: 6),
                   Text(
-                    category,
-                    maxLines: 1,
+                    category.name,
+                    maxLines: 2,
                     overflow: TextOverflow.ellipsis,
+                    softWrap: true,
                     textAlign: TextAlign.center,
                     style: TextStyle(
                       color: isSelected ? FoodFlowTheme.primaryColor : const Color(0xFF1C1C1C),
-                      fontSize: 12,
+                      fontSize: 11.5,
+                      height: 1.15,
                       fontWeight: isSelected ? FontWeight.w800 : FontWeight.w600,
                     ),
                   ),
@@ -514,6 +568,13 @@ class _UnderPriceBannerCarouselState extends State<_UnderPriceBannerCarousel> {
   final PageController _controller = PageController();
   Timer? _autoScrollTimer;
   int _page = 0;
+  // Flexible height: the carousel's aspect ratio follows whatever the admin
+  // actually uploaded (resolved from the first banner's real pixel size)
+  // instead of forcing every banner into a fixed crop. Falls back to a
+  // sensible default until the image's dimensions are known.
+  double _aspectRatio = 16 / 7;
+  ImageStream? _dimensionStream;
+  ImageStreamListener? _dimensionListener;
 
   @override
   void initState() {
@@ -531,12 +592,48 @@ class _UnderPriceBannerCarouselState extends State<_UnderPriceBannerCarousel> {
         );
       });
     }
+    _resolveAspectRatio();
+  }
+
+  void _resolveAspectRatio() {
+    if (widget.banners.isEmpty) return;
+    final rawUrl = widget.banners.first['image_url']?.toString() ?? '';
+    // Must go through the same resolver + cache manager AppCachedImage
+    // itself uses below -- a raw, unresolved relative/storage path handed
+    // straight to a plain NetworkImage fails to load at all, silently
+    // leaving _aspectRatio stuck at the fallback forever (only "fixed" by
+    // a refresh because AppCachedImage's own fetch happens to warm a
+    // differently-keyed cache in the meantime).
+    final imageUrl = AppImageCache.resolveUrl(rawUrl);
+    if (imageUrl.isEmpty) return;
+
+    final stream = CachedNetworkImageProvider(imageUrl, cacheManager: AppImageCache.instance)
+        .resolve(const ImageConfiguration());
+    final listener = ImageStreamListener(
+      (info, _) {
+        if (!mounted) return;
+        final width = info.image.width;
+        final height = info.image.height;
+        if (width <= 0 || height <= 0) return;
+        setState(() => _aspectRatio = width / height);
+      },
+      onError: (_, __) {
+        // Keep the fallback ratio -- AppCachedImage's own errorWidget
+        // already handles showing nothing for a genuinely broken image.
+      },
+    );
+    stream.addListener(listener);
+    _dimensionStream = stream;
+    _dimensionListener = listener;
   }
 
   @override
   void dispose() {
     _autoScrollTimer?.cancel();
     _controller.dispose();
+    if (_dimensionStream != null && _dimensionListener != null) {
+      _dimensionStream!.removeListener(_dimensionListener!);
+    }
     super.dispose();
   }
 
@@ -545,7 +642,7 @@ class _UnderPriceBannerCarouselState extends State<_UnderPriceBannerCarousel> {
     return Padding(
       padding: const EdgeInsets.fromLTRB(14, 14, 14, 4),
       child: AspectRatio(
-        aspectRatio: 16 / 7,
+        aspectRatio: _aspectRatio,
         child: Stack(
           children: [
             ClipRRect(
@@ -559,15 +656,19 @@ class _UnderPriceBannerCarouselState extends State<_UnderPriceBannerCarousel> {
                   final imageUrl = banner['image_url']?.toString() ?? '';
                   return InkWell(
                     onTap: () => widget.onTapBanner(banner),
-                    child: SizedBox.expand(
+                    child: Container(
+                      color: const Color(0xFFFFE9DD),
                       child: imageUrl.isNotEmpty
-                          ? AppCachedImage(
-                              imageUrl: imageUrl,
-                              fit: BoxFit.cover,
-                              width: double.infinity,
-                              height: double.infinity,
+                          ? Stack(
+                              fit: StackFit.expand,
+                              // BoxFit.contain -- the whole banner stays
+                              // visible (no cropping), matching whatever
+                              // aspect ratio the admin actually uploaded.
+                              children: [
+                                AppCachedImage(imageUrl: imageUrl, fit: BoxFit.contain),
+                              ],
                             )
-                          : Container(color: const Color(0xFFFFE9DD)),
+                          : null,
                     ),
                   );
                 },

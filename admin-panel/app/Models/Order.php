@@ -318,6 +318,12 @@ class Order extends Model
         });
 
         static::updated(function ($order) {
+            try {
+                app(\App\Services\WhatsApp\WhatsAppNotifier::class)->orderUpdated($order);
+            } catch (\Throwable $e) {
+                \Illuminate\Support\Facades\Log::warning('WhatsApp hook failed.', ['error' => $e->getMessage()]);
+            }
+
             if ($order->wasChanged('status') && $order->status === 'delivered') {
                 app(BranchManagementService::class)->stampOrder($order);
                 app(\App\Services\PayoutCalculationService::class)->processOrderEarnings($order->fresh());
@@ -347,6 +353,12 @@ class Order extends Model
         });
 
         static::created(function ($order) {
+            try {
+                app(\App\Services\WhatsApp\WhatsAppNotifier::class)->orderCreated($order);
+            } catch (\Throwable $e) {
+                \Illuminate\Support\Facades\Log::warning('WhatsApp hook failed.', ['error' => $e->getMessage()]);
+            }
+
             app(\App\Services\CallMaskingService::class)->ensureMappingForOrder($order);
         });
     }

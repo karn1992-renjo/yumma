@@ -12,7 +12,9 @@ import 'package:video_thumbnail/video_thumbnail.dart' as vt;
 import '../../config/api_constants.dart';
 import '../../providers/auth_provider.dart';
 import '../../services/api_service.dart';
-import '../../services/subscription_checkout_service.dart';
+import '../../services/prepaid_plan_checkout_service.dart';
+import 'story_composer_screen.dart';
+import 'story_preview_screen.dart';
 import '../../theme/foodflow_theme.dart';
 import '../../theme/aurora_theme.dart';
 import '../../widgets/aurora/aurora.dart';
@@ -36,11 +38,47 @@ class _RestaurantStoriesScreenState extends State<RestaurantStoriesScreen> {
   bool _canPost = false;
   bool _isUploading = false;
   bool _isSubscribingAddon = false;
+  PrepaidPlanCheckoutService? _checkout;
+  Map<String, dynamic> _limits = {};
+  bool _canLinkMenu = false;
 
   @override
   void initState() {
     super.initState();
     _loadAll();
+  }
+
+  /// "3 of 5 stories left today · each lives 24h" from the plan's limits; nothing when the plan has none.
+  Widget _limitsBanner() {
+    final perDay = (_limits['per_day'] as num?)?.toInt();
+    final left = (_limits['left_today'] as num?)?.toInt();
+    final hours = (_limits['hours'] as num?)?.toInt() ?? 24;
+    if (perDay == null) {
+      return Align(
+        alignment: Alignment.centerLeft,
+        child: Text('Each story stays live for ${hours}h',
+            style: TextStyle(color: foodflow.muted, fontSize: 12.5, fontWeight: FontWeight.w700)),
+      );
+    }
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: foodflow.surfaceColor,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: foodflow.line),
+      ),
+      child: Text(
+        '${left ?? 0} of $perDay stories left today · each stays live for ${hours}h',
+        style: TextStyle(color: foodflow.ink, fontSize: 12.5, fontWeight: FontWeight.w800),
+      ),
+    );
+  }
+
+  @override
+  void dispose() {
+    _checkout?.dispose();
+    super.dispose();
   }
 
   Future<void> _loadAll() async {
@@ -60,6 +98,10 @@ class _RestaurantStoriesScreenState extends State<RestaurantStoriesScreen> {
               .map((row) => Map<String, dynamic>.from(row))
               .toList();
           _canPost = response['can_post'] == true;
+          _canLinkMenu = response['can_link_menu'] == true;
+          _limits = response['limits'] is Map
+              ? Map<String, dynamic>.from(response['limits'])
+              : {};
         });
       }
     } catch (e) {
@@ -98,16 +140,16 @@ class _RestaurantStoriesScreenState extends State<RestaurantStoriesScreen> {
     setState(() => _isSubscribingAddon = true);
 
     final user = context.read<AuthProvider>().currentUser;
-    final checkout = SubscriptionCheckoutService(
-      onAuthorized: () async {
+    // Kept in a field and disposed with the screen: disposing it right after opening the payment sheet
+    // dropped the payment result, so a paid Stories plan never showed as active.
+    _checkout?.dispose();
+    final checkout = _checkout = PrepaidPlanCheckoutService(
+      onSuccess: () async {
         if (!mounted) return;
         setState(() => _isSubscribingAddon = false);
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Payment authorized. Activating Stories — this can take a few seconds.'),
-          ),
+          const SnackBar(content: Text('Payment received. Stories is active.')),
         );
-        await Future.delayed(const Duration(seconds: 2));
         await _loadAll();
       },
       onFailure: (message) {
@@ -118,7 +160,7 @@ class _RestaurantStoriesScreenState extends State<RestaurantStoriesScreen> {
     );
 
     try {
-      await checkout.subscribe(
+      await checkout.start(
         planId: plan['id'] as int,
         paymentMethod: paymentMethod,
         user: user,
@@ -127,8 +169,6 @@ class _RestaurantStoriesScreenState extends State<RestaurantStoriesScreen> {
       if (!mounted) return;
       setState(() => _isSubscribingAddon = false);
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(_cleanError(e))));
-    } finally {
-      checkout.dispose();
     }
   }
 
@@ -234,8 +274,9 @@ class _RestaurantStoriesScreenState extends State<RestaurantStoriesScreen> {
     final picked = await _picker.pickImage(source: ImageSource.gallery, imageQuality: 90);
     if (picked == null) return;
 
-    final caption = await _promptCaption();
-    await _uploadStory(mediaType: 'image', mediaPath: picked.path, caption: caption);
+    final composed = await _compose(mediaType: 'image', mediaPath: picked.path);
+    if (composed == null) return;
+    await _uploadStory(mediaType: 'image', mediaPath: picked.path, composed: composed);
   }
 
   Future<void> _pickAndUploadVideo() async {
@@ -278,13 +319,14 @@ class _RestaurantStoriesScreenState extends State<RestaurantStoriesScreen> {
       }
 
       setState(() => _isUploading = false);
-      final caption = await _promptCaption();
+      final composed = await _compose(mediaType: 'video', mediaPath: picked.path, thumbnailPath: thumbnailPath);
+      if (composed == null) return;
       await _uploadStory(
         mediaType: 'video',
         mediaPath: picked.path,
         thumbnailPath: thumbnailPath,
         durationSeconds: duration,
-        caption: caption,
+        composed: composed,
       );
     } catch (e) {
       if (!mounted) return;
@@ -295,36 +337,43 @@ class _RestaurantStoriesScreenState extends State<RestaurantStoriesScreen> {
     }
   }
 
-  Future<String?> _promptCaption() {
-    final controller = TextEditingController();
-    return showDialog<String>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Add a caption?'),
-        content: TextField(
-          controller: controller,
-          maxLength: 150,
-          decoration: const InputDecoration(hintText: 'Optional'),
+  /// The composer: layout, caption and (when the plan allows) a linked dish with a button. Null when cancelled.
+  Future<StoryComposerResult?> _compose({
+    required String mediaType,
+    required String mediaPath,
+    String? thumbnailPath,
+  }) {
+    return Navigator.of(context).push<StoryComposerResult>(
+      MaterialPageRoute(
+        fullscreenDialog: true,
+        builder: (_) => StoryComposerScreen(
+          mediaType: mediaType,
+          mediaPath: mediaPath,
+          thumbnailPath: thumbnailPath,
+          canLinkMenu: _canLinkMenu,
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, null),
-            child: const Text('Skip'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(dialogContext, controller.text.trim()),
-            child: const Text('Post'),
-          ),
-        ],
       ),
     );
+  }
+
+  /// Opens one of the restaurant's own stories the way customers see it.
+  Future<void> _openPreview(Map<String, dynamic> story) async {
+    final removed = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(
+        builder: (_) => StoryPreviewScreen(
+          story: story,
+          onDelete: () => _deleteStory(story['id'] as int),
+        ),
+      ),
+    );
+    if (removed == true && mounted) await _loadStories();
   }
 
   Future<void> _uploadStory({
     required String mediaType,
     required String mediaPath,
     String? thumbnailPath,
-    String? caption,
+    required StoryComposerResult composed,
     int? durationSeconds,
   }) async {
     setState(() => _isUploading = true);
@@ -334,7 +383,10 @@ class _RestaurantStoriesScreenState extends State<RestaurantStoriesScreen> {
         ApiConstants.restaurantStories,
         fields: {
           'media_type': mediaType,
-          if (caption != null && caption.isNotEmpty) 'caption': caption,
+          if (composed.caption != null && composed.caption!.isNotEmpty) 'caption': composed.caption!,
+          'layout': composed.layout,
+          if (composed.menuItemId != null) 'menu_item_id': composed.menuItemId.toString(),
+          if (composed.menuItemId != null && composed.ctaLabel != null) 'cta_label': composed.ctaLabel!,
           if (durationSeconds != null) 'duration_seconds': durationSeconds.toString(),
         },
         files: {
@@ -352,6 +404,12 @@ class _RestaurantStoriesScreenState extends State<RestaurantStoriesScreen> {
         const SnackBar(content: Text('Story posted!')),
       );
       await _loadStories();
+      // Show the owner their story right away, the way customers will see it.
+      final posted = response['data'];
+      if (mounted && posted is Map) {
+        setState(() => _isUploading = false);
+        await _openPreview(Map<String, dynamic>.from(posted));
+      }
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(_cleanError(e))));
@@ -360,7 +418,7 @@ class _RestaurantStoriesScreenState extends State<RestaurantStoriesScreen> {
     }
   }
 
-  Future<void> _deleteStory(int id) async {
+  Future<bool> _deleteStory(int id) async {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
@@ -372,19 +430,21 @@ class _RestaurantStoriesScreenState extends State<RestaurantStoriesScreen> {
         ],
       ),
     );
-    if (confirmed != true) return;
+    if (confirmed != true) return false;
 
     try {
       final response = await _api.delete(ApiConstants.restaurantStory(id));
       if (response['success'] != true) {
         throw Exception(response['message'] ?? 'Unable to delete story');
       }
-      if (!mounted) return;
+      if (!mounted) return true;
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Story deleted.')));
       await _loadStories();
+      return true;
     } catch (e) {
-      if (!mounted) return;
+      if (!mounted) return false;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(_cleanError(e))));
+      return false;
     }
   }
 
@@ -431,19 +491,30 @@ class _RestaurantStoriesScreenState extends State<RestaurantStoriesScreen> {
                           onSubscribe: _subscribeAddon,
                           topPad: topPad,
                         )
-                      : GridView.builder(
-                          padding: EdgeInsets.fromLTRB(16, topPad, 16, 96),
-                          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                            crossAxisCount: 3,
-                            crossAxisSpacing: 10,
-                            mainAxisSpacing: 10,
-                            childAspectRatio: 0.62,
-                          ),
-                          itemCount: _stories.length,
-                          itemBuilder: (context, index) => _StoryTile(
-                            story: _stories[index],
-                            onDelete: () => _deleteStory(_stories[index]['id'] as int),
-                          ),
+                      : Column(
+                          children: [
+                            Padding(
+                              padding: EdgeInsets.fromLTRB(16, topPad, 16, 0),
+                              child: _limitsBanner(),
+                            ),
+                            Expanded(
+                              child: GridView.builder(
+                                padding: const EdgeInsets.fromLTRB(16, 10, 16, 96),
+                                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                                  crossAxisCount: 3,
+                                  crossAxisSpacing: 10,
+                                  mainAxisSpacing: 10,
+                                  childAspectRatio: 0.62,
+                                ),
+                                itemCount: _stories.length,
+                                itemBuilder: (context, index) => _StoryTile(
+                                  story: _stories[index],
+                                  onOpen: () => _openPreview(_stories[index]),
+                                  onDelete: () => _deleteStory(_stories[index]['id'] as int),
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
                 ),
         ],
@@ -453,9 +524,10 @@ class _RestaurantStoriesScreenState extends State<RestaurantStoriesScreen> {
 }
 
 class _StoryTile extends StatelessWidget {
-  const _StoryTile({required this.story, required this.onDelete});
+  const _StoryTile({required this.story, required this.onOpen, required this.onDelete});
 
   final Map<String, dynamic> story;
+  final VoidCallback onOpen;
   final VoidCallback onDelete;
 
   @override
@@ -464,7 +536,9 @@ class _StoryTile extends StatelessWidget {
     final viewCount = (story['view_count'] as num?)?.toInt() ?? 0;
     final postedAt = DateTime.tryParse(story['posted_at']?.toString() ?? '');
 
-    return ClipRRect(
+    return GestureDetector(
+      onTap: onOpen,
+      child: ClipRRect(
       borderRadius: BorderRadius.circular(16),
       child: Stack(
         fit: StackFit.expand,
@@ -517,8 +591,15 @@ class _StoryTile extends StatelessWidget {
               ),
             ),
           ),
+          if (story['menu_item'] is Map)
+            const Positioned(
+              bottom: 24,
+              right: 6,
+              child: Icon(Icons.shopping_bag_rounded, color: Colors.white, size: 15),
+            ),
         ],
       ),
+    ),
     );
   }
 }
@@ -578,10 +659,26 @@ class _StoriesUpsell extends StatelessWidget {
                           ),
                         ),
                         Text(
-                          '${formatCurrencyValue(context, (plan['price'] as num?)?.toDouble() ?? 0)}/${plan['billing_period'] ?? 'month'}',
+                          plan['validity_days'] != null
+                              ? '${formatCurrencyValue(context, (plan['price'] as num?)?.toDouble() ?? 0)} / ${plan['validity_days']} days'
+                              : '${formatCurrencyValue(context, (plan['price'] as num?)?.toDouble() ?? 0)}/${plan['billing_period'] ?? 'month'}',
                           style: TextStyle(color: foodflow.orange, fontSize: 14, fontWeight: FontWeight.w900),
                         ),
                       ],
+                    ),
+                    if ((plan['description']?.toString() ?? '').isNotEmpty) ...[
+                      const SizedBox(height: 6),
+                      Text(plan['description'].toString(), style: TextStyle(color: foodflow.muted, fontSize: 12.5)),
+                    ],
+                    const SizedBox(height: 8),
+                    Text(
+                      [
+                        if ((plan['stories_per_day'] as num?) != null) '${(plan['stories_per_day'] as num).toInt()} stories per day' else 'Unlimited stories',
+                        'each live for ${(plan['story_duration_hours'] as num?)?.toInt() ?? 24}h',
+                        if (plan['story_menu_link'] == true) 'link a dish with an order button',
+                        'one payment, no auto-renewal',
+                      ].join(' · '),
+                      style: TextStyle(color: foodflow.muted, fontSize: 12, fontWeight: FontWeight.w700),
                     ),
                     const SizedBox(height: 12),
                     SizedBox(

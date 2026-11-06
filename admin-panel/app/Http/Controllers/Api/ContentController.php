@@ -286,6 +286,13 @@ class ContentController extends Controller
             ];
         }
 
+        if ($banner->redirect_type === 'app_screen' && $banner->redirect_screen) {
+            return [
+                'type' => 'app_screen',
+                'screen' => $banner->redirect_screen,
+            ];
+        }
+
         return null;
     }
 

@@ -3,10 +3,16 @@ import 'dart:async';
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:video_player/video_player.dart';
 
 import '../../config/api_constants.dart';
 import '../../services/api_service.dart';
+import '../../services/appsflyer_deep_link_service.dart';
+import '../../services/story_prefetcher.dart';
+import '../../widgets/stories/story_layout.dart';
+import 'restaurant_detail_screen.dart';
 
 /// Full-screen Instagram-style story viewer for one restaurant's current
 /// reel: tap-to-advance, per-segment auto-progress (real video duration for
@@ -19,11 +25,15 @@ class StoryViewerScreen extends StatefulWidget {
     required this.restaurantId,
     required this.restaurantName,
     this.restaurantAvatar,
+    this.initialStoryId,
   });
 
   final int restaurantId;
   final String restaurantName;
   final String? restaurantAvatar;
+
+  /// Start at this story (opened from a shared link) instead of the first.
+  final int? initialStoryId;
 
   @override
   State<StoryViewerScreen> createState() => _StoryViewerScreenState();
@@ -62,34 +72,22 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
 
   Future<void> _load() async {
     try {
-      final response = await _api.get(
-        ApiConstants.restaurantStories(widget.restaurantId),
-      );
-      if (response['success'] == true) {
-        final stories = (response['data'] as List? ?? [])
-            .whereType<Map>()
-            .map((row) => Map<String, dynamic>.from(row))
-            .toList();
-        if (!mounted) return;
-        if (stories.isEmpty) {
-          setState(() {
-            _isLoading = false;
-            _loadError = 'No stories right now.';
-          });
-          return;
-        }
-        setState(() {
-          _stories = stories;
-          _isLoading = false;
-        });
-        await _openSegment(0);
-      } else {
-        if (!mounted) return;
+      // Usually already fetched by the home rail, so this returns instantly.
+      final stories = await StoryPrefetcher.instance.reel(widget.restaurantId);
+      if (!mounted) return;
+      if (stories.isEmpty) {
         setState(() {
           _isLoading = false;
-          _loadError = response['message']?.toString() ?? 'Unable to load stories.';
+          _loadError = 'No stories right now.';
         });
+        return;
       }
+      setState(() {
+        _stories = stories;
+        _isLoading = false;
+      });
+      final start = stories.indexWhere((s) => (s['id'] as num?)?.toInt() == widget.initialStoryId);
+      await _openSegment(start < 0 ? 0 : start);
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -122,11 +120,19 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
         _advance(1);
         return;
       }
-      final controller = VideoPlayerController.networkUrl(Uri.parse(url));
+      // Play the downloaded copy when we have it (instant); otherwise stream
+      // it while a background download fills the cache for next time.
+      final file = await StoryPrefetcher.instance.cachedVideo(url);
+      if (!mounted || _index != index) return;
+      final controller = file != null
+          ? VideoPlayerController.file(file)
+          : VideoPlayerController.networkUrl(Uri.parse(url));
+      if (file == null) unawaited(StoryPrefetcher.instance.warmStory(story));
       _videoController = controller;
       try {
         await controller.initialize();
-        if (!mounted) return;
+        if (!mounted || _index != index || _videoController != controller) return;
+        _warmNext(index);
         setState(() {});
         controller.play();
         _progressController.duration = controller.value.duration;
@@ -135,8 +141,17 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
         _advance(1);
       }
     } else {
+      _warmNext(index);
       _progressController.duration = _imageDuration;
       _progressController.forward(from: 0);
+    }
+  }
+
+  /// Starts downloading the segment after [index] so the tap-through is instant.
+  void _warmNext(int index) {
+    final next = index + 1;
+    if (next < _stories.length) {
+      unawaited(StoryPrefetcher.instance.warmStory(_stories[next]));
     }
   }
 
@@ -147,6 +162,86 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
       await _api.post(ApiConstants.storyMarkViewed(storyId as int));
     } catch (_) {
       // Non-critical -- a failed view-ack shouldn't interrupt viewing.
+    }
+  }
+
+  /// Heart toggle: instant (optimistic), rolled back if the server says no.
+  Future<void> _toggleLike() async {
+    final story = _current;
+    final storyId = (story?['id'] as num?)?.toInt();
+    if (story == null || storyId == null) return;
+
+    final wasLiked = story['liked'] == true;
+    final count = (story['like_count'] as num?)?.toInt() ?? 0;
+    HapticFeedback.lightImpact();
+    setState(() {
+      story['liked'] = !wasLiked;
+      story['like_count'] = wasLiked ? (count > 0 ? count - 1 : 0) : count + 1;
+    });
+
+    try {
+      final response = wasLiked
+          ? await _api.delete(ApiConstants.storyLike(storyId))
+          : await _api.post(ApiConstants.storyLike(storyId));
+      if (response is Map && response['success'] != true) throw StateError('rejected');
+      if (response is Map && response['like_count'] is num && mounted) {
+        setState(() => story['like_count'] = (response['like_count'] as num).toInt());
+      }
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        story['liked'] = wasLiked;
+        story['like_count'] = count;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Log in to like stories.'), duration: Duration(seconds: 2)),
+      );
+    }
+  }
+
+  /// Shares a short AppsFlyer link that opens this restaurant in the app.
+  Future<void> _share() async {
+    final story = _current;
+    if (story == null) return;
+
+    _progressController.stop();
+    _videoController?.pause();
+    try {
+      final link = await AppsFlyerDeepLinkService.instance.createRestaurantShortLink(
+        restaurantId: widget.restaurantId,
+        restaurantName: widget.restaurantName,
+        extra: {
+          'deep_link_sub2': widget.restaurantName,
+          'deep_link_sub3': '${story['id'] ?? ''}',
+        },
+      );
+      if (link == null || link.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Unable to create share link.'), duration: Duration(seconds: 2)),
+          );
+        }
+        return;
+      }
+
+      final caption = story['caption']?.toString().trim() ?? '';
+      final message = [
+        "Check out ${widget.restaurantName}'s story",
+        if (caption.isNotEmpty) caption,
+        link,
+      ].join('\n');
+      await Share.share(message, subject: widget.restaurantName);
+
+      final storyId = (story['id'] as num?)?.toInt();
+      if (storyId != null) {
+        story['share_count'] = ((story['share_count'] as num?)?.toInt() ?? 0) + 1;
+        unawaited(_api.post(ApiConstants.storyShared(storyId)).catchError((_) {}));
+      }
+    } finally {
+      if (mounted && !_paused) {
+        _progressController.forward();
+        _videoController?.play();
+      }
     }
   }
 
@@ -185,25 +280,59 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
             _advance(1);
           }
         },
-        child: SafeArea(
-          child: _isLoading
-              ? const Center(child: CircularProgressIndicator(color: Colors.white))
-              : _loadError != null
-                  ? _ErrorState(message: _loadError!)
-                  : Stack(
-                      fit: StackFit.expand,
-                      children: [
-                        _buildMedia(),
-                        _buildProgressBars(),
-                        _buildHeader(),
-                        if (_current?['caption'] != null &&
-                            (_current!['caption'] as String).isNotEmpty)
-                          _buildCaption(_current!['caption'] as String),
-                      ],
-                    ),
+        // Edge to edge: the picture fills the whole screen (under the notch and home indicator); only the
+        // controls are kept inside the safe area, so a story is never letterboxed on an iPhone.
+        child: _isLoading
+            ? const SafeArea(child: Center(child: CircularProgressIndicator(color: Colors.white)))
+            : _loadError != null
+                ? SafeArea(child: _ErrorState(message: _loadError!))
+                : Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      _buildStory(),
+                      _buildProgressBars(),
+                      _buildHeader(),
+                      _buildActions(),
+                    ],
+                  ),
+      ),
+    );
+  }
+
+  /// The story in the layout the restaurant chose, with its dish card and button when a menu item is linked.
+  Widget _buildStory() {
+    final story = _current;
+    if (story == null) return const SizedBox.shrink();
+
+    final menuItem = story['menu_item'] is Map ? Map<String, dynamic>.from(story['menu_item'] as Map) : null;
+    return StoryLayoutView(
+      media: _buildMedia(),
+      layout: story['layout']?.toString() ?? 'classic',
+      caption: story['caption']?.toString(),
+      menuItem: menuItem,
+      ctaLabel: story['cta_label']?.toString(),
+      topInset: MediaQuery.paddingOf(context).top + 64,
+      bottomInset: MediaQuery.paddingOf(context).bottom,
+      onCta: menuItem == null ? null : () => _openLinkedDish(menuItem),
+    );
+  }
+
+  /// Opens the linked dish in the restaurant page, pausing the story meanwhile and resuming afterwards.
+  Future<void> _openLinkedDish(Map<String, dynamic> menuItem) async {
+    final itemId = (menuItem['id'] as num?)?.toInt();
+    _progressController.stop();
+    _videoController?.pause();
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => RestaurantDetailScreen(
+          restaurantId: widget.restaurantId,
+          initialMenuItemId: itemId,
         ),
       ),
     );
+    if (!mounted || _paused) return;
+    _progressController.forward();
+    _videoController?.play();
   }
 
   Widget _buildMedia() {
@@ -213,30 +342,81 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
     if (story['media_type'] == 'video') {
       final controller = _videoController;
       if (controller != null && controller.value.isInitialized) {
-        return Center(
-          child: AspectRatio(
-            aspectRatio: controller.value.aspectRatio,
-            child: VideoPlayer(controller),
+        return ClipRect(
+          child: FittedBox(
+            fit: BoxFit.cover,
+            child: SizedBox(
+              width: controller.value.size.width,
+              height: controller.value.size.height,
+              child: VideoPlayer(controller),
+            ),
           ),
         );
       }
-      return const Center(child: CircularProgressIndicator(color: Colors.white));
+      // Show the poster straight away while the video buffers.
+      final poster = story['thumbnail_url']?.toString();
+      return Stack(
+        fit: StackFit.expand,
+        children: [
+          if (poster != null && poster.isNotEmpty)
+            CachedNetworkImage(imageUrl: poster, fit: BoxFit.cover),
+          const Center(child: CircularProgressIndicator(color: Colors.white)),
+        ],
+      );
     }
 
     final url = story['media_url']?.toString();
     if (url == null || url.isEmpty) return const SizedBox.shrink();
     return CachedNetworkImage(
       imageUrl: url,
-      fit: BoxFit.contain,
+      fit: BoxFit.cover,
       width: double.infinity,
       height: double.infinity,
       placeholder: (_, __) => const Center(child: CircularProgressIndicator(color: Colors.white)),
     );
   }
 
+  /// Like and share, stacked on the right edge like Instagram reels.
+  Widget _buildActions() {
+    final story = _current;
+    if (story == null) return const SizedBox.shrink();
+    final liked = story['liked'] == true;
+    final likes = (story['like_count'] as num?)?.toInt() ?? 0;
+
+    return Positioned(
+      right: 10,
+      bottom: MediaQuery.paddingOf(context).bottom + 120,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _ActionButton(
+            icon: liked ? Icons.favorite : Icons.favorite_border,
+            color: liked ? const Color(0xFFFF3B5C) : Colors.white,
+            label: likes > 0 ? _compact(likes) : null,
+            tooltip: liked ? 'Unlike' : 'Like',
+            onTap: _toggleLike,
+          ),
+          const SizedBox(height: 14),
+          _ActionButton(
+            icon: Icons.send_rounded,
+            color: Colors.white,
+            tooltip: 'Share',
+            onTap: _share,
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _compact(int n) => n >= 1000000
+      ? '${(n / 1000000).toStringAsFixed(1)}M'
+      : n >= 1000
+          ? '${(n / 1000).toStringAsFixed(1)}K'
+          : '$n';
+
   Widget _buildProgressBars() {
     return Positioned(
-      top: 8,
+      top: MediaQuery.paddingOf(context).top + 8,
       left: 8,
       right: 8,
       child: Row(
@@ -271,7 +451,7 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
 
   Widget _buildHeader() {
     return Positioned(
-      top: 20,
+      top: MediaQuery.paddingOf(context).top + 20,
       left: 12,
       right: 12,
       child: Row(
@@ -305,21 +485,52 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
       ),
     );
   }
+}
 
-  Widget _buildCaption(String caption) {
-    return Positioned(
-      left: 16,
-      right: 16,
-      bottom: 24,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-        decoration: BoxDecoration(
-          color: Colors.black.withOpacity(0.45),
-          borderRadius: BorderRadius.circular(14),
-        ),
-        child: Text(
-          caption,
-          style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600),
+class _ActionButton extends StatelessWidget {
+  const _ActionButton({
+    required this.icon,
+    required this.color,
+    required this.onTap,
+    required this.tooltip,
+    this.label,
+  });
+
+  final IconData icon;
+  final Color color;
+  final String? label;
+  final String tooltip;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      button: true,
+      label: tooltip,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onTap,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 46,
+              height: 46,
+              decoration: BoxDecoration(color: Colors.black38, shape: BoxShape.circle),
+              child: AnimatedSwitcher(
+                duration: const Duration(milliseconds: 180),
+                transitionBuilder: (child, animation) => ScaleTransition(scale: animation, child: child),
+                child: Icon(icon, key: ValueKey(icon), color: color, size: 26),
+              ),
+            ),
+            if (label != null) ...[
+              const SizedBox(height: 3),
+              Text(
+                label!,
+                style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w700),
+              ),
+            ],
+          ],
         ),
       ),
     );

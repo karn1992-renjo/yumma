@@ -895,6 +895,11 @@ class DriverController extends Controller
             ];
             Cache::put("driver_status_{$driverId}", $status, now()->addDays(7));
             app(GigLifecycleService::class)->checkOutOpenBooking($driverId);
+            try {
+                app(\App\Services\WhatsApp\WhatsAppNotifier::class)->driverStatusChanged(auth()->user(), false, 'You were taken offline because you have no active booked gig. Book a gig to go online again.');
+            } catch (\Throwable $e) {
+                \Illuminate\Support\Facades\Log::warning('WhatsApp driver status hook failed.', ['error' => $e->getMessage()]);
+            }
         }
 
         return response()->json([
@@ -953,6 +958,14 @@ class DriverController extends Controller
                 : null,
         ];
         Cache::put("driver_status_{$driverId}", $status, now()->addDays(7));
+
+        if (($previousStatus['is_online'] ?? false) !== $isOnline) {
+            try {
+                app(\App\Services\WhatsApp\WhatsAppNotifier::class)->driverStatusChanged($user, $isOnline);
+            } catch (\Throwable $e) {
+                \Illuminate\Support\Facades\Log::warning('WhatsApp driver status hook failed.', ['error' => $e->getMessage()]);
+            }
+        }
 
         if ($isOnline) {
             app(GigLifecycleService::class)->checkIn($driverId);

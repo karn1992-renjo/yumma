@@ -7,6 +7,7 @@ use App\Models\DriverGig;
 use App\Models\DriverGigBooking;
 use App\Models\GigIncentive;
 use App\Models\Order;
+use App\Models\User;
 use Illuminate\Support\Facades\Schema;
 
 class GigIncentiveService
@@ -65,13 +66,16 @@ class GigIncentiveService
         // customers were charged in flat zone surge fees (Order::surge_fee)
         // for the orders this driver personally delivered during the gig --
         // see App\Services\ZoneSurgeService for the customer-side activation.
-        $zoneSurgeBonus = $eligible && Schema::hasColumn('orders', 'surge_fee')
+        // A salaried driver does not receive the surge / night charges: those stay with admin (see
+        // PayoutCalculationService::processOrderEarnings).
+        $isSalaried = User::query()->whereKey($driverId)->value('earning_mode') === 'salary';
+        $zoneSurgeBonus = $eligible && ! $isSalaried && Schema::hasColumn('orders', 'surge_fee')
             ? (float) $orders->sum('surge_fee')
             : 0.0;
         // Self-funding late-night bonus: pays the driver exactly what
         // customers were charged in flat night surcharges (Order::night_surcharge)
         // for the orders this driver delivered -- see App\Services\NightSurchargeService.
-        $nightSurchargeBonus = $eligible && Schema::hasColumn('orders', 'night_surcharge')
+        $nightSurchargeBonus = $eligible && ! $isSalaried && Schema::hasColumn('orders', 'night_surcharge')
             ? (float) $orders->sum('night_surcharge')
             : 0.0;
         $penaltyAmount = 0.0;

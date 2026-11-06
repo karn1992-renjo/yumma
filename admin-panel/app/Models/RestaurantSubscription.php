@@ -19,10 +19,14 @@ class RestaurantSubscription extends Model
         'orders_used_in_period',
         'auto_renew',
         'cancelled_at',
+        'past_due_at',
         'gateway',
         'gateway_customer_id',
         'gateway_subscription_id',
         'gateway_payment_method_label',
+        'payment_mode',
+        'gateway_order_id',
+        'replaces_subscription_id',
     ];
 
     protected $casts = [
@@ -30,6 +34,7 @@ class RestaurantSubscription extends Model
         'current_period_start' => 'datetime',
         'current_period_end' => 'datetime',
         'cancelled_at' => 'datetime',
+        'past_due_at' => 'datetime',
         'orders_used_in_period' => 'integer',
         'auto_renew' => 'boolean',
     ];
@@ -51,7 +56,21 @@ class RestaurantSubscription extends Model
 
     public function isLive(): bool
     {
-        return in_array($this->status, ['trialing', 'active', 'past_due'], true);
+        if (! in_array($this->status, ['trialing', 'active', 'past_due'], true)) {
+            return false;
+        }
+
+        // Pay-as-you-go: nothing flips the status when the paid period ends, so an elapsed period is not live.
+        if ($this->isPrepaid() && $this->current_period_end && $this->current_period_end->isPast()) {
+            return false;
+        }
+
+        return true;
+    }
+
+    public function isPrepaid(): bool
+    {
+        return $this->payment_mode === 'prepaid';
     }
 
     public function hasOrderCapacity(): bool

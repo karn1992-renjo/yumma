@@ -9,6 +9,7 @@ import '../config/app_config.dart';
 import '../screens/customer/search_screen.dart';
 import '../screens/customer/home_screen.dart';
 import '../screens/customer/restaurant_detail_screen.dart';
+import '../screens/customer/story_viewer_screen.dart';
 import '../screens/customer/campaign_landing_screen.dart';
 import 'navigation_service.dart';
 import 'tracking_authorization_service.dart';
@@ -66,6 +67,88 @@ class AppsFlyerDeepLinkService {
       _log('AppsFlyer init failed: $error');
       debugPrintStack(stackTrace: stackTrace);
     }
+  }
+
+  /// A short AppsFlyer OneLink (`https://<domain>/abcd1234`) that opens
+  /// [restaurantId] in the app, or the store if the app isn't installed.
+  /// Falls back to the long OneLink when AppsFlyer is off or slow, so a share
+  /// never fails. Returns null only when OneLink isn't configured at all.
+  Future<String?> createRestaurantShortLink({
+    required int restaurantId,
+    required String restaurantName,
+    String channel = 'story_share',
+    Map<String, String> extra = const {},
+  }) async {
+    final params = <String, String>{
+      'deep_link_value': 'restaurant',
+      'deep_link_sub1': '$restaurantId',
+      // Must be a URI scheme the app declares (AndroidManifest: foodflow), so the
+      // link can open the installed app when App Links aren't verified.
+      'af_dp': 'foodflow:///restaurants/$restaurantId?deep_link_value=restaurant&deep_link_sub1=$restaurantId',
+      'af_force_deeplink': 'true',
+      ...extra,
+    };
+
+    final sdk = _sdk;
+    if (sdk != null) {
+      final completer = Completer<String?>();
+      try {
+        sdk.generateInviteLink(
+          AppsFlyerInviteLinkParams(
+            channel: channel,
+            campaign: channel,
+            referrerName: restaurantName,
+            customParams: params,
+          ),
+          (dynamic result) {
+            if (!completer.isCompleted) completer.complete(_inviteUrlFrom(result));
+          },
+          (dynamic error) {
+            _log('generateInviteLink failed: $error');
+            if (!completer.isCompleted) completer.complete(null);
+          },
+        );
+        final url = await completer.future.timeout(
+          const Duration(seconds: 4),
+          onTimeout: () => null,
+        );
+        if (url != null && url.isNotEmpty) return url;
+      } catch (error) {
+        _log('generateInviteLink threw: $error');
+      }
+    }
+    return _longOneLink(channel, params);
+  }
+
+  String? _inviteUrlFrom(dynamic result) {
+    final map = _mapFrom(result);
+    final payload = _mapFrom(map['payload']);
+    for (final source in [payload, map]) {
+      for (final key in const ['userInviteURL', 'userInviteUrl', 'link', 'url']) {
+        final value = source[key]?.toString().trim();
+        if (value != null && value.startsWith('http')) return value;
+      }
+    }
+    return null;
+  }
+
+  String? _longOneLink(String channel, Map<String, String> params) {
+    final domain = AppConfig.appsFlyerOneLinkDomain
+        .trim()
+        .replaceFirst(RegExp(r'^https?://'), '')
+        .replaceFirst(RegExp(r'/$'), '');
+    if (domain.isEmpty) return null;
+    final segments = AppConfig.appsFlyerOneLinkPath
+        .split('/')
+        .map((s) => s.trim())
+        .where((s) => s.isNotEmpty)
+        .toList();
+    return Uri.parse('https://$domain')
+        .replace(
+          pathSegments: segments,
+          queryParameters: {'pid': 'share', 'c': channel, ...params},
+        )
+        .toString();
   }
 
   Future<void> _requestTrackingAuthorizationIfNeeded() async {
@@ -174,6 +257,16 @@ class AppsFlyerDeepLinkService {
   void _navigate(AppsFlyerDeepLinkDestination destination) {
     switch (destination.type) {
       case AppsFlyerDeepLinkType.restaurant:
+        // A shared story carries its id in sub3 and the restaurant name in sub2.
+        final storyId = destination.tertiaryId;
+        if (storyId != null) {
+          _openSharedStory(
+            restaurantId: destination.primaryId!,
+            restaurantName: destination.secondaryRaw,
+            storyId: storyId,
+          );
+          return;
+        }
         _push(
           RestaurantDetailScreen(restaurantId: destination.primaryId!),
         );
@@ -222,6 +315,30 @@ class AppsFlyerDeepLinkService {
         _navigateHome('Referral handled.');
         return;
     }
+  }
+
+  /// Home underneath, the story on top -- closing the story lands on home.
+  void _openSharedStory({
+    required int restaurantId,
+    required int storyId,
+    String? restaurantName,
+  }) {
+    _withNavigator((navigator) {
+      navigator.pushAndRemoveUntil(
+        MaterialPageRoute(builder: (_) => const HomeScreen()),
+        (_) => false,
+      );
+      navigator.push(
+        MaterialPageRoute(
+          fullscreenDialog: true,
+          builder: (_) => StoryViewerScreen(
+            restaurantId: restaurantId,
+            restaurantName: (restaurantName?.trim().isNotEmpty ?? false) ? restaurantName!.trim() : 'Story',
+            initialStoryId: storyId,
+          ),
+        ),
+      );
+    });
   }
 
   void _push(Widget screen) {

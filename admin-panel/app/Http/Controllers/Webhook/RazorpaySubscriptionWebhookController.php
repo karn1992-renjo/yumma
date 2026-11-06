@@ -3,9 +3,7 @@
 namespace App\Http\Controllers\Webhook;
 
 use App\Http\Controllers\Controller;
-use App\Models\CustomerSubscription;
 use App\Models\RestaurantSubscription;
-use App\Services\GoldSubscriptionService;
 use App\Services\SubscriptionService;
 use App\Services\Subscription\RazorpaySubscriptionGateway;
 use Illuminate\Http\Request;
@@ -20,16 +18,33 @@ use Illuminate\Support\Facades\Log;
  * razorpay_subscription_webhook_secret AppSetting (never the same secret as
  * the other Razorpay webhooks -- each webhook endpoint gets its own in
  * Razorpay's dashboard).
+ *
+ * Restaurant subscriptions only -- Customer Gold membership is pay-as-you-go
+ * (one-time payment, verified synchronously by the client right after
+ * checkout) and never touches this or any other webhook. See
+ * GoldSubscriptionService::verifyAndActivate().
  */
 class RazorpaySubscriptionWebhookController extends Controller
 {
-    public function __invoke(Request $request, RazorpaySubscriptionGateway $gateway, SubscriptionService $subscriptionService, GoldSubscriptionService $goldService)
+    public function __invoke(Request $request, RazorpaySubscriptionGateway $gateway, SubscriptionService $subscriptionService)
     {
         $rawBody = $request->getContent();
         $signature = $request->header('X-Razorpay-Signature', '');
 
+        // Distinguished from a genuine signature mismatch below -- an admin
+        // who never pasted the webhook secret into Settings -> Payment (or
+        // never registered this URL in Razorpay's dashboard) would otherwise
+        // see every webhook rejected as a "mismatch", which reads like a
+        // signing bug rather than the real, much simpler cause: every real
+        // subscription silently stuck in pending_authorization forever.
+        if (! \App\Models\AppSetting::getValue('razorpay_subscription_webhook_secret')) {
+            Log::warning('Rejected Razorpay subscription webhook: razorpay_subscription_webhook_secret is not set in Settings -> Payment. Every Razorpay subscription will stay stuck in pending_authorization until this is configured and the webhook URL is registered in Razorpay\'s dashboard.');
+
+            return response()->json(['success' => false], 400);
+        }
+
         if (! $gateway->verifyWebhookSignature($rawBody, $signature)) {
-            Log::warning('Rejected Razorpay subscription webhook: signature mismatch.');
+            Log::warning('Rejected Razorpay subscription webhook: signature mismatch (secret IS configured -- check it matches the one in Razorpay\'s dashboard for this exact webhook URL).');
 
             return response()->json(['success' => false], 400);
         }
@@ -53,23 +68,12 @@ class RazorpaySubscriptionWebhookController extends Controller
         $subscription = RestaurantSubscription::where('gateway_subscription_id', $gatewaySubscriptionId)->first();
         if ($subscription) {
             match ($event) {
+                // Authenticated/activated arrive before any charge: they start a free trial (access straight away).
+                'subscription.authenticated', 'subscription.activated' => $subscriptionService->markAuthorized($subscription),
                 'subscription.charged' => $subscriptionService->activateFromCharge($subscription, $chargeData),
                 'subscription.pending' => $subscriptionService->markPastDue($subscription, 'Razorpay reported a pending/failed renewal charge.'),
                 'subscription.halted' => $subscriptionService->markBillingChoiceRequired($subscription),
                 'subscription.cancelled' => $subscription->update(['status' => 'cancelled', 'cancelled_at' => now()]),
-                default => null,
-            };
-
-            return response()->json(['success' => true]);
-        }
-
-        $goldSubscription = CustomerSubscription::where('gateway_subscription_id', $gatewaySubscriptionId)->first();
-        if ($goldSubscription) {
-            match ($event) {
-                'subscription.charged' => $goldService->activateFromCharge($goldSubscription, $chargeData),
-                'subscription.pending' => $goldService->markPastDue($goldSubscription, 'Razorpay reported a pending/failed renewal charge.'),
-                'subscription.halted' => $goldService->markExpired($goldSubscription),
-                'subscription.cancelled' => $goldSubscription->update(['status' => 'cancelled', 'cancelled_at' => now()]),
                 default => null,
             };
 

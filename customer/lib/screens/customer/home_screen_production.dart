@@ -2786,6 +2786,14 @@ class _CustomerHomeFeedState extends State<_CustomerHomeFeed> {
     return 'UP TO $value OFF';
   }
 
+  // Unlike _isPromoCardBanner() (pure VISUAL style, layout_mode only), this
+  // one is a CATEGORY check: it decides whether an item belongs to the
+  // Promo Widgets group for the purpose of excluding it from the primary
+  // hero/banner slot selection (_primaryBannerToken()/_primaryHeroToken()
+  // below) -- a promo-type banner must stay excluded from that slot even
+  // when its layout_mode is a plain one (e.g. "Full Media"), otherwise the
+  // Promo Widgets section gets wrongly promoted into the hero slot and the
+  // real Home Banner section gets bumped down into its place.
   bool _isPromoBannerItem(dynamic item) {
     if (item is! Map) return false;
     final layoutMode = (item['layout_mode'] ?? item['layoutMode'] ?? '')
@@ -4773,12 +4781,7 @@ class _CustomerHomeFeedState extends State<_CustomerHomeFeed> {
                       .toString()
                       .toLowerCase()
                       .trim();
-              final bannerType =
-                  (banner['banner_type'] ?? banner['bannerType'] ?? '')
-                      .toString()
-                      .toLowerCase()
-                      .trim();
-              return layoutMode == 'promo_card' || bannerType == 'promo';
+              return layoutMode == 'promo_card';
             });
         return Column(
           children: <Widget>[
@@ -8564,16 +8567,14 @@ class _HomePromoBannerState extends State<_HomePromoBanner> {
     return layoutMode == 'full_image' || layoutMode == 'image_only';
   }
 
+  // layout_mode alone decides the visual style -- banner_type='promo' is a
+  // separate, purely organizational classification (see _isPromoBannerItem).
   bool _isPromoCardBanner(Map<String, dynamic> banner) {
     final mode = (banner['layout_mode'] ?? banner['layoutMode'] ?? '')
         .toString()
         .trim()
         .toLowerCase();
-    final type = (banner['banner_type'] ?? banner['bannerType'] ?? '')
-        .toString()
-        .trim()
-        .toLowerCase();
-    return mode == 'promo_card' || type == 'promo';
+    return mode == 'promo_card';
   }
 
   String _badgeImageUrl(Map<String, dynamic> banner) {
@@ -8861,6 +8862,7 @@ class _HomePromoBannerState extends State<_HomePromoBanner> {
                 banner['offer_id'],
             'url':
                 banner['external_url'] ?? banner['link_url'] ?? banner['link'],
+            'screen': banner['redirect_screen'],
           };
     final redirectType = redirect['type']?.toString().toLowerCase();
     final redirectId = _parseBannerInt(redirect['id']);
@@ -8911,6 +8913,32 @@ class _HomePromoBannerState extends State<_HomePromoBanner> {
     if (redirectType == 'offer' || redirectType == 'offers') {
       Navigator.pushNamed(context, '/offers');
       return;
+    }
+    if (redirectType == 'app_screen') {
+      final screen = redirect['screen']?.toString().toLowerCase().trim() ?? '';
+      if (screen == 'under_99') {
+        Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => const UnderPriceScreen()),
+        );
+        return;
+      }
+      const routes = <String, String>{
+        'home': '/',
+        'offers': '/offers',
+        'search': '/search',
+        'gold': '/gold',
+        'wallet': '/wallet',
+        'notifications': '/notifications',
+      };
+      final route = routes[screen];
+      if (route != null) {
+        if (route == '/') {
+          Navigator.of(context).popUntil((r) => r.isFirst);
+        } else {
+          Navigator.pushNamed(context, route);
+        }
+        return;
+      }
     }
 
     final rawLink = (redirect['url'] ??
@@ -9240,7 +9268,8 @@ class _HomeSectionContainer extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final backgroundImageUrl = _sectionBackgroundImage(section);
+    // Section artwork images are not shown: sections keep a normal background.
+    const backgroundImageUrl = '';
     final backgroundColor = _sectionBackgroundColor(section);
     final backgroundOpacity =
         _sectionBackgroundOpacity(section).clamp(0.0, 1.0).toDouble();
@@ -9428,25 +9457,9 @@ class _HomeSectionContainer extends StatelessWidget {
 class _SectionArtworkClipper extends CustomClipper<Path> {
   const _SectionArtworkClipper();
 
+  // A plain straight edge: sections keep a normal background (no scalloped top).
   @override
-  Path getClip(Size size) {
-    final path = Path()..lineTo(0, 16);
-    final segment = size.width / 8;
-    for (var i = 0; i < 8; i++) {
-      final start = segment * i;
-      path.quadraticBezierTo(
-        start + segment / 2,
-        i.isEven ? 0 : 32,
-        start + segment,
-        16,
-      );
-    }
-    path
-      ..lineTo(size.width, size.height)
-      ..lineTo(0, size.height)
-      ..close();
-    return path;
-  }
+  Path getClip(Size size) => Path()..addRect(Offset.zero & size);
 
   @override
   bool shouldReclip(covariant CustomClipper<Path> oldClipper) => false;
@@ -10076,8 +10089,17 @@ class _RecommendedRestaurantGridCard extends StatelessWidget {
           restaurant['amount_for_one'],
       fallback: 0,
     );
+    final isOpenValue = restaurant['is_open_now'] ?? restaurant['is_open'];
+    final isOpen = isOpenValue == null
+        ? true
+        : (isOpenValue == true ||
+            isOpenValue == 1 ||
+            isOpenValue?.toString().toLowerCase() == 'true');
 
-    return InkWell(
+    return _unavailableWrap(
+      orderable: isOpen,
+      label: 'Closed',
+      child: InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(20),
       child: Column(
@@ -10171,6 +10193,7 @@ class _RecommendedRestaurantGridCard extends StatelessWidget {
             ],
           ),
         ],
+      ),
       ),
     );
   }

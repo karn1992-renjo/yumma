@@ -15,9 +15,24 @@ class Banner extends Model
         'app' => 'Customer App Only',
     ];
 
+    // redirect_type='app_screen' destinations -- named in-app screens with
+    // no specific row to point at (unlike category/restaurant/menu_item).
+    // Keys must match the customer app's named routes in main.dart, except
+    // 'under_99' which has no named route and is special-cased in
+    // _handleBannerTap() to push UnderPriceScreen directly.
+    public const REDIRECT_SCREENS = [
+        'home' => 'Home',
+        'offers' => 'Offers',
+        'search' => 'Search',
+        'gold' => 'Gold Membership',
+        'wallet' => 'Wallet',
+        'notifications' => 'Notifications',
+        'under_99' => 'Dishes Under ₹99',
+    ];
+
     protected $fillable = [
         'title', 'description', 'cta_label', 'image', 'badge_image', 'link', 'redirect_type', 'redirect_category_id', 'redirect_restaurant_id',
-        'redirect_menu_item_id', 'display_order', 'is_active', 'start_date', 'end_date', 'banner_type',
+        'redirect_menu_item_id', 'redirect_screen', 'display_order', 'is_active', 'start_date', 'end_date', 'banner_type',
         'display_surface', 'layout_mode', 'image_ratio', 'delivery_area_id'
     ];
     

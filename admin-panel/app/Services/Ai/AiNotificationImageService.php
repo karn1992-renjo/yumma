@@ -162,17 +162,11 @@ class AiNotificationImageService
         $started = microtime(true);
 
         try {
-            $res = Http::withToken($key)
-                ->timeout(75)
-                ->acceptJson()
-                ->post('https://api.openai.com/v1/images/generations', [
-                    'model' => 'gpt-image-1',
-                    'prompt' => $prompt,
-                    'n' => 1,
-                    'size' => '1536x1024',
-                    'quality' => 'high',
-                    'background' => 'opaque',
-                ]);
+            $res = $this->requestImage($key, $prompt, 'gpt-image-1');
+            // Accounts without access to gpt-image-1 (e.g. organization not verified) get DALL-E 3 instead.
+            if ($res->status() === 400 && preg_match('/does not exist|must be verified|not have access/i', $res->body())) {
+                $res = $this->requestImage($key, $prompt, 'dall-e-3');
+            }
         } catch (\Throwable $e) {
             report($e);
             $this->logImageUsage($spec, 'failed', (int) ((microtime(true) - $started) * 1000), 'exception: ' . mb_substr($e->getMessage(), 0, 120));
@@ -208,6 +202,15 @@ class AiNotificationImageService
         $this->logImageUsage($spec, 'success', $latency, null);
 
         return $bytes;
+    }
+
+    private function requestImage(string $key, string $prompt, string $model): \Illuminate\Http\Client\Response
+    {
+        $body = $model === 'dall-e-3'
+            ? ['model' => $model, 'prompt' => mb_substr($prompt, 0, 4000), 'n' => 1, 'size' => '1792x1024', 'quality' => 'hd', 'response_format' => 'b64_json']
+            : ['model' => $model, 'prompt' => $prompt, 'n' => 1, 'size' => '1536x1024', 'quality' => 'high', 'background' => 'opaque'];
+
+        return Http::withToken($key)->connectTimeout(10)->timeout(60)->acceptJson()->post('https://api.openai.com/v1/images/generations', $body);
     }
 
     /**

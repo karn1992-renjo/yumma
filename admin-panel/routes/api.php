@@ -108,6 +108,10 @@ Route::post('/recaptcha/validate-otp', [RecaptchaController::class, 'validateOtp
 // Refund Policy (Public)
 Route::get('/refund-policy', [OrderController::class, 'getRefundPolicy']);
 Route::get('/home/sections', [ContentController::class, 'homeSections']);
+// Customer app-open video (guests included; a signed-in customer's token adds server-side "seen")
+Route::get('/customer/app-video', [\App\Http\Controllers\Api\AppOpenVideoController::class, 'showForCustomer']);
+// Story reel behind a home-rail bubble; guests can watch (seen state needs a token)
+Route::get('/restaurants/{restaurant}/stories', [StoryViewController::class, 'show']);
 Route::get('/banners', [ContentController::class, 'banners']);
 Route::get('/banners/{type}', [ContentController::class, 'bannersByType']);
 Route::get('/cuisines/popular', [ContentController::class, 'popularCuisines']);
@@ -300,7 +304,10 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/favorites/restaurants', function (Request $request) {
         return response()->json([
             'success' => true,
-            'data' => RestaurantResource::collection($request->user()->favoriteRestaurants()->customerVisible()->get()),
+            'data' => app(\App\Services\SponsoredListingService::class)->stampCards(
+                RestaurantResource::collection($request->user()->favoriteRestaurants()->customerVisible()->get())->resolve(),
+                'favorites'
+            ),
         ]);
     });
     Route::post('/favorites/restaurants/{restaurant}', function (Request $request, Restaurant $restaurant) {
@@ -330,19 +337,27 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/plans', [CustomerGoldController::class, 'plans'])->name('plans');
         Route::get('/current', [CustomerGoldController::class, 'current'])->name('current');
         Route::post('/subscribe', [CustomerGoldController::class, 'subscribe'])->name('subscribe');
+        Route::post('/verify', [CustomerGoldController::class, 'verify'])->name('verify');
         Route::post('/cancel', [CustomerGoldController::class, 'cancel'])->name('cancel');
     });
 
     // Customer-facing Stories read side (upload/manage is in the
     // restaurant-owner group below)
-    Route::get('/restaurants/{restaurant}/stories', [StoryViewController::class, 'show']);
+    // (the GET reel is public, see above -- the home rail is public too)
     Route::post('/stories/{story}/viewed', [StoryViewController::class, 'markViewed']);
+    Route::post('/stories/{story}/like', [StoryViewController::class, 'like']);
+    Route::delete('/stories/{story}/like', [StoryViewController::class, 'unlike']);
+    Route::post('/stories/{story}/shared', [StoryViewController::class, 'shared']);
+    Route::post('/customer/app-video/{video}/viewed', [\App\Http\Controllers\Api\AppOpenVideoController::class, 'viewed']);
 
     // Restaurant Owner APIs
     Route::prefix('restaurant')->middleware('role:restaurant_owner,restaurant_staff')->group(function () {
         // Dashboard & Status
         Route::get('/restaurants', [RestaurantController::class, 'myRestaurants']);
         Route::get('/dashboard', [RestaurantController::class, 'dashboard']);
+        // The video played when the app opens (skippable, once per person).
+        Route::get('/app-video', [\App\Http\Controllers\Api\AppOpenVideoController::class, 'show']);
+        Route::post('/app-video/{video}/viewed', [\App\Http\Controllers\Api\AppOpenVideoController::class, 'viewed']);
         Route::get('/stats', [RestaurantController::class, 'getStats']);
         Route::get('/reviews', [RestaurantController::class, 'getReviews'])->middleware('restaurant.permission:view_reports');
         Route::get('/statements', [RestaurantController::class, 'statements'])->middleware('restaurant.permission:view_reports,view_dashboard');
@@ -447,12 +462,15 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/subscription/plans', [SubscriptionBillingController::class, 'plans'])->middleware('role:restaurant_owner');
         Route::get('/subscription/current', [SubscriptionBillingController::class, 'current'])->middleware('role:restaurant_owner');
         Route::post('/subscription/subscribe', [SubscriptionBillingController::class, 'subscribe'])->middleware('role:restaurant_owner');
+        Route::post('/subscription/upgrade', [SubscriptionBillingController::class, 'upgrade'])->middleware('role:restaurant_owner');
+        Route::post('/subscription/verify', [SubscriptionBillingController::class, 'verify'])->middleware('role:restaurant_owner');
         Route::post('/subscription/cancel', [SubscriptionBillingController::class, 'cancel'])->middleware('role:restaurant_owner');
         Route::get('/subscription/commission-preview', [SubscriptionBillingController::class, 'commissionPreview'])->middleware('role:restaurant_owner');
         Route::post('/subscription/switch-to-commission', [SubscriptionBillingController::class, 'switchToCommission'])->middleware('role:restaurant_owner');
 
         // Stories
         Route::get('/stories', [RestaurantStoryController::class, 'index'])->middleware('role:restaurant_owner');
+        Route::get('/stories/menu-items', [RestaurantStoryController::class, 'menuItems'])->middleware('role:restaurant_owner');
         Route::post('/stories', [RestaurantStoryController::class, 'store'])->middleware('role:restaurant_owner');
         Route::delete('/stories/{id}', [RestaurantStoryController::class, 'destroy'])->middleware('role:restaurant_owner');
 
@@ -628,3 +646,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
 // Inbound webhooks from the standalone Accounts / HRMS apps (HMAC-verified in the controller).
 Route::post('/ingest/employee-user', [\App\Http\Controllers\Api\IngestController::class, 'employeeUser']);
+
+// WhatsApp provider webhooks (inbound messages + delivery receipts). Authenticated in the controller.
+Route::get('/webhooks/whatsapp/{provider}/{key?}', [\App\Http\Controllers\Api\WhatsAppWebhookController::class, 'verify'])->middleware('throttle:600,1');
+Route::post('/webhooks/whatsapp/{provider}/{key?}', [\App\Http\Controllers\Api\WhatsAppWebhookController::class, 'receive'])->middleware('throttle:600,1');

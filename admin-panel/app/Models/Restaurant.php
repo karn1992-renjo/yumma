@@ -202,6 +202,23 @@ class Restaurant extends Model
             }
         });
         
+        static::updated(function ($restaurant) {
+            if ($restaurant->wasChanged('is_open')) {
+            try {
+                app(\App\Services\WhatsApp\WhatsAppNotifier::class)->restaurantStatusChanged($restaurant);
+            } catch (\Throwable $e) {
+                \Illuminate\Support\Facades\Log::warning('WhatsApp hook failed.', ['error' => $e->getMessage()]);
+            }
+            }
+            if ($restaurant->wasChanged('is_verified') && $restaurant->is_verified) {
+            try {
+                app(\App\Services\WhatsApp\WhatsAppNotifier::class)->restaurantApproved($restaurant);
+            } catch (\Throwable $e) {
+                \Illuminate\Support\Facades\Log::warning('WhatsApp hook failed.', ['error' => $e->getMessage()]);
+            }
+            }
+        });
+
         static::updating(function ($restaurant) {
             if (empty($restaurant->branch_id) && ($restaurant->isDirty('city') || $restaurant->isDirty('address') || $restaurant->isDirty('pincode'))) {
                 $branch = app(BranchManagementService::class)->resolveBranchForRestaurant($restaurant);

@@ -84,4 +84,17 @@ class Payout extends Model
     {
         return $this->restaurant_id ? 'restaurant' : 'driver';
     }
+
+    protected static function booted(): void
+    {
+        static::updated(function (Payout $payout) {
+            if ($payout->wasChanged('status') && $payout->status === 'completed') {
+            try {
+                app(\App\Services\WhatsApp\WhatsAppNotifier::class)->payoutCompleted($payout);
+            } catch (\Throwable $e) {
+                \Illuminate\Support\Facades\Log::warning('WhatsApp hook failed.', ['error' => $e->getMessage()]);
+            }
+            }
+        });
+    }
 }

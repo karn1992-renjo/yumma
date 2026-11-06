@@ -10,6 +10,7 @@ import '../../config/api_constants.dart';
 import '../../providers/auth_provider.dart';
 import '../../providers/restaurant_provider.dart';
 import '../../providers/theme_provider.dart';
+import '../../services/app_open_video_service.dart';
 import '../../services/api_service.dart';
 import '../../services/incoming_order_alert_service.dart';
 import '../../services/order_alert_permission_manager.dart';
@@ -81,6 +82,8 @@ class _RestaurantDashboardState extends State<RestaurantDashboard> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _initializeRealtimeOrders();
       _loadUnreadNotificationCount();
+      // The admin's welcome video: once per person, skippable, played from a cached copy.
+      AppOpenVideoService.maybePlay(context);
     });
   }
 
@@ -6091,8 +6094,11 @@ class _RestaurantComplaintsScreenState
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    // 'all' stands for "All restaurants" (no single restaurant selected); without it the first load was skipped
+    // and the spinner never stopped.
     final selectedRestaurantId =
-        context.watch<RestaurantProvider>().selectedRestaurantId?.toString();
+        context.watch<RestaurantProvider>().selectedRestaurantId?.toString() ??
+            'all';
     if (_loadedRestaurantId != selectedRestaurantId) {
       _loadedRestaurantId = selectedRestaurantId;
       _loadComplaints();
@@ -6200,8 +6206,11 @@ class _RestaurantReviewsScreenState extends State<_RestaurantReviewsScreen> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    // 'all' stands for "All restaurants" (no single restaurant selected); without it the first load was skipped
+    // and the spinner never stopped.
     final selectedRestaurantId =
-        context.watch<RestaurantProvider>().selectedRestaurantId?.toString();
+        context.watch<RestaurantProvider>().selectedRestaurantId?.toString() ??
+            'all';
     if (_loadedRestaurantId != selectedRestaurantId) {
       _loadedRestaurantId = selectedRestaurantId;
       _loadReviews();

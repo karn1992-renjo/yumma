@@ -92,6 +92,33 @@
                     </select>
                     @error('banner_type') <div class="invalid-feedback">{{ $message }}</div> @enderror
                 </div>
+                <div class="col-12 d-none" data-home-position-field>
+                    <div class="row g-3 align-items-end">
+                        <div class="col-md-8">
+                            <label class="form-label fw-bold">Place On Home Screen Relative To</label>
+                            <select name="position_anchor_token" class="form-select @error('position_anchor_token') is-invalid @enderror">
+                                <option value="">Don't reposition (use Display Order)</option>
+                                @foreach($positionableSections ?? [] as $otherSection)
+                                    <option value="{{ $otherSection['token'] }}" @selected(old('position_anchor_token') === $otherSection['token'])>
+                                        {{ $otherSection['title'] }} ({{ $otherSection['is_active'] ? 'active' : 'inactive' }})
+                                    </option>
+                                @endforeach
+                            </select>
+                            @error('position_anchor_token')<div class="invalid-feedback">{{ $message }}</div>@enderror
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label fw-bold">Position</label>
+                            <select name="position_direction" class="form-select @error('position_direction') is-invalid @enderror">
+                                <option value="above" @selected(old('position_direction', 'above') === 'above')>Above that section</option>
+                                <option value="below" @selected(old('position_direction') === 'below')>Below that section</option>
+                            </select>
+                            @error('position_direction')<div class="invalid-feedback">{{ $message }}</div>@enderror
+                        </div>
+                        <div class="col-12">
+                            <div class="bf-muted">Every "Home Banner" shares one carousel on the homepage &mdash; this places that whole carousel above or below the section you pick.</div>
+                        </div>
+                    </div>
+                </div>
                 <div class="col-md-6">
                     <label class="form-label fw-bold">Placement <span class="text-danger">*</span></label>
                     <select name="display_surface" class="form-select @error('display_surface') is-invalid @enderror" required>
@@ -181,8 +208,19 @@
                         <option value="category" @selected(old('redirect_type', $banner->redirect_type) === 'category')>Category</option>
                         <option value="restaurant" @selected(old('redirect_type', $banner->redirect_type) === 'restaurant')>Restaurant</option>
                         <option value="menu_item" @selected(old('redirect_type', $banner->redirect_type) === 'menu_item')>Menu Item</option>
+                        <option value="app_screen" @selected(old('redirect_type', $banner->redirect_type) === 'app_screen')>App Screen</option>
                     </select>
                     @error('redirect_type') <div class="invalid-feedback">{{ $message }}</div> @enderror
+                </div>
+                <div class="col-12 redirect-target" data-target="app_screen">
+                    <label class="form-label fw-bold">Redirect Screen</label>
+                    <select name="redirect_screen" class="form-select @error('redirect_screen') is-invalid @enderror">
+                        <option value="">Select screen</option>
+                        @foreach(\App\Models\Banner::REDIRECT_SCREENS as $value => $label)
+                            <option value="{{ $value }}" @selected(old('redirect_screen', $banner->redirect_screen) === $value)>{{ $label }}</option>
+                        @endforeach
+                    </select>
+                    @error('redirect_screen') <div class="invalid-feedback">{{ $message }}</div> @enderror
                 </div>
                 <div class="col-12 redirect-target" data-target="category">
                     <label class="form-label fw-bold">Redirect Category</label>
@@ -268,12 +306,13 @@ function syncLayoutFields() {
     const mode = layoutModeInput?.value || 'text_image';
     const bannerType = bannerTypeInput?.value || '';
     document.querySelectorAll('[data-layout-field]').forEach((field) => {
-        const active = field.dataset.layoutField === mode || (field.dataset.layoutField === 'promo_card' && bannerType === 'promo');
+        const active = field.dataset.layoutField === mode;
         field.classList.toggle('d-none', !active);
         field.querySelectorAll('input, select').forEach((input) => {
             input.disabled = !active;
         });
     });
+    document.querySelector('[data-home-position-field]')?.classList.toggle('d-none', bannerType !== 'home');
 }
 
 function renderPreview() {
@@ -311,7 +350,7 @@ function renderPreview() {
         return;
     }
 
-    if (layoutModeInput.value === 'promo_card' || bannerTypeInput?.value === 'promo') {
+    if (layoutModeInput.value === 'promo_card') {
         const title = titleInput.value || 'Biryani starting at ₹149*';
         const description = descriptionInput.value || 'From The Biryani Life';
         const ctaLabel = (document.getElementById('ctaLabel')?.value || 'Order Now').toUpperCase();

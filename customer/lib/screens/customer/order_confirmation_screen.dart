@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:ui' as ui;
 
@@ -38,6 +39,8 @@ class OrderConfirmationScreen extends StatefulWidget {
   final String? couponCode;
   final DateTime? scheduledTime;
   final List<ScratchCard> initialScratchCards;
+  final bool goldDeliveryWaived;
+  final double? goldDeliveryWaiverAmount;
 
   const OrderConfirmationScreen({
     super.key,
@@ -58,6 +61,8 @@ class OrderConfirmationScreen extends StatefulWidget {
     this.couponCode,
     this.scheduledTime,
     this.initialScratchCards = const [],
+    this.goldDeliveryWaived = false,
+    this.goldDeliveryWaiverAmount,
   });
 
   @override
@@ -73,6 +78,8 @@ class _OrderConfirmationScreenState extends State<OrderConfirmationScreen>
   late final Animation<double> _scaleAnimation;
   List<ScratchCard> _scratchCards = const [];
   bool _scratchPopupShown = false;
+  String? _goldShareTemplateUrl;
+  double? _goldShareTemplateAspect;
 
   @override
   void initState() {
@@ -99,6 +106,63 @@ class _OrderConfirmationScreenState extends State<OrderConfirmationScreen>
     } else {
       _loadScratchCards();
     }
+
+    if (widget.goldDeliveryWaived) {
+      _loadGoldShareTemplate();
+    }
+  }
+
+  /// Best-effort: the admin-uploaded premium background for the Gold
+  /// savings share card (Admin\GoldMemberController::updateShareTemplate()).
+  /// Silent on failure -- the card falls back to a plain gradient.
+  Future<void> _loadGoldShareTemplate() async {
+    try {
+      final response = await _api.get(ApiConstants.goldCurrent);
+      if (!mounted || response['success'] != true) return;
+      final url = Map<String, dynamic>.from(response['data'] ?? {})[
+              'gold_share_template_url']
+          ?.toString();
+      if (url == null || url.trim().isEmpty) return;
+      final resolvedUrl = url.trim();
+
+      // Pre-decode before it ever appears in the widget tree -- otherwise a
+      // user tapping "Share" right away could capture the card before
+      // NetworkImage has finished loading, exporting a blank/incomplete
+      // background.
+      final aspect = await _resolveImageAspect(NetworkImage(resolvedUrl));
+      if (!mounted || aspect == null) return;
+      setState(() {
+        _goldShareTemplateUrl = resolvedUrl;
+        _goldShareTemplateAspect = aspect;
+      });
+    } catch (e) {
+      debugPrint('Gold share template load error: $e');
+    }
+  }
+
+  /// Loads [provider] fully and returns width / height, so the share card can
+  /// be drawn at the image's own proportions (nothing cropped). Null on failure.
+  Future<double?> _resolveImageAspect(ImageProvider provider) {
+    final completer = Completer<double?>();
+    final stream = provider.resolve(createLocalImageConfiguration(context));
+    late final ImageStreamListener listener;
+    listener = ImageStreamListener(
+      (info, _) {
+        if (!completer.isCompleted) {
+          final w = info.image.width.toDouble();
+          final h = info.image.height.toDouble();
+          // Keep within sensible share proportions (story-tall .. wide banner).
+          completer.complete(h > 0 ? (w / h).clamp(0.5, 1.91) : null);
+        }
+        stream.removeListener(listener);
+      },
+      onError: (_, __) {
+        if (!completer.isCompleted) completer.complete(null);
+        stream.removeListener(listener);
+      },
+    );
+    stream.addListener(listener);
+    return completer.future.timeout(const Duration(seconds: 20), onTimeout: () => null);
   }
 
   @override
@@ -147,7 +211,7 @@ class _OrderConfirmationScreenState extends State<OrderConfirmationScreen>
                   _buildRestaurantCard(),
                   const SizedBox(height: 12),
                   _buildSuccessCard(),
-                  if (_shareSavingsAmount > 0) ...[
+                  if (_goldOrShareSavingsAmount > 0) ...[
                     const SizedBox(height: 12),
                     _buildSavingsShareCard(context),
                   ],
@@ -254,6 +318,15 @@ class _OrderConfirmationScreenState extends State<OrderConfirmationScreen>
           .clamp(0.0, double.infinity)
           .toDouble();
 
+  /// This order's free delivery came specifically from Gold membership
+  /// (rather than a generic coupon/offer) -- the share card calls that out
+  /// by name and uses the admin's premium template image when available.
+  bool get _isGoldSavingsShare =>
+      widget.goldDeliveryWaived && (widget.goldDeliveryWaiverAmount ?? 0) > 0;
+
+  double get _goldOrShareSavingsAmount =>
+      _isGoldSavingsShare ? widget.goldDeliveryWaiverAmount! : _shareSavingsAmount;
+
   String _appShareLink() {
     final domain = AppConfig.appsFlyerOneLinkDomain
         .replaceFirst(RegExp(r'^https?://'), '')
@@ -279,11 +352,12 @@ class _OrderConfirmationScreenState extends State<OrderConfirmationScreen>
   }
 
   Future<void> _shareSavings() async {
-    final amount = _shareSavingsAmount;
+    final amount = _goldOrShareSavingsAmount;
     if (amount <= 0) return;
 
-    final message =
-        'Yeah! We have saved ${formatCurrency(context, amount)} from ${AppConfig.appName}. Download it now.\n${_appShareLink()}';
+    final message = _isGoldSavingsShare
+        ? 'We have saved ${formatCurrency(context, amount)} on ${AppConfig.appName} Gold Membership! Download it now.\n${_appShareLink()}'
+        : 'Yeah! We have saved ${formatCurrency(context, amount)} from ${AppConfig.appName}. Download it now.\n${_appShareLink()}';
 
     try {
       final boundary = _shareCardKey.currentContext?.findRenderObject()
@@ -314,8 +388,159 @@ class _OrderConfirmationScreenState extends State<OrderConfirmationScreen>
     }
   }
 
+  /// The image that gets shared. It is drawn at the template's own aspect
+  /// ratio (the full artwork, never cropped to a strip) with the text laid
+  /// over a soft bottom scrim, and every size scales with the card width so the
+  /// exported picture looks the same on any phone.
+  Widget _savingsArt(BuildContext context,
+      {required bool isGold, required double amount, String? templateUrl}) {
+    final hasTemplate = isGold && templateUrl != null;
+    final aspect = hasTemplate ? (_goldShareTemplateAspect ?? 1.0) : 1.0;
+    final amountText = formatCurrency(context, amount);
+    const gold = Color(0xFFFFD76A);
+
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(22),
+      child: AspectRatio(
+        aspectRatio: aspect,
+        child: LayoutBuilder(builder: (context, box) {
+          final w = box.maxWidth;
+          final pad = w * 0.07;
+          const shadow = [Shadow(color: Color(0x99000000), blurRadius: 10, offset: Offset(0, 2))];
+
+          return Stack(
+            fit: StackFit.expand,
+            children: [
+              if (hasTemplate)
+                Image(image: NetworkImage(templateUrl), fit: BoxFit.cover)
+              else
+                DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [
+                        FoodFlowTheme.brandPrimary(context),
+                        FoodFlowTheme.brandSecondary(context),
+                      ],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
+                  ),
+                ),
+              // Soft scrim only behind the text, so the artwork stays visible.
+              DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    stops: const [0.0, 0.42, 1.0],
+                    colors: [
+                      Colors.transparent,
+                      Colors.black.withOpacity(hasTemplate ? 0.10 : 0.0),
+                      Colors.black.withOpacity(0.78),
+                    ],
+                  ),
+                ),
+              ),
+              Padding(
+                padding: EdgeInsets.all(pad),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                      padding: EdgeInsets.symmetric(horizontal: w * 0.03, vertical: w * 0.012),
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(99),
+                        gradient: const LinearGradient(
+                          colors: [Color(0xFFFFE08A), Color(0xFFC89B2E)],
+                        ),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.workspace_premium_rounded,
+                              color: const Color(0xFF3B2A00), size: w * 0.05),
+                          SizedBox(width: w * 0.015),
+                          Text(
+                            isGold ? 'GOLD MEMBER' : 'SMART SAVER',
+                            style: TextStyle(
+                              color: const Color(0xFF3B2A00),
+                              fontSize: w * 0.032,
+                              fontWeight: FontWeight.w900,
+                              letterSpacing: 1.6,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    SizedBox(height: w * 0.035),
+                    Text(
+                      'YOU SAVED',
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.92),
+                        fontSize: w * 0.04,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 4,
+                        shadows: shadow,
+                      ),
+                    ),
+                    FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        amountText,
+                        maxLines: 1,
+                        style: TextStyle(
+                          color: gold,
+                          fontSize: w * 0.2,
+                          height: 1.05,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: -1.5,
+                          shadows: shadow,
+                        ),
+                      ),
+                    ),
+                    SizedBox(height: w * 0.012),
+                    Text(
+                      isGold
+                          ? 'with ${AppConfig.appName} Gold Membership'
+                          : 'on this order with ${AppConfig.appName}',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: w * 0.05,
+                        fontWeight: FontWeight.w800,
+                        shadows: shadow,
+                      ),
+                    ),
+                    SizedBox(height: w * 0.03),
+                    Container(height: 1.2, width: w * 0.18, color: gold.withOpacity(0.8)),
+                    SizedBox(height: w * 0.025),
+                    Text(
+                      isGold
+                          ? 'Join Gold and save on every order'
+                          : 'Download the app and start saving too',
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.9),
+                        fontSize: w * 0.034,
+                        fontWeight: FontWeight.w600,
+                        shadows: shadow,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          );
+        }),
+      ),
+    );
+  }
+
   Widget _buildSavingsShareCard(BuildContext context) {
-    final amount = _shareSavingsAmount;
+    final amount = _goldOrShareSavingsAmount;
+    final isGold = _isGoldSavingsShare;
+    final templateUrl = _goldShareTemplateUrl;
+
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: FoodFlowTheme.surface(radius: 24),
@@ -324,67 +549,7 @@ class _OrderConfirmationScreenState extends State<OrderConfirmationScreen>
         children: [
           RepaintBoundary(
             key: _shareCardKey,
-            child: Container(
-              padding: const EdgeInsets.all(18),
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [
-                    FoodFlowTheme.brandPrimary(context),
-                    FoodFlowTheme.brandSecondary(context),
-                  ],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
-                borderRadius: BorderRadius.circular(22),
-              ),
-              child: Row(
-                children: [
-                  Container(
-                    width: 64,
-                    height: 64,
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(22),
-                    ),
-                    child: Image.asset(
-                      'assets/images/offer-icon.png',
-                      fit: BoxFit.contain,
-                    ),
-                  ),
-                  const SizedBox(width: 14),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'You saved ${formatCurrency(context, amount)}',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 19,
-                            fontWeight: FontWeight.w900,
-                          ),
-                        ),
-                        const SizedBox(height: 5),
-                        Text(
-                          'Yeah! We have saved from ${AppConfig.appName}. Download it now.',
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: Colors.white.withOpacity(0.9),
-                            fontSize: 12,
-                            height: 1.25,
-                            fontWeight: FontWeight.w800,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
+            child: _savingsArt(context, isGold: isGold, amount: amount, templateUrl: templateUrl),
           ),
           const SizedBox(height: 12),
           OutlinedButton.icon(

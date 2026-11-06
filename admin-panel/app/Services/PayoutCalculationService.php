@@ -131,43 +131,15 @@ class PayoutCalculationService
     }
 
     /**
-     * Splits a salaried driver's diverted delivery earning between branch and
-     * admin per DeliveryChargeSetting. Falls back to 100% admin when the
-     * recipient is 'admin' or the order has no branch to share with.
+     * A salaried driver is already paid via monthly_salary, so everything customers paid for the driver's work
+     * (delivery fee, long-distance charge, multi-order bonus; surge and night are added in processOrderEarnings)
+     * stays with admin. Never routed to a branch: a branch only earns its share of the restaurant commission.
      */
     protected function divertedDeliveryEarningShares(Order $order, float $divertedEarning): array
     {
-        if ($divertedEarning <= 0) {
-            return ['branch' => 0.0, 'admin' => 0.0, 'driver_branch_id' => null, 'driver_branch_amount' => 0.0];
-        }
-
-        // A salaried driver's own branch mapping is a stronger, unambiguous
-        // signal than the order's own branch_id -- when the driver belongs
-        // to a branch, 100% of the diverted delivery earning goes to that
-        // branch (not the admin/branch % split below, and not order.branch_id,
-        // which may be a different branch or null). Credited independently
-        // by the caller via BranchManagementService::creditDriverSalaryDeliveryEarning()
-        // so it never touches order.branch_commission.
-        $driverBranchId = $order->driver?->branch_id;
-        if ($driverBranchId) {
-            return [
-                'branch' => 0.0,
-                'admin' => 0.0,
-                'driver_branch_id' => (int) $driverBranchId,
-                'driver_branch_amount' => round($divertedEarning, AppSetting::currencyDecimals()),
-            ];
-        }
-
-        $recipient = DeliveryChargeSetting::getSalaryDriverDeliveryRecipient();
-        if ($recipient !== 'branch' || ! $order->branch_id) {
-            return ['branch' => 0.0, 'admin' => round($divertedEarning, AppSetting::currencyDecimals()), 'driver_branch_id' => null, 'driver_branch_amount' => 0.0];
-        }
-
-        $branchShare = round($divertedEarning * $this->normalizePercentage(DeliveryChargeSetting::getSalaryDriverBranchSharePercent()), AppSetting::currencyDecimals());
-
         return [
-            'branch' => $branchShare,
-            'admin' => round($divertedEarning - $branchShare, AppSetting::currencyDecimals()),
+            'branch' => 0.0,
+            'admin' => round(max(0, $divertedEarning), AppSetting::currencyDecimals()),
             'driver_branch_id' => null,
             'driver_branch_amount' => 0.0,
         ];
@@ -827,6 +799,11 @@ class PayoutCalculationService
             $adminDeliverySubsidy = max(0, (float) ($order->admin_delivery_subsidy ?? 0));
             $restaurantEarningForRecord = $isResaleOrder ? 0.0 : (float) $restaurantEarningData['restaurant_earning'];
             $divertedShares = $this->divertedDeliveryEarningShares($order, (float) $driverEarningData['diverted_delivery_earning']);
+            // Surge and night surcharges are normally paid on to the driver through the gig bonus; for a salaried
+            // driver they stay with admin (GigIncentiveService skips them for salaried drivers).
+            $salariedExtraCharges = $driverEarningData['is_salaried_driver']
+                ? max(0, (float) ($order->surge_fee ?? 0)) + max(0, (float) ($order->night_surcharge ?? 0))
+                : 0.0;
 
             $order->update([
                 'platform_commission' => $isResaleOrder ? 0 : $restaurantEarningData['platform_commission'],
@@ -850,7 +827,8 @@ class PayoutCalculationService
                     + (float) $driverEarningData['driver_commission']
                     + (float) ($order->platform_fee ?? 0)
                     - $adminDeliverySubsidy
-                    + $divertedShares['admin'],
+                    + $divertedShares['admin']
+                    + $salariedExtraCharges,
                     2
                 ),
                 'payout_processed' => true,
@@ -889,14 +867,6 @@ class PayoutCalculationService
                 }
             }
             
-            if (($divertedShares['driver_branch_id'] ?? null) && ($divertedShares['driver_branch_amount'] ?? 0) > 0) {
-                app(BranchManagementService::class)->creditDriverSalaryDeliveryEarning(
-                    $order,
-                    $divertedShares['driver_branch_id'],
-                    $divertedShares['driver_branch_amount']
-                );
-            }
-
             app(RestaurantOnboardingService::class)->markFirstSuccessfulOrder($order->restaurant, $order->driver);
             app(DriverReferralService::class)->settleOnFirstDelivery($order);
 

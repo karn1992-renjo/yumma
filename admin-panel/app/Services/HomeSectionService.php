@@ -161,6 +161,42 @@ class HomeSectionService
         }
     }
 
+    /**
+     * Pins $section directly above/below $anchorToken in the homepage's
+     * runtime section order -- an explicit alternative to the drag-reorder
+     * UI on the Home Sections index page, used by the banner_carousel/
+     * hero_banner create+edit forms so an admin can place a banner relative
+     * to another section (built-in or dynamic) without a second trip to
+     * that page. Reuses reorder()'s own persistence (same
+     * homepage_section_order AppSetting + display_order resync), so both
+     * ways of positioning a section stay consistent with each other.
+     */
+    public function positionSectionRelativeTo(HomeSection $section, string $anchorToken, string $direction): void
+    {
+        $sections = HomeSection::query()
+            ->orderBy('display_order')
+            ->orderBy('id')
+            ->get();
+
+        $order = $this->resolveRuntimeOrder($sections);
+        $ownToken = 'home_section:'.$section->id;
+
+        $order = array_values(array_filter($order, static fn (string $token) => $token !== $ownToken));
+
+        $anchorIndex = $anchorToken !== $ownToken ? array_search($anchorToken, $order, true) : false;
+
+        if ($anchorIndex === false) {
+            // Anchor missing/invalid/self-targeting -- append at the end
+            // rather than silently doing nothing.
+            $order[] = $ownToken;
+        } else {
+            $insertAt = $direction === 'above' ? $anchorIndex : $anchorIndex + 1;
+            array_splice($order, $insertAt, 0, [$ownToken]);
+        }
+
+        $this->reorder($order);
+    }
+
     public function toggleBuiltInVisibility(string $token): bool
     {
         if (! array_key_exists($token, $this->builtInDefinitions())) {
@@ -200,6 +236,12 @@ class HomeSectionService
                 'subtitle' => 'Discover food by cuisine',
                 'type' => 'categories',
             ],
+            // Fresh stories from restaurants: shown automatically whenever any restaurant has a live story.
+            'restaurant_stories' => [
+                'title' => 'Stories',
+                'subtitle' => 'Fresh from restaurants near you',
+                'type' => 'restaurant_stories',
+            ],
             ...$this->promotionBuiltInDefinitions(),
             'restaurant_discovery' => [
                 'title' => 'Restaurants Near You',
@@ -229,6 +271,7 @@ class HomeSectionService
 
         return [
             'categories',
+            'restaurant_stories',
             ...array_keys($this->promotionBuiltInDefinitions()),
             ...$dynamicTokens,
             'restaurant_discovery',
@@ -296,6 +339,24 @@ class HomeSectionService
                 'subtitle' => $this->builtInSubtitle($token, $definition),
                 'enabled' => $items->isNotEmpty(),
                 'items' => $items,
+            ];
+        }
+
+        if ($token === 'restaurant_stories') {
+            // An admin-created "Restaurant Stories" section takes over; never show two rails.
+            if (HomeSection::query()->where('section_type', 'restaurant_stories')->exists()) {
+                return null;
+            }
+
+            $payload = $this->storiesRail(20);
+
+            return [
+                'token' => $token,
+                'type' => 'restaurant_stories',
+                'title' => $this->builtInTitle($token, $definition),
+                'subtitle' => $this->builtInSubtitle($token, $definition),
+                'enabled' => $payload['items']->isNotEmpty(),
+                'items' => $payload['items'],
             ];
         }
 
@@ -714,8 +775,13 @@ class HomeSectionService
                 ->orderByDesc('is_bestseller')
                 ->orderByDesc('is_recommended')
                 ->orderByDesc('rating')
-                ->limit(max(1, min(24, (int) (($section->configuration ?? [])['limit'] ?? 8))))
-                ->get();
+                ->limit(max(1, min(24, (int) (($section->configuration ?? [])['limit'] ?? 8))) * 3)
+                ->get()
+                // Stable sort: keeps closed-restaurant dishes from ever
+                // outranking open ones -- see resolveAutoPopularDishesSection().
+                ->sortByDesc(fn (MenuItem $item) => (int) ($item->restaurant?->isOpenNow() ?? true))
+                ->take(max(1, min(24, (int) (($section->configuration ?? [])['limit'] ?? 8))))
+                ->values();
 
             return [
                 'token' => 'home_section:'.$section->id,
@@ -828,6 +894,12 @@ class HomeSectionService
             $ordered = $ids
                 ->map(fn (int $id) => $menuItems->get($id)?->first())
                 ->filter()
+                ->values()
+                // Stable sort: a closed restaurant's dish drops to the end of
+                // this admin-curated list without disturbing the admin's
+                // intended relative order among the rest -- see
+                // resolveAutoPopularDishesSection().
+                ->sortByDesc(fn (MenuItem $item) => (int) ($item->restaurant?->isOpenNow() ?? true))
                 ->values();
 
             return [
@@ -1383,6 +1455,105 @@ class HomeSectionService
             $section->update(['configuration' => $configuration]);
         }
     }
+    /**
+     * Plain "Home Banner" banners (banner_type=home, the ones managed on
+     * Admin -> Banners) appear on the customer home only when they are
+     * attached to a Banner Carousel home section -- exact same pattern as
+     * attachPromoWidget() above, just a different shared section/title so
+     * the two kinds of banners don't get mixed into one carousel. This is
+     * what lets the Banner's own create/edit form offer a "place above/
+     * below section X" control: it's really positioning this shared
+     * section, same as Home Sections' own picker (positionSectionRelativeTo()).
+     */
+    public function attachHomeBanner(Banner $banner): HomeSection
+    {
+        $section = HomeSection::query()
+            ->where('section_type', 'banner_carousel')
+            ->where('title', 'Home Banners')
+            ->first();
+
+        if (! $section) {
+            $section = HomeSection::create([
+                'title' => 'Home Banners',
+                'subtitle' => null,
+                'section_type' => 'banner_carousel',
+                'data_source' => 'manual',
+                'display_order' => (int) (HomeSection::max('display_order') ?? 0) + 1,
+                'is_active' => true,
+                'configuration' => [
+                    'limit' => 8,
+                    'banner_ids' => [],
+                ],
+            ]);
+        }
+
+        $configuration = $section->configuration ?? [];
+        $bannerIds = collect($configuration['banner_ids'] ?? [])
+            ->map(fn ($id) => (int) $id)
+            ->values();
+
+        if (! $bannerIds->contains($banner->id)) {
+            $bannerIds->push($banner->id);
+            $configuration['banner_ids'] = $bannerIds->values()->all();
+            $section->update(['configuration' => $configuration]);
+        }
+
+        return $section;
+    }
+
+    public function detachHomeBanner(Banner $banner): void
+    {
+        $section = HomeSection::query()
+            ->where('section_type', 'banner_carousel')
+            ->where('title', 'Home Banners')
+            ->first();
+
+        if (! $section) {
+            return;
+        }
+
+        $configuration = $section->configuration ?? [];
+        $original = collect($configuration['banner_ids'] ?? [])
+            ->map(fn ($id) => (int) $id)
+            ->filter()
+            ->values();
+        $bannerIds = $original
+            ->reject(fn (int $id) => $id === (int) $banner->id)
+            ->values();
+
+        if ($bannerIds->count() !== $original->count()) {
+            $configuration['banner_ids'] = $bannerIds->all();
+            $section->update(['configuration' => $configuration]);
+        }
+    }
+
+    /**
+     * Attach home banners that were created before this behavior existed
+     * or whose Home Banners section was deleted. Mirrors
+     * syncOrphanedPromoWidgets() below.
+     */
+    public function syncOrphanedHomeBanners(): void
+    {
+        $attachedIds = HomeSection::query()
+            ->where('section_type', 'banner_carousel')
+            ->get()
+            ->flatMap(fn (HomeSection $section) => collect($section->configuration['banner_ids'] ?? [])
+                ->map(fn ($id) => (int) $id))
+            ->unique()
+            ->all();
+        $orphans = Banner::query()
+            ->where('banner_type', 'home')
+            ->where(function ($query) {
+                $query->whereNull('layout_mode')->orWhere('layout_mode', '!=', 'promo_card');
+            })
+            ->when($attachedIds, fn ($query) => $query->whereNotIn('id', $attachedIds))
+            ->get();
+
+        foreach ($orphans as $orphan) {
+            $this->attachHomeBanner($orphan);
+        }
+    }
+
     /**
      * Attach promo banners that were created before this behavior existed
      * or whose Promo Widgets section was deleted.
@@ -1954,6 +2125,12 @@ class HomeSectionService
             }
         }
 
+        // Stable sort: closed restaurants sink to the end -- see
+        // resolveRestaurantFeed()'s identical pattern.
+        $restaurants = $restaurants->sortBy(
+            fn (Restaurant $restaurant) => $restaurant->isOpenNow() ? 0 : 1
+        )->values();
+
         $items = $restaurants
             ->map(fn (Restaurant $restaurant) => [
                 'id' => $restaurant->id,
@@ -1963,6 +2140,8 @@ class HomeSectionService
                 'logo_image' => MediaStorage::url($restaurant->logo_image),
                 'image' => MediaStorage::url($restaurant->logo_image),
                 'restaurant_id' => $restaurant->id,
+                'is_open' => (bool) $restaurant->is_open,
+                'is_open_now' => $restaurant->isOpenNow(),
                 'is_sponsored' => (bool) ($restaurant->is_sponsored ?? false),
                 'ad_campaign_id' => $restaurant->ad_campaign_id ?? null,
             ])
@@ -1991,6 +2170,33 @@ class HomeSectionService
         $configuration = $section->configuration ?? [];
         $limit = max(1, min(30, (int) ($configuration['limit'] ?? 20)));
 
+        $rail = $this->storiesRail($limit);
+        if ($rail['items']->isEmpty()) {
+            return [
+                'token' => 'home_section:'.$section->id,
+                'type' => 'restaurant_stories',
+                'title' => $section->title,
+                'subtitle' => $section->subtitle,
+                'enabled' => false,
+                'items' => [],
+                'style' => $this->sectionStyle($section),
+            ];
+        }
+
+        return [
+            'token' => 'home_section:'.$section->id,
+            'type' => 'restaurant_stories',
+            'title' => $section->title,
+            'subtitle' => $section->subtitle,
+            'enabled' => true,
+            'items' => $rail['items'],
+            'style' => $this->sectionStyle($section),
+        ];
+    }
+
+    /** One bubble per restaurant that has a live story, newest first. @return array{items: Collection} */
+    private function storiesRail(int $limit): array
+    {
         $stories = RestaurantStory::query()
             ->live()
             ->whereHas('restaurant', function ($builder) {
@@ -2001,15 +2207,7 @@ class HomeSectionService
             ->get();
 
         if ($stories->isEmpty()) {
-            return [
-                'token' => 'home_section:'.$section->id,
-                'type' => 'restaurant_stories',
-                'title' => $section->title,
-                'subtitle' => $section->subtitle,
-                'enabled' => false,
-                'items' => [],
-                'style' => $this->sectionStyle($section),
-            ];
+            return ['items' => collect()];
         }
 
         $userId = auth()->id();
@@ -2037,6 +2235,9 @@ class HomeSectionService
                     'restaurant_slug' => $restaurant->slug,
                     'restaurant_name' => $restaurant->name,
                     'avatar' => MediaStorage::url($restaurant->logo_image),
+                    // Picture for the rail card: the newest story's poster, or the photo itself for image stories.
+                    'preview_url' => $restaurantStories->first()->thumbnailUrl()
+                        ?: ($restaurantStories->first()->media_type === 'video' ? null : $restaurantStories->first()->mediaUrl()),
                     'story_count' => $restaurantStories->count(),
                     'has_unseen' => $hasUnseen,
                     'latest_posted_at' => $restaurantStories->first()->posted_at->toIso8601String(),
@@ -2046,15 +2247,7 @@ class HomeSectionService
             ->values()
             ->take($limit);
 
-        return [
-            'token' => 'home_section:'.$section->id,
-            'type' => 'restaurant_stories',
-            'title' => $section->title,
-            'subtitle' => $section->subtitle,
-            'enabled' => true,
-            'items' => $items,
-            'style' => $this->sectionStyle($section),
-        ];
+        return ['items' => $items];
     }
 
     private function resolveStoredOrAbsoluteImage(?string $image): ?string

@@ -17,6 +17,9 @@
     $selectedPromotionIds = old('promotion_ids', $configuration['promotion_ids'] ?? []);
     $selectedType = old('section_type', $homeSection->section_type);
     $selectedSource = old('data_source', $homeSection->data_source);
+    $positionableSections = $positionableSections ?? collect();
+    $selectedPositionAnchor = old('position_anchor_token');
+    $selectedPositionDirection = old('position_direction', 'above');
     $selectedScope = old('restaurant_scope', $configuration['restaurant_scope'] ?? 'featured');
     $backgroundColor = old('background_color', $configuration['background_color'] ?? '#FFFFFF');
     $backgroundOpacity = old('background_opacity', $configuration['background_opacity'] ?? 0.88);
@@ -83,7 +86,35 @@
                     <div class="col-md-3">
                         <label class="form-label fw-semibold">Sort Order</label>
                         <input type="number" name="display_order" min="0" class="form-control @error('display_order') is-invalid @enderror" value="{{ old('display_order', $homeSection->display_order) }}">
+                        <div class="form-text">Ignored if a position is set below.</div>
                         @error('display_order')<div class="invalid-feedback">{{ $message }}</div>@enderror
+                    </div>
+                    <div class="col-12 d-none" data-position-field>
+                        <div class="row g-3 align-items-end">
+                            <div class="col-md-8">
+                                <label class="form-label fw-semibold">Place Relative To</label>
+                                <select name="position_anchor_token" class="form-select @error('position_anchor_token') is-invalid @enderror">
+                                    <option value="">Don't reposition (use Sort Order above)</option>
+                                    @foreach($positionableSections as $otherSection)
+                                        <option value="{{ $otherSection['token'] }}" @selected($selectedPositionAnchor === $otherSection['token'])>
+                                            {{ $otherSection['title'] }} ({{ $otherSection['is_active'] ? 'active' : 'inactive' }})
+                                        </option>
+                                    @endforeach
+                                </select>
+                                @error('position_anchor_token')<div class="invalid-feedback">{{ $message }}</div>@enderror
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label fw-semibold">Position</label>
+                                <select name="position_direction" class="form-select @error('position_direction') is-invalid @enderror">
+                                    <option value="above" @selected($selectedPositionDirection === 'above')>Above that section</option>
+                                    <option value="below" @selected($selectedPositionDirection === 'below')>Below that section</option>
+                                </select>
+                                @error('position_direction')<div class="invalid-feedback">{{ $message }}</div>@enderror
+                            </div>
+                            <div class="col-12">
+                                <div class="form-text">Places this banner immediately above or below the chosen section on the homepage. Leave on the default option to keep using Sort Order instead.</div>
+                            </div>
+                        </div>
                     </div>
                     <div class="col-md-4">
                         <label class="form-label fw-semibold">Background Color</label>
@@ -328,7 +359,9 @@ document.addEventListener('DOMContentLoaded', function () {
     const menuSubcategoryFilter = document.querySelector('[data-menu-filter="subcategory"]');
     const menuSearchFilter = document.querySelector('[data-menu-filter="search"]');
     const heroMediaField = document.querySelector('[data-hero-media-field]');
+    const positionField = document.querySelector('[data-position-field]');
     const sectionLimit = document.querySelector('[data-section-limit]');
+    const bannerSectionTypes = ['banner_carousel', 'hero_banner'];
     let previousSectionType = typeSelect?.value || 'restaurant_grid';
     const globalCategories = @json($globalCategoryPayload);
 
@@ -392,6 +425,7 @@ document.addEventListener('DOMContentLoaded', function () {
         const selectedSource = sourceSelect?.value || 'auto';
         const visible = (blockMap[selectedType] && blockMap[selectedType][selectedSource]) || [];
         heroMediaField?.classList.toggle('d-none', selectedType !== 'hero_banner');
+        positionField?.classList.toggle('d-none', !bannerSectionTypes.includes(selectedType));
         document.querySelector('[data-max-price-field]')?.classList.toggle('d-none', selectedType !== 'dishes_under_99');
         if (selectedType === 'recommended_for_you' &&
             previousSectionType !== 'recommended_for_you' &&

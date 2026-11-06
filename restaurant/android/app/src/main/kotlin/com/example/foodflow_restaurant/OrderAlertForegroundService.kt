@@ -8,6 +8,7 @@ import android.app.Service
 import android.content.Intent
 import android.os.Build
 import android.os.IBinder
+import android.util.Log
 import androidx.core.app.NotificationCompat
 
 class OrderAlertForegroundService : Service() {
@@ -17,7 +18,19 @@ class OrderAlertForegroundService : Service() {
         val status = intent?.getStringExtra(EXTRA_STATUS) ?: "Online and listening for orders"
         val fullScreen = intent?.getBooleanExtra(EXTRA_FULL_SCREEN, false) ?: false
         ensureChannel()
-        startForeground(NOTIFICATION_ID, buildNotification(status, fullScreen))
+        try {
+            startForeground(NOTIFICATION_ID, buildNotification(status, fullScreen))
+        } catch (e: Exception) {
+            // Android 12+ (API 31) can throw ForegroundServiceStartNotAllowedException
+            // here even though the start call itself succeeded -- the system decided
+            // the calling process wasn't in an eligible (foreground) state at the
+            // moment this was dispatched. A known race when this fires right on app
+            // cold-start, before ActivityManager has caught up with the newly-resumed
+            // activity. Never let a denied start crash the whole app.
+            Log.w("OrderAlertFgService", "startForeground() was not allowed, stopping service", e)
+            stopSelf()
+            return START_NOT_STICKY
+        }
         return START_STICKY
     }
 

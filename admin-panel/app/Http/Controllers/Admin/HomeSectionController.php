@@ -66,7 +66,8 @@ class HomeSectionController extends Controller
 
     public function store(HomeSectionStoreRequest $request): RedirectResponse
     {
-        HomeSection::query()->create($this->payload($request->validated()));
+        $homeSection = HomeSection::query()->create($this->payload($request->validated()));
+        $this->applyRequestedPosition($request, $homeSection);
 
         return redirect()->route('admin.home-sections.index')->with('success', 'Home section created successfully.');
     }
@@ -79,8 +80,19 @@ class HomeSectionController extends Controller
     public function update(HomeSectionUpdateRequest $request, HomeSection $homeSection): RedirectResponse
     {
         $homeSection->update($this->payload($request->validated(), $homeSection));
+        $this->applyRequestedPosition($request, $homeSection);
 
         return redirect()->route('admin.home-sections.index')->with('success', 'Home section updated successfully.');
+    }
+
+    private function applyRequestedPosition(HomeSectionStoreRequest $request, HomeSection $homeSection): void
+    {
+        $anchorToken = $request->validated('position_anchor_token');
+        $direction = $request->validated('position_direction');
+
+        if (filled($anchorToken) && filled($direction)) {
+            $this->homeSectionService->positionSectionRelativeTo($homeSection, $anchorToken, $direction);
+        }
     }
 
     public function destroy(HomeSection $homeSection): RedirectResponse
@@ -223,10 +235,16 @@ class HomeSectionController extends Controller
             $types['admin_offers'] = 'Legacy Admin Offers';
         }
 
+        $ownToken = $homeSection->exists ? 'home_section:'.$homeSection->id : null;
+        $positionableSections = $this->homeSectionService->adminSections()
+            ->reject(fn (array $section) => $section['token'] === $ownToken)
+            ->values();
+
         return [
             'homeSection' => $homeSection,
             'types' => $types,
             'sources' => HomeSection::SOURCES,
+            'positionableSections' => $positionableSections,
             'restaurantScopes' => HomeSection::RESTAURANT_SCOPES,
             'banners' => Banner::query()->orderBy('display_order')->orderByDesc('id')->get(['id', 'title', 'display_surface']),
             'restaurants' => Restaurant::query()->where('is_verified', true)->orderBy('name')->get(['id', 'name']),

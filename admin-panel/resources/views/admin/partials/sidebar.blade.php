@@ -134,6 +134,7 @@
             'items' => [
                 ['label' => 'Banners', 'icon' => 'image', 'url' => route('admin.banners.index'), 'active' => ['admin.banners.*'], 'perm' => ['view_banners', 'create_banners', 'edit_banners', 'delete_banners', 'manage_banners']],
                 ['label' => 'Splash Campaigns', 'icon' => 'bolt-lightning', 'url' => route('admin.splash-campaigns.index'), 'active' => ['admin.splash-campaigns.*'], 'perm' => ['manage_splash_campaigns']],
+                ['label' => 'App Open Video', 'icon' => 'film', 'url' => route('admin.app-open-videos.index'), 'active' => ['admin.app-open-videos.*'], 'perm' => ['manage_splash_campaigns']],
                 ['label' => 'Cuisines', 'icon' => 'egg', 'url' => route('admin.cuisines.index'), 'active' => ['admin.cuisines.*'], 'perm' => ['view_cuisines', 'create_cuisines', 'edit_cuisines', 'delete_cuisines', 'manage_cuisines']],
                 ['label' => 'Global Categories', 'icon' => 'layer-group', 'url' => route('admin.global-menu-categories.index'), 'active' => ['admin.global-menu-categories.*'], 'perm' => ['view_global_categories', 'create_global_categories', 'edit_global_categories', 'delete_global_categories']],
                 ['label' => 'Listed Menu', 'icon' => 'utensils', 'url' => route('admin.listed-menu.index'), 'active' => ['admin.listed-menu.*'], 'perm' => ['view_listed_menu', 'create_listed_menu', 'edit_listed_menu', 'delete_listed_menu']],
@@ -154,12 +155,27 @@
                 ['label' => 'Awaiting Food Return', 'icon' => 'bolt', 'url' => route('admin.orders.index', ['resale_status' => 'expired']), 'active' => [], 'badge' => $awaitingFoodReturnCount ? $badge($awaitingFoodReturnCount) : null, 'perm' => ['view_orders', 'create_orders', 'update_order_status', 'cancel_orders', 'view_order_details', 'manage_orders']],
                 ['label' => 'Commissions', 'icon' => 'percent', 'url' => route('admin.commissions'), 'active' => ['admin.commissions*'], 'perm' => ['manage_commissions']],
                 ['label' => 'Subscription Plans', 'icon' => 'layer-group', 'url' => route('admin.subscription-plans.index'), 'active' => ['admin.subscription-plans.*'], 'perm' => ['manage_commissions']],
+                ['label' => 'Gold Members', 'icon' => 'crown', 'url' => route('admin.gold-members.index'), 'active' => ['admin.gold-members.*'], 'perm' => ['manage_commissions']],
                 ['label' => 'Analytics', 'icon' => 'chart-pie', 'url' => route('admin.analytics'), 'active' => ['admin.analytics', 'admin.reports.*'], 'perm' => ['view_reports', 'export_reports', 'view_sales_report', 'view_earning_report']],
             ],
         ],
         [
             'label' => 'Engagement',
             'items' => [
+                [
+                    'label' => 'WhatsApp',
+                    'icon' => 'whatsapp',
+                    'icon_style' => 'fab',
+                    'active' => ['admin.whatsapp.*'],
+                    'perm' => ['view_settings', 'update_settings', 'manage_settings'],
+                    'children' => [
+                        ['label' => 'Inbox', 'url' => route('admin.whatsapp.inbox'), 'active' => ['admin.whatsapp.inbox', 'admin.whatsapp.thread']],
+                        ['label' => 'Broadcasts', 'url' => route('admin.whatsapp.broadcasts'), 'active' => ['admin.whatsapp.broadcasts*', 'admin.whatsapp.templates*']],
+                        ['label' => 'Reports', 'url' => route('admin.whatsapp.reports'), 'active' => ['admin.whatsapp.reports']],
+                        ['label' => 'Message Log', 'url' => route('admin.whatsapp.messages'), 'active' => ['admin.whatsapp.messages']],
+                        ['label' => 'Settings', 'url' => route('admin.whatsapp.settings'), 'active' => ['admin.whatsapp.settings', 'admin.whatsapp.save', 'admin.whatsapp.test', 'admin.whatsapp.catalog.*']],
+                    ],
+                ],
                 [
                     'label' => 'Promotion Engine',
                     'icon' => 'tags',
@@ -344,7 +360,7 @@
                     <li class="sidebar-nav-item {{ $hasChildren ? 'sidebar-parent' : '' }}" id="{{ $hasChildren ? $itemId : '' }}" data-sidebar-item>
                         @if($hasChildren)
                             <a href="#" onclick="toggleSettingsSubmenu(event)" class="sidebar-nav-link sidebar-parent-link {{ $active ? 'active open' : '' }}">
-                                <i class="fas fa-{{ $item['icon'] }}"></i>
+                                <i class="{{ $item['icon_style'] ?? 'fas' }} fa-{{ $item['icon'] }}"></i>
                                 <span>{{ $item['label'] }}</span>
                                 <i class="fas fa-chevron-down sidebar-submenu-toggle"></i>
                             </a>
@@ -364,7 +380,7 @@
                             </ul>
                         @else
                             <a href="{{ $item['url'] }}" {!! $item['attrs'] ?? '' !!} class="sidebar-nav-link {{ $active ? 'active' : '' }}">
-                                <i class="fas fa-{{ $item['icon'] }}"></i>
+                                <i class="{{ $item['icon_style'] ?? 'fas' }} fa-{{ $item['icon'] }}"></i>
                                 <span>{{ $item['label'] }}</span>
                                 @if(!empty($item['badge']) || !empty($item['badge_id']))
                                     <span class="sidebar-badge {{ empty($item['badge']) ? 'd-none' : '' }}" @if(!empty($item['badge_id'])) id="{{ $item['badge_id'] }}" @endif>{{ $item['badge'] ?? '0' }}</span>

@@ -73,6 +73,13 @@
                         </div>
                         <div class="col-md-4">
                             <div class="mb-3">
+                                <label class="form-label fw-semibold">Minimum Order Amount ({{ $currencySymbol }})</label>
+                                <input type="number" step="0.01" min="0" name="minimum_order_amount" class="form-control" value="{{ $settings['minimum_order_amount'] ?? 0 }}">
+                                <div class="form-text">Platform-wide floor on cart value to place an order. A restaurant's own minimum (if higher) still applies on top of this.</div>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="mb-3">
                                 <label class="form-label fw-semibold">Payment Provider</label>
                                 <select id="paymentProvider" name="payment_gateway_provider" class="form-select">
                                     @foreach($paymentProviders as $providerKey => $providerLabel)
@@ -244,7 +251,7 @@
                             <div class="mb-3">
                                 <label class="form-label fw-semibold">Razorpay Subscriptions Webhook Secret</label>
                                 <input type="password" name="razorpay_subscription_webhook_secret" class="form-control" value="{{ old('razorpay_subscription_webhook_secret', '') }}">
-                                <div class="form-text">Set this in Razorpay's dashboard under a webhook pointed at <code>{{ route('webhooks.razorpay.subscription') }}</code>, subscribed to the Subscriptions event group. Different secret from the other Razorpay webhooks above -- each endpoint has its own.</div>
+                                <div class="form-text">For <strong>restaurant</strong> subscriptions only (recurring mandate). Customer Gold membership is pay-as-you-go and never uses a webhook. Set this in Razorpay's dashboard under a webhook pointed at <code>{{ route('webhooks.razorpay.subscription') }}</code>, subscribed to the Subscriptions event group. Different secret from the other Razorpay webhooks above -- each endpoint has its own.</div>
                             </div>
                         </div>
                         <div class="col-md-3">
@@ -290,7 +297,7 @@
                             <div class="mb-3">
                                 <label class="form-label fw-semibold">Cashfree Subscriptions Webhook Secret</label>
                                 <input type="password" name="cashfree_subscription_webhook_secret" class="form-control" value="{{ old('cashfree_subscription_webhook_secret', '') }}">
-                                <div class="form-text">Set this in Cashfree's dashboard under a webhook pointed at <code>{{ route('webhooks.cashfree.subscription') }}</code>, subscribed to Subscription events. Distinct from the App ID/Secret Key above.</div>
+                                <div class="form-text">For <strong>restaurant</strong> subscriptions only (recurring mandate). Customer Gold membership is pay-as-you-go and never uses a webhook. Set this in Cashfree's dashboard under a webhook pointed at <code>{{ route('webhooks.cashfree.subscription') }}</code>, subscribed to Subscription events. Distinct from the App ID/Secret Key above.</div>
                             </div>
                         </div>
                     </div>

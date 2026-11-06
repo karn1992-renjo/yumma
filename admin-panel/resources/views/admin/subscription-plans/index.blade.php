@@ -14,6 +14,11 @@
                 </ol>
             </div>
             <div class="d-flex gap-2">
+                @if($audience === 'restaurant')
+                    <a href="{{ route('admin.subscription-plans.stories.create') }}" class="btn btn-outline-primary me-2">
+                        <i class="fas fa-circle-play me-2"></i> New Stories Plan
+                    </a>
+                @endif
                 <a href="{{ route('admin.subscription-plans.create', ['audience' => $audience]) }}" class="btn btn-primary">
                     <i class="fas fa-plus me-2"></i> Add Plan
                 </a>
@@ -141,7 +146,7 @@
                                 @endif
                             </td>
                             <td>
-                                <a href="{{ route('admin.subscription-plans.edit', $plan) }}" class="btn btn-sm btn-outline-primary">
+                                <a href="{{ $plan->audience === 'restaurant' && $plan->scope === 'stories_addon' ? route('admin.subscription-plans.stories.edit', $plan) : route('admin.subscription-plans.edit', $plan) }}" class="btn btn-sm btn-outline-primary">
                                     <i class="fas fa-edit"></i>
                                 </a>
                                 <button class="btn btn-sm btn-outline-danger delete-plan"

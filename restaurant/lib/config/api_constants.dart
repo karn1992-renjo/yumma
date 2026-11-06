@@ -4,7 +4,7 @@ class ApiConstants {
   // Base URL - Update this with your actual API URL
   static const String baseUrl = String.fromEnvironment(
     'API_BASE_URL',
-    defaultValue: 'https://yumma.in/api',
+    defaultValue: 'https://swado.online/api',
   );
 
   // Auth endpoints
@@ -135,6 +135,11 @@ class ApiConstants {
   static const String restaurantSubscriptionCurrent = '/restaurant/subscription/current';
   static const String restaurantSubscriptionSubscribe = '/restaurant/subscription/subscribe';
   static const String restaurantSubscriptionCancel = '/restaurant/subscription/cancel';
+  static const String restaurantStoryMenuItems = '/restaurant/stories/menu-items';
+  static const String restaurantAppVideo = '/restaurant/app-video';
+  static String restaurantAppVideoViewed(int id) => '/restaurant/app-video/$id/viewed';
+  static const String restaurantSubscriptionUpgrade = '/restaurant/subscription/upgrade';
+  static const String restaurantSubscriptionVerify = '/restaurant/subscription/verify';
   static const String restaurantSubscriptionCommissionPreview =
       '/restaurant/subscription/commission-preview';
   static const String restaurantSubscriptionSwitchToCommission =

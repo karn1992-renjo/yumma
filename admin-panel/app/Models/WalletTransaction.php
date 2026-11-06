@@ -40,4 +40,15 @@ class WalletTransaction extends Model
     {
         return $this->belongsTo(User::class, 'created_by');
     }
+
+    protected static function booted(): void
+    {
+        static::created(function (WalletTransaction $tx) {
+            try {
+                app(\App\Services\WhatsApp\WhatsAppNotifier::class)->walletCredited($tx);
+            } catch (\Throwable $e) {
+                \Illuminate\Support\Facades\Log::warning('WhatsApp hook failed.', ['error' => $e->getMessage()]);
+            }
+        });
+    }
 }

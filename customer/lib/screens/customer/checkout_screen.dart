@@ -19,6 +19,7 @@ import '../../providers/auth_provider.dart';
 import '../../providers/cart_provider.dart';
 import '../../providers/order_provider.dart';
 import '../../services/api_service.dart';
+import '../../services/app_branding_service.dart';
 import '../../services/flexible_order_payment_service.dart';
 import '../../theme/foodflow_theme.dart';
 import '../../utils/currency_utils.dart';
@@ -82,6 +83,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   double? _summaryOriginalSubtotal;
   double? _summaryDeliveryFee;
   double? _summaryDeliveryDiscount;
+  bool _summaryGoldDeliveryWaived = false;
+  double? _summaryGoldDeliveryWaiverAmount;
   double? _summaryPlatformFee;
   double? _summaryTax;
   double? _summarySurgeFee;
@@ -157,6 +160,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         _summaryOriginalSubtotal = null;
         _summaryDeliveryFee = null;
         _summaryDeliveryDiscount = null;
+        _summaryGoldDeliveryWaived = false;
+        _summaryGoldDeliveryWaiverAmount = null;
         _summaryPlatformFee = null;
         _summaryTax = null;
         _summaryDiscount = null;
@@ -272,6 +277,9 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
           _summaryOriginalSubtotal = _toDouble(data['original_subtotal']);
           _summaryDeliveryFee = _toDouble(data['delivery_fee']);
           _summaryDeliveryDiscount = _toDouble(data['delivery_discount']);
+          _summaryGoldDeliveryWaived = data['gold_delivery_waived'] == true;
+          _summaryGoldDeliveryWaiverAmount =
+              _nullableDouble(data['gold_delivery_waiver_amount']);
           _summaryPlatformFee = _toDouble(data['platform_fee']);
           _summaryTax = _toDouble(data['tax']);
           _summarySurgeFee = _toDouble(data['surge_fee']);
@@ -1394,6 +1402,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                 discount: discount,
                 total: total,
                 isTakeaway: isTakeaway,
+                goldDeliveryWaived: _summaryGoldDeliveryWaived,
+                goldDeliveryWaiverAmount: _summaryGoldDeliveryWaiverAmount ?? 0,
               ),
               if (!isTakeaway && deliveryFee > 0) ...[
                 const SizedBox(height: 14),
@@ -1743,6 +1753,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     required double discount,
     required double total,
     required bool isTakeaway,
+    bool goldDeliveryWaived = false,
+    double goldDeliveryWaiverAmount = 0,
   }) {
     final itemSavings =
         (originalSubtotal - subtotal).clamp(0.0, double.infinity).toDouble();
@@ -1823,6 +1835,28 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                         ? 'FREE'
                         : formatCurrency(context, netDeliveryFee),
                     color: netDeliveryFee <= 0 ? _ckGreen : null),
+          if (!isTakeaway && goldDeliveryWaived && goldDeliveryWaiverAmount > 0)
+            Padding(
+              padding: const EdgeInsets.only(top: 2, bottom: 5),
+              child: Row(
+                children: [
+                  const Icon(Icons.workspace_premium_rounded,
+                      size: 14, color: Color(0xFFC89B2E)),
+                  const SizedBox(width: 5),
+                  Expanded(
+                    child: Text(
+                      'You saved ${formatCurrency(context, goldDeliveryWaiverAmount)} with '
+                      '${AppBrandingService.instance.cachedOrFallback.displayName} Gold',
+                      style: const TextStyle(
+                        color: Color(0xFFC89B2E),
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
           if (platformFee > 0)
             row('Platform fee', formatCurrency(context, platformFee)),
           if (surgeFee > 0)
@@ -1854,6 +1888,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                 nightSurcharge: nightSurcharge,
                 discount: discount,
                 total: total,
+                goldDeliveryWaived: goldDeliveryWaived,
+                goldDeliveryWaiverAmount: goldDeliveryWaiverAmount,
               ),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
@@ -3078,6 +3114,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
               nightSurcharge: nightSurcharge,
               discount: discount,
               total: total,
+              goldDeliveryWaived: _summaryGoldDeliveryWaived,
+              goldDeliveryWaiverAmount: _summaryGoldDeliveryWaiverAmount ?? 0,
             ),
           ),
         ],
@@ -4675,6 +4713,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     double nightSurcharge = 0,
     required double discount,
     required double total,
+    bool goldDeliveryWaived = false,
+    double goldDeliveryWaiverAmount = 0,
   }) {
     final itemPromotionSavings =
         (originalSubtotal - subtotal).clamp(0.0, double.infinity).toDouble();
@@ -4711,6 +4751,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                 deliveryLabel,
                 deliveryFee,
                 deliveryDiscount,
+                goldDeliveryWaived: goldDeliveryWaived,
+                goldDeliveryWaiverAmount: goldDeliveryWaiverAmount,
               ),
               if (platformFee > 0)
                 _billRow(context, 'Platform fee', platformFee),
@@ -6275,6 +6317,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         'taxLabel': _summaryTaxLabel,
         'total': order.total,
         'scratchCards': scratchCards,
+        'goldDeliveryWaived': order.goldDeliveryWaived,
+        'goldDeliveryWaiverAmount': order.goldDeliveryWaiverAmount,
       },
     );
   }
@@ -6348,52 +6392,81 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     BuildContext context,
     String label,
     double deliveryFee,
-    double deliveryDiscount,
-  ) {
+    double deliveryDiscount, {
+    bool goldDeliveryWaived = false,
+    double goldDeliveryWaiverAmount = 0,
+  }) {
     final isFree = deliveryFee > 0 && deliveryDiscount >= deliveryFee - 0.01;
     final payable =
         (deliveryFee - deliveryDiscount).clamp(0, double.infinity).toDouble();
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Expanded(
-            child: Text(
-              label,
-              style: const TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.w500,
-                color: FoodFlowTheme.inkSoft,
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  label,
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                    color: FoodFlowTheme.inkSoft,
+                  ),
+                ),
               ),
-            ),
+              if (isFree) ...[
+                Text(
+                  formatCurrency(context, deliveryFee),
+                  style: const TextStyle(
+                    color: FoodFlowTheme.muted,
+                    fontSize: 13,
+                    decoration: TextDecoration.lineThrough,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(width: 7),
+                const Text(
+                  'FREE',
+                  style: TextStyle(
+                    color: FoodFlowTheme.successDark,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ] else
+                Text(
+                  formatCurrency(context, payable),
+                  style: const TextStyle(
+                    color: FoodFlowTheme.ink,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+            ],
           ),
-          if (isFree) ...[
-            Text(
-              formatCurrency(context, deliveryFee),
-              style: const TextStyle(
-                color: FoodFlowTheme.muted,
-                fontSize: 13,
-                decoration: TextDecoration.lineThrough,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-            const SizedBox(width: 7),
-            const Text(
-              'FREE',
-              style: TextStyle(
-                color: FoodFlowTheme.successDark,
-                fontSize: 14,
-                fontWeight: FontWeight.w900,
-              ),
-            ),
-          ] else
-            Text(
-              formatCurrency(context, payable),
-              style: const TextStyle(
-                color: FoodFlowTheme.ink,
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
+          if (goldDeliveryWaived && goldDeliveryWaiverAmount > 0)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Row(
+                children: [
+                  const Icon(Icons.workspace_premium_rounded,
+                      size: 13, color: Color(0xFFC89B2E)),
+                  const SizedBox(width: 5),
+                  Expanded(
+                    child: Text(
+                      'You saved ${formatCurrency(context, goldDeliveryWaiverAmount)} with '
+                      '${AppBrandingService.instance.cachedOrFallback.displayName} Gold',
+                      style: const TextStyle(
+                        color: Color(0xFFC89B2E),
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
         ],

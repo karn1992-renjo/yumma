@@ -71,4 +71,17 @@ class PaymentAttempt extends Model
     {
         return $this->expires_at !== null && $this->expires_at->isPast();
     }
+
+    protected static function booted(): void
+    {
+        static::updated(function (PaymentAttempt $attempt) {
+            if ($attempt->wasChanged('status') && $attempt->status === self::STATUS_FAILED) {
+            try {
+                app(\App\Services\WhatsApp\WhatsAppNotifier::class)->paymentFailed($attempt);
+            } catch (\Throwable $e) {
+                \Illuminate\Support\Facades\Log::warning('WhatsApp hook failed.', ['error' => $e->getMessage()]);
+            }
+            }
+        });
+    }
 }

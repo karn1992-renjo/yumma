@@ -5,6 +5,7 @@ import '../../providers/auth_provider.dart';
 import '../../services/location_service.dart';
 import '../../services/tracking_authorization_service.dart';
 import '../../widgets/common/app_cached_image.dart';
+import '../../services/app_open_video_service.dart';
 import 'home_experience.dart';
 import 'home_screen_production.dart';
 import 'home_v2/home_screen_v2.dart';
@@ -13,8 +14,22 @@ import 'theatre/theatre_entry_screen.dart';
 import 'theatre/theatre_models.dart';
 import 'theatre/theatre_screen_picker_screen.dart';
 
-class HomeScreen extends StatelessWidget {
+class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
+
+  @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  @override
+  void initState() {
+    super.initState();
+    // The admin's welcome video: once per person, skippable, played from a cached copy. Covers both home designs.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) AppOpenVideoService.maybePlay(context);
+    });
+  }
 
   @override
   Widget build(BuildContext context) {

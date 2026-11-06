@@ -58,6 +58,38 @@ class OrderRewardPointServiceTest extends TestCase
         $this->assertSame(0, RewardPointTransaction::where('order_id', $order->id)->count());
     }
 
+    public function test_gold_only_setting_credits_gold_members_and_skips_everyone_else(): void
+    {
+        \App\Models\AppSetting::updateOrCreate(['key' => 'reward_points_earning_audience'], ['value' => 'gold', 'type' => 'string']);
+        \Illuminate\Support\Facades\Cache::forget('app_settings');
+
+        $gold = User::factory()->create(['reward_points_balance' => 0]);
+        $regular = User::factory()->create(['reward_points_balance' => 0]);
+        $this->mock(\App\Services\GoldSubscriptionService::class, fn ($mock) => $mock
+            ->shouldReceive('isActiveFor')->andReturnUsing(fn ($id) => $id === $gold->id));
+
+        $service = app(OrderRewardPointService::class);
+        $service->creditForDeliveredOrder($this->order($gold, 250));
+        $service->creditForDeliveredOrder($this->order($regular, 250));
+
+        $this->assertSame(250, (int) $gold->fresh()->reward_points_balance);
+        $this->assertSame(0, (int) $regular->fresh()->reward_points_balance);
+        $this->assertSame(0, $service->pointsFor(250, $regular->id));
+        $this->assertSame(250, $service->pointsFor(250, $gold->id));
+        $this->assertSame(0, $service->pointsFor(250, null));
+    }
+
+    public function test_default_audience_is_everyone(): void
+    {
+        $user = User::factory()->create(['reward_points_balance' => 0]);
+
+        $service = app(OrderRewardPointService::class);
+        $service->creditForDeliveredOrder($this->order($user, 99.5));
+
+        $this->assertSame('all', $service->earningAudience());
+        $this->assertSame(99, (int) $user->fresh()->reward_points_balance);
+    }
+
     private function order(User $user, float $total, string $status = 'delivered'): Order
     {
         $restaurant = Restaurant::create([

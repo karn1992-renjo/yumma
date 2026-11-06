@@ -40,9 +40,12 @@ class SubscriptionCheckoutService {
     required int planId,
     required String paymentMethod,
     required User? user,
+    bool upgrade = false,
   }) async {
     final response = await _api.post(
-      ApiConstants.restaurantSubscriptionSubscribe,
+      upgrade
+          ? ApiConstants.restaurantSubscriptionUpgrade
+          : ApiConstants.restaurantSubscriptionSubscribe,
       data: {'plan_id': planId, 'payment_method': paymentMethod},
     );
 

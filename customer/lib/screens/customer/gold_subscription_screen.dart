@@ -134,23 +134,29 @@ class _GoldSubscriptionScreenState extends State<GoldSubscriptionScreen> {
     _checkout?.dispose();
     _checkout = GoldCheckoutService(
       onAuthorized: () async {
+        // Pay-as-you-go: by the time this fires, /gold/verify has already
+        // confirmed the payment and activated the membership synchronously
+        // (or it was a free trial, activated with no payment at all) --
+        // same guarantee a real checkout payment gives, no async wait needed.
         if (!mounted) return;
         setState(() => _isSubscribing = false);
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'Payment authorized. Activating your membership — this can take a few seconds.',
-            ),
-          ),
+          const SnackBar(content: Text('Membership activated!')),
         );
-        await Future.delayed(const Duration(seconds: 2));
         await _loadAll();
       },
-      onFailure: (message) {
+      onFailure: (message) async {
         if (!mounted) return;
         setState(() => _isSubscribing = false);
         ScaffoldMessenger.of(context)
             .showSnackBar(SnackBar(content: Text(message)));
+        // The gateway checkout had already created a pending_authorization
+        // row by this point (startCheckout() creates it before opening the
+        // gateway's payment UI) -- a client-side cancel/decline inside that
+        // UI never reaches our backend on its own, so without this the row
+        // sits stuck until the 30-minute staleness sweep or a manual
+        // "Cancel and try again" tap. Clean it up immediately instead.
+        await _cleanupStuckPendingRow();
       },
     );
 
@@ -166,7 +172,26 @@ class _GoldSubscriptionScreenState extends State<GoldSubscriptionScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(_cleanError(e))),
       );
+      // Same reasoning as onFailure above -- the row may already exist even
+      // though subscribe() itself threw (e.g. opening the checkout UI
+      // failed after the backend had already created it).
+      await _cleanupStuckPendingRow();
     }
+  }
+
+  /// Best-effort: clears a pending_authorization row left behind by a
+  /// failed/cancelled payment attempt so the user lands back on a clean
+  /// plan-picker instead of a stuck "Cancel and try again" card. Silent on
+  /// failure -- there may be nothing to clean up, and the 30-minute
+  /// staleness sweep on the next real subscribe attempt is the fallback.
+  Future<void> _cleanupStuckPendingRow() async {
+    try {
+      final response = await _api.post(ApiConstants.goldCancel);
+      if (response['success'] != true) return;
+    } catch (_) {
+      return;
+    }
+    if (mounted) await _loadAll();
   }
 
   /// Only ever offers gateways the admin has both enabled for customer
@@ -315,6 +340,7 @@ class _GoldSubscriptionScreenState extends State<GoldSubscriptionScreen> {
                           plan: plan,
                           isBusy: _isSubscribing,
                           palette: _palette,
+                          branding: _branding,
                           onSubscribe: () => _subscribe(plan),
                         ),
                       ),
@@ -343,25 +369,127 @@ class _MembershipHeroHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final deep = Color.lerp(palette.primary, Colors.black, 0.32) ?? palette.primary;
+
     return Container(
-      padding: const EdgeInsets.all(20),
+      padding: const EdgeInsets.fromLTRB(24, 28, 16, 28),
       decoration: BoxDecoration(
-        gradient: palette.primaryGradient,
-        borderRadius: BorderRadius.circular(22),
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [palette.primary, deep],
+        ),
+        borderRadius: BorderRadius.circular(26),
+        boxShadow: [
+          BoxShadow(color: palette.primary.withOpacity(0.35), blurRadius: 24, offset: const Offset(0, 14)),
+        ],
       ),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          Container(
-            width: 44,
-            height: 44,
-            decoration: BoxDecoration(color: Colors.white.withOpacity(0.2), shape: BoxShape.circle),
-            child: const Icon(Icons.star_rounded, color: Colors.white, size: 24),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text(
+                  'Every order.',
+                  style: TextStyle(color: Colors.white, fontSize: 26, fontWeight: FontWeight.w900, height: 1.18),
+                ),
+                Text(
+                  'Free delivery.',
+                  style: TextStyle(color: _gold, fontSize: 26, fontWeight: FontWeight.w900, height: 1.18),
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  'No minimum order.',
+                  style: TextStyle(color: Colors.white.withOpacity(0.82), fontSize: 13, fontWeight: FontWeight.w600, height: 1.3),
+                ),
+                Text(
+                  'More delicious moments.',
+                  style: TextStyle(color: Colors.white.withOpacity(0.82), fontSize: 13, fontWeight: FontWeight.w600, height: 1.3),
+                ),
+              ],
+            ),
           ),
-          const SizedBox(width: 14),
-          const Expanded(
-            child: Text(
-              'Free delivery on every order, no minimum.',
-              style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w700),
+          const SizedBox(width: 6),
+          const _MembershipHeroGraphic(),
+        ],
+      ),
+    );
+  }
+}
+
+/// Podium + glow + sparkle composition framing the real crown artwork
+/// (assets/images/gold_crown.webp) -- same asset used on the plan card
+/// below, kept consistent across the screen.
+class _MembershipHeroGraphic extends StatelessWidget {
+  const _MembershipHeroGraphic();
+
+  static const List<double> _sparkleAngles = [-55, -20, 20, 55];
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 104,
+      height: 110,
+      child: Stack(
+        alignment: Alignment.bottomCenter,
+        clipBehavior: Clip.none,
+        children: [
+          Positioned(
+            bottom: 2,
+            child: Container(
+              width: 86,
+              height: 24,
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.16),
+                borderRadius: BorderRadius.circular(999),
+              ),
+            ),
+          ),
+          for (final angle in _sparkleAngles)
+            Positioned(
+              bottom: 44,
+              child: Transform.rotate(
+                angle: angle * 3.14159265 / 180,
+                child: Container(
+                  width: 3,
+                  height: 16,
+                  margin: const EdgeInsets.only(bottom: 56),
+                  decoration: BoxDecoration(
+                    color: _gold.withOpacity(0.85),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                ),
+              ),
+            ),
+          Positioned(
+            bottom: 18,
+            child: Container(
+              width: 66,
+              height: 66,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                boxShadow: [
+                  BoxShadow(color: _gold.withOpacity(0.6), blurRadius: 26, spreadRadius: 2),
+                ],
+              ),
+              child: ClipOval(
+                child: Image.asset(
+                  'assets/images/gold_crown.webp',
+                  width: 66,
+                  height: 66,
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, __, ___) => Container(
+                    decoration: const BoxDecoration(
+                      shape: BoxShape.circle,
+                      gradient: LinearGradient(colors: [_gold, _goldDeep]),
+                    ),
+                    child: const Icon(Icons.star_rounded, color: _goldDark, size: 38),
+                  ),
+                ),
+              ),
             ),
           ),
         ],
@@ -740,12 +868,14 @@ class _MembershipPlanCard extends StatelessWidget {
     required this.plan,
     required this.isBusy,
     required this.palette,
+    required this.branding,
     required this.onSubscribe,
   });
 
   final Map<String, dynamic> plan;
   final bool isBusy;
   final BrandPalette palette;
+  final AppBranding branding;
   final VoidCallback onSubscribe;
 
   @override
@@ -754,86 +884,122 @@ class _MembershipPlanCard extends StatelessWidget {
     final compareAtPrice = (plan['compare_at_price'] as num?)?.toDouble();
     final period = plan['billing_period']?.toString() ?? 'monthly';
     final trialDays = plan['trial_days'] as int?;
+    // The title is composed from the real app branding, not the admin's
+    // free-text plan name -- a white-labelled build should always read
+    // "<App Name> Gold", even if the plan row itself was typed/copied under
+    // a different brand's name.
+    final nameLead = branding.displayName;
+    const nameHighlight = 'Gold';
 
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: palette.primary.withOpacity(0.25)),
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(color: palette.primary.withOpacity(0.18)),
+        boxShadow: [
+          BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 18, offset: const Offset(0, 8)),
+        ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Expanded(
-                child: Text(
-                  plan['name']?.toString() ?? 'Plan',
-                  style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w900),
+              ClipOval(
+                child: Image.asset(
+                  'assets/images/gold_crown.webp',
+                  width: 46,
+                  height: 46,
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, __, ___) => Container(
+                    width: 46,
+                    height: 46,
+                    decoration: const BoxDecoration(
+                      shape: BoxShape.circle,
+                      gradient: LinearGradient(colors: [_gold, _goldDeep]),
+                    ),
+                    child: const Icon(Icons.workspace_premium_rounded, color: _goldDark, size: 24),
+                  ),
                 ),
               ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: RichText(
+                    overflow: TextOverflow.ellipsis,
+                    text: TextSpan(
+                      style: const TextStyle(fontSize: 23, fontWeight: FontWeight.w900, color: FoodFlowTheme.ink),
+                      children: [
+                        if (nameLead.isNotEmpty) TextSpan(text: '$nameLead '),
+                        TextSpan(text: nameHighlight, style: TextStyle(color: palette.primary)),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
               Column(
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
-                  Row(
-                    children: [
-                      if (compareAtPrice != null && compareAtPrice > price) ...[
-                        Text(
-                          formatCurrency(context, compareAtPrice),
-                          style: TextStyle(
-                            color: FoodFlowTheme.muted,
-                            fontSize: 12.5,
-                            decoration: TextDecoration.lineThrough,
-                          ),
-                        ),
-                        const SizedBox(width: 6),
-                      ],
-                      Text(
-                        formatCurrency(context, price),
-                        style: TextStyle(
-                          color: palette.primary,
-                          fontSize: 15,
-                          fontWeight: FontWeight.w900,
-                        ),
+                  if (compareAtPrice != null && compareAtPrice > price)
+                    Text(
+                      formatCurrency(context, compareAtPrice),
+                      style: TextStyle(
+                        color: FoodFlowTheme.faint,
+                        fontSize: 12.5,
+                        decoration: TextDecoration.lineThrough,
                       ),
-                    ],
+                    ),
+                  Text(
+                    formatCurrency(context, price),
+                    style: TextStyle(color: palette.primary, fontSize: 19, fontWeight: FontWeight.w900, height: 1.15),
                   ),
                   Text('per $period', style: TextStyle(color: FoodFlowTheme.muted, fontSize: 11)),
                 ],
               ),
             ],
           ),
-          if ((plan['description']?.toString() ?? '').isNotEmpty) ...[
-            const SizedBox(height: 6),
-            Text(plan['description'].toString(),
-                style: TextStyle(color: FoodFlowTheme.muted, fontSize: 12.5)),
-          ],
-          const SizedBox(height: 10),
-          Wrap(
-            spacing: 8,
-            runSpacing: 6,
-            children: [
-              _MembershipPill(text: 'Free delivery on every order', palette: palette),
-              if ((trialDays ?? 0) > 0) _MembershipPill(text: '$trialDays-day free trial', palette: palette),
-            ],
+          const SizedBox(height: 12),
+          _MembershipPill(
+            text: 'FREE DELIVERY ON EVERY ORDER',
+            icon: Icons.local_shipping_rounded,
+            palette: palette,
           ),
-          const SizedBox(height: 14),
-          SizedBox(
-            width: double.infinity,
-            child: ElevatedButton(
-              onPressed: isBusy ? null : onSubscribe,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: palette.primary,
-                foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                padding: const EdgeInsets.symmetric(vertical: 13),
+          if ((trialDays ?? 0) > 0) ...[
+            const SizedBox(height: 8),
+            _MembershipPill(text: '$trialDays-day free trial', palette: palette),
+          ],
+          const SizedBox(height: 18),
+          _MembershipSubscribeButton(
+            label: (trialDays ?? 0) > 0 ? 'Start Free Trial' : 'Subscribe Now',
+            isBusy: isBusy,
+            palette: palette,
+            onTap: isBusy ? null : onSubscribe,
+          ),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              const Expanded(
+                child: _MembershipFootNote(
+                  icon: Icons.shopping_cart_outlined,
+                  // Matches the free-delivery benefit already stated above --
+                  // this plan's waiver has no minimum order requirement.
+                  label: 'No minimum order',
+                ),
               ),
-              child: Text(
-                (trialDays ?? 0) > 0 ? 'Start free trial' : 'Subscribe',
-                style: const TextStyle(fontWeight: FontWeight.w800),
+              Container(width: 1, height: 28, color: const Color(0xFFE5E7EB)),
+              const Expanded(
+                child: _MembershipFootNote(
+                  icon: Icons.history_rounded,
+                  // Matches the real cancel flow below -- membership can be
+                  // cancelled at any time, not just at period end.
+                  label: 'Cancel anytime',
+                ),
               ),
-            ),
+            ],
           ),
         ],
       ),
@@ -841,24 +1007,157 @@ class _MembershipPlanCard extends StatelessWidget {
   }
 }
 
+/// Glossy, gradient-filled "3D" button -- a lighter tint at the top fading
+/// to the brand color, a thin inner highlight along the top edge, and a
+/// tinted drop shadow for lift, instead of a flat single-color fill.
+class _MembershipSubscribeButton extends StatelessWidget {
+  const _MembershipSubscribeButton({
+    required this.label,
+    required this.isBusy,
+    required this.palette,
+    required this.onTap,
+  });
+
+  final String label;
+  final bool isBusy;
+  final BrandPalette palette;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final light = Color.lerp(palette.primary, Colors.white, 0.18) ?? palette.primary;
+    final deep = Color.lerp(palette.primary, Colors.black, 0.28) ?? palette.primary;
+
+    const radius = 999.0;
+
+    // The gradient/ink/border layer is hard-clipped by ClipRRect, and the
+    // shadow lives on a separate, unclipped outer Container -- keeping
+    // these apart avoids the square corner artifacts that can leak through
+    // when a single rounded BoxDecoration tries to paint both a shadow and
+    // a clipped InkWell ripple at once.
+    return SizedBox(
+      width: double.infinity,
+      height: 56,
+      child: Container(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(radius),
+          boxShadow: [
+            BoxShadow(color: deep.withOpacity(0.45), blurRadius: 16, offset: const Offset(0, 8)),
+          ],
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(radius),
+          child: Material(
+            color: Colors.transparent,
+            child: Ink(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [light, palette.primary, deep],
+                  stops: const [0, 0.5, 1],
+                ),
+              ),
+              child: InkWell(
+                onTap: onTap,
+                child: Container(
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(radius),
+                    border: Border.all(color: Colors.white.withOpacity(0.28), width: 1),
+                  ),
+                  alignment: Alignment.center,
+                  child: isBusy
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2.4, color: Colors.white),
+                        )
+                      : Row(
+                          mainAxisSize: MainAxisSize.min,
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Text(
+                              label,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w800,
+                                fontSize: 16,
+                                shadows: [Shadow(color: Colors.black26, blurRadius: 3, offset: Offset(0, 1))],
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            const Icon(Icons.arrow_forward_rounded, size: 19, color: Colors.white),
+                          ],
+                        ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _MembershipFootNote extends StatelessWidget {
+  const _MembershipFootNote({required this.icon, required this.label});
+
+  final IconData icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        Container(
+          width: 26,
+          height: 26,
+          decoration: BoxDecoration(color: _gold.withOpacity(0.16), shape: BoxShape.circle),
+          child: Icon(icon, size: 14, color: _goldDeep),
+        ),
+        const SizedBox(width: 6),
+        Flexible(
+          child: Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(color: FoodFlowTheme.muted, fontSize: 11.5, fontWeight: FontWeight.w700),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 class _MembershipPill extends StatelessWidget {
-  const _MembershipPill({required this.text, required this.palette});
+  const _MembershipPill({required this.text, required this.palette, this.icon});
 
   final String text;
   final BrandPalette palette;
+  final IconData? icon;
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
         color: palette.primarySoft,
         borderRadius: BorderRadius.circular(999),
         border: Border.all(color: palette.primary.withOpacity(0.3)),
       ),
-      child: Text(
-        text,
-        style: TextStyle(color: palette.primary, fontSize: 11, fontWeight: FontWeight.w800),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (icon != null) ...[
+            Icon(icon, size: 13, color: palette.primary),
+            const SizedBox(width: 5),
+          ],
+          Text(
+            text,
+            style: TextStyle(color: palette.primary, fontSize: 11, fontWeight: FontWeight.w800, letterSpacing: 0.2),
+          ),
+        ],
       ),
     );
   }

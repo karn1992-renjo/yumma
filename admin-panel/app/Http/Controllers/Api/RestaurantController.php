@@ -3908,14 +3908,29 @@ class RestaurantController extends Controller
                 ? min(200.0, (float) $validated['radius'])
                 : $this->discoveryRadiusForLocation($latitude, $longitude);
 
-            $restaurants = Restaurant::query()
+            $nearbyRestaurants = Restaurant::query()
                 ->where('is_verified', true)
                 ->customerVisible()
                 ->nearby($latitude, $longitude, $radius)
                 ->get();
 
+            $restaurants = $nearbyRestaurants
+                // A closed restaurant's items shouldn't appear on this feed
+                // at all -- not even grayed out, since there's no
+                // restaurant-detail page here to explain why.
+                ->filter(fn (Restaurant $restaurant) => $restaurant->isOpenNow())
+                ->values();
+
             if ($restaurants->isEmpty()) {
-                return response()->json(['success' => true, 'data' => [], 'categories' => [], 'threshold' => $threshold]);
+                return response()->json([
+                    'success' => true,
+                    'data' => [],
+                    'categories' => [],
+                    'threshold' => $threshold,
+                    // Lets the client tell "nothing nearby at all" apart from
+                    // "found restaurants, but every one is closed right now".
+                    'all_restaurants_closed' => $nearbyRestaurants->isNotEmpty(),
+                ]);
             }
 
             $items = MenuItem::query()
@@ -3932,7 +3947,11 @@ class RestaurantController extends Controller
                 // guarantees an actual numeric comparison.
                 ->whereRaw('COALESCE(discounted_price, price) < ' . (float) $threshold)
                 ->whereIn('restaurant_id', $restaurants->pluck('id'))
-                ->with(['category:id,name'])
+                ->with([
+                    'category:id,name,parent_id,image',
+                    'category.parent:id,name,image',
+                    'masterMenuItem:id,category_name',
+                ])
                 ->get()
                 // is_available/approval_status are static flags; a menu item
                 // can still be outside its own schedule window right now
@@ -3943,7 +3962,13 @@ class RestaurantController extends Controller
                 ->values();
 
             if ($items->isEmpty()) {
-                return response()->json(['success' => true, 'data' => [], 'categories' => [], 'threshold' => $threshold]);
+                return response()->json([
+                    'success' => true,
+                    'data' => [],
+                    'categories' => [],
+                    'threshold' => $threshold,
+                    'all_restaurants_closed' => false,
+                ]);
             }
 
             $restaurantResourceById = $restaurants
@@ -3952,11 +3977,43 @@ class RestaurantController extends Controller
                     $restaurant->id => $this->augmentRestaurantResource($restaurant, $latitude, $longitude),
                 ]);
 
+            // A menu item's `category_id` can point at a row that is itself a
+            // subcategory (Category::parent_id set) -- common for items
+            // created before the category/subcategory split, or wherever an
+            // admin picked a child category directly. Walking up to the real
+            // top-level category here keeps the filter chips to one flat
+            // level ("Breads", never also "Rotis" as a separate same-level
+            // chip) and lets a subcategory row piggyback on its parent's
+            // uploaded image when it has none of its own.
+            $resolveTopCategory = function (MenuItem $item): ?Category {
+                $category = $item->category;
+                if (!$category) {
+                    return null;
+                }
+
+                return $category->parent_id !== null ? ($category->parent ?? $category) : $category;
+            };
+            $topCategoryNameFor = function (MenuItem $item) use ($resolveTopCategory): ?string {
+                $resolved = $resolveTopCategory($item);
+                if ($resolved) {
+                    return trim($resolved->name);
+                }
+
+                $masterCategoryName = $item->masterMenuItem?->category_name;
+
+                return $masterCategoryName ? trim($masterCategoryName) : null;
+            };
+
             $data = $items
-                ->map(function (MenuItem $item) use ($restaurantResourceById, $threshold) {
+                ->map(function (MenuItem $item) use ($restaurantResourceById, $threshold, $topCategoryNameFor) {
                     $itemData = (new MenuItemResource($item))->resolve();
                     $itemData['restaurant'] = $restaurantResourceById[$item->restaurant_id] ?? null;
                     $itemData['under_price_threshold'] = $threshold;
+                    // Top-level-only category, used for this screen's filter
+                    // chips -- deliberately separate from the resource's own
+                    // `category_name` (which may still be subcategory-level
+                    // and is relied on elsewhere).
+                    $itemData['category_group'] = $topCategoryNameFor($item);
 
                     return $itemData;
                 })
@@ -3964,12 +4021,24 @@ class RestaurantController extends Controller
                 ->sortBy('final_price')
                 ->values();
 
+            $categoryImageByName = $items
+                ->map($resolveTopCategory)
+                ->filter()
+                ->unique(fn (Category $category) => mb_strtolower(trim($category->name)))
+                ->mapWithKeys(fn (Category $category) => [
+                    mb_strtolower(trim($category->name)) => $category->image ? MediaStorage::url($category->image) : null,
+                ]);
+
             $categories = $data
-                ->pluck('category_name')
+                ->pluck('category_group')
                 ->filter(fn ($name) => is_string($name) && trim($name) !== '')
                 ->map(fn ($name) => trim($name))
                 ->unique(fn ($name) => mb_strtolower($name))
-                ->sort(fn ($a, $b) => strcasecmp($a, $b))
+                ->map(fn ($name) => [
+                    'name' => $name,
+                    'image_url' => $categoryImageByName->get(mb_strtolower($name)),
+                ])
+                ->sortBy(fn ($category) => mb_strtolower($category['name']))
                 ->values();
 
             return response()->json([
@@ -3977,6 +4046,7 @@ class RestaurantController extends Controller
                 'data' => $data,
                 'categories' => $categories,
                 'threshold' => $threshold,
+                'all_restaurants_closed' => false,
             ]);
         } catch (ValidationException $e) {
             return response()->json([
@@ -4386,7 +4456,10 @@ class RestaurantController extends Controller
                         ->whereNotNull('comment')
                         ->where('comment', '!=', '')
                         ->count(),
-                    'similar_restaurants' => RestaurantResource::collection($similarRestaurants)->resolve(),
+                    'similar_restaurants' => app(\App\Services\SponsoredListingService::class)->stampCards(
+                        RestaurantResource::collection($similarRestaurants)->resolve(),
+                        'similar'
+                    ),
                 ]),
             ]);
         } catch (\Exception $e) {
